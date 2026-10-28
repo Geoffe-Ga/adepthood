@@ -3,30 +3,34 @@ import { join } from 'node:path';
 
 import { clearBrowserLaneState, writeBrowserLaneState } from './browserState';
 import { scriptUrls, warmBundles } from './bundleWarmup';
+import { DEFAULT_FRONTEND_PORT, frontendServerEnv } from './frontendEnv';
 import apiGlobalSetup from './globalSetup';
 import apiGlobalTeardown from './globalTeardown';
 import { readLaneState } from './laneState';
 
-const BOOT_TIMEOUT_MS = 180_000;
+export const BOOT_TIMEOUT_MS = 180_000;
 /** How long to wait between attempts at a bundle Metro is still compiling. */
 const WARM_RETRY_MS = 250;
-// Development CORS is deliberately explicit and includes this origin. Using a
-// random port would make the app report "offline" even while both servers are
-// healthy, which tests CORS rejection rather than the browser journey.
-const FRONTEND_PORT = 3000;
 const FRONTEND_DIR = join(__dirname, '..');
 const EXPO_CLI = join(FRONTEND_DIR, 'node_modules', 'expo', 'bin', 'cli');
 
-function launchFrontend(apiUrl: string, port: number): ChildProcess {
+/**
+ * Start an Expo web server for `apiUrl` on `port`, as its own process group.
+ *
+ * The env is built by `frontendServerEnv`, which fails closed on the habits
+ * demo flag: only an explicit `extraEnv` can make a demo build, and the default
+ * lane below never passes one.
+ */
+export function launchFrontend(
+  apiUrl: string,
+  port: number,
+  extraEnv: Readonly<Record<string, string>> = {},
+): ChildProcess {
   return spawn(process.execPath, [EXPO_CLI, 'start', '--web', '--port', String(port)], {
     cwd: FRONTEND_DIR,
     detached: true,
     stdio: ['ignore', 'pipe', 'pipe'],
-    env: {
-      ...process.env,
-      CI: '1',
-      EXPO_PUBLIC_API_BASE_URL: apiUrl,
-    },
+    env: frontendServerEnv(apiUrl, process.env, extraEnv),
   });
 }
 
@@ -69,7 +73,7 @@ function captureLog(child: ChildProcess): { text: string } {
   return log;
 }
 
-async function waitForFrontend(child: ChildProcess, frontendUrl: string): Promise<void> {
+export async function waitForFrontend(child: ChildProcess, frontendUrl: string): Promise<void> {
   const log = captureLog(child);
   const deadline = Date.now() + BOOT_TIMEOUT_MS;
   let shell: string | null = null;
@@ -100,8 +104,8 @@ export default async function browserGlobalSetup(): Promise<void> {
     throw new Error('the API journey setup returned without a live backend URL');
   }
 
-  const frontendUrl = `http://127.0.0.1:${FRONTEND_PORT}`;
-  const child = launchFrontend(apiState.baseUrl, FRONTEND_PORT);
+  const frontendUrl = `http://127.0.0.1:${DEFAULT_FRONTEND_PORT}`;
+  const child = launchFrontend(apiState.baseUrl, DEFAULT_FRONTEND_PORT);
   writeBrowserLaneState({ frontendPid: child.pid ?? 0, frontendUrl });
   try {
     await waitForFrontend(child, frontendUrl);

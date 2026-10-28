@@ -14,8 +14,6 @@
 
 [The Default Habit of Beige: Take Work Seriously](#the-default-habit-of-beige-take-work-seriously)
 
-[Energy Scaffolding](#energy-scaffolding)
-
 [How to Perform Energy Scaffolding](#how-to-perform-energy-scaffolding)
 
 [The Four Gates of Habit Alchemy](#the-four-gates-of-habit-alchemy)
@@ -25,7 +23,7 @@
 
 [The Sacred High—and the Temptation to Stay There Forever](#the-sacred-highand-the-temptation-to-stay-there-forever)
 
-[When You Don’t Ground, You Ascend Into Disconnection](#when-you-dont-ground-you-ascend-into-disconnection)
+[When You Don't Ground, You Float Into Disconnection](#when-you-dont-ground-you-float-into-disconnection)
 
 [And then… the dangerous temptation to repeat](#and-then-the-dangerous-temptation-to-repeat)
 

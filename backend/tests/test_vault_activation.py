@@ -809,8 +809,40 @@ async def test_one_time_handoff_is_encrypted_idempotent_and_never_returned(
     assert _CREDENTIAL not in raw
     assert config.provisioned is True
     public_connection = await async_client.get("/vault/connection", headers=headers)
-    assert public_connection.json() == {"connected": True, "vault_url": None}
+    assert public_connection.json() == {
+        "connected": True,
+        "vault_url": None,
+        "mcp_address": None,
+        "classification_key_rejected": False,
+    }
     assert _VAULT_URL not in public_connection.text
+
+
+@pytest.mark.asyncio
+async def test_handoff_stores_the_vault_base_url_without_creeks_v1_suffix(
+    async_client: AsyncClient,
+    db_session: AsyncSession,
+    creek_client: FakeProvisioningClient,
+) -> None:
+    """Creek hands over ``.../v1``; the stored URL is the base the client appends to.
+
+    A redelivered handoff still carries the suffix, so it must compare equal to
+    the stored base rather than read as a conflicting second connection.
+    """
+    del creek_client
+    headers, user_id, _ = await _signup(async_client, "handoff-base-url")
+    await _activate(async_client, headers)
+    activation = (await db_session.execute(select(VaultActivation))).scalar_one()
+
+    assert await _handoff(async_client, activation) == HTTPStatus.NO_CONTENT
+    assert await _handoff(async_client, activation) == HTTPStatus.NO_CONTENT
+
+    config = (
+        await db_session.execute(
+            select(UserVaultConfig).where(col(UserVaultConfig.user_id) == user_id),
+        )
+    ).scalar_one()
+    assert config.vault_url == _VAULT_URL.removesuffix("/v1")
 
 
 @pytest.mark.asyncio
@@ -1192,7 +1224,7 @@ async def test_handed_off_connection_stays_inert_until_provider_reports_ready(
         return None
 
     monkeypatch.setattr(
-        "dependencies.creek_vault.classify_resolved_user_vault_url_off_the_pool",
+        "services.creek_vault_stored_client.classify_resolved_user_vault_url_off_the_pool",
         publicly_resolved,
     )
     activation.state = "ready"
@@ -1571,15 +1603,17 @@ async def test_stuck_teardown_is_visible_only_to_operations(
 
     assert refused.status_code == HTTPStatus.FORBIDDEN
     assert visible.status_code == HTTPStatus.OK
-    assert visible.json() == [
-        {
-            "creek_job_id": "job-stuck",
-            "state": "failed",
-            "attempts": 3,
-            "retryable": True,
-            "failure_reason": "provider_unavailable",
-        }
-    ]
+    (listed,) = visible.json()
+    # The request time is the receipt's own, so only its presence is pinned
+    # here; tests/incident/test_tabletop.py pins that it is the request time.
+    assert datetime.fromisoformat(listed.pop("pending_since"))
+    assert listed == {
+        "creek_job_id": "job-stuck",
+        "state": "failed",
+        "attempts": 3,
+        "retryable": True,
+        "failure_reason": "provider_unavailable",
+    }
 
 
 def test_activation_openapi_is_stable_and_contains_no_connection_secret() -> None:

@@ -18,7 +18,7 @@ Both live at the Third Eye. That's not decoration—it's the reason they belong 
 
 Teal is the shift from the Intentional Actor to the **True Self Embodier**—from someone who consciously chooses their response to someone who *channels* wisdom from their transcendent nature, their Monad, what some traditions call the Holy Guardian Angel or the Higher Self.
 
-In Spiral Dynamics, there isn't really a "Teal"—the model jumps from Yellow (integrative) to Turquoise (holistic). But APTITUDE splits this territory into finer gradations, recognizing that the journey from intellectual integration (Yellow) to the recognition of emptiness (Clear Light) has distinct milestones.
+In Spiral Dynamics, there isn't really a "Teal"—the model jumps from Yellow (integrative) to Turquoise (holistic). But APTITUDE hears finer gradations in this territory: integration through the mind (Yellow), connection to the True Self (Teal), and insight into emptiness (Clear Light) are three distinct capacities, each given its own stage of the course.
 
 **Teal is where you meet the part of you that transcends incarnation.** The True Self. The Monad. The "I AM" that exists beyond personality, beyond conditioning, beyond this single lifetime.
 

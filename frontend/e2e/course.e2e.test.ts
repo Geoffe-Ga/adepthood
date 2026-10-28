@@ -4,7 +4,7 @@ import { describe, afterAll, expect, it } from '@jest/globals';
 
 import { freshLicenseKey } from './licenseKey';
 
-import { ApiError, auth, course, setTokenGetter } from '@/api';
+import { ApiError, auth, course, setTokenGetter, uiFlags } from '@/api';
 import type { ContentItem } from '@/api';
 import { STAGE_DURATIONS_DAYS } from '@/constants/program';
 
@@ -186,6 +186,7 @@ describe('course journey against a live server', () => {
   });
 
   it('moves the stage progress the server reports', async () => {
+    expect((await uiFlags.get()).course_last_stage).toBe(STAGE_NUMBER);
     const progress = await course.stageProgress(STAGE_NUMBER);
 
     expect(progress.total_items).toBe(chapters.length);

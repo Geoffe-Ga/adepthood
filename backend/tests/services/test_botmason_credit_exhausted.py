@@ -24,7 +24,9 @@ captured bodies, and every request that leaves the client is counted.
 from __future__ import annotations
 
 import asyncio
+import inspect
 import logging
+from http import HTTPStatus
 from typing import Any, TypeVar
 
 import anthropic
@@ -35,7 +37,7 @@ import pytest
 
 from services import botmason
 from services.botmason import _MAX_RETRIES, _RETRY_BASE_DELAY, LLMProviderError, generate_response
-from tests.provider_transport import OPENAI_KEY, use_anthropic, use_openai
+from tests.provider_transport import OPENAI_KEY, armed_key, use_anthropic, use_openai
 
 # --- Provider fixtures, captured from real accounts (see the issue bodies) ---
 
@@ -165,7 +167,7 @@ _ExcT = TypeVar("_ExcT", bound=Exception)
 async def _call_and_capture(exc_type: type[_ExcT]) -> _ExcT:  # noqa: UP047
     """Drive ``generate_response`` and return the raised ``exc_type``."""
     with pytest.raises(exc_type) as excinfo:
-        await generate_response("hi", [])
+        await generate_response("hi", [], api_key=armed_key())
     return excinfo.value
 
 
@@ -419,12 +421,12 @@ class TestTheCarveOutsReachOnlyTheirOwnProvider:
         assert backoff_delays == _EXPECTED_BACKOFF
 
 
-class TestBothKeyOwnersProduceAnOperatorSignal:
+class TestASpentBalanceProducesAnOperatorSignal:
     """Making this condition non-retryable removed the retry loop's own WARNINGs.
 
     Before the fix an OpenAI exhaustion was retryable, so the retry loop logged
     twice on the way past. It no longer retries, so if ``credit_exhausted_error``
-    stays silent on a branch, that branch produces no server-side signal at all.
+    stayed silent, a spent balance would produce no server-side signal at all.
     """
 
     @staticmethod
@@ -437,32 +439,30 @@ class TestBothKeyOwnersProduceAnOperatorSignal:
     def test_a_spent_caller_key_is_logged_at_info(self, caplog: pytest.LogCaptureFixture) -> None:
         """A caller's own bill is ordinary traffic, but it is not invisible."""
         with caplog.at_level(logging.INFO, logger=botmason.logger.name):
-            botmason.credit_exhausted_error(self._exhausted(), byok=True)
+            error = botmason.credit_exhausted_error(self._exhausted())
         records = [r for r in caplog.records if r.message == botmason.CREDIT_EXHAUSTED_DETAIL]
         assert len(records) == 1
         assert records[0].levelno == logging.INFO
         assert _extra(records[0], "provider") == "openai"
-        assert _extra(records[0], "byok") is True
+        assert error.status_code == HTTPStatus.PAYMENT_REQUIRED
+        assert error.detail == botmason.CREDIT_EXHAUSTED_DETAIL
 
-    def test_a_spent_server_key_is_logged_at_warning(
-        self, caplog: pytest.LogCaptureFixture
-    ) -> None:
-        """A spent server key is an outage, so it gets the level an operator alerts on."""
-        with caplog.at_level(logging.INFO, logger=botmason.logger.name):
-            botmason.credit_exhausted_error(self._exhausted(), byok=False)
-        records = [
-            r for r in caplog.records if r.message == botmason.SERVICE_CREDIT_EXHAUSTED_DETAIL
-        ]
-        assert len(records) == 1
-        assert records[0].levelno == logging.WARNING
-        assert _extra(records[0], "byok") is False
+    def test_the_server_key_arm_is_retired(self) -> None:
+        """No ``503`` service-credit code is left to reach: every dial carries the writer's key.
+
+        ``_resolve_api_key`` refuses a keyless provider call before a client is
+        built (ADR 0009 phase (a), #3067), so a spent balance can only be the
+        writer's own. The mapping takes no "whose key" flag, and the operator's
+        code it used to choose between is gone.
+        """
+        assert list(inspect.signature(botmason.credit_exhausted_error).parameters) == ["exc"]
+        assert not hasattr(botmason, "SERVICE_CREDIT_EXHAUSTED_DETAIL")
 
     def test_neither_log_carries_the_api_key_or_user_text(
         self, caplog: pytest.LogCaptureFixture
     ) -> None:
         """Whatever an operator reads, it is ids and the provider's own words only."""
         with caplog.at_level(logging.INFO, logger=botmason.logger.name):
-            botmason.credit_exhausted_error(self._exhausted(), byok=True)
-            botmason.credit_exhausted_error(self._exhausted(), byok=False)
+            botmason.credit_exhausted_error(self._exhausted())
         blob = "".join(str(record.__dict__) for record in caplog.records)
         assert OPENAI_KEY not in blob

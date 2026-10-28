@@ -54,6 +54,10 @@ function apiError(status: number, detail: string): Error {
 }
 
 interface Handlers {
+  onSessionConfirmed?: (
+    _session: PracticeSessionResponse,
+    _payload: PracticeSessionCreate,
+  ) => Promise<void>;
   onClose: jest.Mock;
   onSessionApply: jest.Mock;
   onSessionRollback: jest.Mock;
@@ -93,6 +97,45 @@ afterEach(() => {
 });
 
 describe('LogPracticeSessionSheet payload', () => {
+  it('hands a mounted manual sitting to independent habit work only after persistence', async () => {
+    let confirm!: (_session: PracticeSessionResponse) => void;
+    mockCreate.mockReturnValueOnce(
+      new Promise((resolve) => {
+        confirm = resolve;
+      }),
+    );
+    const onSessionConfirmed = jest.fn<
+      (_session: PracticeSessionResponse, _payload: PracticeSessionCreate) => Promise<void>
+    >(() => new Promise(() => {}));
+    const h = { ...handlers(), onSessionConfirmed };
+    const view = renderSheet(h);
+    await act(async () => {
+      fireEvent.press(view.getByTestId('log-session-save'));
+    });
+    expect(mockCreate).toHaveBeenCalledTimes(1);
+    expect(onSessionConfirmed).not.toHaveBeenCalled();
+    await act(async () => {
+      confirm(SAVED);
+    });
+    expect(onSessionConfirmed).toHaveBeenCalledWith(SAVED, mockCreate.mock.calls[0]?.[0], 'manual');
+    expect(h.onClose).toHaveBeenCalledTimes(1);
+    expect(h.onSessionRollback).not.toHaveBeenCalled();
+  });
+
+  it('never starts independent habit work after a mounted manual save refusal', async () => {
+    mockCreate.mockRejectedValueOnce(apiError(503, 'unavailable'));
+    const onSessionConfirmed = jest.fn<
+      (_session: PracticeSessionResponse, _payload: PracticeSessionCreate) => Promise<void>
+    >(async () => {});
+    const h = { ...handlers(), onSessionConfirmed };
+    const view = renderSheet(h);
+    await act(async () => {
+      fireEvent.press(view.getByTestId('log-session-save'));
+    });
+    expect(onSessionConfirmed).not.toHaveBeenCalled();
+    expect(h.onSessionRollback).toHaveBeenCalledTimes(1);
+  });
+
   it('submits a window spanning the chosen minutes and never sends a duration', async () => {
     const h = handlers();
     const { getByTestId } = renderSheet(h);
@@ -331,7 +374,7 @@ describe('LogPracticeSessionSheet save outcomes', () => {
 
     await waitFor(() => expect(getByTestId('log-session-error')).toBeTruthy());
     expect(getByTestId('log-session-error').props.children).toMatch(
-      /^You haven't unlocked this stage yet/,
+      /^This stage hasn't opened yet/,
     );
   });
 

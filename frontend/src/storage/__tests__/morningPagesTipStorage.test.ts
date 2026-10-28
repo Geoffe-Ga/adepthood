@@ -118,10 +118,12 @@ describe('morningPagesTipStorage', () => {
       setAsideOn: null,
       neverOffer: false,
     });
-    expect(warn).toHaveBeenCalledWith(
-      '[morningPagesTipStorage] failed to load dismissal state',
-      error,
-    );
+    expect(warn).toHaveBeenCalledWith('storage_read_failed', { storage: 'morning_pages' });
+  });
+
+  test('a never-offer decline resolves that it saved, for the Settings switch', async () => {
+    await expect(saveMorningPagesTipNeverOffer(true)).resolves.toBe(true);
+    await expect(loadMorningPagesTipState()).resolves.toMatchObject({ neverOffer: true });
   });
 
   test('restore clears both the permanent flag and today’s set-aside, so the tip is back now', async () => {
@@ -151,19 +153,19 @@ describe('morningPagesTipStorage', () => {
   });
 
   test.each([
-    ['set aside', () => saveMorningPagesTipSetAside('2026-09-10')],
-    ['never offer', () => saveMorningPagesTipNeverOffer(true)],
-  ])('a failed %s write resolves and says so rather than rejecting', async (_label, write) => {
-    const warn = jest.spyOn(console, 'warn').mockImplementation(() => undefined);
-    const error = new Error('quota exceeded');
-    mockAsyncStorage.setItem.mockRejectedValueOnce(error);
+    ['set aside', () => saveMorningPagesTipSetAside('2026-09-10'), undefined],
+    ['never offer', () => saveMorningPagesTipNeverOffer(true), false],
+  ])(
+    'a failed %s write resolves and says so rather than rejecting',
+    async (_label, write, resolved) => {
+      const warn = jest.spyOn(console, 'warn').mockImplementation(() => undefined);
+      const error = new Error('quota exceeded');
+      mockAsyncStorage.setItem.mockRejectedValueOnce(error);
 
-    await expect(write()).resolves.toBeUndefined();
-    expect(warn).toHaveBeenCalledWith(
-      '[morningPagesTipStorage] failed to save dismissal state',
-      error,
-    );
-  });
+      await expect(write()).resolves.toBe(resolved);
+      expect(warn).toHaveBeenCalledWith('storage_write_failed', { storage: 'morning_pages' });
+    },
+  );
 
   test('an interruption after any one of restore’s writes never re-locks the tip', async () => {
     // A writer who still has the legacy decline presses restore, and the app is
@@ -203,6 +205,6 @@ describe('morningPagesTipStorage', () => {
     mockAsyncStorage.setItem.mockRejectedValueOnce(error);
 
     await expect(restoreMorningPagesTip()).resolves.toBe(false);
-    expect(warn).toHaveBeenCalledWith('[morningPagesTipStorage] failed to restore the tip', error);
+    expect(warn).toHaveBeenCalledWith('storage_clear_failed', { storage: 'morning_pages' });
   });
 });

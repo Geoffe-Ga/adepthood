@@ -8,6 +8,8 @@ jest.mock('@react-native-async-storage/async-storage', () => ({
   getItem: jest.fn(() => Promise.resolve(null)),
 }));
 
+const IDENTITY = { userId: 1, episode: 'opaque-offer' };
+
 const mockAsyncStorage = AsyncStorage as jest.Mocked<typeof AsyncStorage>;
 
 beforeEach(() => {
@@ -17,19 +19,19 @@ beforeEach(() => {
 describe('returnOfferStorage', () => {
   describe('saveReturnOfferDismissed', () => {
     test('stores true when the offer is dismissed', async () => {
-      await saveReturnOfferDismissed(true);
+      await saveReturnOfferDismissed(IDENTITY, true);
 
       expect(mockAsyncStorage.setItem).toHaveBeenCalledWith(
-        '@adepthood/return_offer_dismissed',
+        '@adepthood/return_offer_dismissed#u1#eopaque-offer',
         'true',
       );
     });
 
     test('stores false when the flag is reset (episode advanced)', async () => {
-      await saveReturnOfferDismissed(false);
+      await saveReturnOfferDismissed(IDENTITY, false);
 
       expect(mockAsyncStorage.setItem).toHaveBeenCalledWith(
-        '@adepthood/return_offer_dismissed',
+        '@adepthood/return_offer_dismissed#u1#eopaque-offer',
         'false',
       );
     });
@@ -38,19 +40,19 @@ describe('returnOfferStorage', () => {
   describe('loadReturnOfferDismissed', () => {
     test('returns false when nothing is stored', async () => {
       mockAsyncStorage.getItem.mockResolvedValueOnce(null);
-      const result = await loadReturnOfferDismissed();
+      const result = await loadReturnOfferDismissed(IDENTITY);
       expect(result).toBe(false);
     });
 
     test('returns true when the stored flag is true', async () => {
       mockAsyncStorage.getItem.mockResolvedValueOnce('true');
-      const result = await loadReturnOfferDismissed();
+      const result = await loadReturnOfferDismissed(IDENTITY);
       expect(result).toBe(true);
     });
 
     test('returns false on a storage error', async () => {
       mockAsyncStorage.getItem.mockRejectedValueOnce(new Error('storage error'));
-      const result = await loadReturnOfferDismissed();
+      const result = await loadReturnOfferDismissed(IDENTITY);
       expect(result).toBe(false);
     });
   });

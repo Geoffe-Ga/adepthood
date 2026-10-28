@@ -1,20 +1,15 @@
-/**
- * ``usePromptHistory`` — paged reader for the weekly prompts a person has
- * already answered (``GET /prompts/history``).
- *
- * The shelf's prompt card only ever shows the *current* unanswered question, so
- * without this the questions themselves are unreadable once answered: the
- * response is mirrored into the journal stream, but the question that drew it
- * is not. Fetching starts only when the surface is opened, so a shelf render
- * costs nothing extra.
- */
-import { useCallback, useEffect, useRef, useState } from 'react';
+/** Paged prompt history, bound to the account and the visit that requested it. */
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import type { Dispatch, SetStateAction } from 'react';
 
-import type { prompts } from '@/api';
-import type { PromptDetail } from '@/api';
+import type { prompts, PromptDetail } from '@/api';
 import { formatApiError } from '@/api/errorMessages';
+import { useAuth } from '@/context/AuthContext';
+import { useAccountScope } from '@/storage/useActiveUser';
+import { parseUserId } from '@/storage/userScope';
+import { decodeJwtPayload } from '@/utils/token';
 
-/** Rows per request; the route caps ``limit`` at 200. */
+/** Rows per request; the route caps limit at 200. */
 export const PROMPT_HISTORY_PAGE_SIZE = 20;
 
 export interface PromptHistoryState {
@@ -25,52 +20,95 @@ export interface PromptHistoryState {
   loadMore: () => void;
 }
 
+type HistoryPage = Omit<PromptHistoryState, 'loadMore'> & { epoch: number };
+
+function emptyPage(epoch: number): HistoryPage {
+  return { epoch, items: [], loading: false, error: null, hasMore: false };
+}
+
+/** Namespace adoption precedes Auth's token commit: wait for the matching credential. */
+function useHistoryAccount() {
+  const { token } = useAuth();
+  const scope = useAccountScope();
+  const credentialOwner = token ? parseUserId(decodeJwtPayload(token)?.sub) : null;
+  return useMemo(
+    () => ({
+      ...scope,
+      token,
+      authenticated: scope.owner !== null && credentialOwner === scope.owner,
+    }),
+    [scope, token, credentialOwner],
+  );
+}
+
+async function readHistoryPage(
+  offset: number,
+  fetchHistory: typeof prompts.history,
+  account: ReturnType<typeof useHistoryAccount>,
+  isCurrent: () => boolean,
+  setPage: Dispatch<SetStateAction<HistoryPage>>,
+): Promise<void> {
+  if (!account.authenticated || !isCurrent()) return;
+  setPage((prev) => ({ ...prev, loading: true, error: null }));
+  try {
+    const page = await fetchHistory(
+      { limit: PROMPT_HISTORY_PAGE_SIZE, offset, include_unanswered: true },
+      account.token ?? undefined,
+    );
+    if (!isCurrent()) return;
+    setPage((prev) => ({
+      ...prev,
+      epoch: account.epoch,
+      items: offset === 0 ? page.items : [...prev.items, ...page.items],
+      hasMore: page.has_more,
+    }));
+  } catch (err: unknown) {
+    if (isCurrent())
+      setPage((prev) => ({
+        ...prev,
+        error: formatApiError(err, { fallback: 'Could not load your past prompts.' }),
+      }));
+  } finally {
+    if (isCurrent()) setPage((prev) => ({ ...prev, loading: false }));
+  }
+}
+
 export function usePromptHistory(
   visible: boolean,
   fetchHistory: typeof prompts.history,
 ): PromptHistoryState {
-  const [items, setItems] = useState<PromptDetail[]>([]);
-  const [hasMore, setHasMore] = useState(false);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  // Guards against a page landing after the surface closed or unmounted.
-  const live = useRef(false);
-
+  const account = useHistoryAccount();
+  const [page, setPage] = useState(() => emptyPage(account.epoch));
+  // A boolean cannot distinguish a late answer from a previous visit once the
+  // same surface has reopened. Each focus/credential lifecycle gets a revision.
+  const visit = useRef(0);
   const loadPage = useCallback(
-    async (offset: number): Promise<void> => {
-      setLoading(true);
-      setError(null);
-      try {
-        const page = await fetchHistory({ limit: PROMPT_HISTORY_PAGE_SIZE, offset });
-        if (!live.current) return;
-        setItems((prev) => (offset === 0 ? page.items : [...prev, ...page.items]));
-        setHasMore(page.has_more);
-      } catch (err: unknown) {
-        if (live.current) {
-          setError(formatApiError(err, { fallback: 'Could not load your past prompts.' }));
-        }
-      } finally {
-        if (live.current) setLoading(false);
-      }
+    (offset: number) => {
+      const revision = visit.current;
+      return readHistoryPage(
+        offset,
+        fetchHistory,
+        account,
+        () => visit.current === revision && account.isCurrent(),
+        setPage,
+      );
     },
-    [fetchHistory],
+    [fetchHistory, account],
   );
 
   useEffect(() => {
-    if (!visible) return undefined;
-    live.current = true;
-    setItems([]);
-    setHasMore(false);
+    if (!visible || !account.authenticated) return;
+    visit.current += 1;
+    setPage(emptyPage(account.epoch));
     void loadPage(0);
     return () => {
-      live.current = false;
+      visit.current += 1;
     };
-  }, [visible, loadPage]);
+  }, [visible, account, loadPage]);
 
   const loadMore = useCallback(() => {
-    if (loading) return;
-    void loadPage(items.length);
-  }, [loading, loadPage, items.length]);
-
-  return { items, loading, error, hasMore, loadMore };
+    if (!page.loading) void loadPage(page.items.length);
+  }, [page.loading, page.items.length, loadPage]);
+  const current = account.authenticated && page.epoch === account.epoch;
+  return { ...(current ? page : emptyPage(account.epoch)), loadMore };
 }

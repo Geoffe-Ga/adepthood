@@ -45,6 +45,10 @@ from domain.resonance import MAX_PRIOR_ENTRIES
 from models.corpus_fragment import CorpusFragment, CorpusSource
 from models.course_stage import CourseStage
 from models.journal_entry import JournalClassification, JournalEntry
+from models.journal_withdrawal_obligation import (
+    JournalWithdrawalObligation,
+    JournalWithdrawalState,
+)
 from models.stage_progress import StageProgress
 from services.corpus_store import FragmentDraft, record_fragment
 from services.frequency_classification import ClassificationSource, FrequencyClassification
@@ -525,6 +529,33 @@ async def test_a_deleted_entry_is_not_gathered(db_session: AsyncSession) -> None
 
 
 @pytest.mark.asyncio
+async def test_a_page_whose_deletion_is_in_progress_is_not_gathered(
+    db_session: AsyncSession,
+) -> None:
+    """A DELETE that met a vault outage left the page live but going (#3098 review).
+
+    Its body must not be sent as grounding for another pass: the deletion the
+    writer asked for is in progress, and the background sweep finishes it.
+    """
+    await _write_entry(db_session, "kept", entry_id=1)
+    await _write_entry(db_session, "going", entry_id=2)
+    db_session.add(
+        JournalWithdrawalObligation(
+            user_id=_OWNER,
+            journal_entry_id=2,
+            state=JournalWithdrawalState.PENDING_DELETE.value,
+        )
+    )
+    await db_session.commit()
+
+    grounding = await gather_grounding(
+        db_session, user_id=_OWNER, exclude_entry_id=_ENTRY_UNDER_REFLECTION
+    )
+
+    assert grounding.bodies == ("kept",)
+
+
+@pytest.mark.asyncio
 async def test_grounding_never_crosses_accounts(db_session: AsyncSession) -> None:
     """Another account's corpus and another account's entries are both invisible."""
     await _store_fragment(db_session, "the stranger's fragment", user_id=_STRANGER, F1=0.8)
@@ -555,6 +586,22 @@ async def test_the_corpus_path_stays_within_its_statement_budget(
     await _seed_stage_position(db_session, stage_number=5, code=Frequency.F5)
     for index in range(10):
         await _store_fragment(db_session, f"fragment {index}", F5=0.5)
+
+    with _counting_statements() as statements:
+        await gather_grounding(db_session, user_id=_OWNER, exclude_entry_id=_ENTRY_UNDER_REFLECTION)
+
+    assert len(statements) <= GROUNDING_STATEMENT_BUDGET, statements
+
+
+@pytest.mark.asyncio
+async def test_the_corpus_path_from_journal_entries_stays_within_its_statement_budget(
+    db_session: AsyncSession,
+) -> None:
+    """Fragments that name their source entries pay for one lineage read, not one per fragment."""
+    await _seed_stage_position(db_session, stage_number=5, code=Frequency.F5)
+    for index in range(10):
+        await _write_entry(db_session, f"entry {index}", entry_id=index + 1)
+        await _store_fragment(db_session, f"fragment {index}", source_entry_id=index + 1, F5=0.5)
 
     with _counting_statements() as statements:
         await gather_grounding(db_session, user_id=_OWNER, exclude_entry_id=_ENTRY_UNDER_REFLECTION)

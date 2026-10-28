@@ -15,6 +15,7 @@ import { openFeedbackComposer } from '../features/Feedback/navigation';
 import { SendFeedbackButton } from '../features/Feedback/SendFeedbackButton';
 import HabitsScreen from '../features/Habits/HabitsScreen';
 import JournalShelfScreen from '../features/Journal/JournalShelfScreen';
+import NotificationCenterScreen from '../features/Journal/NotificationCenterScreen';
 import MapScreen from '../features/Map/MapScreen';
 import PracticeScreen from '../features/Practice/PracticeScreen';
 
@@ -31,11 +32,29 @@ import {
 } from '@/store/useDepthPreferencesStore';
 
 export type RootTabParamList = {
-  Habits: undefined;
+  Habits:
+    | {
+        onboardingIntent?: 'energy-scaffolding';
+        onboardingOwner?: number;
+        onboardingGeneration?: number;
+        onboardingSession?: number;
+      }
+    | undefined;
   Practice: { stageNumber?: number } | undefined;
-  // contentId/scrollOffset are optional restore hints from a Back-to-reading return.
-  Course: { stageNumber?: number; contentId?: number; scrollOffset?: number } | undefined;
+  Course:
+    | {
+        stageNumber?: number;
+        /** One-shot request to show this section, replacing any open reader. */
+        openSection?: true;
+        /** One-shot request to open a specific suggested chapter from its beginning. */
+        openReading?: true;
+        /** Optional restore hints from a Back-to-reading return. */
+        contentId?: number;
+        scrollOffset?: number;
+      }
+    | undefined;
   Journal: undefined;
+  Prompts: undefined;
   Map: undefined;
 };
 
@@ -62,6 +81,7 @@ const HabitsTab = withBoundary('Habits', HabitsScreen);
 const PracticeTab = withBoundary('Practice', PracticeScreen);
 const CourseTab = withBoundary('Course', CourseScreen);
 const JournalTab = withBoundary('Journal', JournalShelfScreen);
+const PromptsTab = withBoundary('Prompts', NotificationCenterScreen);
 const MapTab = withBoundary('Map', MapScreen);
 
 const SETTINGS_ICON_SIZE = 24;
@@ -80,6 +100,7 @@ const SCREEN_COMPONENT_BY_NAME: Readonly<
   Record<keyof RootTabParamList, React.ComponentType<object>>
 > = {
   Journal: JournalTab,
+  Prompts: PromptsTab,
   Habits: HabitsTab,
   Practice: PracticeTab,
   Course: CourseTab,
@@ -234,7 +255,12 @@ const BottomTabs = (): React.JSX.Element => {
     <Tab.Navigator
       initialRouteName={REDIRECT_TARGET}
       tabBar={renderTabBar}
-      screenOptions={{ headerRight: renderHeaderRight, headerTitleAlign: HEADER_TITLE_ALIGN }}
+      screenOptions={{
+        headerRight: renderHeaderRight,
+        headerTitleAlign: HEADER_TITLE_ALIGN,
+        headerTitleContainerStyle: styles.headerTitle,
+        headerRightContainerStyle: styles.headerActions,
+      }}
     >
       {destinations.map(({ name }) => (
         <Tab.Screen key={name} name={name} component={SCREEN_COMPONENT_BY_NAME[name]} />
@@ -244,6 +270,11 @@ const BottomTabs = (): React.JSX.Element => {
 };
 
 const styles = StyleSheet.create({
+  // Reserve the actions' real width before the one-line title takes the rest.
+  // Navigation's default zero-basis end slot lets enlarged labels paint over
+  // the title even though every button retains its own touch target.
+  headerTitle: { flexGrow: 1, flexShrink: 1, minWidth: 0 },
+  headerActions: { flexGrow: 0, flexBasis: 'auto' },
   headerRow: {
     flexDirection: 'row',
     alignItems: 'center',

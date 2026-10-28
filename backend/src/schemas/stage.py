@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import date, datetime
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class StageExpression(BaseModel):
@@ -102,6 +102,27 @@ class ProgramCalendarResponse(BaseModel):
     calendar_week: int
     current_stage: int
     cycle_number: int = Field(default=1, ge=1)
+
+
+class ProgramStartRequest(BaseModel):
+    """The person's chosen program start date (issue #3097).
+
+    A local calendar date and nothing else: the server stores its local
+    midnight in the caller's zone and derives both stage answers from it, so
+    there is no field through which a client could name a stage. Closed
+    (``extra="forbid"``) so an attempt to send one is refused rather than
+    silently dropped.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    program_start_date: date = Field(
+        description=(
+            "The calendar date the program starts on, in the caller's timezone. "
+            "No later than today and no earlier than one full program before "
+            "account creation."
+        )
+    )
 
 
 class StageProgressResponse(BaseModel):

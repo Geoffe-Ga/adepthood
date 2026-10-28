@@ -281,6 +281,7 @@ const styles = StyleSheet.create({
   },
   actions: {
     flexDirection: 'row',
+    flexWrap: 'wrap',
     alignItems: 'center',
   },
   accept: {

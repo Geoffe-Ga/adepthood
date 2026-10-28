@@ -76,12 +76,13 @@ export const useStarFill = ({
     return () => anim.removeListener(id);
   }, [anim]);
 
-  // After a committed fill, the frozen frame equals the marker percent the
-  // logged units produce; once the static percent catches up (the parent
-  // habit re-renders), hand the bar back to the prop so it can never go stale.
+  // After a committed fill, keep the landing frame until the parent publishes
+  // the logged habit, then hand the bar back to static rendering. Habit identity
+  // is part of this signal because an over-Stretch walk-back can change the
+  // marker scale while leaving the clamped static progress at 100%.
   useEffect(() => {
     if (activeRef.current === null) setDisplayPercent(null);
-  }, [progressPercent]);
+  }, [habit, progressPercent]);
 
   const begin = (tier: TierType): void => {
     if (activeRef.current !== null) return;

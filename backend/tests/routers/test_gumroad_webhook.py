@@ -245,7 +245,7 @@ async def test_unknown_resource_name_is_persisted_and_flagged(
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     "resource_name",
-    ["refund", "dispute", "cancellation", "subscription_ended"],
+    ["refund", "dispute", "cancellation", "subscription_ended", "subscription_restarted"],
 )
 async def test_known_event_persists_without_unhandled_flag(
     async_client: AsyncClient,

@@ -27,6 +27,7 @@ from services import botmason as botmason_service
 from services import marginalia as marginalia_service
 from services.botmason import STUB_MODEL_NAME, STUB_PROSE_PREFIX, LLMResponse
 from services.usage import DEFAULT_MONTHLY_CAP
+from tests.support.fake_llm import real_provider_response
 
 _BODY = "I walked by the river and the willow bent without breaking."
 # The explicit ask a client sends once the writer has seen a letter's price.
@@ -67,10 +68,16 @@ async def _seed_marginalia(session: AsyncSession, user_id: int, *, body: str = _
 
 
 class _CountingLLM:
-    """Patches the LLM seam, returning fixed text and counting calls."""
+    """Patches the LLM seam, returning fixed text and counting calls.
 
-    def __init__(self, text: str) -> None:
+    Answers as a real provider by default: a stub letter is a demo whose unit
+    is handed back (#3062), and most tests here are about a letter whose charge
+    stands. ``stub=True`` answers as the stub, whose calls the usage log skips.
+    """
+
+    def __init__(self, text: str, *, stub: bool = False) -> None:
         self.text = text
+        self.stub = stub
         self.calls = 0
 
     async def __call__(
@@ -78,13 +85,15 @@ class _CountingLLM:
     ) -> LLMResponse:
         del prompt, history, system_prompt, api_key
         self.calls += 1
-        return LLMResponse(
-            text=self.text,
-            provider="stub",
-            model=STUB_MODEL_NAME,
-            prompt_tokens=0,
-            completion_tokens=0,
-        )
+        if self.stub:
+            return LLMResponse(
+                text=self.text,
+                provider="stub",
+                model=STUB_MODEL_NAME,
+                prompt_tokens=0,
+                completion_tokens=0,
+            )
+        return real_provider_response(self.text)
 
 
 @pytest.mark.asyncio
@@ -319,10 +328,15 @@ async def test_essay_byok_credit_exhausted_is_402(
 
 
 @pytest.mark.asyncio
-async def test_essay_server_key_credit_exhausted_is_503(
+async def test_essay_spent_balance_is_never_an_operator_outage(
     async_client: AsyncClient, db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """A spent server key on the essay path gets the operator's code, not the reader's."""
+    """No server-key ``503`` is left on the essay path: 402, and no letter is cached.
+
+    A keyless letter reaches no vendor in production (ADR 0009 phase (a),
+    #3067); the armed test seam is the only way to raise here, and the retired
+    ``llm_service_credit_exhausted`` code must not come back on it.
+    """
     _refuse_for_credit(monkeypatch)
     headers, user_id = await _signup(async_client, "essay_server")
     marg_id = await _seed_marginalia(db_session, user_id)
@@ -331,8 +345,8 @@ async def test_essay_server_key_credit_exhausted_is_503(
         f"/journal/marginalia/{marg_id}/essay", headers=headers, json=_PRICED
     )
 
-    assert resp.status_code == HTTPStatus.SERVICE_UNAVAILABLE, resp.text
-    assert resp.json()["detail"] == "llm_service_credit_exhausted"
+    assert resp.status_code == HTTPStatus.PAYMENT_REQUIRED, resp.text
+    assert resp.json()["detail"] == "llm_credit_exhausted"
     await _assert_no_essay_cached(db_session, marg_id)
 
 
@@ -465,7 +479,7 @@ async def test_a_blank_completion_is_not_cached_as_a_letter(
     async_client: AsyncClient, db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """An empty essay is not a letter, and caching one strands the note forever."""
-    monkeypatch.setattr(marginalia_service, "generate_response", _CountingLLM("   \n  "))
+    monkeypatch.setattr(marginalia_service, "generate_response", _CountingLLM("   \n  ", stub=True))
     headers, user_id = await _signup(async_client, "blank_essay")
     marg_id = await _seed_marginalia(db_session, user_id)
 
@@ -735,7 +749,7 @@ def _fail_provider(monkeypatch: pytest.MonkeyPatch) -> None:
     ("break_provider", "status"),
     [
         (_fail_provider, HTTPStatus.BAD_GATEWAY),
-        (_refuse_for_credit, HTTPStatus.SERVICE_UNAVAILABLE),
+        (_refuse_for_credit, HTTPStatus.PAYMENT_REQUIRED),
     ],
 )
 async def test_failed_server_paid_essay_is_refunded(
@@ -745,7 +759,7 @@ async def test_failed_server_paid_essay_is_refunded(
     break_provider: object,
     status: HTTPStatus,
 ) -> None:
-    """A provider error or a spent server key hands the reserved unit back."""
+    """A provider error or a spent balance hands the reserved unit back."""
     assert callable(break_provider)
     break_provider(monkeypatch)
     headers, user_id = await _signup(async_client, f"failed_{status.value}")

@@ -19,8 +19,12 @@ import {
  * `vault_required` as the backstop.
  */
 
-const CONNECTED = readConnectionState({ connected: true, vault_url: 'https://v.example' });
-const MANAGED = readConnectionState({ connected: true, vault_url: null });
+const CONNECTED = readConnectionState({
+  connected: true,
+  vault_url: 'https://v.example',
+  mcp_address: null,
+});
+const MANAGED = readConnectionState({ connected: true, vault_url: null, mcp_address: null });
 
 const EVERY_VAULT: readonly [string, VaultConnectionState][] = [
   ['unknown', CONNECTION_UNKNOWN],
@@ -30,13 +34,13 @@ const EVERY_VAULT: readonly [string, VaultConnectionState][] = [
 ];
 
 describe('corpusDestinationForReadiness', () => {
-  it('sends a gathering account with no vault to Where your corpus lives', () => {
+  it('sends a gathering account with no vault to Where your writing lives', () => {
     expect(corpusDestinationForReadiness({ state: 'gathering' }, NOTHING_CONNECTED)).toBe(
       'VaultSettings',
     );
   });
 
-  it('sends a ready account with no vault to Where your corpus lives', () => {
+  it('sends a ready account with no vault to Where your writing lives', () => {
     expect(corpusDestinationForReadiness({ state: 'ready' }, NOTHING_CONNECTED)).toBe(
       'VaultSettings',
     );

@@ -71,29 +71,35 @@ audit log.
 
 from __future__ import annotations
 
+import hashlib
 import logging
 import os
+from contextvars import ContextVar
+from dataclasses import dataclass, field
 from typing import Annotated
+from urllib.parse import urlsplit, urlunsplit
 
-from fastapi import Depends
+from fastapi import Depends, Header
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from database import get_session
-from domain.creek_vault import CreekVaultPipelineClient, resolve_vault_owner
+from domain.creek_vault import CreekVaultPipelineClient, VaultProviderKey, resolve_vault_owner
+from models.journal_entry import VAULT_DESTINATION_WIDTH
+from models.user_vault_config import UserVaultConfig
 from models.vault_activation import VaultActivationState
 from routers.auth import get_current_user
 from services.creek_provisioning import load_vault_activation
 from services.creek_vault_client import (
     LocalFallbackCreekVaultClient,
-    build_connected_vault_client,
     build_creek_vault_client,
 )
+from services.creek_vault_stored_client import build_stored_vault_client
 from services.creek_vault_telemetry import VaultTelemetryOutcome
-from services.creek_vault_url_resolution import (
-    classify_resolved_user_vault_url_off_the_pool,
-)
-from services.creek_vault_url_user import vault_url_host
+from services.creek_vault_url import vault_base_url
+from services.journal_withdrawal_note import DetachedVault
+from services.reflection_boundary import ReflectionBoundary
 from services.user_vault_config import has_vault_config, load_vault_config
+from services.vault_byok import relayable_key
 
 logger = logging.getLogger(__name__)
 
@@ -108,6 +114,11 @@ logger = logging.getLogger(__name__)
 # who has connected a vault of their own never reaches either of them.
 OWNER_ENV_VAR = "CREEK_VAULT_OWNER_USER_ID"
 _VAULT_URL_ENV_VAR = "CREEK_VAULT_URL"
+_DESTINATION_DOMAIN = "adepthood-vault-destination"
+_DESTINATION_SEPARATOR = "\x00"
+_SOURCE_MANAGED = "managed"
+_SOURCE_CONNECTED = "connected"
+_SOURCE_DEPLOYMENT = "deployment"
 
 # The two ways a configured vault ends up belonging to nobody, and the two static
 # messages that say so. Both name the variable that fixes it, because a record
@@ -132,18 +143,6 @@ _UNREADABLE_OWNER_EVENT = (
 # and it is the most a record can safely say.
 _BINDING_UNSET = "unset"
 _BINDING_UNREADABLE = "unreadable"
-
-# What the dial-time destination refusal says, and where the value it is about
-# came from. The message names no host and no account: the host is a string a
-# stranger chose and the account did nothing wrong -- an ordinary user whose
-# vault started resolving somewhere else is not an incident, and filing them in a
-# warning stream by id would read as one. The remedy is theirs, not an
-# operator's, which is why it is phrased as one they can act on.
-_FORBIDDEN_DESTINATION_EVENT = (
-    "a connected creek vault host resolves to a destination this server must not dial; "
-    "that user gets the local fallback -- they can reconnect their vault to fix it"
-)
-_STORED_VAULT_SOURCE = "user_vault_connection"
 
 
 def _log_unowned_vault(raw_owner: str | None) -> None:
@@ -225,6 +224,45 @@ async def account_has_configured_vault(session: AsyncSession, current_user: int)
     )
 
 
+async def resolve_reflection_boundary(
+    session: AsyncSession, current_user: int
+) -> ReflectionBoundary:
+    """Whether this caller's AI operations are bound to their vault, from local state only.
+
+    :attr:`~ReflectionBoundary.VAULT_BOUND` whenever the account owns a vault by
+    :func:`account_has_configured_vault`'s rule: a stored connection row of any
+    state -- ready, provisioned but not yet ready, or with a host that currently
+    resolves somewhere this server must not dial -- or the deployment-wide vault's
+    bound owner. Those first two still get
+    :class:`LocalFallbackCreekVaultClient` from :func:`resolve_creek_vault_client`,
+    which is exactly why the boundary cannot be read off the client: "chose a
+    vault and it is not usable right now" and "has no vault" look identical
+    there, and only the first forbids answering from the app provider.
+
+    The deployment owner counts as vault-bound because it is the more restrictive
+    reading of a binding an operator made on that user's behalf.
+
+    Never client-supplied and never dials: one indexed read, so it holds no
+    connection across anything and answers during a vault outage.
+    """
+    if await account_has_configured_vault(session, current_user):
+        return ReflectionBoundary.VAULT_BOUND
+    return ReflectionBoundary.APP_PROVIDER
+
+
+async def get_reflection_boundary(
+    current_user: Annotated[int, Depends(get_current_user)],
+    session: Annotated[AsyncSession, Depends(get_session)],
+) -> ReflectionBoundary:
+    """Resolve the request caller's AI-operation boundary (see :func:`resolve_reflection_boundary`).
+
+    A dependency of its own, beside :func:`get_creek_vault_client` rather than
+    folded into it, so every consumer of the vault client keeps its type and a
+    test can pin either one independently.
+    """
+    return await resolve_reflection_boundary(session, current_user)
+
+
 async def get_creek_vault_client(
     current_user: Annotated[int, Depends(get_current_user)],
     session: Annotated[AsyncSession, Depends(get_session)],
@@ -250,7 +288,8 @@ async def resolve_creek_vault_client(
     own.
 
     A connected row is re-judged before it is dialled, by
-    :func:`_stored_host_is_undialable`. Write-time refusal is not enough on its
+    :func:`~services.creek_vault_stored_client.stored_host_is_undialable`.
+    Write-time refusal is not enough on its
     own: rows predate rules, and a name that resolved publicly when it was stored
     can resolve privately by the time it is used. The re-judgement degrades to
     the local fallback rather than refusing the request, for the reason the
@@ -259,7 +298,8 @@ async def resolve_creek_vault_client(
 
     The row's connection fields are read into locals before that re-judgement, and the
     order is deliberate. Re-judging ends the transaction this read opened -- see
-    :func:`_stored_host_is_undialable` for why -- and a mapped attribute read
+    :func:`~services.creek_vault_stored_client.stored_host_is_undialable` for why
+    -- and a mapped attribute read
     after a commit is a question the session may decide to answer by going back
     to the database. This factory's sessions are built with
     ``expire_on_commit=False`` and would not, so today the hoist changes nothing;
@@ -286,6 +326,7 @@ async def resolve_creek_vault_client(
     ``get_current_user``'s revocation read and this function's own.
     """
     connection = await load_vault_config(session, current_user)
+    _RESOLVED_DESTINATION.set((current_user, _fingerprint_of(connection, current_user)))
     if connection is None:
         client: CreekVaultPipelineClient = deployment_vault_client(current_user)
     elif connection.provisioned and not await _provisioned_connection_is_ready(
@@ -299,12 +340,7 @@ async def resolve_creek_vault_client(
             connection.api_key,
             connection.provisioned,
         )
-        undialable = await _stored_host_is_undialable(session, vault_url)
-        client = (
-            LocalFallbackCreekVaultClient(VaultTelemetryOutcome.FALLBACK_UNCONFIGURED)
-            if undialable
-            else build_connected_vault_client(vault_url, api_key, managed=managed)
-        )
+        client = await build_stored_vault_client(session, vault_url, api_key, managed=managed)
     await session.commit()
     return client
 
@@ -316,57 +352,6 @@ async def _provisioned_connection_is_ready(
     """Keep a handed-off credential inert until Creek reports its allocation ready."""
     activation = await load_vault_activation(session, user_id)
     return activation is not None and activation.state == VaultActivationState.READY.value
-
-
-async def _stored_host_is_undialable(session: AsyncSession, vault_url: str) -> bool:
-    """Report whether this stored URL's host resolves somewhere this server must not dial.
-
-    The resolving half of the request-forgery guard, run here because this is the
-    first coroutine on the dial path and a name lookup cannot happen inside
-    :func:`~services.creek_vault_client.build_connected_vault_client`, which is
-    synchronous. That function still runs the pure half, so an address literal is
-    caught whether or not this check exists; what only this one can catch is the
-    name whose answer changed after the row was written, which is DNS rebinding
-    stated plainly.
-
-    A refusal degrades and never raises, like every other decision in this
-    module. This is a per-request dependency: a raise means the handler body
-    never executes, and the writer loses the entry they were saving to protect
-    them from a connection they never see. Their vault being misdirected must
-    cost them the optional capability and never their writing.
-
-    Counted under :attr:`~VaultTelemetryOutcome.FALLBACK_UNCONFIGURED` rather
-    than a member of its own, on the reasoning
-    :func:`~services.creek_vault_client.build_connected_vault_client` already
-    gives for its own degrade: it is true of the request -- there was no usable
-    vault behind it -- and a new member would be one the write path ordinarily
-    makes unreachable. What distinguishes this from a user who connected nothing
-    is the WARNING, which that path does not emit.
-
-    ``session`` is taken only to be given up before the lookup. This is the more
-    frequent of the two places that ask this question -- once per request for
-    every account with a stored vault, where the write path asks once per
-    reconnection -- and its caller read the connection row on the line above, so
-    the transaction is certainly open and one of fifteen pooled connections is
-    certainly checked out. Waiting on a resolver while holding it is what
-    :func:`~services.creek_vault_url_resolution.classify_resolved_user_vault_url_off_the_pool`
-    exists to prevent, and asking through that seam is the only way this module
-    can reach the verdict at all.
-    """
-    finding = await classify_resolved_user_vault_url_off_the_pool(
-        session, vault_url_host(vault_url)
-    )
-    if finding is None:
-        return False
-    logger.warning(
-        _FORBIDDEN_DESTINATION_EVENT,
-        extra={
-            "config_source": _STORED_VAULT_SOURCE,
-            "url_defect": finding.defect.value,
-            "url_detail": finding.detail,
-        },
-    )
-    return True
 
 
 def _degrade_outcome(*, vault_configured: bool) -> VaultTelemetryOutcome:
@@ -382,3 +367,125 @@ def _degrade_outcome(*, vault_configured: bool) -> VaultTelemetryOutcome:
     if vault_configured:
         return VaultTelemetryOutcome.FALLBACK_NOT_OWNER
     return VaultTelemetryOutcome.FALLBACK_UNCONFIGURED
+
+
+def _normalized_vault_url(vault_url: str) -> str:
+    """Spell one vault URL one way: case-folded scheme and host, no trailing slash or ``/v1``."""
+    parts = urlsplit(vault_base_url(vault_url.strip()))
+    return urlunsplit((parts.scheme.lower(), parts.netloc.lower(), parts.path, parts.query, ""))
+
+
+def _destination_digest(user_id: int, source: str, vault_url: str) -> str:
+    """Return the opaque, fixed-width fingerprint for one account's vault destination.
+
+    The account id is folded in so the same vault URL fingerprints differently
+    per account, and the source keeps a user's own connection distinct from
+    the deployment-wide vault. The credential is never an input: rotating a key
+    does not change which vault holds the copy.
+    """
+    identity = _DESTINATION_SEPARATOR.join(
+        (_DESTINATION_DOMAIN, str(user_id), source, _normalized_vault_url(vault_url))
+    )
+    return hashlib.sha256(identity.encode()).hexdigest()[:VAULT_DESTINATION_WIDTH]
+
+
+#: The fingerprint read alongside the client by the latest
+#: :func:`resolve_creek_vault_client` call in this context, keyed by account.
+#: A request resolves its client once, in a dependency that runs in the same
+#: context as the handler; the background sweep resolves it in its own task.
+_RESOLVED_DESTINATION: ContextVar[tuple[int, str | None] | None] = ContextVar(
+    "adepthood_resolved_vault_destination", default=None
+)
+
+
+def _fingerprint_of(connection: UserVaultConfig | None, current_user: int) -> str | None:
+    """Fingerprint the destination one config read resolves to, by the resolver's priority."""
+    if connection is not None:
+        source = _SOURCE_MANAGED if connection.provisioned else _SOURCE_CONNECTED
+        return _destination_digest(current_user, source, connection.vault_url)
+    if deployment_vault_belongs_to(current_user):
+        deployment_url = os.getenv(_VAULT_URL_ENV_VAR, "")
+        return _destination_digest(current_user, _SOURCE_DEPLOYMENT, deployment_url)
+    return None
+
+
+async def vault_destination_fingerprint(session: AsyncSession, current_user: int) -> str | None:
+    """Fingerprint the vault this caller's copies currently go to, or ``None`` for none.
+
+    Mirrors :func:`resolve_creek_vault_client`'s priority -- the caller's own
+    stored connection first, then the deployment-wide vault for its bound owner
+    -- but answers *which* vault rather than whether it is dialable right now,
+    so a connection that is briefly unreachable keeps its identity. Withdrawal
+    of an existing copy is trusted only when this matches the fingerprint
+    recorded when the copy was offered (#3060). Local only; never dials, and
+    commits its read so no pooled connection is held past it.
+
+    This is a fresh read. Code that is about to dial a client should use
+    :func:`resolved_vault_destination`, which answers from the same read that
+    built the client.
+    """
+    connection = await load_vault_config(session, current_user)
+    fingerprint = _fingerprint_of(connection, current_user)
+    await session.commit()
+    return fingerprint
+
+
+async def resolved_vault_destination(session: AsyncSession, current_user: int) -> str | None:
+    """Fingerprint the vault the client resolved for ``current_user`` will dial.
+
+    Taken from the same config read as that client, so a reconnect committing
+    after the client was resolved cannot pair one vault's dial with the other's
+    fingerprint (#3060 review). When no client was resolved for this account in
+    this context -- a caller that supplies its own client -- it falls back to a
+    fresh read.
+    """
+    captured = _RESOLVED_DESTINATION.get()
+    if captured is not None and captured[0] == current_user:
+        return captured[1]
+    return await vault_destination_fingerprint(session, current_user)
+
+
+def detached_vaults() -> tuple[DetachedVault, ...]:
+    """Every vault a detached withdrawal note can still be confirmed by, with no account (#3267).
+
+    Only the deployment-wide vault qualifies: its URL and credential are this
+    deployment's configuration, not the erased account's data, so they survive
+    the account. Its fingerprint is the one its bound owner's copies were
+    recorded under -- the digest :func:`vault_destination_fingerprint` gave
+    that owner while the account lived -- so only notes that owner left behind
+    match it. A vault the writer connected, or a managed one, had its
+    credential erased with the account and cannot be dialled, so nothing is
+    returned for it. Never dials; the client is built only when a matching note
+    is worked.
+    """
+    owner = resolve_vault_owner(os.getenv(OWNER_ENV_VAR))
+    if owner is None or not deployment_vault_belongs_to(owner):
+        return ()
+    deployment_url = os.getenv(_VAULT_URL_ENV_VAR, "")
+    destination = _destination_digest(owner, _SOURCE_DEPLOYMENT, deployment_url)
+    return (DetachedVault(destination=destination, connect=lambda: deployment_vault_client(owner)),)
+
+
+@dataclass(frozen=True)
+class OnboardingVault:
+    """The vault a save or an import hands new writing to, and the key its onboarding may use.
+
+    ``relay_key`` is the writer's own key, read from the optional
+    ``X-LLM-API-Key`` header, for the classification pass that onboards the new
+    writing (#3437). It is a candidate only: the vault client attaches it to that
+    one call, and only when the vault's handshake advertised the key's vendor.
+    """
+
+    client: CreekVaultPipelineClient
+    relay_key: VaultProviderKey | None = field(default=None, repr=False)
+
+
+def get_onboarding_vault(
+    client: Annotated[CreekVaultPipelineClient, Depends(get_creek_vault_client)],
+    # No ``max_length`` here, unlike the reading routes: an over-long header is a
+    # malformed key, which :func:`relayable_key` ignores, and a save must never
+    # fail over a key header (#3437).
+    x_llm_api_key: Annotated[str | None, Header(alias="X-LLM-API-Key")] = None,
+) -> OnboardingVault:
+    """Bundle the caller's vault client with the key its onboarding pass may relay."""
+    return OnboardingVault(client=client, relay_key=relayable_key(x_llm_api_key))

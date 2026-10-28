@@ -17,6 +17,11 @@ from bounds import RowIdPath
 from database import get_session
 from dependencies.ownership import log_ownership_denied, require_owned_habit
 from dependencies.timezone import current_user_timezone
+from domain.habit_links import (
+    assert_linked_units_allowed,
+    assert_units_allowed_if_linked,
+    clear_practice_habit_links,
+)
 from domain.habit_stats import compute_habit_stats
 from domain.ui_flags import clear_writing_habit_links
 from error_responses import build_router
@@ -24,18 +29,26 @@ from errors import conflict, forbidden, not_found, unprocessable
 from load_options import HABIT_WITH_GOALS_AND_COMPLETIONS, habit_with_recent_completions
 from models.goal import Goal
 from models.goal_completion import GoalCompletion
+from models.goal_log_event import GoalLogEvent
 from models.habit import Habit
 from routers.auth import get_current_user
 from schemas import Page, PaginationParams, build_page
 from schemas.goal import Goal as GoalSchema
 from schemas.goal import GoalUnitsUpdate
-from schemas.habit import HABIT_NAME_MAX_LENGTH, HabitCreate, HabitWithGoals
+from schemas.habit import HABIT_NAME_MAX_LENGTH, HabitCreate, HabitGoalsCreate, HabitWithGoals
 from schemas.habit import Habit as HabitSchema
 from schemas.habit_stats import HabitStats
+from schemas.habit_story import HabitStoryResponse
 from schemas.pagination import paginate_query
 from security import TextTooLongError, sanitize_user_text
+from services.checkin import lock_habit_for_completion_mutation
 from services.habit_auto_reveal import reconcile_habit_auto_reveals
-from services.streaks import compute_habit_streak, subtractive_context_for_goals
+from services.habit_story import read_habit_story
+from services.streaks import (
+    compute_habit_streak,
+    period_cadence_for_goals,
+    subtractive_context_for_goals,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -135,10 +148,21 @@ def _consume_auto_reveal_on_manual_change(habit: Habit, payload: HabitCreate) ->
 # goal endpoint ever wrote a row, and the editor's PUT /goals/{id} had nothing
 # to update. The frontend's onboarding code builds the same shape locally; we
 # now mirror it server-side so ids round-trip correctly.
-_DEFAULT_GOAL_TIERS: tuple[tuple[str, str, float], ...] = (
-    ("low", "Low", 1.0),
-    ("clear", "Clear", 2.0),
-    ("stretch", "Stretch", 3.0),
+#
+# A link flow may send its own tiers instead (#3150); both shapes are a
+# :class:`HabitGoalsCreate`, so one builder writes either.
+_DEFAULT_GOALS = HabitGoalsCreate(
+    target_unit="units",
+    frequency=1.0,
+    frequency_unit="per_day",
+    low=1.0,
+    clear=2.0,
+    stretch=3.0,
+)
+_TIER_LABELS: tuple[tuple[str, str], ...] = (
+    ("low", "Low"),
+    ("clear", "Clear"),
+    ("stretch", "Stretch"),
 )
 
 
@@ -152,7 +176,8 @@ def _populate_streak(habit: Habit, completions: list[GoalCompletion], user_timez
     so the response payload stays bounded.
     """
     subtractive = subtractive_context_for_goals(habit.goals, habit.start_date)
-    habit.streak = compute_habit_streak(completions, user_timezone, subtractive)
+    cadence = period_cadence_for_goals(habit.goals, habit.start_date)
+    habit.streak = compute_habit_streak(completions, user_timezone, subtractive, cadence)
 
 
 async def _populate_streaks_for(
@@ -183,20 +208,21 @@ async def _streak_completions_by_habit(
     return by_habit
 
 
-def _build_default_goals(habit_id: int, habit_name: str) -> list[Goal]:
-    """Three-tier default goals for a newly-created habit."""
+def _build_goals(habit_id: int, habit_name: str, spec: HabitGoalsCreate) -> list[Goal]:
+    """The three tier goals for a newly-created habit, sharing ``spec``'s unit and cadence."""
+    targets = spec.tier_targets()
     return [
         Goal(
             habit_id=habit_id,
             title=f"{label} goal for {habit_name}",
             tier=tier,
-            target=target,
-            target_unit="units",
-            frequency=1.0,
-            frequency_unit="per_day",
+            target=targets[tier],
+            target_unit=spec.target_unit,
+            frequency=spec.frequency,
+            frequency_unit=spec.frequency_unit,
             is_additive=True,
         )
-        for tier, label, target in _DEFAULT_GOAL_TIERS
+        for tier, label in _TIER_LABELS
     ]
 
 
@@ -222,8 +248,10 @@ async def _ensure_unique_name(session: AsyncSession, current_user: int, name: st
         raise conflict("duplicate_habit_name")
 
 
-async def _persist_habit_with_default_goals(session: AsyncSession, habit: Habit) -> int:
-    """Insert the habit + three default goals in a single savepoint."""
+async def _persist_habit_with_goals(
+    session: AsyncSession, habit: Habit, goals: HabitGoalsCreate
+) -> int:
+    """Insert the habit + its three tier goals in a single savepoint."""
     try:
         async with session.begin_nested():
             session.add(habit)
@@ -231,7 +259,7 @@ async def _persist_habit_with_default_goals(session: AsyncSession, habit: Habit)
             if habit.id is None:
                 msg = "session.flush() did not populate habit.id"
                 raise RuntimeError(msg)
-            for goal in _build_default_goals(habit.id, habit.name):
+            for goal in _build_goals(habit.id, habit.name, goals):
                 session.add(goal)
             new_id = habit.id
         await session.commit()
@@ -263,6 +291,32 @@ async def _refetch_with_goals(session: AsyncSession, habit_id: int, current_user
     return refreshed
 
 
+def _goals_for_create(payload: HabitCreate) -> HabitGoalsCreate:
+    """The tiers a new habit is created with: the link flow's, or the defaults.
+
+    A goals block exists only for a habit a timer will log to, so it must
+    already count in a unit the timer measures.
+    """
+    if payload.goals is None:
+        return _DEFAULT_GOALS
+    assert_linked_units_allowed(payload.goals.target_unit, payload.goals.frequency_unit)
+    return payload.goals
+
+
+def _new_habit(payload: HabitCreate, current_user: int) -> Habit:
+    """Build the unsaved habit row for ``payload``.
+
+    A link flow that creates its habit unlocked has made the lock-state
+    decision itself, so the program's one-shot auto-reveal invitation is
+    consumed at birth -- exactly as a manual unlock would consume it -- and a
+    later manual re-lock stays a real choice.
+    """
+    habit = Habit(user_id=current_user, **payload.model_dump(exclude={"goals"}))
+    if payload.goals is not None and payload.revealed and not payload.is_carryover:
+        habit.auto_revealed_at = datetime.now(UTC)
+    return habit
+
+
 @router.post("/", response_model=HabitWithGoals)
 async def create_habit(
     payload: HabitCreate,
@@ -270,12 +324,19 @@ async def create_habit(
     session: Annotated[AsyncSession, Depends(get_session)],
     user_tz: Annotated[str, Depends(current_user_timezone)],
 ) -> Habit:
-    """Create a habit + defaults; 422 invisible name, 409 quota/duplicate."""
+    """Create a habit + its goal tiers; 422 invisible name or non-timer goals, 409 quota/duplicate.
+
+    ``payload.goals`` is the link flows' block (#3150): the habit a timer will
+    log to is created with its minutes-or-sessions tiers in the same request,
+    so the first timed session lands on the right unit. Without it the habit
+    gets the 1 / 2 / 3 ``units`` per day defaults.
+    """
     canonical_payload = payload.model_copy(update={"name": _sanitize_habit_name(payload.name)})
+    goals = _goals_for_create(canonical_payload)
     await _ensure_under_quota(session, current_user)
     await _ensure_unique_name(session, current_user, canonical_payload.name)
-    habit = Habit(user_id=current_user, **canonical_payload.model_dump())
-    new_id = await _persist_habit_with_default_goals(session, habit)
+    habit = _new_habit(canonical_payload, current_user)
+    new_id = await _persist_habit_with_goals(session, habit, goals)
     refreshed = await _refetch_with_goals(session, new_id, current_user)
     # Recompute the streak like the list/detail paths so POST mirrors GET instead
     # of returning the model default (0); a subtractive habit can already have a
@@ -349,12 +410,15 @@ async def update_habit(
     session: Annotated[AsyncSession, Depends(get_session)],
     habit: Annotated[Habit, Depends(require_owned_habit)],
 ) -> Habit:
-    """Replace a habit; 422 invisible name, 409 on rename collision."""
+    """Replace a habit; 422 invisible name or a goals block, 409 on rename collision."""
+    if payload.goals is not None:
+        # Goals are create-only; silently dropping them would read as success.
+        raise unprocessable("habit_goals_create_only")
     canonical_payload = payload.model_copy(update={"name": _sanitize_habit_name(payload.name)})
     # A manual accept or decline consumes the same one-shot invitation. Without
     # this, an early unlock followed by a re-lock would reopen at eligibility.
     _consume_auto_reveal_on_manual_change(habit, canonical_payload)
-    for key, value in canonical_payload.model_dump().items():
+    for key, value in canonical_payload.model_dump(exclude={"goals"}).items():
         setattr(habit, key, value)
     session.add(habit)
     try:
@@ -385,10 +449,12 @@ async def delete_habit(
     # NULL into a NOT NULL column and failing the request for any habit that
     # had ever been checked in (#2763).
     #
-    # A writing timer linked to this habit is unlinked first (#2861). The
-    # column's ``ON DELETE SET NULL`` would do it on Postgres; doing it here
-    # keeps the rule true wherever foreign keys are not enforced.
+    # A writing timer (#2861) or practice (#3151) linked to this habit is
+    # unlinked first. The columns' ``ON DELETE SET NULL`` would do it on
+    # Postgres; doing it here keeps the rule true wherever foreign keys are
+    # not enforced.
     await clear_writing_habit_links(session, cast("int", habit_id))
+    await clear_practice_habit_links(session, cast("int", habit_id))
     await session.delete(habit)
     await session.commit()
     logger.info(
@@ -407,9 +473,9 @@ async def clear_habit_completions(
     session: Annotated[AsyncSession, Depends(get_session)],
     habit: Annotated[Habit, Depends(require_owned_habit)],
 ) -> Response:
-    """Bulk-delete every goal-completion row for the owned habit's goals.
+    """Clear aggregate and event history for the owned habit's goals.
 
-    Resets the habit's completion history in one statement so a start-date
+    Resets the habit's completion history in one transaction so a start-date
     reset (or any other "start fresh" flow) leaves no stale rows behind for a
     later refetch to embed. Ownership is enforced by ``require_owned_habit``,
     yielding the same 404 (missing) / 403 (cross-user) split as
@@ -417,6 +483,7 @@ async def clear_habit_completions(
     the caller's own rows are removed even if a foreign row is somehow parented
     to one of the habit's goals.
     """
+    await lock_habit_for_completion_mutation(session, cast("int", habit.id))
     # ``execute`` is typed ``Result``; a DELETE yields a ``CursorResult`` whose
     # ``rowcount`` is the number of rows removed.
     result = cast(
@@ -429,6 +496,12 @@ async def clear_habit_completions(
                 col(GoalCompletion.user_id) == current_user,
             )
         ),
+    )
+    await session.execute(
+        delete(GoalLogEvent).where(
+            col(GoalLogEvent.goal_id).in_(select(col(Goal.id)).where(Goal.habit_id == habit.id)),
+            col(GoalLogEvent.user_id) == current_user,
+        )
     )
     await session.commit()
     deleted = int(result.rowcount)
@@ -498,7 +571,17 @@ async def update_goal_units(
     the all-tiers invariant atomic: either every goal moves to the new
     unit fields or none do.  Tier identity and per-tier targets are
     deliberately untouched.
+
+    A habit a timer logs to stays on ``minutes``/``sessions``, per day or per
+    week (#3150); anything else is a 422 that writes nothing.
     """
+    await assert_units_allowed_if_linked(
+        session,
+        user_id=current_user,
+        habit_id=cast("int", habit.id),
+        target_unit=payload.target_unit,
+        frequency_unit=payload.frequency_unit,
+    )
     result = await session.execute(select(Goal).where(Goal.habit_id == habit.id))
     goals = list(result.scalars().all())
     for goal in goals:
@@ -530,4 +613,20 @@ async def get_habit_stats(
     habit = await _get_habit_with_completions(habit_id, current_user, session, windowed=False)
     completions = [c for goal in habit.goals for c in goal.completions if c.user_id == current_user]
     subtractive = subtractive_context_for_goals(habit.goals, habit.start_date)
-    return compute_habit_stats(completions, user_tz, subtractive)
+    cadence = period_cadence_for_goals(habit.goals, habit.start_date)
+    return compute_habit_stats(completions, user_tz, subtractive, cadence)
+
+
+@router.get("/{habit_id}/story", response_model=HabitStoryResponse)
+async def get_habit_story(
+    habit_id: RowIdPath,
+    response: Response,
+    current_user: Annotated[int, Depends(get_current_user)],
+    session: Annotated[AsyncSession, Depends(get_session)],
+    user_tz: Annotated[str, Depends(current_user_timezone)],
+) -> HabitStoryResponse:
+    """Return owned lifetime habit history with explicit cadence and timing coverage."""
+    habit = await _get_habit_with_completions(habit_id, current_user, session, windowed=False)
+    response.headers["Cache-Control"] = "private, no-store"
+    response.headers["Vary"] = "Authorization"
+    return await read_habit_story(session, habit, current_user, user_tz)

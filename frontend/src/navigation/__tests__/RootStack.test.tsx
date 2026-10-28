@@ -33,6 +33,10 @@ jest.mock('@/features/Journal/JournalPhotographScreen', () => ({
   __esModule: true,
   default: mockPlaceholder('x'),
 }));
+jest.mock('@/features/Journal/NotificationCenterScreen', () => ({
+  __esModule: true,
+  default: mockPlaceholder('JournalNotifications'),
+}));
 jest.mock('@/features/Journal/VoiceDraftsShelfScreen', () => ({
   __esModule: true,
   default: mockPlaceholder('x'),
@@ -107,5 +111,21 @@ describe('RootStack', () => {
 
     expect(screen.getByTestId('screen-AdminFeedback')).toBeTruthy();
     expect(ref.getCurrentRoute()?.name).toBe('AdminFeedback');
+  });
+
+  it('routes JournalNotifications to the Notification Center screen (#3142)', async () => {
+    const ref = createNavigationContainerRef<RootStackParamList>();
+    const screen = render(
+      <NavigationContainer ref={ref}>
+        <RootStack />
+      </NavigationContainer>,
+    );
+
+    await act(async () => {
+      ref.navigate('JournalNotifications');
+    });
+
+    expect(screen.getByTestId('screen-JournalNotifications')).toBeTruthy();
+    expect(ref.getCurrentRoute()?.name).toBe('JournalNotifications');
   });
 });

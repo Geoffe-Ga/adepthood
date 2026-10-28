@@ -12,6 +12,7 @@ import React from 'react';
  */
 import type { CareResponse, ContractionReflection, JournalMessage, ResonanceResponse } from '@/api';
 import { DEFAULT_IDLE_DELAY_MS } from '@/hooks/useIdle';
+import { useDepthPreferencesStore } from '@/store/useDepthPreferencesStore';
 
 // ---------------------------------------------------------------------------
 // API mocks — mirrors the shape in JournalEntryScreenCare.test.tsx exactly.
@@ -35,6 +36,8 @@ jest.mock('@/storage/resonanceExplainerStorage', () => require('./resonanceExpla
 jest.mock('@/context/AuthContext', () => require('./authContextTestKit'));
 
 jest.mock('@/api', () => ({
+  ...require('./journalUiFlagsTestKit'),
+  ...require('./readingRouteTestKit'),
   journal: {
     get: (...a: unknown[]) => (mockGet as unknown as (...x: unknown[]) => unknown)(...a),
     create: (...a: unknown[]) => (mockCreate as unknown as (...x: unknown[]) => unknown)(...a),
@@ -210,6 +213,28 @@ describe('JournalEntryScreen — contraction-reflection surface', () => {
 
       expect(queryByTestId('contraction-reflection')).toBeNull();
     } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  it('renders no contraction-reflection once the habits ring is declined (#3073)', async () => {
+    jest.useFakeTimers();
+    useDepthPreferencesStore.setState({ enable_habits: false });
+    try {
+      mockCreate.mockResolvedValue(entry({ id: 42 }));
+      mockGenerate.mockResolvedValue(
+        resonancePayload({ care: carePayload(), contraction: contractionPayload() }),
+      );
+
+      const { getByTestId, queryByTestId } = renderScreen(undefined, { autosaveDelayMs: 100 });
+      await triggerResonancePass({ getByTestId });
+
+      // The care surface is not a ring and still shows; only the habit-foundation
+      // reflection is quieted, even if a stale server were to send one.
+      await waitFor(() => expect(getByTestId('care-support')).toBeTruthy());
+      expect(queryByTestId('contraction-reflection')).toBeNull();
+    } finally {
+      useDepthPreferencesStore.getState().reset();
       jest.useRealTimers();
     }
   });

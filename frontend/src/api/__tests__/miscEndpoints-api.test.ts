@@ -132,7 +132,16 @@ describe('course misc endpoints', () => {
   });
 
   test('siteResources GETs the always-available resource list', async () => {
-    const resources = [{ slug: 'faq', title: 'FAQ', description: 'desc', url: 'https://x' }];
+    const resources = [
+      {
+        slug: 'faq',
+        title: 'FAQ',
+        description: 'desc',
+        url: 'https://x',
+        order: 1,
+        is_read: false,
+      },
+    ];
     mockFetch.mockReturnValueOnce(jsonResponse(resources));
 
     const result = await course.siteResources('tok');
@@ -264,6 +273,14 @@ describe('prompts client', () => {
 
     const [url] = mockFetch.mock.calls[0];
     expect(url).toBe('http://test/prompts/history?limit=10&offset=5');
+  });
+
+  test('history can request unanswered questions without changing the default read', async () => {
+    mockFetch.mockReturnValueOnce(jsonResponse({ items: [], total: 0, has_more: false }));
+    await prompts.history({ limit: 20, offset: 0, include_unanswered: true }, 'tok');
+    const [url, init] = mockFetch.mock.calls[0];
+    expect(url).toBe('http://test/prompts/history?limit=20&offset=0&include_unanswered=true');
+    expect(init.headers).toMatchObject({ Authorization: 'Bearer tok' });
   });
 });
 

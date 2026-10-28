@@ -87,7 +87,7 @@ describe('TimezoneSettingsScreen', () => {
     fireEvent.press(getByTestId('save-timezone-button'));
 
     await waitFor(() => {
-      expect(getByTestId('timezone-error').props.children).toMatch(/recognized time zone/i);
+      expect(getByTestId('timezone-error').props.children).toMatch(/time zone Adepthood knows/i);
     });
     expect(setUserTimezone).not.toHaveBeenCalled();
   });

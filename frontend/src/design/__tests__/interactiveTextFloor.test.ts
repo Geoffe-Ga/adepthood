@@ -93,11 +93,9 @@ const AUDITED_NON_INTERACTIVE_CAPTIONS = [
   // at INTERACTIVE_TEXT_MIN); neither is itself pressable.
   'features/Course/Course.styles.ts::contentCardSubtitle',
   'features/Course/Course.styles.ts::introCardLabel',
-  // Read-only landing metadata: the stage progress count, the resources panel's
-  // heading (its chips use uiType.button) and the stage detail label/value rows.
+  // Read-only landing metadata: the stage progress count and stage detail rows.
   'features/Course/Course.styles.ts::progressBarLabel',
   'features/Course/Course.styles.ts::readerEyebrow',
-  'features/Course/Course.styles.ts::resourcesHeading',
   'features/Course/Course.styles.ts::sectionBandLabel',
   'features/Course/Course.styles.ts::stageCoverEyebrow',
   'features/Course/Course.styles.ts::stageCoverProgressLabel',
@@ -113,6 +111,10 @@ const AUDITED_NON_INTERACTIVE_CAPTIONS = [
   // its tap targets are the open CTA (editorialType.action) and two
   // ReflectionDismiss controls (editorialType.note).
   'features/Journal/CorpusInvitationNote.tsx::label',
+  // Audited: the sort-the-rest offer (#3500) is the invitation's twin -- the
+  // same read-only eyebrow over the same open CTA and two ReflectionDismiss
+  // controls.
+  'features/Journal/CorpusSweepOfferNote.tsx::label',
   // Audited: the expanded Creek panel's section eyebrow and lifecycle/count
   // captions are read-only metadata. Its only tap target is the collapsed
   // header, whose two labels both use editorialType.action.
@@ -145,11 +147,19 @@ const AUDITED_NON_INTERACTIVE_CAPTIONS = [
   'features/Journal/JournalShelf.styles.ts::promptSectionNote',
   'features/Journal/JournalShelf.styles.ts::sectionHeading',
   'features/Journal/MarginNote.tsx::kind',
+  // Audited (#3062): the note's recorded-source line is metadata inside the
+  // card; the tap target is the whole card, as with the stale caption.
+  'features/Journal/MarginNote.tsx::sourceCaption',
   'features/Journal/MarginNote.tsx::staleCaption',
   // The stale-quote row's caption is metadata beside the snapshot text; the
   // tap target is the whole row (touchTarget.minimum), as with MarginNote.
   'features/Journal/StaleQuoteNotes.tsx::staleCaption',
   'features/Journal/MorningPagesTip.tsx::label',
+  // Audited (#3206): the current pass's operation headings and recorded
+  // identity/payment lines are read-only metadata, with no press handlers.
+  // The separate Get Resonance button retains its action-sized label.
+  'features/Journal/PassReceiptNotice.tsx::caption',
+  'features/Journal/PassReceiptNotice.tsx::title',
   // A promoted quote's source line (and, once used, its review), beneath the
   // quote inside the row's own tap target: metadata, as cardDate is below. The
   // row's accessible name carries the quote and its source; this is not itself
@@ -180,6 +190,9 @@ const AUDITED_NON_INTERACTIVE_CAPTIONS = [
   'features/Journal/ReflectionSourcesPanel.tsx::rowDate',
   'features/Journal/ReflectionSourcesPanel.tsx::rowExcerpt',
   'features/Journal/ResonanceEssayModal.tsx::kind',
+  // Audited (#3062): the letter's recorded-source line under the letter text.
+  // Static metadata, never pressed.
+  'features/Journal/ResonanceEssayModal.tsx::source',
   // Audited: the one line under "Which habit?" (#2861) saying what choosing a
   // habit does. Static text above the rows, never pressed — every row in the
   // picker is an OfferAction, which takes editorialType.action.
@@ -217,6 +230,15 @@ const AUDITED_NON_INTERACTIVE_CAPTIONS = [
   'features/Practice/components/LogPracticeSessionSheet.tsx::subtitle',
   'features/Practice/components/ModePicker.tsx::categoryBlurb',
   'features/Practice/components/ModePicker.tsx::rowDescription',
+  // Audited (#3153): saved-link failure copy, invitation explanation, picker
+  // help/error and linked-habit/log-result facts are plain Text under only
+  // View/ScrollView containers. Their separate OfferAction controls use the
+  // action face; none of these five captions has a press handler or target.
+  'features/Practice/components/PracticeHabitConnection.tsx::copy',
+  'features/Practice/components/PracticeHabitOffer.tsx::copy',
+  'features/Practice/components/PracticeHabitPicker.tsx::error',
+  'features/Practice/components/PracticeHabitPicker.tsx::help',
+  'features/Practice/components/PracticeHabitSessionProvider.tsx::copy',
   // Audited: the line under the quick-launch button explaining that a page
   // written before the stage opens is not counted on the practice yet. Plain
   // Text, no press handler — the button above it is the tappable thing.

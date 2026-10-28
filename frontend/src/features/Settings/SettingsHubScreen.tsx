@@ -7,6 +7,7 @@ import {
   BookOpen,
   Download,
   FileText,
+  FolderSync,
   FolderUp,
   Globe,
   KeyRound,
@@ -17,15 +18,25 @@ import {
   Trash2,
   Vault,
 } from 'lucide-react-native';
-import React, { useCallback, useRef } from 'react';
+import React, { useCallback, useEffect, useRef } from 'react';
 import { StyleSheet, Text, useWindowDimensions, View } from 'react-native';
 
 import { BYOK_HUB_DISCLOSURE } from './byokDisclosure';
-import { CORPUS_CONSENT_ROW_DESCRIPTION, CORPUS_CONSENT_ROW_LABEL } from './corpusConsentCopy';
+import { KEY_REJECTED_HUB_DESCRIPTION } from './byokOnlyCopy';
+import {
+  CORPUS_CONSENT_ROW_DESCRIPTION,
+  CORPUS_CONSENT_ROW_LABEL,
+  CORPUS_GROUP_TITLE,
+  CORPUS_SORTING_HUB_LEAD,
+} from './corpusConsentCopy';
+import { CorpusConsentRows } from './CorpusConsentRows';
+import { CORPUS_SWEEP_ROW_LABEL, corpusSweepRowDescription } from './corpusSweepCopy';
 import { LEGAL_DOCUMENTS } from './legalLinks';
 import { SettingsRow } from './shared/SettingsRow';
+import { useCorpusConsent } from './useCorpusConsent';
+import { CORPUS_SWEEP_SOURCE, refreshSweepEstimate, useCorpusSweepPending } from './useCorpusSweep';
 import { useVaultConnectionState } from './useVaultConnectionState';
-import { vaultComesFirst } from './vaultConnectionState';
+import { vaultComesFirst, type VaultConnectionState } from './vaultConnectionState';
 
 import { EditorialSection } from '@/components/layout/EditorialSection';
 import { ScreenHeader } from '@/components/layout/ScreenHeader';
@@ -58,6 +69,13 @@ import { openExternalUrl } from '@/utils/openExternalUrl';
  * Account (API key, time zone) and Session (log out) — as warm editorial rows
  * on the shared scaffold. The header-right gear points here (not at a single
  * sub-screen); logout moved off the tab header and lives in the Session group.
+ *
+ * The groups run in the order a person meets them: the depths they chose
+ * (and the Sangha door those open) first, then their account, their journal,
+ * their corpus, the privacy promise, the copy they can take away, the ways to
+ * reach us, the legal documents, and last the two ways out. Session sits at
+ * the bottom on purpose: everything above it is how to keep and shape what
+ * is here, and the only honest order is that before how to leave.
  */
 
 const ICON_SIZE = 22;
@@ -73,15 +91,21 @@ const PRIVACY_A11Y_LABEL = `${PRIVACY_VISIBILITY_LINE} ${PRIVACY_INTIMATE_LINE}`
 interface AccountSectionProps {
   onApiKey: () => void;
   onTimezone: () => void;
+  /** The writer's provider refused their key on the last vault sort (#3595). */
+  keyRejected: boolean;
 }
 
 /** Account group: the bring-your-own-key and time-zone destinations. */
-const AccountSection = ({ onApiKey, onTimezone }: AccountSectionProps): React.JSX.Element => (
+const AccountSection = ({
+  onApiKey,
+  onTimezone,
+  keyRejected,
+}: AccountSectionProps): React.JSX.Element => (
   <EditorialSection title="Account" testID="settings-group-account">
     <SettingsRow
       icon={KeyRound}
       label="API key"
-      description={BYOK_HUB_DISCLOSURE}
+      description={keyRejected ? KEY_REJECTED_HUB_DESCRIPTION : BYOK_HUB_DISCLOSURE}
       onPress={onApiKey}
       testID="settings-row-api-key"
     />
@@ -123,8 +147,40 @@ const PrivacySection = (): React.JSX.Element => {
   );
 };
 
+/**
+ * "Sort the rest of your writing" (#3499): the way to finish sorting writing
+ * that predates the decision to sort it, one bounded pass at a time.
+ *
+ * Shown only when it can do something. Without a standing yes for what is
+ * written here a pass sorts nothing, and with nothing unsorted there is
+ * nothing to sort -- so the row is absent in both cases, and while the count
+ * is unknown. It is an offer like the rest of this group: it says how much is
+ * waiting and nothing about what is missed.
+ */
+const CorpusSweepRow = ({ onOpen }: { onOpen: () => void }): React.JSX.Element | null => {
+  const { decisions } = useCorpusConsent();
+  const granted =
+    decisions?.some((decision) => decision.source === CORPUS_SWEEP_SOURCE && decision.granted) ??
+    false;
+  const pending = useCorpusSweepPending();
+  useEffect(() => {
+    if (granted) void refreshSweepEstimate();
+  }, [granted]);
+  if (!granted || pending === null || pending === 0) return null;
+  return (
+    <SettingsRow
+      icon={FolderSync}
+      label={CORPUS_SWEEP_ROW_LABEL}
+      description={corpusSweepRowDescription(pending)}
+      onPress={onOpen}
+      testID="settings-row-corpus-sweep"
+    />
+  );
+};
+
 interface CorpusSectionProps {
   onSeedCorpus: () => void;
+  onCorpusSweep: () => void;
   onCorpusConsent: () => void;
   onVault: () => void;
   seedDescription: string;
@@ -132,44 +188,57 @@ interface CorpusSectionProps {
 
 /**
  * Corpus group: where a corpus lives, the way in for writing that already
- * exists elsewhere, and the decision about whether any of it is sorted for
- * reflections to draw on. A corpus lives in a vault (#3015), so the place comes
- * first and the way in second (#3017). Phrased as an offer, not a task — the
- * journal works fine on its own, and every row only widens what reflections can
- * reach or where a copy goes, for people who want that. The consent row is off
- * until somebody turns it on, so it is a question rather than a setting to
- * correct.
+ * exists elsewhere, the sorting switches themselves, and the full account of
+ * what they do. A corpus lives in a vault (#3015), so the place comes first
+ * and the way in second (#3017). The switches sit here on the hub, not only
+ * behind a sub-screen, because this is where somebody who has just given
+ * their corpus a vault goes looking for them — the vault screen points here —
+ * and a decision that is nowhere to be seen reads as one already made. Phrased
+ * as an offer, not a task: the journal works fine on its own, every row only
+ * widens what reflections can reach or where a copy goes, for people who want
+ * that, and each switch is off until somebody turns it on, so it is a question
+ * rather than a setting to correct.
  */
 const CorpusSection = ({
   onSeedCorpus,
+  onCorpusSweep,
   onCorpusConsent,
   onVault,
   seedDescription,
-}: CorpusSectionProps): React.JSX.Element => (
-  <EditorialSection title="Your corpus" testID="settings-group-corpus">
-    <SettingsRow
-      icon={Vault}
-      label={VAULT_ROW_LABEL}
-      description={VAULT_ROW_DESCRIPTION}
-      onPress={onVault}
-      testID="settings-row-vault"
-    />
-    <SettingsRow
-      icon={FolderUp}
-      label={SEED_ROW_LABEL}
-      description={seedDescription}
-      onPress={onSeedCorpus}
-      testID="settings-row-seed-corpus"
-    />
-    <SettingsRow
-      icon={BookOpen}
-      label={CORPUS_CONSENT_ROW_LABEL}
-      description={CORPUS_CONSENT_ROW_DESCRIPTION}
-      onPress={onCorpusConsent}
-      testID="settings-row-corpus-consent"
-    />
-  </EditorialSection>
-);
+}: CorpusSectionProps): React.JSX.Element => {
+  const { width } = useWindowDimensions();
+  const t = typeRamp(width);
+  return (
+    <EditorialSection title={CORPUS_GROUP_TITLE} testID="settings-group-corpus">
+      <SettingsRow
+        icon={Vault}
+        label={VAULT_ROW_LABEL}
+        description={VAULT_ROW_DESCRIPTION}
+        onPress={onVault}
+        testID="settings-row-vault"
+      />
+      <SettingsRow
+        icon={FolderUp}
+        label={SEED_ROW_LABEL}
+        description={seedDescription}
+        onPress={onSeedCorpus}
+        testID="settings-row-seed-corpus"
+      />
+      <CorpusSweepRow onOpen={onCorpusSweep} />
+      <Text style={[t.caption, styles.sortingLead]} testID="settings-corpus-sorting-lead">
+        {CORPUS_SORTING_HUB_LEAD}
+      </Text>
+      <CorpusConsentRows offeredOnly />
+      <SettingsRow
+        icon={BookOpen}
+        label={CORPUS_CONSENT_ROW_LABEL}
+        description={CORPUS_CONSENT_ROW_DESCRIPTION}
+        onPress={onCorpusConsent}
+        testID="settings-row-corpus-consent"
+      />
+    </EditorialSection>
+  );
+};
 
 /**
  * Where "Bring in your writing" leads, and what its row says (#3017).
@@ -178,11 +247,13 @@ const CorpusSection = ({
  * would live; every other account -- including one whose read is still out or
  * failed -- gets the picker. The read never holds the hub's render.
  */
-function useSeedCorpusRow(navigation: NativeStackNavigationProp<RootStackParamList>): {
+function useSeedCorpusRow(
+  navigation: NativeStackNavigationProp<RootStackParamList>,
+  state: VaultConnectionState,
+): {
   onSeedCorpus: () => void;
   seedDescription: string;
 } {
-  const { state } = useVaultConnectionState();
   const vaultFirst = vaultComesFirst(state);
   const onSeedCorpus = useCallback(
     () => navigation.navigate(vaultFirst ? 'VaultSettings' : 'SeedCorpus'),
@@ -196,8 +267,9 @@ function useSeedCorpusRow(navigation: NativeStackNavigationProp<RootStackParamLi
 
 /**
  * Your data group: the copy you can take away. It sits above Session on
- * purpose -- deletion is down there, and the only honest order is "here is how
- * to keep your writing" before "here is how to destroy it".
+ * purpose -- deletion is down there, at the very end, and the only honest
+ * order is "here is how to keep your writing" before "here is how to destroy
+ * it".
  */
 const YourDataSection = ({ onExportData }: { onExportData: () => void }): React.JSX.Element => (
   <EditorialSection title="Your data" testID="settings-group-your-data">
@@ -235,7 +307,7 @@ const SessionSection = ({ onLogout, onDeleteAccount }: SessionSectionProps): Rea
     <SettingsRow
       icon={Trash2}
       label="Delete account"
-      description="Erase your account and everything in it. This cannot be undone."
+      description="Erase your account from Adepthood. This cannot be undone."
       onPress={onDeleteAccount}
       testID="settings-row-delete-account"
       destructive
@@ -310,20 +382,28 @@ const FeedbackSection = (): React.JSX.Element => {
  */
 type SettingsHubScreenProps = Partial<NativeStackScreenProps<RootStackParamList, 'Settings'>>;
 
+/** The hub's row handlers, each a stable callback onto one settings screen. */
+function useHubNavigation(navigation: NativeStackNavigationProp<RootStackParamList>) {
+  return {
+    openApiKey: useCallback(() => navigation.navigate('ApiKeySettings'), [navigation]),
+    openTimezone: useCallback(() => navigation.navigate('TimezoneSettings'), [navigation]),
+    openSupportCare: useCallback(() => navigation.navigate('SupportCare'), [navigation]),
+    openExportData: useCallback(() => navigation.navigate('ExportData'), [navigation]),
+    openCorpusConsent: useCallback(() => navigation.navigate('CorpusConsent'), [navigation]),
+    openCorpusSweep: useCallback(() => navigation.navigate('CorpusSweep'), [navigation]),
+    openDeleteAccount: useCallback(() => navigation.navigate('DeleteAccount'), [navigation]),
+    openVault: useCallback(() => navigation.navigate('VaultSettings'), [navigation]),
+  };
+}
+
 const SettingsHubScreen = ({ route }: SettingsHubScreenProps = {}): React.JSX.Element => {
   const navigation = useNavigation<NativeStackNavigationProp<RootStackParamList>>();
   const { logout } = useAuth();
   const focus = route?.params?.focus;
   const journalInView = useScrollIntoViewOnce(focus === 'writing-habit');
-
-  const openApiKey = useCallback(() => navigation.navigate('ApiKeySettings'), [navigation]);
-  const openTimezone = useCallback(() => navigation.navigate('TimezoneSettings'), [navigation]);
-  const openSupportCare = useCallback(() => navigation.navigate('SupportCare'), [navigation]);
-  const seedRow = useSeedCorpusRow(navigation);
-  const openExportData = useCallback(() => navigation.navigate('ExportData'), [navigation]);
-  const openCorpusConsent = useCallback(() => navigation.navigate('CorpusConsent'), [navigation]);
-  const openDeleteAccount = useCallback(() => navigation.navigate('DeleteAccount'), [navigation]);
-  const openVault = useCallback(() => navigation.navigate('VaultSettings'), [navigation]);
+  const nav = useHubNavigation(navigation);
+  const vaultRead = useVaultConnectionState();
+  const seedRow = useSeedCorpusRow(navigation, vaultRead.state);
   const onLogout = useCallback(() => void logout(), [logout]);
 
   return (
@@ -334,25 +414,30 @@ const SettingsHubScreen = ({ route }: SettingsHubScreenProps = {}): React.JSX.El
         titleHidden
         lead="Manage how Adepthood works for you."
       />
-      <AccountSection onApiKey={openApiKey} onTimezone={openTimezone} />
-      <CorpusSection
-        onSeedCorpus={seedRow.onSeedCorpus}
-        seedDescription={seedRow.seedDescription}
-        onCorpusConsent={openCorpusConsent}
-        onVault={openVault}
-      />
-      <PrivacySection />
       <ChooseDepthsSection />
+      <SanghaSection />
+      <AccountSection
+        onApiKey={nav.openApiKey}
+        onTimezone={nav.openTimezone}
+        keyRejected={vaultRead.keyRejected}
+      />
       <View testID="settings-journal-anchor" onLayout={journalInView.onTargetLayout}>
         <JournalSection focus={focus} />
       </View>
-      <SanghaSection />
-      <YourDataSection onExportData={openExportData} />
-      <SessionSection onLogout={onLogout} onDeleteAccount={openDeleteAccount} />
-      <SupportSection onSupportCare={openSupportCare} />
+      <CorpusSection
+        onSeedCorpus={seedRow.onSeedCorpus}
+        seedDescription={seedRow.seedDescription}
+        onCorpusSweep={nav.openCorpusSweep}
+        onCorpusConsent={nav.openCorpusConsent}
+        onVault={nav.openVault}
+      />
+      <PrivacySection />
+      <YourDataSection onExportData={nav.openExportData} />
       <FeedbackSection />
       <AdminInboxSettingsSection />
+      <SupportSection onSupportCare={nav.openSupportCare} />
       <LegalSection />
+      <SessionSection onLogout={onLogout} onDeleteAccount={nav.openDeleteAccount} />
     </ScreenScaffold>
   );
 };
@@ -373,6 +458,10 @@ const styles = StyleSheet.create({
   privacyLineSoft: {
     color: ink.soft,
     marginTop: rhythm.blockGap / 3,
+  },
+  sortingLead: {
+    color: ink.soft,
+    marginTop: rhythm.blockGap,
   },
 });
 

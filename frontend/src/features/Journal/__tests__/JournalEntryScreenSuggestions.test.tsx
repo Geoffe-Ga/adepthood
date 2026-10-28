@@ -33,6 +33,8 @@ const mockDetect = jest.fn() as jest.MockedFunction<
 const mockUserTz = 'America/Chicago';
 
 jest.mock('@/api', () => ({
+  ...require('./journalUiFlagsTestKit'),
+  ...require('./readingRouteTestKit'),
   journal: {
     get: (...a: unknown[]) => (mockGet as unknown as (...x: unknown[]) => unknown)(...a),
     create: (...a: unknown[]) => (mockCreate as unknown as (...x: unknown[]) => unknown)(...a),
@@ -73,7 +75,7 @@ jest.mock('@/navigation/hooks', () => ({
 jest.mock('@/storage/resonanceExplainerStorage', () => require('./resonanceExplainerTestKit'));
 
 jest.mock('@/context/AuthContext', () => ({
-  useAuth: () => ({ userTimezone: mockUserTz }),
+  useAuth: () => ({ ...require('./authContextTestKit').useAuth(), userTimezone: mockUserTz }),
 }));
 
 jest.mock('@/features/Habits/services/habitManager', () => ({

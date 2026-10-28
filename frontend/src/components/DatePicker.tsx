@@ -1,6 +1,8 @@
 import React, { useEffect, useState } from 'react';
 import type { ComponentType } from 'react';
-import { Platform, Text, TextInput, TouchableOpacity, View } from 'react-native';
+import { Platform, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
+
+import { SPACING, accent, editorialType, touchTarget } from '@/design/tokens';
 
 let DateTimePickerModal: ComponentType<Record<string, unknown>> = () => null;
 if (Platform.OS !== 'web') {
@@ -116,14 +118,30 @@ export const getNextMonday = (): Date => {
   return local;
 };
 
+// Anchored to local midnight like the other quick candidates, so a
+// ``maxDate`` on the first of next month compares equal instead of the
+// current time-of-day pushing the candidate past it.
 const getFirstOfNextMonth = (): Date => {
-  const d = new Date();
+  const d = getLocalToday();
   d.setMonth(d.getMonth() + 1, 1);
   return d;
 };
 
-const QUICK_BUTTON_STYLE = { marginLeft: 12 };
-const ROW_STYLE = { flexDirection: 'row' as const, marginTop: 8 };
+const quickStyles = StyleSheet.create({
+  picker: { maxWidth: '100%', minWidth: 0, flexShrink: 1 },
+  row: { flexDirection: 'row', flexWrap: 'wrap', gap: SPACING.sm, marginTop: SPACING.sm },
+  button: {
+    minWidth: touchTarget.minimum,
+    minHeight: touchTarget.minimum,
+    maxWidth: '100%',
+    flexShrink: 1,
+    paddingHorizontal: SPACING.sm,
+    paddingVertical: SPACING.xs,
+    justifyContent: 'center',
+  },
+  disabled: { opacity: 0.5 },
+  label: { ...editorialType.action, color: accent.primary, flexShrink: 1 },
+});
 
 interface QuickDateButtonsProps {
   onSelectDate: (_date: Date) => void;
@@ -154,13 +172,16 @@ const isQuickCandidateAllowed = (
 };
 
 interface QuickButtonProps {
-  candidate: Date;
+  // Factory rather than a precomputed Date: the candidate depends on the
+  // local calendar day, which can change while the picker stays mounted
+  // (#3381).  It is evaluated on every render for the disabled state and
+  // again at press time for the committed value.
+  factory: () => Date;
   label: string;
   // Internal prop name distinct from ``accessibilityLabel`` so test
   // helpers that find the inner TouchableOpacity by its
   // ``accessibilityLabel`` prop do not also match this wrapper.
   a11yLabel: string;
-  style?: { marginLeft: number };
   onSelectDate: (_date: Date) => void;
   minDate?: string;
   maxDate?: string;
@@ -168,25 +189,28 @@ interface QuickButtonProps {
 }
 
 const QuickButton: React.FC<QuickButtonProps> = ({
-  candidate,
+  factory,
   label,
   a11yLabel,
-  style,
   onSelectDate,
   minDate,
   maxDate,
   disabledDate,
 }) => {
-  const allowed = isQuickCandidateAllowed(candidate, minDate, maxDate, disabledDate);
+  const allowed = isQuickCandidateAllowed(factory(), minDate, maxDate, disabledDate);
   return (
     <TouchableOpacity
-      onPress={() => onSelectDate(candidate)}
+      // Re-evaluate at press time: if local midnight passed since the last
+      // render, this commits the new day, and ``onSelectDate`` (commitDate)
+      // re-validates it against min/max/disabledDate.
+      onPress={() => onSelectDate(factory())}
       disabled={!allowed}
-      style={style}
+      style={[quickStyles.button, !allowed && quickStyles.disabled]}
+      accessibilityRole="button"
       accessibilityLabel={a11yLabel}
       accessibilityState={{ disabled: !allowed }}
     >
-      <Text>{label}</Text>
+      <Text style={quickStyles.label}>{label}</Text>
     </TouchableOpacity>
   );
 };
@@ -211,21 +235,14 @@ const QuickDateButtons: React.FC<QuickDateButtonsProps> = ({
   maxDate,
   disabledDate,
 }) => {
-  // Build the candidate dates once per mount instead of allocating a fresh
-  // Date for every option on every render.
-  const options = React.useMemo(
-    () => QUICK_OPTIONS.map((option) => ({ ...option, candidate: option.factory() })),
-    [],
-  );
   return (
-    <View style={ROW_STYLE}>
-      {options.map((option, idx) => (
+    <View style={quickStyles.row}>
+      {QUICK_OPTIONS.map((option) => (
         <QuickButton
           key={option.label}
-          candidate={option.candidate}
+          factory={option.factory}
           label={option.label}
           a11yLabel={option.a11yLabel}
-          style={idx === 0 ? undefined : QUICK_BUTTON_STYLE}
           onSelectDate={onSelectDate}
           minDate={minDate}
           maxDate={maxDate}
@@ -310,6 +327,7 @@ const DateInput: React.FC<DateInputProps> = ({
     <input
       aria-label="Date"
       type="date"
+      style={{ maxWidth: '100%', minWidth: 0, boxSizing: 'border-box' }}
       value={value}
       min={minDate}
       max={maxDate}
@@ -363,7 +381,7 @@ const DatePicker: React.FC<DatePickerProps> = ({
   const handleChangeText = makeHandleChangeText(setTextValue, setError, commitDate);
 
   return (
-    <View>
+    <View style={quickStyles.picker}>
       <DateInput
         value={value}
         minDate={minDate}

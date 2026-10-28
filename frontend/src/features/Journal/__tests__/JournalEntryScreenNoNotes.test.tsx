@@ -31,6 +31,8 @@ jest.mock('@/storage/resonanceExplainerStorage', () => require('./resonanceExpla
 jest.mock('@/context/AuthContext', () => require('./authContextTestKit'));
 
 jest.mock('@/api', () => ({
+  ...require('./journalUiFlagsTestKit'),
+  ...require('./readingRouteTestKit'),
   journal: {
     get: (...a: unknown[]) => (mockGet as unknown as (...x: unknown[]) => unknown)(...a),
     create: jest.fn(),
@@ -165,3 +167,102 @@ describe('JournalEntryScreen — a pass that yields no notes', () => {
     expect(queryByTestId('journal-resonance-no-notes')).toBeNull();
   });
 });
+
+describe('JournalEntryScreen — the pass names its source (#3062)', () => {
+  function provenance(source: 'creek_vault' | 'app_provider' | 'demo') {
+    return {
+      notes: {
+        source,
+        provider:
+          source === 'demo'
+            ? ('stub' as const)
+            : source === 'creek_vault'
+              ? ('creek' as const)
+              : null,
+        model: null,
+        receipt_version: 1 as const,
+      },
+      detection: {
+        source: 'none' as const,
+        provider: null,
+        model: null,
+        receipt_version: 1 as const,
+      },
+      detection_checked: false,
+      paid_by: 'free' as const,
+    };
+  }
+
+  it('flags a demo pass before any one note is read', async () => {
+    const { findByTestId } = await runPass(
+      payload({ marginalia: [marginNote()], provenance: provenance('demo') }),
+    );
+
+    expect((await findByTestId('resonance-pass-source')).props.children).toMatch(/^Demo/);
+  });
+
+  it('names which source answered an empty pass, beside its reason', async () => {
+    const { findByTestId } = await runPass(
+      payload({ no_notes_message: NO_NOTES, provenance: provenance('creek_vault') }),
+    );
+
+    expect((await findByTestId('resonance-pass-source')).props.children).toBe(
+      'From your Creek vault',
+    );
+    expect((await findByTestId('journal-resonance-no-notes')).props.children).toBe(NO_NOTES);
+  });
+
+  it('adds no pass line to an ordinary pass whose notes carry their own labels', async () => {
+    const { findByText, queryByTestId } = await runPass(
+      payload({ marginalia: [marginNote()], provenance: provenance('app_provider') }),
+    );
+
+    await findByText('You return to water.');
+    expect(queryByTestId('resonance-pass-source')).toBeNull();
+  });
+});
+
+describe('live pass receipts (#3206)', () => {
+  it('discloses separate notes and attempted completion identities plus the reported payer', async () => {
+    const { findByText, queryByText } = await runPass(
+      payload({
+        provenance: {
+          notes: {
+            source: 'app_provider',
+            provider: 'openai',
+            model: 'notes-model',
+            receipt_version: 1,
+          },
+          detection: {
+            source: 'app_provider',
+            provider: 'anthropic',
+            model: 'completion-model',
+            receipt_version: 1,
+          },
+          detection_checked: false,
+          paid_by: 'own_key',
+        },
+      }),
+    );
+    expect(await findByText('Your provider key')).toBeTruthy();
+    expect(await findByText('Reported model: notes-model')).toBeTruthy();
+    expect(await findByText('Reported model: completion-model')).toBeTruthy();
+    expect(await findByText('A check was attempted; completion was not confirmed.')).toBeTruthy();
+    expect(queryByText('No AI completion check was sent.')).toBeNull();
+  });
+
+  it('uses a none receipt to distinguish an unsent check from a failed attempt', async () => {
+    const { findByText } = await runPass(payload({ provenance: provenanceForUnrun() }));
+    expect(await findByText('No AI completion check was sent.')).toBeTruthy();
+    expect(await findByText('No Adepthood wallet charge')).toBeTruthy();
+  });
+});
+
+function provenanceForUnrun(): NonNullable<ResonanceResponse['provenance']> {
+  return {
+    notes: { source: 'demo', provider: 'stub', model: 'stub', receipt_version: 1 },
+    detection: { source: 'none', provider: null, model: null, receipt_version: 1 },
+    detection_checked: false,
+    paid_by: 'free',
+  };
+}

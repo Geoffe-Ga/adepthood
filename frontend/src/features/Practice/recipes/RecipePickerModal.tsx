@@ -255,7 +255,7 @@ function useActionState(): ActionState {
     try {
       return await task();
     } catch (err: unknown) {
-      setError(formatApiError(err, { fallback: 'Action failed.' }));
+      setError(formatApiError(err, { fallback: "That didn't go through. Try again in a moment." }));
       return null;
     } finally {
       setBusy(false);
@@ -392,7 +392,7 @@ const RecipeRowHeader = (props: RecipeRowHeaderProps): React.JSX.Element => (
       <Text style={styles.recipeName}>{props.recipe.name}</Text>
       {props.isSystem && (
         <View style={styles.systemBadge}>
-          <Text style={styles.systemBadgeText}>System</Text>
+          <Text style={styles.systemBadgeText}>Built in</Text>
         </View>
       )}
     </View>

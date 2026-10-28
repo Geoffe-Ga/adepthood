@@ -8,6 +8,10 @@
 
 import type { StageHistoryResponse } from '../../api';
 
+/** Wheel-not-ladder framing shared by every Map drawer state. */
+export const MAP_LEAD =
+  'The Map is a wheel, not a ladder: its ten stages revisit different capacities, never ranking you or the stages.';
+
 /** Compact "Stage N of 10 · Week W" read for the journey header. */
 export const journeyRead = (
   currentStage: number,
@@ -15,11 +19,11 @@ export const journeyRead = (
   stageCount: number,
 ): string => `Stage ${currentStage} of ${stageCount} · Week ${currentWeek}`;
 
-/** "Unlocks in N days" / already-reached copy for a locked stage. */
+/** "Opens in N days" / already-reached copy for a stage the calendar has not reached. */
 export const unlockTimeline = (daysUntil: number | null): string => {
-  if (daysUntil === null) return 'Unlocks as your journey reaches it';
-  if (daysUntil <= 0) return 'Unlocking now';
-  return `Unlocks in ${daysUntil} day${daysUntil === 1 ? '' : 's'}`;
+  if (daysUntil === null) return 'Opens with the course';
+  if (daysUntil <= 0) return 'Opening now';
+  return `Opens in ${daysUntil} day${daysUntil === 1 ? '' : 's'}`;
 };
 
 /** A single ranked headline stat (largest contribution first). */

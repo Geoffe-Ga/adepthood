@@ -11,6 +11,8 @@
 import React from 'react';
 import { StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 
+import { PAYER_CHANGED_NOTICE } from './resonanceExplainerCopy';
+
 import {
   BORDER_RADIUS,
   colors,
@@ -22,6 +24,26 @@ import {
 
 /** Faded, not hidden: an arm that cannot act yet still says what it would do. */
 const DISABLED_ARM_OPACITY = 0.45;
+
+/**
+ * The line above a price disclosed again because the server refused a request
+ * whose payer route had changed (#3385). Announced as it appears, since the
+ * writer pressed a button and is now looking at the same surface.
+ */
+export function PayerChangedNotice({
+  visible,
+  testID,
+}: {
+  visible: boolean;
+  testID: string;
+}): React.JSX.Element | null {
+  if (!visible) return null;
+  return (
+    <Text style={explainerStyles.body} accessibilityLiveRegion="polite" testID={testID}>
+      {PAYER_CHANGED_NOTICE}
+    </Text>
+  );
+}
 
 export interface DontShowAgainCheckboxProps {
   checked: boolean;

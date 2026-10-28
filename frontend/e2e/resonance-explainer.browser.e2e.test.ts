@@ -3,24 +3,31 @@ import { expect, test, type Page } from '@playwright/test';
 import { backendUrl, frontendUrl, signUp, tokenFor } from './journalHabitsBrowserSupport';
 import { readLaneState } from './laneState';
 
+// A routed read can still be awaiting `route.fetch()` when the test ends, and
+// that fetch then rejects with "Test ended" outside any test (#3481). Unroute
+// first so a straggler's late error is dropped rather than failing the run.
+test.afterEach(async ({ page }) => {
+  await page.unrouteAll({ behavior: 'ignoreErrors' });
+});
+
 /**
  * The spend disclosure in front of a resonance pass, in a real browser.
  *
  * `resonance.e2e.test.ts` already proves a pass reaches the server and keeps
  * anchored notes, but it drives the API client directly and cannot press a
  * button. The claim this journey makes is the one only a rendered screen can
- * settle: no request is sent until the reader sees who will pay, and changing
- * from the shared allowance to a device-stored key changes that answer before
- * the pass leaves the browser.
+ * settle: controlled production app-provider admission requires a device key,
+ * and saving one changes the disclosure before the pass leaves the browser.
  *
  * The assertions are therefore counted requests and server state, not visible
  * text alone. A spec that only checked the dialog was on screen would pass just
  * as happily against a build that charged behind it, which is exactly the
  * failure this gate exists to prevent.
  *
- * The lane runs the backend's default (stub) BotMason provider, so the pass here
- * is the real route, the real wallet deduction and the real anchoring, with only
- * the model's sentences canned.
+ * The lane explicitly permits keyless demos. This spec controls only that
+ * advertised capability to false for the browser's usage read; the route and
+ * wallet fields remain server-derived. The later own-key request reaches the
+ * real loopback provider's spent-key response without spending wallet credits.
  */
 
 /** A page with sentences the stub provider is willing to quote back. */
@@ -33,7 +40,8 @@ function recordPasses(page: Page, entryId: number): { readonly length: number } 
   const sent: string[] = [];
   const route = `/journal/${String(entryId)}/resonance`;
   page.on('request', (request) => {
-    if (request.method() === 'POST' && request.url().endsWith(route)) sent.push(request.url());
+    if (request.method() === 'POST' && new URL(request.url()).pathname === route)
+      sent.push(request.url());
   });
   return sent;
 }
@@ -51,6 +59,7 @@ interface Usage {
   monthly_messages_used: number;
   offering_balance: number;
   monthly_cap: number;
+  resonance_route: 'vault_bound' | 'app_provider';
 }
 
 /** The two wallet buckets a pass could draw from. */
@@ -88,29 +97,35 @@ test('the payer is disclosed before a resonance pass is ever sent', async ({ pag
   });
   expect(finished.ok()).toBe(true);
 
+  const beforeKey = await usage(page, token);
+  expect(beforeKey.resonance_route).toBe('app_provider');
+  await page.route('**/user/usage', async (route) => {
+    const actual = await route.fetch();
+    const served = await actual.json();
+    expect(served.resonance_route).toBe('app_provider');
+    await route.fulfill({
+      response: actual,
+      json: { ...served, resonance_demo_available: false },
+    });
+  });
   const passes = recordPasses(page, entryId);
   await page.reload();
   await page.getByTestId(`journal-shelf-open-${String(entryId)}`).click();
 
-  // 1. The first press buys nothing. It says what a pass does, where the entry
-  //    goes, and what it costs — and sends no request at all. The allowance is
-  //    the one this deployment serves, read from the server rather than written
-  //    here, so the copy check follows the cap wherever the operator sets it.
-  const { monthly_cap: monthlyCap } = await usage(page, token);
+  // 1. Controlled production app-provider admission needs a key, even with
+  // credits remaining. The invitation sends no generation request.
   await page.getByRole('button', { name: 'Get resonance' }).click();
-  await expect(page.getByTestId('resonance-explainer-what')).toContainText('AI model');
-  await expect(page.getByTestId('resonance-explainer-cost')).toContainText(
-    `one of your ${String(monthlyCap)} BotMason messages`,
-  );
-  await expect(page.getByTestId('resonance-explainer-cost')).not.toContainText('free');
+  const keyRequired = page.getByTestId('resonance-explainer');
+  await expect(keyRequired).toContainText('This needs your own API key');
+  await expect(keyRequired).not.toContainText('BotMason');
   expect(passes.length).toBe(0);
-
-  // 2. Backing out is a real refusal, not a deferral of something already sent:
-  //    no request left the browser and the server kept nothing.
+  await expect(page.getByTestId('resonance-explainer-open-settings')).toBeVisible();
+  await expect(page.getByTestId('resonance-explainer-continue')).toHaveCount(0);
   await page.getByTestId('resonance-explainer-cancel').click();
-  await expect(page.getByTestId('resonance-explainer-card')).toHaveCount(0);
+  await expect(keyRequired).toHaveCount(0);
   expect(passes.length).toBe(0);
   expect(await keptNotes(page, token, entryId)).toEqual([]);
+  expect(await usage(page, token)).toEqual(beforeKey);
 
   // 3. Saving a caller-owned key through Settings changes the same disclosure.
   //    Cancelling still sends nothing, so this proves the payer is selected

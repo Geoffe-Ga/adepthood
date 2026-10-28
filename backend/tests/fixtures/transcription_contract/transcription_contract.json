@@ -1,0 +1,275 @@
+{
+  "_comment": "Shared contract for client-direct page reading (ADR 0009 phase (a), #3067). The device calls the vendor itself with this exact system prompt and max_tokens, always uses each vendor's registry default vision model (the operator's LLM_MODEL does not govern a device-direct read), and classifies the reply with the same rules as domain.transcription; the refused cases cover every REFUSAL_OPENERS x REFUSAL_OBJECT_CUES pair. backend/tests/test_transcription_client_contract.py derives every field from the Python; frontend/src/api/__tests__/transcriptionContract.test.ts holds the TypeScript mirror to it.",
+  "system_prompt": "Safety boundary: never advise the writer to reduce, stop, or change any medication — including psychiatric medication — and never suggest a specific dose. That decision belongs to the writer and their prescriber. Affirm the writer's agency and, when medication comes up, defer it to them and their prescriber rather than offering medical direction.\n\nYou are transcribing the text in an image into faithful body text for someone's digital journal entry. The image may be a handwritten page, a typed or printed page, a screenshot of messages or a document, a sign or a whiteboard, or a photo of a screen.\n\nTranscribe every word exactly as written. Do not summarize, paraphrase, correct grammar or spelling, reword sentences, or add anything the writer did not write.\n\nDo not judge whether the image belongs in a journal. The writer chose it; your only job is to transcribe its text. If the image contains no readable text at all, reply with exactly [no text found] and nothing else.\n\nHandwriting conventions (these apply to handwritten text):\n- If a word or short phrase is illegible, write [illegible] in its place and keep transcribing the rest of the sentence.\n- If you can make out a word but are not certain, write your best guess followed by a question mark inside brackets, e.g. [word?].\n- If a word or phrase is crossed out or struck through, omit it entirely from the transcription — do not include struck-through text, even in brackets.\n- If the writer added a word or phrase via a caret insertion or a margin note pointing back into the text, integrate it inline at the point the writer intended it to be inserted.\n\nConversations: If the image shows a conversation, such as a text-message thread or a chat, write one message per line in reading order, prefix each line with the sender label exactly as shown (or Me: for the writer's own messages and the contact's name for theirs when no label is shown), keep a timestamp only when it sits inline with the message text, and ignore interface chrome such as the status bar, the input field and reaction badges.\n\nScreens: If the image is a photo of a screen, transcribe the document or messages shown on it. Ignore window frames, browser tabs, menus, toolbars, taskbars, notifications and any other windows. Glare, moiré or a skewed angle are not reasons to decline — write [illegible] for any span you cannot make out and keep going.\n\nExamples:\n- Handwriting shows: I felt <s>angry</s> frustrated about the meeting. Transcribe as: I felt frustrated about the meeting.\n- Handwriting shows a word you cannot make out in the middle of a sentence. Transcribe as: I went to the [illegible] with my sister.\n- A screenshot shows a message from Sam, then the writer's reply. Transcribe as:\nSam: Are you still coming tonight?\nMe: Yes — leaving at 6.\n- A phone photo of a laptop shows a document. Transcribe the document's paragraphs only, not the tab title, the address bar or the menu.\n\nReturn only the journal entry body text. No preamble, no commentary, no markdown formatting, no headers — just the transcribed body text.\n\nSafety boundary: never advise the writer to reduce, stop, or change any medication — including psychiatric medication — and never suggest a specific dose. That decision belongs to the writer and their prescriber. Affirm the writer's agency and, when medication comes up, defer it to them and their prescriber rather than offering medical direction.",
+  "max_tokens": 4096,
+  "registry_default_models": {
+    "openai": "gpt-4o-mini",
+    "anthropic": "claude-sonnet-5"
+  },
+  "classify_cases": [
+    {
+      "reply": "[no text found]",
+      "verdict": "no_text_found"
+    },
+    {
+      "reply": "  [No Text Found].\n",
+      "verdict": "no_text_found"
+    },
+    {
+      "reply": "",
+      "verdict": "no_text_found"
+    },
+    {
+      "reply": "   \n ",
+      "verdict": "no_text_found"
+    },
+    {
+      "reply": "I'm not able to help with this request — the image you've shared appears to be a screenshot of a text message conversation, not a handwritten journal page. I'm set up specifically to transcribe photographed handwritten journal entries into digital text. If you meant to share a journal page, feel free to upload that photo and I'll transcribe it faithfully, keeping every word exactly as you wrote it.",
+      "verdict": "transcription_refused"
+    },
+    {
+      "reply": "I’m not able to help with this request — the image you’ve shared appears to be a screenshot of a text message conversation, not a handwritten journal page. I’m set up specifically to transcribe photographed handwritten journal entries into digital text. If you meant to share a journal page, feel free to upload that photo and I’ll transcribe it faithfully, keeping every word exactly as you wrote it.",
+      "verdict": "transcription_refused"
+    },
+    {
+      "reply": "I can't sleep again tonight.",
+      "verdict": "transcribed"
+    },
+    {
+      "reply": "I can't stop looking at the photo of Dad from 1987.\nHe looks so young.",
+      "verdict": "transcribed"
+    },
+    {
+      "reply": "I can't stop thinking about this imagery from the dream.",
+      "verdict": "transcribed"
+    },
+    {
+      "reply": "I can't believe this requested change went through.",
+      "verdict": "transcribed"
+    },
+    {
+      "reply": "I'm unable to transcribe this image.\n\nBut here is the second paragraph of my page.",
+      "verdict": "transcribed"
+    },
+    {
+      "reply": "I can't transcribe this image. xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+      "verdict": "transcribed"
+    },
+    {
+      "reply": "Sam: Are you still coming tonight?\nMe: Yes — leaving at 6.",
+      "verdict": "transcribed"
+    },
+    {
+      "reply": "Today I walked to the river.",
+      "verdict": "transcribed"
+    },
+    {
+      "reply": "I'm not able to help with transcription.",
+      "verdict": "transcription_refused"
+    },
+    {
+      "reply": "I'm not able to help with this image.",
+      "verdict": "transcription_refused"
+    },
+    {
+      "reply": "I'm not able to help with this photo.",
+      "verdict": "transcription_refused"
+    },
+    {
+      "reply": "I'm not able to help with this picture.",
+      "verdict": "transcription_refused"
+    },
+    {
+      "reply": "I'm not able to help with this screenshot.",
+      "verdict": "transcription_refused"
+    },
+    {
+      "reply": "I'm not able to help with this request.",
+      "verdict": "transcription_refused"
+    },
+    {
+      "reply": "I'm not able to help with the image you sent.",
+      "verdict": "transcription_refused"
+    },
+    {
+      "reply": "I'm not able to help with the photo you sent.",
+      "verdict": "transcription_refused"
+    },
+    {
+      "reply": "I'm not able to help with the picture you sent.",
+      "verdict": "transcription_refused"
+    },
+    {
+      "reply": "I'm not able to help with the screenshot you sent.",
+      "verdict": "transcription_refused"
+    },
+    {
+      "reply": "I can't help with transcription.",
+      "verdict": "transcription_refused"
+    },
+    {
+      "reply": "I can't help with this image.",
+      "verdict": "transcription_refused"
+    },
+    {
+      "reply": "I can't help with this photo.",
+      "verdict": "transcription_refused"
+    },
+    {
+      "reply": "I can't help with this picture.",
+      "verdict": "transcription_refused"
+    },
+    {
+      "reply": "I can't help with this screenshot.",
+      "verdict": "transcription_refused"
+    },
+    {
+      "reply": "I can't help with this request.",
+      "verdict": "transcription_refused"
+    },
+    {
+      "reply": "I can't help with the image you sent.",
+      "verdict": "transcription_refused"
+    },
+    {
+      "reply": "I can't help with the photo you sent.",
+      "verdict": "transcription_refused"
+    },
+    {
+      "reply": "I can't help with the picture you sent.",
+      "verdict": "transcription_refused"
+    },
+    {
+      "reply": "I can't help with the screenshot you sent.",
+      "verdict": "transcription_refused"
+    },
+    {
+      "reply": "I cannot help with transcription.",
+      "verdict": "transcription_refused"
+    },
+    {
+      "reply": "I cannot help with this image.",
+      "verdict": "transcription_refused"
+    },
+    {
+      "reply": "I cannot help with this photo.",
+      "verdict": "transcription_refused"
+    },
+    {
+      "reply": "I cannot help with this picture.",
+      "verdict": "transcription_refused"
+    },
+    {
+      "reply": "I cannot help with this screenshot.",
+      "verdict": "transcription_refused"
+    },
+    {
+      "reply": "I cannot help with this request.",
+      "verdict": "transcription_refused"
+    },
+    {
+      "reply": "I cannot help with the image you sent.",
+      "verdict": "transcription_refused"
+    },
+    {
+      "reply": "I cannot help with the photo you sent.",
+      "verdict": "transcription_refused"
+    },
+    {
+      "reply": "I cannot help with the picture you sent.",
+      "verdict": "transcription_refused"
+    },
+    {
+      "reply": "I cannot help with the screenshot you sent.",
+      "verdict": "transcription_refused"
+    },
+    {
+      "reply": "I'm unable to help with transcription.",
+      "verdict": "transcription_refused"
+    },
+    {
+      "reply": "I'm unable to help with this image.",
+      "verdict": "transcription_refused"
+    },
+    {
+      "reply": "I'm unable to help with this photo.",
+      "verdict": "transcription_refused"
+    },
+    {
+      "reply": "I'm unable to help with this picture.",
+      "verdict": "transcription_refused"
+    },
+    {
+      "reply": "I'm unable to help with this screenshot.",
+      "verdict": "transcription_refused"
+    },
+    {
+      "reply": "I'm unable to help with this request.",
+      "verdict": "transcription_refused"
+    },
+    {
+      "reply": "I'm unable to help with the image you sent.",
+      "verdict": "transcription_refused"
+    },
+    {
+      "reply": "I'm unable to help with the photo you sent.",
+      "verdict": "transcription_refused"
+    },
+    {
+      "reply": "I'm unable to help with the picture you sent.",
+      "verdict": "transcription_refused"
+    },
+    {
+      "reply": "I'm unable to help with the screenshot you sent.",
+      "verdict": "transcription_refused"
+    },
+    {
+      "reply": "Sorry, I can't help with transcription.",
+      "verdict": "transcription_refused"
+    },
+    {
+      "reply": "Sorry, I can't help with this image.",
+      "verdict": "transcription_refused"
+    },
+    {
+      "reply": "Sorry, I can't help with this photo.",
+      "verdict": "transcription_refused"
+    },
+    {
+      "reply": "Sorry, I can't help with this picture.",
+      "verdict": "transcription_refused"
+    },
+    {
+      "reply": "Sorry, I can't help with this screenshot.",
+      "verdict": "transcription_refused"
+    },
+    {
+      "reply": "Sorry, I can't help with this request.",
+      "verdict": "transcription_refused"
+    },
+    {
+      "reply": "Sorry, I can't help with the image you sent.",
+      "verdict": "transcription_refused"
+    },
+    {
+      "reply": "Sorry, I can't help with the photo you sent.",
+      "verdict": "transcription_refused"
+    },
+    {
+      "reply": "Sorry, I can't help with the picture you sent.",
+      "verdict": "transcription_refused"
+    },
+    {
+      "reply": "Sorry, I can't help with the screenshot you sent.",
+      "verdict": "transcription_refused"
+    },
+    {
+      "reply": "I can't transcribe this image. 😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀",
+      "verdict": "transcription_refused"
+    },
+    {
+      "reply": "I can't transcribe this image. 😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀",
+      "verdict": "transcribed"
+    }
+  ]
+}

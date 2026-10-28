@@ -5,17 +5,20 @@
  * ``journal-markdown-<style>-<start>`` test IDs) lives here and is shared with
  * {@link HighlightedBody}, so bold is styled in exactly one read-mode place.
  * Unlike HighlightedBody this component draws no anchors, no notes and no
- * ``journal-body-read`` container, and it renders blocks FLAT: a bullet line
- * keeps its glyph, but a quote block gets no rule or wash. That makes it the
- * right surface for a sources feed or any preview that must never show raw
- * markers, and the wrong one for the entry reader itself.
+ * ``journal-body-read`` container, and it renders blocks FLAT: a bullet, task
+ * or ordered line keeps its glyph or number and a heading its rung of the type
+ * ramp, but a quote block gets no rule or wash. A horizontal rule is the one
+ * block that cannot live inside a ``<Text>``, so a body holding one is split
+ * around a hairline. That makes it the right surface for a sources feed or any
+ * preview that must never show raw markers, and the wrong one for the entry
+ * reader itself.
  *
  * Deliberately not named ``markdown*``: ``journalMarkdownPurity.test.ts``
  * reserves that prefix for modules that import no React Native.
  */
 import React from 'react';
-import { Platform, StyleSheet, Text } from 'react-native';
-import type { StyleProp, TextStyle } from 'react-native';
+import { Platform, StyleSheet, Text, View } from 'react-native';
+import type { StyleProp, TextProps, TextStyle, ViewStyle } from 'react-native';
 
 import {
   markdownRuns,
@@ -25,6 +28,8 @@ import {
   type JournalMarkdownLine,
   type JournalMarkdownRun,
 } from './journalMarkdown';
+
+import { SPACING, colors, editorialType } from '@/design/tokens';
 
 /**
  * The bullet glyph a list item renders.
@@ -36,6 +41,84 @@ import {
 export const JOURNAL_BULLET_GLYPH = '• ';
 /** One column of rendered bullet indent, matching the measured indent width. */
 export const JOURNAL_INDENT_COLUMN = ' ';
+
+/**
+ * The checkbox a task line draws in place of the writer's hidden ``- [ ] ``.
+ * Decoration like the bullet glyph: never a character in the source stream.
+ */
+export const JOURNAL_TASK_GLYPHS = Object.freeze({ open: '\u2610', done: '\u2611' });
+
+/** A native task glyph's transparent reach: at least 44dp without changing its ink. */
+const TASK_HIT_SLOP = Object.freeze({ top: 12, right: 14, bottom: 12, left: 14 });
+
+// Native Text forwards hitSlop even though the public TextProps declaration omits it.
+interface TaskKeyEvent {
+  key?: string;
+  nativeEvent?: { key?: string };
+  preventDefault: () => void;
+  stopPropagation: () => void;
+}
+
+type TaskGlyphProps = TextProps & {
+  hitSlop?: typeof TASK_HIT_SLOP;
+  onKeyDown?: (_event: TaskKeyEvent) => void;
+};
+const TaskGlyph = Text as React.ComponentType<TaskGlyphProps>;
+
+/** A read-mode task press, addressed by the source line's code-point start. */
+export type TaskPress = (_lineStart: number) => void;
+
+/** Keep feed/source task glyphs truly inert when there is no finished-page handler. */
+function taskOnPress(onTaskPress: TaskPress | undefined, lineStart: number): TextProps['onPress'] {
+  if (onTaskPress == null) return undefined;
+  return (event) => {
+    event?.stopPropagation();
+    onTaskPress(lineStart);
+  };
+}
+
+/** A span with checkbox semantics needs the native checkbox keyboard contract too. */
+function taskOnKeyDown(
+  onTaskPress: TaskPress | undefined,
+  lineStart: number,
+): TaskGlyphProps['onKeyDown'] {
+  if (onTaskPress == null) return undefined;
+  return (event) => {
+    const key = event.key ?? event.nativeEvent?.key;
+    if (key !== ' ' && key !== 'Enter') return;
+    event.preventDefault();
+    event.stopPropagation();
+    onTaskPress(lineStart);
+  };
+}
+
+/** RN Web drops Text's checkbox state unless its ARIA spelling is explicit. */
+function taskStateProps(interactive: boolean, checked: boolean): TextProps {
+  if (!interactive) return {};
+  const native = { accessibilityState: { checked } };
+  if (Platform.OS !== 'web') return native;
+  return { ...native, 'aria-checked': checked } as TextProps;
+}
+
+/**
+ * Pads an ordered marker to {@link ORDINAL_COLUMN_DIGITS} digits. A figure
+ * space is exactly one tabular digit wide, so with tabular numerals ``9.`` and
+ * ``10.`` share a text edge.
+ */
+export const JOURNAL_ORDINAL_PAD = '\u2007';
+/** The digit column an ordered marker is right-aligned to. */
+export const ORDINAL_COLUMN_DIGITS = 2;
+/**
+ * The hairline a horizontal rule draws in read mode (its characters stay hidden
+ * in the source): the faint warm rule, with breathing room above and below.
+ */
+export const JOURNAL_RULE_STYLE: ViewStyle = Object.freeze({
+  height: StyleSheet.hairlineWidth,
+  backgroundColor: colors.paper.hairline,
+  marginVertical: SPACING.sm,
+});
+/** Heading levels that take their own rung; deeper levels share H3's. */
+const HEADING_RUNG_LEVELS = 3;
 
 /** Semantic roles become matching HTML elements on web; native uses the style. */
 export function webRole(role: 'strong' | 'emphasis' | 'blockquote'): never | undefined {
@@ -83,21 +166,164 @@ export function renderMarkdownRun(run: JournalMarkdownRun): React.ReactNode {
   return node;
 }
 
-/** The indent and glyph a bullet line draws in front of its text. */
-export function bulletDecoration(block: JournalMarkdownBlock, line: JournalMarkdownLine): string[] {
-  if (block.kind !== 'bullet') return [];
-  return [`${JOURNAL_INDENT_COLUMN.repeat(line.indentWidth)}${JOURNAL_BULLET_GLYPH}`];
+/** The rung of the read-mode type ramp a heading of ``level`` is drawn at. */
+export function headingStyle(level: number): TextStyle {
+  const rungs = [styles.heading1, styles.heading2, styles.heading3];
+  return rungs[Math.min(level, HEADING_RUNG_LEVELS) - 1]!;
 }
 
-/** Every line of every block in order, line feeds restored only between them. */
-function renderFlatLines(document: JournalMarkdownDocument): React.ReactNode[] {
-  return document.blocks
-    .flatMap((block) => block.lines.map((line) => ({ block, line })))
-    .flatMap(({ block, line }, index) => [
-      ...(index === 0 ? [] : ['\n']),
-      ...bulletDecoration(block, line),
-      ...markdownRuns(document, line.start, line.end).map(renderMarkdownRun),
-    ]);
+/**
+ * A heading's semantics: ``role="heading"`` with its ``aria-level`` on web
+ * (react-native-web renders the matching ``<h1>``-``<h6>``), the header role on
+ * native. ``aria-level`` is a react-native-web prop absent from RN's TextProps.
+ */
+export function headingProps(level: number): TextProps {
+  if (Platform.OS !== 'web') return { accessibilityRole: 'header' };
+  return { role: 'heading', 'aria-level': level } as TextProps;
+}
+
+/** The indent a list line draws, one column per measured indent column. */
+function indentOf(line: JournalMarkdownLine): string {
+  return JOURNAL_INDENT_COLUMN.repeat(line.indentWidth);
+}
+
+/** The ordered marker exactly as typed (``3.`` / ``3)``), padded to the digit column. */
+function ordinalText(document: JournalMarkdownDocument, line: JournalMarkdownLine): string {
+  // The separator after the delimiter may be a tab; a space is drawn instead.
+  const typed = document.chars.slice(line.indentEnd, line.contentStart - 1);
+  const pad = JOURNAL_ORDINAL_PAD.repeat(Math.max(0, ORDINAL_COLUMN_DIGITS + 1 - typed.length));
+  return `${pad}${typed.join('')} `;
+}
+
+/** A task line's glyph, plain in feeds and a checkbox on the finished page. */
+function taskDecoration(
+  document: JournalMarkdownDocument,
+  line: JournalMarkdownLine,
+  onTaskPress?: TaskPress,
+): React.ReactNode[] {
+  const checked = line.taskChecked === true;
+  const glyph = checked ? JOURNAL_TASK_GLYPHS.done : JOURNAL_TASK_GLYPHS.open;
+  const label = markdownRuns(document, line.contentStart, line.end)
+    .map((run) => run.text)
+    .join('')
+    .trim();
+  const press = onTaskPress == null ? undefined : onTaskPress;
+  return [
+    indentOf(line),
+    <TaskGlyph
+      key={`checkbox-${line.start}`}
+      style={[styles.marker, press == null ? null : styles.taskTarget]}
+      onPress={taskOnPress(press, line.start)}
+      onKeyDown={taskOnKeyDown(press, line.start)}
+      accessibilityRole={press == null ? undefined : 'checkbox'}
+      {...taskStateProps(press != null, checked)}
+      accessibilityLabel={press == null ? undefined : label || 'Task item'}
+      hitSlop={press == null || Platform.OS === 'web' ? undefined : TASK_HIT_SLOP}
+      testID={`journal-markdown-checkbox-${line.start}`}
+    >
+      {`${glyph} `}
+    </TaskGlyph>,
+  ];
+}
+
+/** What a list line draws in front of its text: indent plus glyph, checkbox or number. */
+export function lineDecoration(
+  document: JournalMarkdownDocument,
+  block: JournalMarkdownBlock,
+  line: JournalMarkdownLine,
+  onTaskPress?: TaskPress,
+): React.ReactNode[] {
+  if (block.kind === 'bullet') return [`${indentOf(line)}${JOURNAL_BULLET_GLYPH}`];
+  if (block.kind === 'task') return taskDecoration(document, line, onTaskPress);
+  if (block.kind === 'ordered') {
+    return [
+      indentOf(line),
+      <Text
+        key={`ordinal-${line.start}`}
+        style={styles.ordinal}
+        testID={`journal-markdown-ordinal-${line.start}`}
+      >
+        {ordinalText(document, line)}
+      </Text>,
+    ];
+  }
+  return [];
+}
+
+/**
+ * One line's decoration followed by its content. A checked task's text is
+ * dimmed, not struck: strikethrough is an inline style of its own.
+ */
+export function renderDecoratedLine(
+  document: JournalMarkdownDocument,
+  block: JournalMarkdownBlock,
+  line: JournalMarkdownLine,
+  content: React.ReactNode[],
+  onTaskPress?: TaskPress,
+): React.ReactNode[] {
+  const decoration = lineDecoration(document, block, line, onTaskPress);
+  if (line.kind !== 'task' || line.taskChecked !== true) return [...decoration, ...content];
+  return [
+    ...decoration,
+    <Text
+      key={`task-done-${line.start}`}
+      style={styles.taskDone}
+      testID={`journal-markdown-task-done-${line.start}`}
+    >
+      {content}
+    </Text>,
+  ];
+}
+
+/** One line of the flat rendering: a heading at its rung, any other line decorated. */
+function renderFlatLine(
+  document: JournalMarkdownDocument,
+  block: JournalMarkdownBlock,
+  line: JournalMarkdownLine,
+): React.ReactNode[] {
+  const content = markdownRuns(document, line.start, line.end).map(renderMarkdownRun);
+  if (line.headingLevel == null) return renderDecoratedLine(document, block, line, content);
+  return [
+    <Text
+      key={`heading-${line.start}`}
+      {...headingProps(line.headingLevel)}
+      style={headingStyle(line.headingLevel)}
+      testID={`journal-markdown-heading-${line.start}`}
+    >
+      {content}
+    </Text>,
+  ];
+}
+
+/** A run of non-rule lines, or the rule that separates two of them. */
+type FlatSegment =
+  { rule: number } | { lines: { block: JournalMarkdownBlock; line: JournalMarkdownLine }[] };
+
+/** Split the document at its rules, which cannot be drawn inside a ``<Text>``. */
+function flatSegments(document: JournalMarkdownDocument): FlatSegment[] {
+  const segments: FlatSegment[] = [];
+  for (const block of document.blocks) {
+    if (block.kind === 'rule') {
+      segments.push({ rule: block.start });
+      continue;
+    }
+    const last = segments.at(-1);
+    const lines = block.lines.map((line) => ({ block, line }));
+    if (last != null && 'lines' in last) last.lines.push(...lines);
+    else segments.push({ lines });
+  }
+  return segments;
+}
+
+/** Every line of a segment in order, line feeds restored only between them. */
+function renderFlatLines(
+  document: JournalMarkdownDocument,
+  lines: { block: JournalMarkdownBlock; line: JournalMarkdownLine }[],
+): React.ReactNode[] {
+  return lines.flatMap(({ block, line }, index) => [
+    ...(index === 0 ? [] : ['\n']),
+    ...renderFlatLine(document, block, line),
+  ]);
 }
 
 export interface ReadOnlyMarkdownTextProps {
@@ -113,10 +339,32 @@ function ReadOnlyMarkdownText({
   testID,
 }: ReadOnlyMarkdownTextProps): React.JSX.Element {
   const document = React.useMemo(() => parseJournalMarkdown(body), [body]);
+  const segments = flatSegments(document);
+  const [only] = segments;
+  if (segments.length === 1 && only != null && 'lines' in only) {
+    return (
+      <Text style={style} testID={testID}>
+        {renderFlatLines(document, only.lines)}
+      </Text>
+    );
+  }
   return (
-    <Text style={style} testID={testID}>
-      {renderFlatLines(document)}
-    </Text>
+    <View testID={testID}>
+      {segments.map((segment) =>
+        'rule' in segment ? (
+          <View
+            key={`rule-${segment.rule}`}
+            role="separator"
+            style={styles.rule}
+            testID={`journal-markdown-rule-${segment.rule}`}
+          />
+        ) : (
+          <Text key={`lines-${segment.lines[0]!.line.start}`} style={style}>
+            {renderFlatLines(document, segment.lines)}
+          </Text>
+        ),
+      )}
+    </View>
   );
 }
 
@@ -130,6 +378,37 @@ const styles = StyleSheet.create({
   underline: {
     textDecorationLine: 'underline',
   },
+  heading1: {
+    ...editorialType.title,
+  },
+  heading2: {
+    ...editorialType.heading,
+  },
+  heading3: {
+    fontSize: editorialType.body.fontSize,
+    lineHeight: editorialType.body.lineHeight,
+    fontWeight: '700',
+  },
+  /** A task's checkbox glyph: soft ink, like the writer's own marker would be. */
+  marker: {
+    color: colors.paper.inkSoft,
+  },
+  /** Padding plus cancelling margins expands the web DOM box without moving its ink. */
+  taskTarget: {
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    marginHorizontal: -14,
+    marginVertical: -12,
+  },
+  /** The writer's own number, soft ink, tabular so the column holds. */
+  ordinal: {
+    color: colors.paper.inkSoft,
+    fontVariant: ['tabular-nums'],
+  },
+  taskDone: {
+    color: colors.paper.inkSoft,
+  },
+  rule: JOURNAL_RULE_STYLE,
 });
 
 export default ReadOnlyMarkdownText;

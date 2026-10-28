@@ -41,8 +41,8 @@ const EMPTY_ZONE_MESSAGE =
 
 function unknownZoneMessage(zone: string): string {
   return (
-    `"${zone}" isn't a recognized time zone. ` +
-    `Use an IANA name like "${EXAMPLE_ZONE}", or tap "Use device time zone".`
+    `"${zone}" isn't a time zone Adepthood knows. ` +
+    `Use a name like "${EXAMPLE_ZONE}", or tap "Use device time zone".`
   );
 }
 

@@ -13,6 +13,29 @@ _FLAGS_URL = "/ui-flags"
 _FLAG_KEYS = ("has_seen_welcome", "energy_scaffolding_archived")
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize("stage", [0, 11, -1])
+async def test_course_reading_stage_is_bounded(async_client: AsyncClient, stage: int) -> None:
+    """Reject values that cannot name a Frequency before touching the row."""
+    headers = await _signup(async_client)
+    response = await async_client.patch(
+        _FLAGS_URL, headers=headers, json={"course_last_stage": stage}
+    )
+    assert response.status_code == HTTPStatus.UNPROCESSABLE_ENTITY
+
+
+@pytest.mark.asyncio
+async def test_course_reading_stage_can_be_set_and_cleared(async_client: AsyncClient) -> None:
+    """PATCH exposes the same nullable reading state GET returns."""
+    headers = await _signup(async_client)
+    for stage in [1, 10, None]:
+        response = await async_client.patch(
+            _FLAGS_URL, headers=headers, json={"course_last_stage": stage}
+        )
+        assert response.status_code == HTTPStatus.OK
+        assert response.json()["course_last_stage"] == stage
+
+
 async def _signup(client: AsyncClient, username: str = "uiflagsuser") -> dict[str, str]:
     """Create an account and return auth headers."""
     resp = await client.post(
@@ -214,6 +237,16 @@ _MISSING_HABIT_ID = 999_999
 # One past the int32 ceiling every row-id field is bounded by.
 _PAST_INT32_MAX = 2**31
 
+# The journal link's default tiers: 10 / 20 / 45 minutes a day.
+_TIMER_GOALS: dict[str, object] = {
+    "target_unit": "minutes",
+    "frequency": 1,
+    "frequency_unit": "per_day",
+    "low": 10,
+    "clear": 20,
+    "stretch": 45,
+}
+
 
 async def _create_habit(client: AsyncClient, headers: dict[str, str], name: str) -> int:
     """Create a habit the caller owns and return its id."""
@@ -225,6 +258,8 @@ async def _create_habit(client: AsyncClient, headers: dict[str, str], name: str)
             "start_date": "2024-01-01",
             "energy_cost": 1,
             "energy_return": 2,
+            # Only a habit on timer units may be linked (#3150).
+            "goals": _TIMER_GOALS,
         },
         headers=headers,
     )

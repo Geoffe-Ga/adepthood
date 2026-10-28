@@ -33,6 +33,7 @@ import {
 import type { SeamInfo, TranscriptionBlock, TranscriptionRunState } from './transcriptionRun';
 
 import { TranscriptionError, journal } from '@/api';
+import type { JournalClassification } from '@/api';
 
 /** A stable empty set so the initial redo-confirm state never re-triggers renders. */
 const NO_REDO_CONFIRM: ReadonlySet<string> = new Set();
@@ -115,6 +116,9 @@ export interface UseTranscriptionRunArgs {
   pages: CapturePage[];
   /** True once the writer has tapped Transcribe — the run is inert until then. */
   started: boolean;
+  /** The tier of the entry the pages belong to, declared on every read so the
+   *  server can refuse one it may not read (#3059 AC15). Read at call time. */
+  classification: JournalClassification;
   /** Re-pick just this page and substitute it in place (a fresh-id CapturePage). */
   onRetake: (_id: string) => void;
   /** Drop this page from the session entirely, releasing its image. */
@@ -173,6 +177,13 @@ function useRedoConfirm(dispatch: Dispatch<Parameters<typeof transcriptionRunRed
   return { retryBlock, confirmRedo, isConfirmingRedo };
 }
 
+/** What a read needs from the run's latest props: the tier it declares (#3059
+ *  AC15) and the per-page file release fired once it is read. */
+interface PageReadContext {
+  classification: JournalClassification;
+  onPageTranscribed: ((_id: string) => void) | undefined;
+}
+
 /**
  * Read one page into the run: reject an oversize page on device without spending a
  * call (or the wallet), otherwise transcribe it, record the result, and release its
@@ -182,7 +193,7 @@ async function transcribePageInto(
   page: CapturePage,
   attempt: number,
   dispatch: Dispatch<Parameters<typeof transcriptionRunReducer>[1]>,
-  onTranscribed: ((_id: string) => void) | undefined,
+  { classification, onPageTranscribed }: PageReadContext,
 ): Promise<void> {
   if (page.byteLength >= MAX_TRANSCRIBE_IMAGE_BYTES) {
     dispatch({ type: 'reject', id: page.id, attempt, error: 'image_too_large' });
@@ -192,9 +203,10 @@ async function transcribePageInto(
     const { text } = await journal.transcribePage({
       imageBase64: page.imageBase64,
       mediaType: page.mediaType,
+      classification,
     });
     dispatch({ type: 'resolve', id: page.id, attempt, text });
-    onTranscribed?.(page.id);
+    onPageTranscribed?.(page.id);
   } catch (err: unknown) {
     dispatch({ type: 'reject', id: page.id, attempt, error: asTranscriptionError(err).kind });
   }
@@ -229,6 +241,7 @@ function useRunLoop(
 export function useTranscriptionRun({
   pages,
   started,
+  classification,
   onRetake,
   onRemove,
   onPageTranscribed,
@@ -240,15 +253,16 @@ export function useTranscriptionRun({
   // session's page count times the retries the writer asks for by hand, and every
   // entry is one charge that must never be repeated. It dies with the screen.
   const launchedRef = useRef<Set<string>>(new Set());
-  // Read the latest cleanup callback from a ref so `transcribeOne` stays stable
-  // (its identity gates the run loop) regardless of the caller's memoization.
-  const onTranscribedRef = useRef(onPageTranscribed);
-  onTranscribedRef.current = onPageTranscribed;
+  // Read the latest cleanup callback and tier from a ref so `transcribeOne` stays
+  // stable (its identity gates the run loop) regardless of the caller's
+  // memoization; a read declares the tier current when it launches.
+  const latestRef = useRef<PageReadContext>({ classification, onPageTranscribed });
+  latestRef.current = { classification, onPageTranscribed };
 
   const transcribeOne = useCallback(async (id: string, attempt: number): Promise<void> => {
     const page = pagesRef.current.find((candidate) => candidate.id === id);
     if (!page) return; // The page left the session mid-flight; its reply is inert.
-    await transcribePageInto(page, attempt, dispatch, onTranscribedRef.current);
+    await transcribePageInto(page, attempt, dispatch, latestRef.current);
   }, []);
 
   const pageIdsKey = pages.map((page) => page.id).join('|');

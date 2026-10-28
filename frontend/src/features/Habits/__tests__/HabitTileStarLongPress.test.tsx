@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, jest } from '@jest/globals';
 import { act, fireEvent, render } from '@testing-library/react-native';
 import React from 'react';
+import { StyleSheet } from 'react-native';
 
 import type { Goal, Habit } from '../Habits.types';
 import { HabitTile } from '../HabitTile';
@@ -160,6 +161,27 @@ describe('HabitTile star long-press fill', () => {
 
     expect(props.onLogUnit).not.toHaveBeenCalled();
     expect(fillWidth(getByTestId as never)).toBe(100);
+  });
+
+  it('moves the stretch star to halfway when today is twice the stretch target', () => {
+    const habit = makeHabit({
+      completions: [{ id: 't-1', timestamp: new Date(), completed_units: 6 }],
+    });
+    const { getByTestId } = renderTile(habit);
+
+    expect(StyleSheet.flatten(getByTestId(MARKER_STRETCH).props.style).left).toBe('50%');
+    expect(fillWidth(getByTestId as never)).toBe(100);
+  });
+
+  it('names a negative-delta hold as walking back to the tier', () => {
+    const habit = makeHabit({
+      completions: [{ id: 't-1', timestamp: new Date(), completed_units: 6 }],
+    });
+    const { getByTestId } = renderTile(habit);
+
+    expect(getByTestId(MARKER_LOW).props.accessibilityHint).toBe(
+      'Hold to walk back to your Low Grit target.',
+    );
   });
 
   it('shows the tooltip on a quick tap without arming a fill', () => {

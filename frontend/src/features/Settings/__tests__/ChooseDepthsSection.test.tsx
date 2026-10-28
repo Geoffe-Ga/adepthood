@@ -1,4 +1,6 @@
 /* eslint-env jest */
+import { readFileSync } from 'node:fs';
+
 import { describe, it, expect, beforeEach, jest } from '@jest/globals';
 import { fireEvent, render, within } from '@testing-library/react-native';
 import React from 'react';
@@ -74,6 +76,7 @@ jest.mock('@/config', () => ({
 import ChooseDepthsSection from '../ChooseDepthsSection';
 
 import { touchTarget } from '@/design/tokens';
+import { backendPath } from '@/testing/backendSource';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -114,11 +117,13 @@ describe('ChooseDepthsSection — section-level copy', () => {
     expect(getByText('Choose your depths')).toBeTruthy();
   });
 
-  it('renders the rings framing caption verbatim', () => {
+  // The Course is optional but not ungated: its chapters drip out across each
+  // stage, and the owner asked that the depths copy say so (#3057 C18, B20).
+  it('renders the rings framing caption verbatim, naming the Course schedule', () => {
     const { getByText } = render(<ChooseDepthsSection />);
     expect(
       getByText(
-        'Turn any depth on or off whenever it fits your life. Turning one off is a choice, not a loss.',
+        'Turn any depth on or off whenever it fits your life. Turning one off is a choice, not a loss. Some readings follow a schedule.',
       ),
     ).toBeTruthy();
   });
@@ -178,6 +183,34 @@ describe('ChooseDepthsSection — ring row labels', () => {
   it('renders the label "Sangha"', () => {
     const { getByText } = render(<ChooseDepthsSection />);
     expect(getByText('Sangha')).toBeTruthy();
+  });
+});
+
+describe('ChooseDepthsSection — honest gain under every depth', () => {
+  const gains = {
+    habits: 'Build one habit from one minute a day across three weeks.',
+    practices: 'Grow a practice from one minute to 45 minutes across the arc.',
+    course: 'Explore ten capacities through readings paced by the calendar.',
+    sangha: 'Find company that helps you feel less alone in the room you are actually in.',
+  } as const;
+
+  for (const [depth, gain] of Object.entries(gains)) {
+    it(`${depth} renders its gain and gives the switch the same accessible hint`, () => {
+      const { getByTestId, getByText } = render(<ChooseDepthsSection />);
+
+      expect(getByText(gain)).toBeTruthy();
+      expect(getByTestId(`depth-gain-${depth}`).props.children).toBe(gain);
+      expect(getByTestId(`depth-toggle-${depth}`).props.accessibilityHint).toBe(gain);
+    });
+  }
+
+  it('keeps the practice duration grounded in the canonical course description', () => {
+    const about = readFileSync(
+      backendPath('content', 'markdown', 'resources', '02-about.md'),
+      'utf8',
+    );
+    expect(about).toMatch(/a practice that starts\s+at one minute and climbs to forty-five/iu);
+    expect(gains.practices).toBe('Grow a practice from one minute to 45 minutes across the arc.');
   });
 });
 

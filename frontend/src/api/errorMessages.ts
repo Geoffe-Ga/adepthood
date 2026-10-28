@@ -24,8 +24,9 @@ import { ApiError, ApiTimeoutError, ApiValidationError } from './index';
 const PULL_TO_REFRESH = 'Pull down to refresh and try again.';
 const CHECK_CONNECTION = 'Check your connection and try again.';
 const PROVIDER_TROUBLE =
-  "BotMason's AI provider is having trouble connecting. Give it a moment and tap retry.";
-const SESSION_EXPIRED = 'Your session has expired. Sign back in to continue.';
+  "BotMason can't reach the AI service it runs on right now. Give it a moment and tap retry.";
+const SESSION_EXPIRED =
+  "You've been signed out for now. Sign back in to pick up where you left off.";
 const NO_ACCESS = "You don't have access to this.";
 // The backend caps at 64 characters so bcrypt's 72-byte limit can never
 // silently truncate. Naming the ceiling turns "try again" into a fix. // pragma: allowlist secret
@@ -34,18 +35,55 @@ const PASSWORD_TOO_LONG =
 // Shared by the signup form's ``license_required`` and the social exchanges'
 // ``needs_license`` so the two roads to "we need your key" read identically.
 const ADD_LICENSE_KEY = 'Add the license key from your Gumroad receipt to continue.';
+// One wallet (#623). Since ADR 0009 phase (a) (#3067) it pays only for a
+// reading or letter the writer's vault answers; page reading needs the
+// writer's own key. Shared by the ``payment_required`` code and the bare 402
+// fallback so a spent month reads the same whichever road reported it.
+/**
+ * The two payer refusals (#3096). Every AI feature -- a reading, a letter,
+ * completion checks, a page read -- is refused before anything is spent unless a
+ * key of the writer's own or BotMason credits can pay for it. Each line names the
+ * way forward and says nothing was charged. Exported so the transcription
+ * surface, which keeps its own closed taxonomy, renders the same words.
+ *
+ * Since ADR 0009 phase (a) (#3067) credits pay only when the writer's vault
+ * answers a reading or letter; page reading goes to the app's provider and
+ * needs the writer's own key. Owner-approved wording
+ * (#3262); it makes no privacy promise (B24, #3076 gates those).
+ */
+export const INSUFFICIENT_OFFERINGS_COPY =
+  "You're out of BotMason credits, so nothing was charged. Credits pay for readings and letters your vault answers; page reading needs your own OpenAI or Anthropic API key, which you can add in Settings.";
+// Owner-approved wording (ADR 0009 phase (a), #3067; #3262): says plainly that
+// credits no longer pay for cloud AI. No privacy promise; B24 (#3076) gates those.
+export const LLM_KEY_REQUIRED_COPY =
+  "BotMason's cloud AI needs an API key of your own — credits don't pay for it — so nothing was charged. Add your OpenAI or Anthropic key in Settings to continue.";
+// Owner-approved wording (#1938, B21 E1; #3262): a revoked entitlement -- a
+// refund, a dispute, a membership that ended, or an operator's revocation -- restricts
+// AI features only. Plain and non-pressuring under "you choose your depth": it
+// says what stopped and what did not, and offers no price, purchase or refill,
+// since credits are not what is missing.
+export const AI_ACCESS_REVOKED_COPY =
+  "BotMason can't do this on the app's allowance any more, because this account's APTITUDE membership is no longer active. Nothing was charged. Your journal, the course, your habits and your practice are all still here, and you can export or delete your data whenever you like.";
+// Owner-approved wording (#3501, 2026-10-24; #3262): a managed vault with no
+// shared pool writes only with the writer's own key. Refused before any charge
+// and permanent until a key is added, so it names the remedy and never asks the
+// writer to wait.
+export const VAULT_KEY_REQUIRED_COPY =
+  'Your vault writes reflections and letters only with your own API key for now, so nothing was charged. Add your OpenAI or Anthropic key in Settings to continue.';
+
+const MONTHLY_FREE_MESSAGES_USED =
+  "You've used up this month's free BotMason messages. Add your own API key in Settings, or wait for next month's fresh batch.";
 
 /**
- * A spent provider balance, told twice — because the person who can fix it is
- * not the same person. Neither line offers a retry: waiting refills nothing, so
- * "give it a moment and try again" is a promise this condition cannot keep. Both
- * are exported so the transcription surface, which keeps its own closed error
- * taxonomy, renders this story from the same words rather than a second copy.
+ * A spent provider balance on the writer's own key. It offers no retry: waiting
+ * refills nothing, so "give it a moment and try again" is a promise this
+ * condition cannot keep. Exported so the transcription surface, which keeps its
+ * own closed error taxonomy, renders this story from the same words rather than
+ * a second copy. The server's own key never pays for anyone's writing (ADR 0009
+ * phase (a), #3067), so the shared-balance sibling this once had is retired.
  */
 export const CREDIT_EXHAUSTED_COPY =
-  'The account behind your API key has run out of credit, so BotMason cannot run. Add credit with your provider, or paste a different key in Settings.';
-export const SERVICE_CREDIT_EXHAUSTED_COPY =
-  "BotMason's shared AI access has run out of credit. Restoring it is ours to do and we have been alerted. Add your own API key in Settings if you would rather not wait.";
+  "The account behind your API key has run out of credit, so BotMason can't run. Top it up with whoever issued the key (OpenAI or Anthropic), or paste a different key in Settings.";
 
 /**
  * The generation guardrails' refusals (#623). Decision record §1 ratifies
@@ -60,7 +98,7 @@ export const SERVICE_CREDIT_EXHAUSTED_COPY =
 export const GENERATION_IN_PROGRESS_COPY =
   'BotMason is already writing for you, and nothing was charged for this request. Ask again once that finishes.';
 export const DAILY_GENERATION_LIMIT_COPY =
-  "You've reached today's limit for new readings and letters, and nothing was charged for this request. It resets at midnight UTC.";
+  "You've hit today's limit for new readings and letters, and nothing was charged. A fresh day's worth opens at midnight UTC — that's evening in the Americas.";
 
 /**
  * Map of backend ``detail`` strings (see ``backend/src/errors.py`` and each
@@ -116,7 +154,13 @@ export const USER_FACING_ERROR_MESSAGES: Readonly<Record<string, string>> = Obje
   invalid_oauth_token: 'That sign-in could not be verified. Try again in a moment.',
 
   // --- Admin -----------------------------------------------------------
-  admin_required: 'Admin privileges are required for this action.',
+  admin_required: 'Only admins can do this.',
+
+  // --- Timer-fed habits (#3150, #3154) ----------------------------------
+  linked_habit_unit_not_allowed:
+    'A timer logs this habit, so it counts in minutes or sessions only. Choose one of those.',
+  linked_habit_frequency_unit_not_allowed:
+    'A timer logs this habit, so its goal counts per day or per week only. Choose one of those.',
 
   // --- Resource not found ----------------------------------------------
   stage_not_found: `We couldn't find that stage. ${PULL_TO_REFRESH}`,
@@ -147,15 +191,15 @@ export const USER_FACING_ERROR_MESSAGES: Readonly<Record<string, string>> = Obje
 
   // --- State / validation ----------------------------------------------
   cannot_go_backwards:
-    "You can't move to an earlier stage — APTITUDE is designed to progress forward only.",
-  already_responded: "You've already answered this week's prompt. A new one unlocks each week.",
+    "The course walks the stages in order, so you can't set yourself back to an earlier one here. Nothing from that stage is lost — its capacity stays yours.",
+  already_responded: "You've already answered this week's prompt. A new one arrives each week.",
   practice_not_approved:
     "This practice is still pending review, so it isn't available to select yet.",
   // ``stage_locked`` (403) is raised across the app whenever a user reaches
   // for stage-gated content, history, or session logging before that stage
-  // unlocks. The copy stays stage-generic so it reads right everywhere.
+  // opens. The copy stays stage-generic so it reads right everywhere.
   stage_locked:
-    "You haven't unlocked this stage yet. It opens as you move through the program — everything here will be waiting when you arrive.",
+    "This stage hasn't opened yet. The course opens them one at a time, and everything here will still be here when it does.",
   stage_number_mismatch:
     'This practice belongs to a different stage. Make a copy for your stage to use it there.',
   active_practice_exists_for_stage:
@@ -163,16 +207,29 @@ export const USER_FACING_ERROR_MESSAGES: Readonly<Record<string, string>> = Obje
   tag_slug_taken: 'You already have a tag by that name. Pick a different one.',
   habits_must_not_be_empty:
     'Add at least one habit before generating an energy plan. You can add habits from the Habits tab.',
+  // These codes also answer Intimate PATCHes, which keep the page editable.
+  // Only the deletion surface can add its recorded-delete/edit-lock context.
+  // Every shared message keeps remote removal explicitly unconfirmed.
   vault_withdrawal_pending:
-    'Creek has not confirmed removal yet. Bring your vault online, then delete this page again.',
+    'Removal of a copy from your Creek vault has not been confirmed. Adepthood retries while that vault is reachable.',
+  vault_withdrawal_previous_vault:
+    'Removal has not been confirmed by your previous Creek vault. Reconnect that vault in Settings to allow retry.',
+  vault_withdrawal_disconnected_vault:
+    'Removal has not been confirmed by the Creek vault you disconnected. Reconnect that vault in Settings to allow retry.',
+  // A copy made before Adepthood recorded which vault received it (#3095). No
+  // vault can confirm it, so this never promises the deletion finishes on its own.
+  vault_withdrawal_unrecorded_vault:
+    'Adepthood cannot identify the vault that received this older copy, so removal cannot be confirmed. It may remain in a vault you connected earlier.',
+  journal_entry_deletion_pending:
+    "This page is set to be deleted, so it can't be edited. Deletion finishes once your Creek vault confirms its copy is gone.",
 
   // --- Wallet / BotMason quota -----------------------------------------
-  payment_required:
-    "You've reached this month's free allotment. Add your own API key in Settings, or wait until the next monthly reset.",
-  // One wallet pays for chat, resonance readings and a note's first letter
-  // (#623), so the copy names the shared allowance rather than any one of them.
-  insufficient_offerings:
-    "You've used this month's free BotMason messages, which chat, readings and letters share, and have no offerings left. Add your own API key in Settings, or wait until your next monthly reset.",
+  payment_required: MONTHLY_FREE_MESSAGES_USED,
+  // The wallet is one pool, so the copy names what shares it rather than any
+  // one of them.
+  insufficient_offerings: INSUFFICIENT_OFFERINGS_COPY,
+  // A revoked entitlement (403): AI features only, never the journal (#1938).
+  ai_access_revoked: AI_ACCESS_REVOKED_COPY,
   // Only an older build that still asks for a letter the moment a note opens
   // can meet this: the server will not charge for a letter whose price the
   // writer was never shown. Nothing was spent.
@@ -183,15 +240,15 @@ export const USER_FACING_ERROR_MESSAGES: Readonly<Record<string, string>> = Obje
   // The concurrency guard fails closed when its lease table is unreachable.
   generation_guard_unavailable:
     "BotMason couldn't start this just now, and nothing was charged. Give it a moment and try again.",
-  llm_key_required:
-    'BotMason needs a key to reply. Add your API key in Settings to start chatting.',
+  llm_key_required: LLM_KEY_REQUIRED_COPY,
+  // A managed vault with no shared pool writes only with the writer's own key (#3501).
+  vault_key_required: VAULT_KEY_REQUIRED_COPY,
   invalid_llm_api_key_format:
     "That API key doesn't look right. Copy the full key from your OpenAI or Anthropic dashboard and paste it into Settings.",
   // A permanent, billing-level refusal — deliberately NOT inheriting the bare
-  // 402 fallback below, which tells the monthly free-allotment story and points
+  // 402 fallback below, which tells the monthly free-messages story and points
   // the reader at the very key that just came back empty.
   llm_credit_exhausted: CREDIT_EXHAUSTED_COPY,
-  llm_service_credit_exhausted: SERVICE_CREDIT_EXHAUSTED_COPY,
 
   // --- Streaming / rate limits / network -------------------------------
   // Deliberately surface-neutral and number-free. The backend emits this one
@@ -201,8 +258,15 @@ export const USER_FACING_ERROR_MESSAGES: Readonly<Record<string, string>> = Obje
   // wrong everywhere else. The previous copy named BotMason *and* said
   // "10 messages per minute", which was wrong even for BotMason. A surface that
   // wants its own real limit can override this locally.
-  rate_limit_exceeded: "That's a lot of requests in a short time. Give it a moment and try again.",
+  rate_limit_exceeded: "That's a lot all at once. Give it a moment and try again.",
   llm_provider_error: PROVIDER_TROUBLE,
+  // A vault-bound pass whose one permitted source could not answer (#3061). The
+  // server refunds the pass and asks no other model, so the copy says only what
+  // the client can stand behind: nothing was produced, nothing was charged, the
+  // entry is intact, and waiting may help. It deliberately names no source and
+  // makes no claim about where writing is or is not processed.
+  reflection_source_unavailable:
+    "The reflection couldn't be prepared just now, and nothing was charged. Your entry is saved, so give it a moment and try again.",
   malformed_stream_frame: PROVIDER_TROUBLE,
   incomplete_stream:
     'The connection dropped before BotMason finished its reply. Tap retry to send the same message again.',
@@ -210,7 +274,7 @@ export const USER_FACING_ERROR_MESSAGES: Readonly<Record<string, string>> = Obje
 
   // --- Database / infra ------------------------------------------------
   'Database unavailable':
-    "We can't reach the database right now. Give it a moment, then pull down to refresh.",
+    "We can't reach your saved data right now. Give it a moment, then pull down to refresh.",
 });
 
 /**
@@ -231,7 +295,7 @@ export const FIELD_VALIDATION_MESSAGE =
 const STATUS_FALLBACKS: Readonly<Record<number, string>> = Object.freeze({
   400: "That didn't go through. Double-check what you entered and try again.",
   401: SESSION_EXPIRED,
-  402: "You've reached this month's free allotment. Add your own API key in Settings, or wait until the next monthly reset.",
+  402: MONTHLY_FREE_MESSAGES_USED,
   403: NO_ACCESS,
   404: `We couldn't find what you were looking for. ${PULL_TO_REFRESH}`,
   409: 'That conflicts with something we already have. Refresh and try again.',
@@ -239,7 +303,7 @@ const STATUS_FALLBACKS: Readonly<Record<number, string>> = Object.freeze({
   429: "You're going a bit fast for us. Slow down and try again in a moment.",
   500: 'Something went wrong on our end. Give it a moment and try again — if it keeps happening, let us know.',
   502: PROVIDER_TROUBLE,
-  503: 'The service is temporarily unavailable. Give it a moment, then try again.',
+  503: "We're down for a moment. Give it a minute, then try again.",
   504: 'The server took too long to respond. Check your connection, then try again.',
 });
 
@@ -349,7 +413,7 @@ export const TIMEOUT_MESSAGE =
  */
 export const UNREACHABLE_MESSAGE = `We couldn't reach the server. ${CHECK_CONNECTION}`;
 export const VALIDATION_MESSAGE =
-  "Something changed on the server and we couldn't read the response. Update the app if an update is available, or try again shortly.";
+  "The app and our side aren't speaking the same language right now. Update the app if there's an update waiting, or try again shortly.";
 
 function isTimeout(err: unknown): boolean {
   // Guard against the class reference being undefined in test contexts that

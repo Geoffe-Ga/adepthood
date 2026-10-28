@@ -11,23 +11,29 @@ import { useHabitActions } from './useHabitActions';
 import { registerForPushNotificationsAsync, reconcileNotifications } from './useHabitNotifications';
 import { useHabitUI } from './useHabitUI';
 
-export const useBootstrapHabits = (userTimezone: string): void => {
-  // Runs twice on cold start (UTC default, then the auth-hydrated zone).
-  // The second fetch is intentional, not a bug: day buckets and queued
-  // check-in replay days both depend on the zone (#269).
+export const useBootstrapHabits = (
+  userTimezone: string,
+  userTimezoneReady = true,
+  recoverUserTimezone?: () => Promise<void>,
+): void => {
+  // Cached habits remain readable before auth hydrates the account calendar,
+  // but a provisional fallback must not assign durable replay days (#269).
+  const reload = useCallback(() => {
+    if (userTimezoneReady) void habitManager.loadHabits(userTimezone);
+    else {
+      void recoverUserTimezone?.();
+      void habitManager.loadHabits(userTimezone, { replayCheckIns: false });
+    }
+  }, [userTimezone, userTimezoneReady, recoverUserTimezone]);
   useEffect(() => {
-    void habitManager.loadHabits(userTimezone);
-  }, [userTimezone]);
+    reload();
+  }, [reload]);
   // The tab stays mounted once visited, so the effect above is the only read
   // the screen would ever do: a check-in accepted from the journal, or a day
   // that turned over elsewhere, stayed invisible until a restart (#2764).
   // Returning to the tab is one way back in; foregrounding the app on the tab
   // the user never left is the other, and only the first was covered (#2847).
-  useRefetchOnReturn(
-    useCallback(() => {
-      void habitManager.loadHabits(userTimezone);
-    }, [userTimezone]),
-  );
+  useRefetchOnReturn(reload);
   useEffect(() => {
     // Abort on unmount so in-flight notification work cannot mutate stale state.
     const controller = new AbortController();
@@ -52,9 +58,9 @@ export const useHabits = (): UseHabitsReturn => {
   const error = useHabitStore((s) => s.error);
   const storeSetHabits = useHabitStore((s) => s.setHabits);
   const { showToast } = useToast();
-  const { userTimezone, token } = useAuth();
+  const { userTimezone, userTimezoneReady, recoverUserTimezone, token } = useAuth();
   const ui = useHabitUI(token);
-  useBootstrapHabits(userTimezone);
+  useBootstrapHabits(userTimezone, userTimezoneReady, recoverUserTimezone);
   const actions = useHabitActions(ui, showToast, userTimezone);
 
   return {

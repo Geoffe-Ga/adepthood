@@ -41,6 +41,37 @@ allocation. Every other case returns the same
 The UI derives availability from the GET response and continues to expose the
 bring-your-own-vault form.
 
+## A writer's own key and a managed vault (#3437)
+
+Since ADR 0009's 2026-10-16 amendment and Creek-Vault ADR 0015, a managed
+vault writes with the writer's own Anthropic or OpenAI key when they have one.
+What happens, per request:
+
+- **The key.** The device sends its stored key to adepthood in `X-LLM-API-Key`,
+  as for every relayed BYOK feature. When the account is vault-bound and the
+  vault's handshake lists the key's vendor in `request_key_providers`,
+  adepthood relays it to the vault in `X-Creek-Provider` /
+  `X-Creek-Provider-Key`, on the vault's model routes only: reflections,
+  letters, and the classification pass after a journal save or document import.
+  Neither adepthood nor Creek stores, logs or echoes it; a vendor error raised
+  under it is reduced to its status.
+- **The text.** The vault grounds the entry in the writer's corpus and voice and
+  sends the prompt to the writer's vendor, under the writer's own account. The
+  vault reads that writing in plaintext while the request runs (Creek-Vault ADR
+  0014). Intimate entries are not sent: adepthood refuses them before any dial,
+  and the vault forces any intimate work onto its local model or refuses it.
+- **The price.** Such a reading or letter takes no BotMason credit. Before it
+  runs, the price line says "Your vault will write this reading with your own
+  Anthropic key. Your key pays for it, not your BotMason messages." After, the
+  receipt's payment route says "Paid by your own Anthropic key, through your
+  vault" (or OpenAI).
+- **Without a key**, nothing changes: the vault's local model, or the existing
+  fail-closed `reflection_source_unavailable`.
+
+To confirm a pilot vault takes writer keys, read its handshake: a managed
+vault on Creek contract 0.18 or later answers `GET /v1/capabilities` with
+`"request_key_providers": ["anthropic", "openai"]`.
+
 ## Enabling a bounded cohort
 
 1. Verify Creek's provider-side fleet cap, billing alert, reconciliation worker,

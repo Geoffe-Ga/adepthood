@@ -8,6 +8,7 @@ import { ChevronDown, ChevronRight } from 'lucide-react-native';
 import React from 'react';
 import { StyleSheet } from 'react-native';
 
+import { AGENTS_HEADING } from '../agentsCopy';
 import {
   HIGHER_SELF_GAIN,
   VAULT_ADDRESS_EXTRA_PARTS,
@@ -102,7 +103,14 @@ jest.mock('@/api', () => {
   const actual = jest.requireActual('@/api');
   return {
     ...actual,
-    vault: { connection: jest.fn(), connect: jest.fn(), disconnect: jest.fn() },
+    vault: {
+      connection: jest.fn(),
+      connect: jest.fn(),
+      disconnect: jest.fn(),
+      agents: jest.fn(() => Promise.resolve([])),
+      agentActivity: jest.fn(() => Promise.resolve({ status: 'ok', rows: [] })),
+      revokeAgent: jest.fn(),
+    },
     vaultActivation: { status: jest.fn() },
   };
 });
@@ -120,12 +128,20 @@ const TYPED_KEY = 'typed-vault-key-never-rendered'; // pragma: allowlist secret
 const HTTP_UNPROCESSABLE = 422;
 const HTTP_SERVER_ERROR = 500;
 
-const NOT_CONNECTED: VaultConnection = { connected: false, vault_url: null };
-const CONNECTED: VaultConnection = { connected: true, vault_url: VAULT_URL };
-const REPLACED: VaultConnection = { connected: true, vault_url: REPLACEMENT_VAULT_URL };
+const NOT_CONNECTED: VaultConnection = { connected: false, vault_url: null, mcp_address: null };
+const CONNECTED: VaultConnection = { connected: true, vault_url: VAULT_URL, mcp_address: null };
+const REPLACED: VaultConnection = {
+  connected: true,
+  vault_url: REPLACEMENT_VAULT_URL,
+  mcp_address: null,
+};
 // The server cannot produce this pair, but the type can, and a screen that
 // read it as "nothing connected" would be inventing an answer nobody gave.
-const CONNECTED_WITHOUT_ADDRESS: VaultConnection = { connected: true, vault_url: null };
+const CONNECTED_WITHOUT_ADDRESS: VaultConnection = {
+  connected: true,
+  vault_url: null,
+  mcp_address: null,
+};
 const AVAILABLE_ACTIVATION: VaultActivation = {
   active: false,
   state: 'inactive',
@@ -143,8 +159,9 @@ const AVAILABLE_ACTIVATION: VaultActivation = {
  * in, in reading order. Rendered on every path, folded or not.
  */
 const COPY_BLOCKS: [string, string][] = [
-  ['vault-what-it-is', VAULT_WHAT_IT_IS],
   ['vault-higher-self-gain', HIGHER_SELF_GAIN],
+  ['vault-promise', VAULT_PROMISE],
+  ['vault-what-it-is', VAULT_WHAT_IT_IS],
   ['vault-floor', VAULT_FLOOR],
   ['vault-intimate', VAULT_INTIMATE],
 ];
@@ -381,10 +398,10 @@ describe('VaultSettingsScreen — rendering', () => {
     expectNavigationOwnsTitle(view, VAULT_TITLE);
   });
 
-  test('renders the promise inside the header block', async () => {
+  test('renders the promise directly after the leading gain', async () => {
     const { getByTestId } = await renderVault();
 
-    expect(within(getByTestId('vault-header')).getByText(VAULT_PROMISE)).toBeTruthy();
+    expect(within(getByTestId('vault-promise')).getByText(VAULT_PROMISE)).toBeTruthy();
   });
 
   for (const [testID, copy] of COPY_BLOCKS) {
@@ -447,7 +464,9 @@ describe('VaultSettingsScreen — managed private vault', () => {
 
     const view = await renderWithFormOpen(NOT_CONNECTED);
 
-    expect(view.getByText('Managed vault availability could not be checked')).toBeTruthy();
+    expect(
+      view.getByText('Adepthood could not check whether a managed vault is on offer'),
+    ).toBeTruthy();
     expect(view.getByTestId('vault-address-input')).toBeTruthy();
   });
 });
@@ -531,7 +550,7 @@ describe('VaultSettingsScreen — reading the connection', () => {
     const { getByTestId } = await renderUnreachable();
 
     expect(within(getByTestId('vault-error')).getByText(VAULT_LOAD_FAILED)).toBeTruthy();
-    expect(within(getByTestId('vault-header')).getByText(VAULT_PROMISE)).toBeTruthy();
+    expect(within(getByTestId('vault-promise')).getByText(VAULT_PROMISE)).toBeTruthy();
     for (const [testID, copy] of COPY_BLOCKS) {
       expect(within(getByTestId(testID)).getByText(copy)).toBeTruthy();
     }
@@ -913,14 +932,15 @@ describe('VaultSettingsScreen — the key is write-only', () => {
 // What saying yes gives, beside the floor (#3003)
 // ---------------------------------------------------------------------------
 
-describe('VaultSettingsScreen — the gain sits directly above the floor', () => {
-  test('renders the promise deck in reading order, the floor right beneath the gain', async () => {
+describe('VaultSettingsScreen — the gain leads the promise deck', () => {
+  test('renders the gain before every vault explanation and leaves the floor at the end', async () => {
     const view = await renderVault(NOT_CONNECTED);
     const order = testIDsInOrder(view);
     const deck = COPY_BLOCKS.map(([testID]) => order.indexOf(testID));
 
     expect(deck.every((index) => index >= 0)).toBe(true);
-    expect(order.indexOf('vault-floor')).toBe(order.indexOf('vault-higher-self-gain') + 1);
+    expect(order.indexOf('vault-higher-self-gain')).toBeLessThan(order.indexOf('vault-promise'));
+    expect(order.indexOf('vault-floor')).toBeGreaterThan(order.indexOf('vault-what-it-is'));
     expect(deck).toEqual([...deck].sort((a, b) => a - b));
   });
 
@@ -935,7 +955,7 @@ describe('VaultSettingsScreen — the gain sits directly above the floor', () =>
 
     expect(
       within(view.getByTestId('managed-vault-offer')).getByText(
-        /Fly and privileged Adepthood or Creek operators can access its stored bytes; Intimate writing stays local\./u,
+        /Fly and the people who run Adepthood and Creek can read what is stored there; anything you mark Intimate never goes there\./u,
       ),
     ).toBeTruthy();
   });
@@ -1190,5 +1210,43 @@ describe('VaultSettingsScreen — the fold is remembered for this visit only', (
     const second = await renderVault(NOT_CONNECTED);
 
     expect(foldExpanded(second)).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Agents that may read your vault (#3534)
+// ---------------------------------------------------------------------------
+
+describe('VaultSettingsScreen — agents that may read your vault', () => {
+  const mockAgents = vault.agents as jest.MockedFunction<typeof vault.agents>;
+  const AGENT_ADDRESS = `${VAULT_URL}/mcp`;
+
+  test('shows the section, with the address to give an agent, under a vault you run', async () => {
+    const { getByTestId } = await renderVault({ ...CONNECTED, mcp_address: AGENT_ADDRESS });
+
+    const section = within(getByTestId('vault-agents-section'));
+    expect(section.getByText(AGENTS_HEADING)).toBeTruthy();
+    expect(section.getByText(AGENT_ADDRESS)).toBeTruthy();
+  });
+
+  test('takes the address from the one connection read, and asks for the list once', async () => {
+    await renderVault({ ...CONNECTED, mcp_address: AGENT_ADDRESS });
+
+    expect(mockConnection).toHaveBeenCalledTimes(1);
+    expect(mockAgents).toHaveBeenCalledTimes(1);
+  });
+
+  test('leaves the section out for an account with no vault and no agents', async () => {
+    const { queryByTestId } = await renderVault(NOT_CONNECTED);
+
+    expect(queryByTestId('vault-agents-section')).toBeNull();
+  });
+
+  test('renders the section after the connection, so the deck still leads', async () => {
+    const { toJSON } = await renderVault({ ...CONNECTED, mcp_address: AGENT_ADDRESS });
+    const tree = JSON.stringify(toJSON());
+
+    expect(tree.indexOf(VAULT_PROMISE)).toBeLessThan(tree.indexOf(AGENTS_HEADING));
+    expect(tree.indexOf('vault-advanced-toggle')).toBeLessThan(tree.indexOf(AGENTS_HEADING));
   });
 });

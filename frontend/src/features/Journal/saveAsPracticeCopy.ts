@@ -32,6 +32,13 @@ export const JOURNALING_PRACTICE_NAME = 'Journaling';
 /** The stage the practice sits at, named as the writer sees it. */
 export const GREEN_STAGE_LABEL = 'Green';
 
+/**
+ * The invitation's sentence when the practice is the only way offered — the
+ * habits ring declined (#3073) — so the note still says what it offers. Worded
+ * like ``SAVE_AS_HABIT_PROMPT``: an option, nothing promised.
+ */
+export const SAVE_AS_PRACTICE_PROMPT = 'You can keep this as a practice, if you would like.';
+
 /** The invitation's second action, beside the habit one. */
 export const SAVE_AS_PRACTICE_ACCEPT = 'Keep this as a practice';
 export const SAVE_AS_PRACTICE_ACCEPT_A11Y = 'Keep this writing session as a practice';
@@ -130,6 +137,7 @@ const SWEEP_EXAMPLE_PRACTICE = 'Loving-kindness';
 /** Every user-facing string above, gathered for the balance-not-altitude sweep. */
 export const SAVE_AS_PRACTICE_COPY_ENTRIES: readonly string[] = [
   JOURNALING_PRACTICE_NAME,
+  SAVE_AS_PRACTICE_PROMPT,
   SAVE_AS_PRACTICE_ACCEPT,
   SAVE_AS_PRACTICE_ACCEPT_A11Y,
   SAVE_AS_PRACTICE_CHECKING,

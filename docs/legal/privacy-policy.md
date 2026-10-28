@@ -65,7 +65,7 @@ that record.
 Your entries live in the operator's PostgreSQL database.
 
 Everything you write in the journal is encrypted in that database, and so
-is everything derived from it: **the body and title of every entry**, **the
+is the text derived from it: **the body and title of every entry**, **the
 text of a passage you promote out of one**, **each fragment of your writing
 held in the corpus your reflections are drawn from**, **every margin note —
 including the sentence of yours it quotes back at you**, **the suggestions
@@ -73,12 +73,34 @@ drawn from your entries**, and **your answers to the weekly prompts**. So is
 the writing you do away from the journal: **the reflection and the insight
 you write after sitting a practice**, and **everything you write in a beta
 feedback report** — none of these is part of any entry, and all of them are
-protected for the same reason. One thing that is not your writing is
+protected for the same reason. Two things computed from your writing are
+encrypted the same way as the writing itself: **the embedding of each passage
+in the corpus** — a list of numbers a model computes from the text so that
+passages with similar meaning can be found — and **the vault tags on an
+entry**, the frequency and Wavelength-phase labels a Creek Vault gives back
+when an entry is sent to it. One thing that is not your writing is
 encrypted alongside all of it: **the access key for a private vault, if you
 connect one**. They are encrypted with a key the
 operator configures, and a production server refuses to start without one, so
-there is no version of this service that quietly stores your writing in the
-clear.
+a production deployment of this service cannot quietly store your writing in
+the clear.
+
+Some of the rest of what is derived from your writing is not text, and it is
+stored unencrypted. **Frequency weights**: when the corpus is on, each passage
+in it is stored with a score for each frequency the sorting found in it, and
+one overall confidence score for the sorting as a whole. **Detected amounts
+and dates**: when a reflection notices that an entry seems to record a habit
+or practice you finished, the suggestion it offers keeps the
+amount and date it found (say, 5 miles on a given day), where in the entry it
+found them, and which habit or practice it points at; the suggestion's wording
+and the quoted words are encrypted, these are not. **An entry's tier**: the
+privacy tier you chose for it (Public, Personal or Intimate). **An entry's
+tag**: what kind of entry it is, such as a free-form page, a practice note or
+an answer to a weekly prompt. **An entry's reflection scope**: for an entry
+that reflects on a stretch of time, which period it covers. **A corpus
+passage's tier**: each passage in the corpus is stored with the privacy tier
+of the writing it came from. None of these is your words, but each says
+something about them, and anyone who can read the database can read them.
 
 **If you connect your own vault or activate a managed one**, Adepthood stores
 the address and access credential and uses them only to send your own entries
@@ -137,8 +159,8 @@ on who receives your data says how many.
 
 - An Intimate entry is **never sent to a language model**. Asking for a
   reflection on one returns without any model call at all — the request is
-  refused from the stored tier on the server, before a provider client is
-  built or your wallet is touched.
+  refused on the server, before any connection to a language model is
+  opened or your wallet is touched.
 - An Intimate entry is **never used as context** for another entry's
   reflection. Neither source can produce one: the query that gathers recent
   entries excludes them, and an Intimate entry is never put into the corpus
@@ -213,11 +235,10 @@ says; the tier section above is where that promise is written out in full.
 
 ## Who else receives your data
 
-Five parties, and nothing else. There is no advertising, no analytics
+The parties below, and nothing else. There is no advertising, no analytics
 service, no tracking SDK, and no data broker anywhere in this app.
 
-**The language-model provider** (Anthropic or OpenAI, depending on how the
-deployment is configured, or on your own key if you supply one). It
+**The language-model provider** (the provider whose key you saved). It
 receives: the body of a non-Intimate entry when you ask for a reflection or
 an essay, up to three other pieces of your own non-Intimate writing as
 context — passages chosen out of the corpus of your own writing, or your
@@ -232,11 +253,19 @@ have turned the corpus on**, the body of each non-Intimate entry once as it
 is saved — and once for each non-Intimate entry that was already in your
 journal on the day you turned it on — so that it can be sorted into the ten
 frequencies. It never receives an Intimate entry, and Adepthood does not
-send it a document you bring in. If you bring your own key, the production app sends it
-over HTTPS to Adepthood's server in the `X-LLM-API-Key` header. Adepthood
-forwards it over HTTPS to your account with the selected provider for that
-call. The key is used for that one call and is never persisted, logged or
-returned by Adepthood.
+send it a document you bring in.
+
+Your key is kept on your device, and how it travels depends on the feature.
+**Page reading goes directly from your device to the provider you chose.** The
+device sends your key and the photograph of the page straight to that
+provider, which sees your device's IP address and browser or app details.
+Adepthood's server is asked only whether the read may go ahead, and that
+request carries neither the key nor the page. **Every other feature that uses
+the key still passes through Adepthood's server**, including resonance notes,
+letters and completion checks: the production app sends the key over HTTPS to
+Adepthood's server in the `X-LLM-API-Key` header, and Adepthood forwards it
+over HTTPS to your account with that provider for that call. The key is used
+for that one call and is never persisted, logged or returned by Adepthood.
 
 **Your Creek Vault**, only if one is configured. A vault is a corpus of
 your own writing on infrastructure the operator arranges, reached over
@@ -247,37 +276,89 @@ sent.
 
 Four things are worth knowing about a vault. It is **optional** — with
 none configured, none of this happens and the app is otherwise unchanged.
-Each connection or allocation is **bound to one named account**: another
-account cannot read or write through it, so nobody's writing reaches somebody
+Each connection or allocation is **bound to one named account**: no other
+account can read or write through it, so nobody's writing reaches somebody
 else's corpus. An ordinary Fly vault activated by Adepthood is
 **provider-managed and operator-readable**: Fly and privileged Adepthood or
 Creek operators can access its stored bytes and restart it without you. It is
 not confidential compute, there is no user-held recovery key, and Intimate
 journal entries are never replicated to it. Finally, deleting or re-marking a
 mirrored journal page withdraws its content-free stable identity before
-Adepthood reports completion. Deleting an account requests teardown of a
-provisioned allocation; a manually connected vault still requires its owner to
-perform any account-wide purge. [Your data](../your-data.md) explains both
-cases.
+Adepthood reports completion. Deleting an account requests teardown of the
+managed vault Adepthood created for you; a vault you connected yourself still
+requires its owner to perform any account-wide purge.
+[Your data](../your-data.md) explains both cases.
+
+**Your Creek Vault's model provider**, only if the vault's own deployment
+allows it to use a cloud model (its `CREEK_CLOUD_CONSENT` setting). A vault
+sorts and reflects on what it is sent. When it is allowed a cloud model for
+that work, what it holds of yours — non-Intimate entries and documents — goes
+to that model's provider under the vault's configuration, not Adepthood's.
+Which provider that is depends on how the vault is set up.
+
+**Railway**, the platform the server and its database run on. Everything the
+database holds is on Railway's machines, and so is the key the server
+decrypts your writing with, so the encryption described above does not keep
+your writing from the host any more than it does from the operator. The
+database's backups are Railway's own platform backups, held by Railway too
+("Deleting your account" below says how long they are kept). The operator no
+longer makes backup copies anywhere other than Railway.
+
+**Fly.io**, only if Adepthood activated a managed vault for you. Fly hosts
+that vault, and as the vault paragraph above says, Fly and privileged
+Adepthood or Creek operators can access what it stores.
 
 **Gumroad**, for purchases. It receives what you type into its own
-checkout, which Adepthood never sees; Adepthood sends it a licence key to
+checkout, which stays with Gumroad; Adepthood sends it a licence key to
 verify and receives back the sale record it keeps.
 
 **Sentry**, if — and only if — the deployment configures it. It is how a
-crash becomes visible to the operator instead of vanishing. What it
-receives is the exception, its type and message and stack, plus a request
-id, path and method. What it does not receive is the rest of the request:
-the body, the headers, log breadcrumbs, and the local variables of every
-stack frame are stripped from each event before it is sent, credential-
-shaped text is redacted, and an over-long exception message is truncated.
-Those are the four channels through which a journal entry could otherwise
-reach a monitoring vendor, and each is closed twice — once by turning the
-capture off, once by deleting it on the way out. A deployment that sets no
-Sentry credentials sends nothing anywhere and logs the same crash locally.
+crash becomes visible to the operator instead of vanishing. Reports can come
+from two places, and neither captures anything automatically.
 
-**An email relay**, when the deployment is configured to send mail. It
-carries password-reset messages to your address and nothing else.
+From the server, a report is made when the server meets an error it did not
+handle, and each one is rebuilt from a short list of fields before it is sent.
+It names the release and environment that failed, a request id, the
+request's method and route — the route's pattern, such as
+`/journal/{entry_id}`, not the address you visited — and, for each exception,
+its type and the module it comes from, how it was caught and whether it was
+handled, a fixed error code, and the file, function and line of each stack
+frame, and whether that frame is in the app's own code. The exception's message is never sent: the fixed error code stands in
+for it, and that code is written into the program, never taken from anything
+you typed. Nor is anything else sent — not the body or headers of the
+request, not log records, not the source lines or local variables of any
+frame. Credential-shaped text in what is left is redacted as a second,
+separate lock.
+
+From the app, if it was built with a Sentry address, a crash that reaches one
+of the app's error screens is reported straight from your device. That report
+names the error's type from a fixed list, and which error screen caught it
+using fixed boundary and feature names, plus the app's release and environment.
+The error's message is withheld here too, and component stacks are omitted.
+Because the report is sent from your device, Sentry also sees the network address it
+came from and the ordinary details any connection carries, such as the
+browser's or app's version string.
+
+A deployment that sets no Sentry credentials, and an app built without a
+Sentry address, sends no crash reports to Sentry. The app records a fixed
+crash-caught diagnostic code locally, without the error text or context objects.
+
+**An email relay (Resend, or the deployment's own mail server)**, when the
+deployment is configured to send mail. It carries password-reset messages to
+your address and nothing else.
+
+**Google and Apple**, if you sign in with one of them. Signing in happens
+between you and that company, under its own terms, and Adepthood receives the
+signed token it issues. To check that token, the server fetches the
+company's published keys; that request carries nothing about you.
+
+**An agent you connect to your vault**, if you approve one. An agent such as
+Claude Code or a ChatGPT connector asks through Adepthood, and you decide on
+Adepthood's own page what it may do. When an agent identifies itself by a web
+address instead of registering, the server fetches the short description the
+agent publishes there — its name and where it may send you back to; that
+request carries nothing about you. What an approved agent can read comes from
+your vault, under what you approved, and never includes Intimate entries.
 
 One more, on the device rather than the server: turning on habit reminders
 asks the operating system's push service for a token, which is kept on your
@@ -304,7 +385,8 @@ and never reproduced in a log, an error report, or a crash trace.
 **platform** — iOS, Android, or web; the **app build** you are running; a
 **viewport class** — compact, regular, or expanded, never your exact screen
 size; your **locale**, as a language and optional region; and a **correlation
-id**, a random identifier the app generates for a session's own telemetry.
+id**, a random label the app makes up for one sitting, so reports from that
+sitting can be matched to each other and nothing else.
 
 That list is an allowlist enforced by the server, not a filter applied
 afterwards. A report carrying any other field is refused outright, and nothing
@@ -415,21 +497,54 @@ might want it.
 ## Deleting your account
 
 **Settings → Delete account.** You retype your email address and the
-account is erased. It is immediate and irreversible: no grace period, no
-deactivation, no support path to recover any of it. Your session stops
-working on every device.
+account is erased from the live service straight away. It cannot be undone:
+no grace period, no deactivation, no support path to recover any of it. Your
+session stops working on every device.
 
-Everything of yours goes — entries at every tier, margin notes, habits,
+Removed from the live service: entries at every tier, margin notes, habits,
 goals, practices, course progress, beta feedback reports, sign-in records,
 the account row itself.
 
 Three things survive, each for a stated reason: a practice you contributed
 to the shared catalogue stays and stops naming you, because other people
-may already have it assigned; a **purchase receipt** stays with the email
-address on it, because that address is how something you paid for is
-matched back to you, and because retaining a payment record is the ordinary
-carve-out in data-protection law; and a note that a deletion happened —
-date, counts, and an internal id that now names nobody.
+may already have it assigned; a **purchase receipt** stays, because
+retaining a payment record is the ordinary carve-out in data-protection law,
+but on a purchase linked to your account (a licence bound to it, or a token
+pack credited to it) the email address is blanked, and so is the sale record
+as Gumroad sent it — a purchase never linked to any account keeps its email
+address, because that address is the only way it can still be claimed; and a
+note that a deletion happened — date, counts, and an internal id that now
+names nobody.
+
+One more thing can survive, and only if a page of yours had a copy in a Creek
+Vault that had not yet confirmed that copy deleted: for each such copy we keep
+a note holding only an opaque vault identifier and an entry number, not linked
+to you, until the vault confirms the copy is gone or for 97 days at most. Then
+the note is deleted.
+
+**Backups age out; they are not edited.** The database is backed up, and a
+backup taken before you deleted still holds what your account held then, with
+your writing encrypted in it as it is in the database. No backup is altered to
+remove one account. Our backups are the hosting platform's daily backups,
+which Railway keeps for 6 days. The operator no longer makes copies off the
+platform. A weekly copy off the platform made before that stopped in October
+2026 could be kept for up to 90 days; if any is left, it is deleted by the
+operator by hand. Until the operator confirms none is left, we state the longer
+figure: on that schedule, the last copy of your data in Adepthood's own backups
+ages out within about 97 days of your deletion. That
+bound is Adepthood's alone: each party under "Who else receives your data"
+keeps what it received under its own retention, which this page does not set.
+
+If the operator ever has to restore the database from a backup taken before
+you deleted, that backup still holds your account, so a restore could bring
+your data back. The restore procedure has a step that re-applies deletions
+made since the backup before the service goes back online, but that step is
+still a draft and relies on a record of deletions whose keeping is not yet
+settled. <!-- DRAFT for owner (#3063 AC17): once tombstone custody is decided
+and the "Suppress resurrected deletions" step in DEPLOYMENT.md is ratified,
+replace this paragraph with: "If we ever have to restore from a backup,
+we re-apply deletions made since that backup before the service goes back
+online." -->
 
 [Your data](../your-data.md) says all of this at greater length, including
 what happens to a Creek Vault.
@@ -450,8 +565,8 @@ about your use of the app, and content that was never yours to take.
 happened is noted — your account id and how many records went, and not a
 line of what they said.
 
-Because deletion is immediate and total, **take a copy before you delete**.
-Nothing here can undo it afterwards.
+Because deletion takes effect at once and cannot be undone, **take a copy
+before you delete**. Nothing here can undo it afterwards.
 
 ## Children
 

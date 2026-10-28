@@ -1,6 +1,8 @@
 /** Styles for the journal shelf (the editorial library of entry "pages"). */
 import { StyleSheet } from 'react-native';
 
+import { closeCornerReserve } from './ReflectionDismiss';
+
 import {
   BORDER_RADIUS,
   SPACING,
@@ -94,6 +96,9 @@ const styles = StyleSheet.create({
   // now carrying "New entry" alone, with no display-scale title above it.
   actionRow: {
     flexDirection: 'row',
+    // Three doors share the row (#3142); at a phone width with enlarged text
+    // they wrap onto a second line rather than run off the edge.
+    flexWrap: 'wrap',
     justifyContent: 'flex-end',
     alignItems: 'center',
     gap: SPACING.sm,
@@ -105,6 +110,12 @@ const styles = StyleSheet.create({
   deleteError: {
     ...editorialType.note,
     color: colors.danger,
+    paddingHorizontal: SPACING.lg,
+    paddingTop: SPACING.sm,
+  },
+  deleteReceipt: {
+    ...editorialType.note,
+    color: colors.paper.inkSoft,
     paddingHorizontal: SPACING.lg,
     paddingTop: SPACING.sm,
   },
@@ -198,6 +209,9 @@ const styles = StyleSheet.create({
     color: accent.primary,
     paddingTop: spacing(0.5),
   },
+  // Put the open target below the corner X so narrow cards retain their full
+  // text width, and the two touch targets never overlap.
+  promptOpenArea: { marginTop: closeCornerReserve(SPACING.lg), minHeight: touchTarget.minimum },
   promptQuestion: {
     ...editorialType.heading,
     color: ink.primary,

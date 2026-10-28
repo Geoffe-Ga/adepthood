@@ -29,7 +29,9 @@ export interface CorpusConsentDecision {
   readonly decided_at: string | null;
 }
 
-export const CORPUS_CONSENT_EYEBROW = 'Your corpus';
+/** The Settings group the switches sit in, and this screen's eyebrow. */
+export const CORPUS_GROUP_TITLE = 'Your writing';
+export const CORPUS_CONSENT_EYEBROW = CORPUS_GROUP_TITLE;
 export const CORPUS_CONSENT_TITLE = 'Writing reflections can draw on';
 
 /** The offer, with declining stated as a whole answer rather than a deferral. */
@@ -50,8 +52,8 @@ export const CORPUS_CONSENT_CONSEQUENCE_HEADING = 'What turning one on does';
 
 /** The first consequence: sorting is a model call, once per save. */
 export const CORPUS_CONSENT_CONSEQUENCE_SENDING =
-  'Each entry you save is sent once to the language-model provider to be sorted — one call as ' +
-  'it is saved, and one more if you go back and change its wording or its tier.';
+  'Each entry you save is sent once to the AI service that sorts it, as it is saved — and once ' +
+  'more if you go back and change its wording or its privacy setting.';
 
 /** The second: withdrawing is a deletion, not a preference. */
 export const CORPUS_CONSENT_CONSEQUENCE_REMOVAL =
@@ -87,10 +89,18 @@ export const CORPUS_NOT_SORTED_YET_NOTE =
 export const CORPUS_CONSENT_FAILURE =
   'That did not reach the server, so nothing changed. Check your connection and try again.';
 
-/** The Settings row that leads here. */
+/**
+ * Over the switches on the Settings hub: the three facts somebody needs
+ * before moving one, in one breath — what sorting is for, what it sends, and
+ * that Intimate is never sent — with the full account one row below.
+ */
+export const CORPUS_SORTING_HUB_LEAD =
+  'Sorted for reflections to quote. Each entry is sent once to the language-model provider; an entry marked Intimate never is. Off unless you turn it on.';
+
+/** The Settings row that leads here, under the switches, for the full account. */
 export const CORPUS_CONSENT_ROW_LABEL = 'What reflections draw on';
 export const CORPUS_CONSENT_ROW_DESCRIPTION =
-  'Choose whether your own writing is sorted for reflections to quote. Off unless you turn it on.';
+  'The full account of what sorting does, what turning it off deletes, and the record it keeps.';
 
 /**
  * The invitation offered once, after a first completed reflection (#2407).
@@ -103,20 +113,20 @@ export const CORPUS_CONSENT_ROW_DESCRIPTION =
  */
 export const CORPUS_INVITATION_REACH =
   'Saying yes also sorts the entries you have already written, apart from any you marked ' +
-  'Intimate — the same one call per entry — so a reflection can draw on all of it and not only ' +
-  'on what comes after.';
+  'Intimate — each one sent once, the same as a new entry — so a reflection can draw on all of ' +
+  'it and not only on what comes after.';
 
 /** Leads to the decision itself; matches the shelf band's wording. */
 export const CORPUS_INVITATION_OPEN_LABEL = 'Look at the decision';
-export const CORPUS_INVITATION_OPEN_A11Y = 'Open the decision about your corpus';
+export const CORPUS_INVITATION_OPEN_A11Y = 'Open the decision about your writing';
 
 /** A plain decline. The question may return, quietly, after a while. */
 export const CORPUS_INVITATION_NOT_NOW_LABEL = 'Not now';
-export const CORPUS_INVITATION_NOT_NOW_A11Y = 'Set the question about your corpus aside for now';
+export const CORPUS_INVITATION_NOT_NOW_A11Y = 'Set the question about your writing aside for now';
 
 /** A final decline. The question is not offered again. */
 export const CORPUS_INVITATION_NEVER_LABEL = 'Do not ask again';
-export const CORPUS_INVITATION_NEVER_A11Y = 'Do not offer the question about your corpus again';
+export const CORPUS_INVITATION_NEVER_A11Y = 'Do not offer the question about your writing again';
 
 /** One source's name and what it covers, in the reader's language. */
 export interface CorpusSourceCopy {
@@ -222,6 +232,7 @@ export const CORPUS_CONSENT_COPY_ENTRIES: readonly string[] = [
   CORPUS_CONSENT_INTIMATE_LINE,
   CORPUS_CONSENT_RECORD_LINE,
   CORPUS_CONSENT_SOURCES_HEADING,
+  CORPUS_SORTING_HUB_LEAD,
   CORPUS_CONSENT_ROW_LABEL,
   CORPUS_CONSENT_ROW_DESCRIPTION,
   CORPUS_INVITATION_REACH,

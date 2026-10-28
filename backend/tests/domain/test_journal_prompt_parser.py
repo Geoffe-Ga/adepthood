@@ -39,7 +39,8 @@ def test_orange_prompts_parse_in_curriculum_order() -> None:
     assert len(prompts) == 4
     assert [p.ordinal for p in prompts] == [1, 2, 3, 4]
     assert prompts[1].title == "Make a List of 25 Curiosities"
-    assert prompts[1].cadence == "At least 4x per week"
+    # The "(At least 4x per week)" typo was removed upstream (#3136).
+    assert prompts[1].cadence is None
     assert "polyvagal theory" in prompts[1].body
 
 
@@ -169,10 +170,12 @@ def test_clear_lights_fourth_prompt_still_reads_its_qualifier_as_a_cadence() -> 
         "upstream -- delete this test rather than restoring the old reading."
     )
 
-    # The other three carry real cadences, which is what makes the fourth a
+    # Prompts 1 and 3 carry real cadences, which is what makes the fourth a
     # divergence in the content rather than a parser that cannot find cadences.
+    # Prompt 2 states none: its "(At least 4x per week)" typo was removed
+    # upstream (#3136).
     assert [p.cadence for p in prompts[:3]] == [
         "Whenever they arise",
-        "At least 4x per week",
+        None,
         "Daily",
     ]

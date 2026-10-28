@@ -64,6 +64,7 @@ from types import MappingProxyType, SimpleNamespace
 from typing import Final
 
 import pytest
+import sentry_sdk.utils as sentry_sdk_utils
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import SQLModel
 
@@ -72,6 +73,7 @@ from domain.data_export import MANIFEST, Included, Omitted
 from domain.feedback_triage import DRAFT_METADATA_FIELDS, FORBIDDEN_DRAFT_FIELDS, DraftSource
 from domain.frequencies import Frequency
 from domain.resonance import PRIOR_DRAFT_LIMIT
+from domain.retention import DETACHED_WITHDRAWAL_NOTE_RETENTION_DAYS, REDACT_INSTEAD_OF_DELETE
 from main import validate_journal_encryption_config
 from models.corpus_fragment import CorpusSource
 from models.feedback import FEEDBACK_RETENTION_DAYS
@@ -105,7 +107,8 @@ from services.creek_vault_client import LocalFallbackCreekVaultClient
 from services.creek_vault_upload import UploadedDocument
 from services.creek_vault_write import VaultWriteStatus, store_and_classify
 from services.higher_self_grounding import GROUNDING_LIMIT, GroundingSource
-from services.journal_encryption import EncryptedString
+from services.journal_encryption import is_encrypted_type
+from services.reflection_boundary import ReflectionBoundary
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 _LEGAL_DIR = _REPO_ROOT / "docs" / "legal"
@@ -138,6 +141,7 @@ _ENCRYPTED_COLUMNS = frozenset(
         "completionsuggestion.anchor_text",
         "completionsuggestion.label",
         "corpusfragment.content",
+        "corpusfragment.embedding",
         "feedbacknote.body",
         "feedbackreport.actual",
         "feedbackreport.expected",
@@ -145,6 +149,7 @@ _ENCRYPTED_COLUMNS = frozenset(
         "feedbackreport.summary",
         "journalentry.message",
         "journalentry.title",
+        "journalentry.vault_tags",
         "marginalia.anchor_text",
         "marginalia.essay",
         "marginalia.note",
@@ -210,7 +215,7 @@ def _encrypted_columns() -> frozenset[str]:
         f"{table.name}.{column.name}"
         for table in SQLModel.metadata.tables.values()
         for column in table.columns
-        if isinstance(column.type, EncryptedString)
+        if is_encrypted_type(column.type)
     )
 
 
@@ -268,6 +273,97 @@ def test_exactly_the_pinned_columns_are_encrypted() -> None:
     they have. Either direction is a rewrite before the schema change ships.
     """
     assert _encrypted_columns() == _ENCRYPTED_COLUMNS
+
+
+# Columns derived from a person's writing that the schema stores in the clear,
+# each mapped to the words the policy discloses it under. The owner chose to
+# disclose rather than encrypt these (#3058 AC5, B01). The list is kept by
+# hand: the test holds each listed column to the schema (still plaintext) and
+# to the policy (still named), and does not discover a derived column nobody
+# has added here.
+_DERIVED_PLAINTEXT_DISCLOSURES: Final[Mapping[str, str]] = MappingProxyType(
+    {
+        "corpusfragment.frequency_weights": "**frequency weights**",
+        "corpusfragment.overall_confidence": "overall confidence",
+        "completionsuggestion.completed_units": "**detected amounts and dates**",
+        "completionsuggestion.completed_on": "**detected amounts and dates**",
+        "completionsuggestion.anchor_start": "where in the entry",
+        "completionsuggestion.anchor_end": "where in the entry",
+        # Named on 2026-10-14 (#3260, #3058 AC5): kept plaintext and disclosed.
+        "journalentry.classification": "**an entry's tier**",
+        "journalentry.tag": "**an entry's tag**",
+        "journalentry.reflection_scope_key": "**an entry's reflection scope**",
+        "corpusfragment.tier": "**a corpus passage's tier**",
+    }
+)
+
+# Columns derived from a person's writing that the owner chose to encrypt
+# rather than keep disclosing (#3263), each mapped to the words the policy
+# names it under among the encrypted values. Held to the schema (encrypted) and
+# to the policy (named before the unencrypted list begins), so neither the
+# encryption nor the promise can lapse alone.
+_ENCRYPTED_DERIVED_DISCLOSURES: Final[Mapping[str, str]] = MappingProxyType(
+    {
+        "corpusfragment.embedding": "**the embedding of each passage in the corpus**",
+        "journalentry.vault_tags": "**the vault tags on an entry**",
+    }
+)
+
+# The broad claim the policy made before it named those columns. True of the
+# prose derived from an entry; false of the numbers and labels derived from it.
+_RETIRED_DERIVED_CLAIMS: Final[tuple[str, ...]] = (
+    "and so is everything derived from it",
+    "there is no version of this service that quietly stores your writing",
+)
+
+
+def test_the_policy_discloses_the_derived_data_it_stores_unencrypted() -> None:
+    """Each listed derived column stays unencrypted in the schema and named in the policy.
+
+    Each is something about a person's writing rather than the writing itself,
+    and each is plaintext in the schema, so the policy may neither call
+    everything derived from an entry encrypted nor leave these unnamed.
+    """
+    prose = _prose(_PRIVACY_POLICY)
+    encrypted = _encrypted_columns()
+
+    every_column = {
+        f"{table.name}.{column.name}"
+        for table in SQLModel.metadata.tables.values()
+        for column in table.columns
+    }
+    missing = sorted(set(_DERIVED_PLAINTEXT_DISCLOSURES) - every_column)
+    assert not missing, f"no longer in the schema; update the disclosure: {missing}"
+    still_encrypted = sorted(set(_DERIVED_PLAINTEXT_DISCLOSURES) & encrypted)
+    assert not still_encrypted, f"now encrypted; narrow the disclosure: {still_encrypted}"
+    undisclosed = sorted(
+        column for column, name in _DERIVED_PLAINTEXT_DISCLOSURES.items() if name not in prose
+    )
+    assert not undisclosed, f"the policy does not name these derived columns: {undisclosed}"
+    assert "stored unencrypted" in prose
+    restated = [claim for claim in _RETIRED_DERIVED_CLAIMS if claim in prose]
+    assert not restated, f"the policy still claims all derived data is encrypted: {restated}"
+
+
+def test_the_policy_names_the_encrypted_derived_data_as_encrypted() -> None:
+    """Embeddings and vault tags are ciphertext, and the policy says so before its plaintext list.
+
+    The policy once named both among the derived values "stored unencrypted".
+    Now that the schema encrypts them, naming them there would understate the
+    protection, and dropping them altogether would leave a reader who read the
+    old copy with no word on where they went.
+    """
+    prose = _prose(_PRIVACY_POLICY)
+    encrypted = _encrypted_columns()
+    plaintext_list_starts = prose.index("stored unencrypted")
+
+    not_encrypted = sorted(set(_ENCRYPTED_DERIVED_DISCLOSURES) - encrypted)
+    assert not not_encrypted, f"no longer encrypted; restore the disclosure: {not_encrypted}"
+    for column, name in _ENCRYPTED_DERIVED_DISCLOSURES.items():
+        assert name in prose, f"the policy does not name {column} as encrypted"
+        assert prose.index(name) < plaintext_list_starts, f"{column} is named as unencrypted"
+    for retired in ("**embeddings**", "**vault tags**"):
+        assert retired not in prose[plaintext_list_starts:], f"still disclosed: {retired}"
 
 
 # The one sentence in the policy that lists what is *not* encrypted, identified
@@ -482,15 +578,27 @@ def test_the_policy_describes_every_source_the_context_can_come_from() -> None:
 def test_the_error_monitor_never_receives_a_journal_body() -> None:
     """Scrubbing removes the channels a journal body could ride out on.
 
-    Driven through the real ``before_send`` hook with a body planted in all four
-    of them, so a channel that stopped being scrubbed fails here rather than in
-    a vendor's dashboard.
+    Driven through the real ``before_send`` hook with a body planted in every
+    one of them -- including the exception message, the log entry, and a key no
+    SDK has invented yet (#3079) -- so a channel that stopped being scrubbed
+    fails here rather than in a vendor's dashboard.
     """
     event: dict[str, object] = {
         "request": {"data": {"message": _SENTINEL_BODY}},
         "extra": {"body": _SENTINEL_BODY},
         "breadcrumbs": [{"message": _SENTINEL_BODY}],
-        "exception": {"values": [{"stacktrace": {"frames": [{"vars": {"body": _SENTINEL_BODY}}]}}]},
+        "message": _SENTINEL_BODY,
+        "logentry": {"formatted": _SENTINEL_BODY},
+        "unknown_future_key": _SENTINEL_BODY,
+        "exception": {
+            "values": [
+                {
+                    "type": "RuntimeError",
+                    "value": _SENTINEL_BODY,
+                    "stacktrace": {"frames": [{"vars": {"body": _SENTINEL_BODY}}]},
+                }
+            ]
+        },
     }
 
     scrubbed = json.dumps(scrub_event(event, {}))
@@ -501,6 +609,197 @@ def test_the_error_monitor_never_receives_a_journal_body() -> None:
 def test_the_policy_says_monitoring_is_deployment_configured() -> None:
     """The policy names monitoring as optional, which the DSN gate makes true."""
     assert "sentry" in _read(_PRIVACY_POLICY)
+
+
+# The policy paragraph describing the error monitor, from its lead-in to the
+# next party's.
+_SENTRY_PARAGRAPH_OPENING: Final[str] = "**sentry**, if"
+_SENTRY_PARAGRAPH_CLOSING: Final[str] = "**an email relay"
+
+# What the paragraph said while the scrubber subtracted fields from the vendor's
+# event and truncated the message (#3079 replaced that with a rebuild from an
+# allowlist that never copies the message). Any of these back would describe a
+# report the code no longer sends.
+_RETIRED_SENTRY_CLAIMS: Final[tuple[str, ...]] = (
+    "type and message and stack",
+    "over-long exception message is truncated",
+    "each is closed twice",
+)
+
+# Each field the scrubber keeps, at each level of an exception entry, and the
+# policy's words for it. The rebuilt event must carry exactly these: a kept
+# field missing here is undisclosed, and a word here for a field never sent
+# describes a report the code does not make (#3116).
+_ENTRY_FIELD_WORDS: Final[Mapping[str, str]] = MappingProxyType(
+    {
+        "type": "its type",
+        "module": "the module it comes from",
+        "value": "a fixed error code",
+        "mechanism": "how it was caught",
+        "stacktrace": "each stack frame",
+    }
+)
+_MECHANISM_FIELD_WORDS: Final[Mapping[str, str]] = MappingProxyType(
+    {"type": "how it was caught", "handled": "whether it was handled"}
+)
+_FRAME_FIELD_WORDS: Final[Mapping[str, str]] = MappingProxyType(
+    {
+        "filename": "file",
+        "function": "function",
+        "lineno": "line",
+        "in_app": "whether that frame is in the app's own code",
+    }
+)
+
+
+def _field(node: object, name: str) -> object:
+    """Return ``node[name]``, asserting ``node`` is a mapping that has it."""
+    assert isinstance(node, dict), node
+    return node[name]
+
+
+def _mappings(node: object) -> list[dict[str, object]]:
+    """Return a non-empty list of mappings, asserting that is what ``node`` is."""
+    assert isinstance(node, list), node
+    assert node, node
+    assert all(isinstance(item, dict) for item in node), node
+    return node
+
+
+# Every key the installed SDK puts on a stack frame (``serialize_frame`` plus
+# the ``in_app`` flag the client adds while preparing the event), on an
+# exception entry, and on an entry's mechanism (an exception group with a
+# chained cause fills them all). The fixture below is built by the SDK itself;
+# these pin that it really carries them, so a key the SDK fills cannot hide
+# from the disclosure check by being absent.
+_SDK_FRAME_KEYS: Final[frozenset[str]] = frozenset(
+    {
+        "filename",
+        "abs_path",
+        "function",
+        "module",
+        "lineno",
+        "pre_context",
+        "context_line",
+        "post_context",
+        "vars",
+        "in_app",
+    }
+)
+_SDK_ENTRY_KEYS: Final[frozenset[str]] = frozenset(
+    {"type", "module", "value", "mechanism", "stacktrace"}
+)
+_SDK_MECHANISM_KEYS: Final[frozenset[str]] = frozenset(
+    {"type", "handled", "exception_id", "parent_id", "source", "is_exception_group"}
+)
+
+
+class _AppDefinedError(RuntimeError):
+    """An exception class of the app's own, so the SDK fills the entry's ``module``.
+
+    A builtin's module is ``None`` on the wire; the app's own errors are not builtins.
+    """
+
+
+def _raise_with_body(body: str) -> None:
+    """Raise with ``body`` in the message and in a frame local, as a real crash would."""
+    raise KeyError(body)
+
+
+def _raise_app_error(body: str) -> None:
+    """Raise an app-defined error chained from a cause carrying ``body``."""
+    try:
+        _raise_with_body(body)
+    except KeyError as cause:
+        raise _AppDefinedError(body) from cause
+
+
+def _raise_chained(body: str) -> None:
+    """Raise an exception group around a chained cause, so every mechanism key is filled."""
+    try:
+        _raise_app_error(body)
+    except _AppDefinedError as chained:
+        raise ExceptionGroup(body, [chained]) from None
+
+
+def _sdk_built_event() -> dict[str, object]:
+    """Return the event the installed Sentry SDK builds for a real exception.
+
+    ``event_from_exception`` serialises every entry with its mechanism and every
+    frame with source context and locals; ``set_in_app_in_frames`` adds the
+    ``in_app`` flag the client sets before ``before_send`` sees the event.
+    Nothing is hand-written, so the fixture has every key a deployed SDK emits.
+    """
+    try:
+        _raise_chained(_SENTINEL_BODY)
+    except ExceptionGroup as exc:
+        event, _ = sentry_sdk_utils.event_from_exception(exc)
+    for entry in event["exception"]["values"]:
+        sentry_sdk_utils.set_in_app_in_frames(
+            entry["stacktrace"]["frames"], None, None, project_root=str(_REPO_ROOT)
+        )
+    return dict(event)
+
+
+def _entries(event: object) -> list[dict[str, object]]:
+    """Return an event's exception entries."""
+    return _mappings(_field(_field(event, "exception"), "values"))
+
+
+def _keys_of(nodes: list[dict[str, object]]) -> set[str]:
+    """Every key any of ``nodes`` carries."""
+    return {key for node in nodes for key in node}
+
+
+def test_the_sdk_built_fixture_carries_every_key_the_sdk_fills() -> None:
+    """The fixture is SDK-shaped: entries, mechanisms and frames carry every key the SDK fills."""
+    entries = _entries(_sdk_built_event())
+
+    assert all(set(entry) == _SDK_ENTRY_KEYS for entry in entries), entries
+    assert _keys_of([_string_keyed(entry["mechanism"]) for entry in entries]) == _SDK_MECHANISM_KEYS
+    for entry in entries:
+        for frame in _mappings(_field(_field(entry, "stacktrace"), "frames")):
+            assert set(frame) == _SDK_FRAME_KEYS
+
+
+def _string_keyed(node: object) -> dict[str, object]:
+    """Return ``node`` as a mapping, asserting that is what it is."""
+    assert isinstance(node, dict), node
+    return node
+
+
+def test_the_policy_describes_the_error_report_the_scrubber_builds() -> None:
+    """The Sentry paragraph names exactly what the rebuilt event carries, level by level.
+
+    Re-derived by running ``scrub_event`` over the event the installed SDK
+    builds for a real exception group -- message, mechanism ids, frame source,
+    frame locals, module and ``in_app`` all present. At each level (entry,
+    mechanism, frame) the keys the scrubber sends are exactly the keys the
+    paragraph names, so nothing the SDK fills goes unsaid and nothing said is
+    left unsent.
+    """
+    policy = _prose(_PRIVACY_POLICY)
+    start = policy.index(_SENTRY_PARAGRAPH_OPENING)
+    paragraph = policy[start : policy.index(_SENTRY_PARAGRAPH_CLOSING, start)]
+
+    entries = _entries(scrub_event(_sdk_built_event(), {}))
+    mechanisms = [_string_keyed(entry["mechanism"]) for entry in entries]
+    frames = [
+        frame
+        for entry in entries
+        for frame in _mappings(_field(_field(entry, "stacktrace"), "frames"))
+    ]
+
+    assert all(entry["value"] != _SENTINEL_BODY for entry in entries)
+    assert _keys_of(entries) == set(_ENTRY_FIELD_WORDS)
+    assert _keys_of(mechanisms) == set(_MECHANISM_FIELD_WORDS)
+    assert _keys_of(frames) == set(_FRAME_FIELD_WORDS)
+    assert "message is never sent" in paragraph
+    for words in (_ENTRY_FIELD_WORDS, _MECHANISM_FIELD_WORDS, _FRAME_FIELD_WORDS):
+        unnamed = [word for word in words.values() if word not in paragraph]
+        assert not unnamed, f"the Sentry paragraph no longer names {unnamed}"
+    restated = [claim for claim in _RETIRED_SENTRY_CLAIMS if claim in paragraph]
+    assert not restated, f"the Sentry paragraph still describes the retired scrubber: {restated}"
 
 
 @pytest.mark.asyncio
@@ -522,16 +821,42 @@ async def test_an_intimate_entry_never_reaches_a_vault() -> None:
     assert outcome.vault_ref is None
 
 
-def test_the_purchase_receipt_outlives_deletion_in_both_documents() -> None:
+# What both documents must say about a purchase receipt after deletion (#3063
+# AC15): the receipt stays, the address on a sale linked to the account is
+# blanked, and only a sale never linked to any account keeps its address.
+_RECEIPT_FACTS: Final[tuple[str, ...]] = (
+    "purchase receipt",
+    "on a purchase linked to your account",
+    "the email address is blanked",
+    "a purchase never linked to any account keeps its email address",
+)
+# What the documents once said: that every receipt keeps the address.
+_RECEIPT_OVERCLAIMS: Final[tuple[str, ...]] = (
+    "stays with the email address on it",
+    "and so does the email address on it",
+    "deliberately outlives a deletion",
+    "address appears nowhere but the purchase receipt",
+)
+
+
+@pytest.mark.parametrize("document", [_PRIVACY_POLICY, _YOUR_DATA], ids=lambda path: path.name)
+def test_the_purchase_receipt_outlives_deletion_without_its_address(document: Path) -> None:
     """The policy and ``your-data.md`` agree with the code on what survives.
 
-    ``gumroadsale`` is the one table whose rows keep an email address after an
-    account is erased. Two user-facing documents now describe that, and the
-    disposition in the code is what makes both of them true.
+    ``gumroadsale`` is anonymised, not erased: deletion blanks the buyer's
+    email (and Gumroad's raw payload) on every sale linked to the account and
+    keeps the receipt (``services.account_deletion._anonymise_linked_sales``).
+    A sale never linked to an account keeps its email, its only claim path.
+    The copy says exactly that, and no longer says every receipt keeps it.
     """
     assert POLICY["gumroadsale"].disposition is Disposition.ANONYMISE
-    assert "receipt" in _read(_PRIVACY_POLICY)
-    assert "receipt" in _read(_YOUR_DATA)
+    assert "email" in REDACT_INSTEAD_OF_DELETE["gumroadsale"]
+    copy = _prose(document)
+
+    missing = [fact for fact in _RECEIPT_FACTS if fact not in copy]
+    assert not missing, f"{document.name} does not say: {missing}"
+    restated = [claim for claim in _RECEIPT_OVERCLAIMS if claim in copy]
+    assert not restated, f"{document.name} still says the receipt keeps the address: {restated}"
 
 
 def test_the_terms_permit_a_gift_and_still_forbid_resale() -> None:
@@ -857,6 +1182,23 @@ def test_the_policy_describes_deleting_one_page_without_overstating_it() -> None
     assert "corpus" in section, "the section does not say the corpus copy goes with the page"
 
 
+def test_the_policy_discloses_the_detached_withdrawal_note() -> None:
+    """Account deletion keeps a note for an unconfirmed vault copy; the policy says so (#3267).
+
+    The note outlives the account on purpose, so the account section must say
+    what it holds, that it names nobody, and the bound the purge enforces --
+    read from the constant, so changing the bound reopens this sentence.
+    """
+    section = _section(_PRIVACY_POLICY, "## deleting your account")
+
+    assert "an opaque vault identifier and an entry number, not linked to you" in section
+    assert (
+        f"until the vault confirms the copy is gone or for "
+        f"{DETACHED_WITHDRAWAL_NOTE_RETENTION_DAYS} days at most"
+    ) in section
+    assert POLICY["journalwithdrawalnote"].disposition is Disposition.RETAIN
+
+
 @pytest.mark.asyncio
 async def test_deleting_one_page_keeps_the_row_and_takes_the_corpus_copy(
     db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch
@@ -895,7 +1237,7 @@ async def test_deleting_one_page_keeps_the_row_and_takes_the_corpus_copy(
     db_session.add(entry)
     await db_session.commit()
     await db_session.refresh(entry)
-    await ingest_journal_entry(db_session, entry)
+    await ingest_journal_entry(db_session, entry, boundary=ReflectionBoundary.APP_PROVIDER)
     await db_session.commit()
     assert await retrieve_fragments(db_session, user_id=_DELETING_ACCOUNT), (
         "the entry never reached the corpus, so the withdrawal below proves nothing"
@@ -986,7 +1328,12 @@ async def test_granting_consent_sorts_the_writing_that_was_already_there(
     change = await set_consent(
         db_session, user_id=_CONSENTING_ACCOUNT, source=INGEST_SOURCE, granted=True
     )
-    await backfill_after_consent(db_session, user_id=_CONSENTING_ACCOUNT, change=change)
+    await backfill_after_consent(
+        db_session,
+        user_id=_CONSENTING_ACCOUNT,
+        change=change,
+        boundary=ReflectionBoundary.APP_PROVIDER,
+    )
     await db_session.commit()
 
     stored = await retrieve_fragments(db_session, user_id=_CONSENTING_ACCOUNT)
@@ -1249,3 +1596,52 @@ def test_your_data_says_operator_triage_goes_with_the_report() -> None:
     assert "are not in your export" in your_data
     assert "they do not outlive the report they describe" in your_data
     assert "your report's words are never published" in your_data
+
+
+# The owner's own-key wording (2026-10-14, #3260, #3067 B01). Page reading goes
+# from the device straight to the vendor, which sees the device's address; the
+# other features still cross Adepthood's server. The policy says both, names the
+# provider by the saved key rather than by deployment configuration, and drops
+# the sentence that sent every key through Adepthood.
+_OWN_KEY_PROMISES: Final[tuple[str, ...]] = (
+    "the provider whose key you saved",
+    "page reading goes directly from your device to the provider you chose",
+    "which sees your device's ip address and browser or app details",
+    "request carries neither the key nor the page",
+    "every other feature that uses the key still passes through adepthood's server",
+    "including resonance notes, letters and completion checks",
+)
+_RETIRED_OWN_KEY_CLAIMS: Final[tuple[str, ...]] = (
+    "depending on how the deployment is configured",
+    "anthropic or openai",
+    "if you bring your own key, the production app sends it over https",
+)
+
+
+def test_the_policy_says_where_an_own_key_travels_for_each_feature() -> None:
+    """Page reading is device-to-vendor; everything else crosses Adepthood (#3260)."""
+    prose = _prose(_PRIVACY_POLICY)
+
+    missing = [promise for promise in _OWN_KEY_PROMISES if promise not in prose]
+    assert not missing, f"the policy drops the owner's own-key wording: {missing}"
+    restated = [claim for claim in _RETIRED_OWN_KEY_CLAIMS if claim in prose]
+    assert not restated, f"the policy still makes a retired own-key claim: {restated}"
+
+
+# The off-host backup copy the owner retired on 2026-10-14 (#3260): "No off-host
+# copy; rely on Railway's 6-day backups." No public document may still promise it.
+_RETIRED_OFFHOST_CLAIMS: Final[tuple[str, ...]] = (
+    "30-day off-host",
+    "off-host backups",
+    "kept off the hosting platform",
+    "once a week the operator copies the whole database",
+    "kept off the platform for 30 days",
+)
+
+
+def test_no_public_document_promises_an_off_host_backup() -> None:
+    """The retired off-host leg is promised nowhere a reader looks."""
+    for document in (_PRIVACY_POLICY, _TERMS_OF_SERVICE, _YOUR_DATA):
+        prose = _prose(document)
+        restated = [claim for claim in _RETIRED_OFFHOST_CLAIMS if claim.lower() in prose]
+        assert not restated, f"{document.name} still promises an off-host copy: {restated}"

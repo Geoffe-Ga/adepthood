@@ -139,11 +139,13 @@ jest.mock('react-native-safe-area-context', () => {
 
 jest.mock('../components/GoalModal', () => () => null);
 jest.mock('../components/HabitSettingsModal', () => () => null);
-jest.mock('../components/MissedDaysModal', () => () => null);
 jest.mock('../components/OnboardingModal', () => () => null);
 jest.mock('../components/ReorderHabitsModal', () => () => null);
 jest.mock('../components/AddHabitModal', () => () => null);
-jest.mock('../components/StatsModal', () => ({ __esModule: true, default: jest.fn(() => null) }));
+jest.mock('../story/HabitStorySheet', () => ({
+  __esModule: true,
+  HabitStorySheet: jest.fn(() => null),
+}));
 
 beforeEach(() => {
   headerLeftStore.current = undefined;

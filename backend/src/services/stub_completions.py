@@ -1,8 +1,9 @@
 """What the stub provider answers when a prompt asks for a structured reply.
 
-``BOTMASON_PROVIDER`` defaults to ``stub``, so every environment without a key
-— local development, the backend suite, and the end-to-end lane, which drives a
-real server over a real socket — reaches this module rather than a third party.
+The stub is a test seam (#3096): it answers only while ``BOTMASON_STUB_SEAM``
+is armed, which the backend suite and the end-to-end lane (a real server over a
+real socket) do, and which a production boot refuses. Everywhere else a keyless
+request on a ``stub`` server is refused, and never reaches this module.
 A single canned prose sentence is a fine answer to a chat turn, but the
 resonance prompt asks for strict JSON carrying quotes copied out of the entry,
 and prose answers that question with garbage: the completion does not parse, the
@@ -23,8 +24,8 @@ as their reflection (issue #2762). ``domain.resonance`` now refuses such a
 completion, and a stub that only ever produced refusals would leave the default
 developer experience exercising the failure branch and nothing else.
 
-Nothing here weakens a boundary. The stub is selected by configuration, never
-by a test import; an intimate entry still returns from the privacy floor before
+Nothing here weakens a boundary. The stub is reached only through the armed
+seam, never by a test import; an intimate entry still returns from the privacy floor before
 any provider is constructed; and stub traffic still reports zero tokens.
 """
 

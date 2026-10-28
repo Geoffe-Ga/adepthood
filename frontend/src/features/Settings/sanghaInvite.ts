@@ -14,37 +14,29 @@
  * an absent invitation rather than a broken one.
  */
 
-/** The only scheme a door out of the app is allowed to use. */
-const HTTPS_PREFIX = 'https://';
+import { httpsLinkOrNull } from '@/utils/httpsLink';
 
 /**
  * Resolve the configured invite, or ``null`` when there is nothing safe to
- * open.
- *
- * Whitespace is trimmed because an env var reaches a build through shells and
- * CI secret stores that add it. Everything that is not a non-empty ``https``
- * URL resolves to ``null``: ``http`` is downgrade-prone and a custom scheme is
- * an app-hijack vector, and neither is worth rendering a row for.
+ * open. The rule is the one every configured door out of the app shares
+ * (``httpsLinkOrNull``): a non-empty ``https`` URL, trimmed, or nothing.
  */
 export function sanghaInviteUrl(configured: string): string | null {
-  const trimmed = configured.trim();
-  if (!trimmed.startsWith(HTTPS_PREFIX) || trimmed.length === HTTPS_PREFIX.length) {
-    return null;
-  }
-  return trimmed;
+  return httpsLinkOrNull(configured);
 }
 
 /** Section heading. Names the depth, promises nothing about it. */
 export const SANGHA_SECTION_TITLE = 'Digital Sangha';
 
 /**
- * The invitation itself. It says the app is whole without the Sangha, because
+ * The invitation itself. It says the app works without the Sangha, because
  * that is true and because the alternative — implying something is missing
  * until you go — is the pressure this depth is forbidden to apply.
  */
 export const SANGHA_LEAD =
-  'There is a Discord where people walking this path keep each other company. ' +
-  'It is a door left open — Adepthood is whole without it.';
+  'There are people walking this with you, and the point of meeting them is to feel less ' +
+  'alone in the room you are actually in. Adepthood works without it, and the door is ' +
+  'one tap either way.';
 
 /**
  * Where the door is closed. Declining is the same one tap as accepting, on the

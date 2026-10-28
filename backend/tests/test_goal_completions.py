@@ -1333,7 +1333,7 @@ async def _seed_subtractive_habit(
 
     Returns ``(low, clear, stretch)``.  Mirrors the shape onboarding builds
     so the router's clear-tier lookup is exercised end-to-end — without
-    this fixture the new ``_subtractive_context_for_goal`` DB query was
+    this fixture the new ``_streak_contexts_for_habit`` DB query was
     never executed in any test, exactly the gap the PR review flagged.
     """
     habit = Habit(
@@ -1373,7 +1373,7 @@ async def test_subtractive_check_in_uses_clear_tier_threshold(
 ) -> None:
     """End-to-end: ``POST /goal_completions`` resolves the clear-tier sibling.
 
-    The router's ``_subtractive_context_for_goal`` issues a live
+    The router's ``_streak_contexts_for_habit`` issues a live
     ``session.scalar(select(Goal.target).where(habit_id == ..., tier ==
     'clear'))`` query.  Unit tests on the streak helpers pass a hand-built
     context, so the wiring layer — the SELECT, the tier-string match,
@@ -1416,7 +1416,7 @@ async def test_subtractive_check_in_falls_back_to_additive_for_additive_habit(
     Inverse of :func:`test_subtractive_check_in_uses_clear_tier_threshold`:
     same scenario (habit started 3 days ago, zero prior logs, one log
     today) on a vanilla additive habit must yield streak=1, proving the
-    polarity branch in ``_subtractive_context_for_goal`` actually
+    polarity branch in ``_streak_contexts_for_habit`` actually
     distinguishes additive from subtractive.
     """
     headers, user_id = await _signup(async_client, "additive_baseline")
@@ -1585,7 +1585,7 @@ async def test_subtractive_check_in_fails_loudly_on_duplicate_clear_tier(
     There is no DB-level ``UniqueConstraint`` on ``(habit_id, tier)``
     (PR #379 review).  If a migration artifact or a future multi-group
     schema change ever puts two ``clear`` goals under one habit,
-    ``_subtractive_context_for_goal`` MUST refuse to silently pick one
+    ``_streak_contexts_for_habit`` MUST refuse to silently pick one
     -- which is exactly what the original ``scalar()`` did.  The router
     catches ``MultipleResultsFound`` and re-raises a 500 with detail
     ``duplicate_clear_tier_goals`` so clients see a predictable code

@@ -6,7 +6,7 @@ order: 29
 slug: practicing-understanding-off-the-cushion
 title: "Practicing Understanding Off the Cushion"
 content_type: chapter
-release_day: 28
+release_day: 25
 media: []
 ---
 

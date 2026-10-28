@@ -2,9 +2,9 @@ import React, { useMemo } from 'react';
 import { ScrollView, StyleSheet, Text, View } from 'react-native';
 
 import { scheduledCues } from '../engine/cues';
-import type { IntervalBellConfig, RitualControls, RitualState } from '../engine/types';
+import type { CueKind, IntervalBellConfig, RitualControls, RitualState } from '../engine/types';
 
-import { formatTime } from './formatTime';
+import { formatTime, spokenTime } from './formatTime';
 import RitualControlsBar from './RitualControlsBar';
 import type { SessionSurface } from './sessionSurface';
 import { useSessionSurface } from './sessionSurface';
@@ -33,7 +33,13 @@ const IntervalBellView = ({ config, state, controls }: Props): React.JSX.Element
   return (
     <SessionContainer testID="interval-bell-view" style={styles.container}>
       <Text style={[styles.label, { color: surface.textSoft }]}>next bell</Text>
-      <Text style={[styles.time, { color: surface.text }]} testID="interval-bell-next">
+      <Text
+        style={[styles.time, { color: surface.text }]}
+        testID="interval-bell-next"
+        accessibilityRole="timer"
+        accessibilityLabel={spokenTime(untilNextMs, 'next')}
+        accessibilityLiveRegion="polite"
+      >
         {formatTime(untilNextMs)}
       </Text>
       <ScrollView
@@ -60,9 +66,18 @@ const IntervalBellView = ({ config, state, controls }: Props): React.JSX.Element
   );
 };
 
+/** User-facing names; engine cue discriminators remain unchanged. */
+const CUE_LABELS: Record<CueKind, string> = {
+  start_bell: 'Opening bell',
+  interval_bell: 'Interval bell',
+  end_bell: 'Closing bell',
+  halfway_bell: 'Halfway bell',
+  metronome_tick: 'Metronome beat',
+};
+
 interface OffsetRowProps {
   atMs: number;
-  kind: string;
+  kind: CueKind;
   struck: boolean;
   upcoming: boolean;
   surface: SessionSurface;
@@ -95,7 +110,7 @@ const OffsetRow = ({
         struck && [styles.rowStruck, { color: surface.textMuted }],
       ]}
     >
-      {kind}
+      {CUE_LABELS[kind]}
     </Text>
     <Text
       style={[styles.rowMark, { color: surface.accent }]}
@@ -126,13 +141,14 @@ const styles = StyleSheet.create({
     borderRadius: 8,
   },
   rowTime: {
-    flex: 0,
-    width: 64,
+    flexShrink: 0,
+    minWidth: 64,
+    paddingRight: SPACING.sm,
     fontSize: 16,
     fontVariant: ['tabular-nums'],
   },
-  rowKind: { flex: 1, fontSize: 14 },
-  rowMark: { width: 24, textAlign: 'right', fontSize: 16 },
+  rowKind: { flex: 1, minWidth: 0, fontSize: 14 },
+  rowMark: { minWidth: 24, flexShrink: 0, textAlign: 'right', fontSize: 16 },
   rowStruck: { textDecorationLine: 'line-through' },
 });
 

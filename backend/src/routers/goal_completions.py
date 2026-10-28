@@ -15,6 +15,7 @@ from dependencies.ownership import resolve_owned_goal_and_habit
 from dependencies.timezone import current_user_timezone
 from error_responses import build_router
 from models.goal_completion_idempotency import GOAL_COMPLETION_IDEMPOTENCY_KEY_MAX_LENGTH
+from models.goal_log_event import GoalLogSource
 from routers.auth import get_current_user
 from schemas import CheckInResult
 from services.checkin import CheckInCommand, CheckInContext, record_goal_completion
@@ -36,6 +37,13 @@ class GoalCompletionRequest(BaseModel):
     # ``None`` preserves the idempotent full-target behavior of clients that
     # predate signed unit logging. Explicit values are additive deltas.
     completed_units: float | None = Field(default=None, allow_inf_nan=False)
+    # ``True`` when a journal or practice timer measured the amount (#3150).
+    # Stored on the day's row by the write that creates it; a later write that
+    # accumulates into that row leaves the flag as the first write set it.
+    via_timer: bool = False
+    # Optional provenance preserves existing requests while distinguishing a
+    # practice's linked log from a standalone timer. The server owns timestamps.
+    source: GoalLogSource | None = None
 
     @model_validator(mode="after")
     def _validate_explicit_units(self) -> Self:
@@ -79,9 +87,12 @@ async def create_goal_completion(
         session,
         ctx,
         CheckInCommand(
+            source=payload.source
+            or (GoalLogSource.TIMER if payload.via_timer else GoalLogSource.MANUAL),
             did_complete=payload.did_complete,
             completed_on=payload.completed_on,
             completed_units=payload.completed_units,
             idempotency_key=idempotency_key,
+            via_timer=payload.via_timer,
         ),
     )

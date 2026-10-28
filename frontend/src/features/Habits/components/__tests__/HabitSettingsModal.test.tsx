@@ -5,6 +5,7 @@ import { Switch } from 'react-native';
 
 import type { Habit, HabitSettingsModalProps } from '../../Habits.types';
 import { HabitSettingsModal } from '../HabitSettingsModal';
+import { EDIT_HABIT_CLOSE_LABEL } from '../modalCloseLabels';
 
 jest.mock('react-native-draggable-flatlist', () => 'DraggableFlatList');
 jest.mock('@react-native-community/datetimepicker', () => 'DateTimePicker');
@@ -440,6 +441,13 @@ describe('HabitSettingsModal actions', () => {
   it('closes via the header close button without saving', () => {
     const { getByTestId, onClose, onUpdate } = renderModal();
     fireEvent.press(getByTestId('habit-settings-close'));
+    expect(onClose).toHaveBeenCalledTimes(1);
+    expect(onUpdate).not.toHaveBeenCalled();
+  });
+
+  it('names its header close button after the Edit Habit title', () => {
+    const { getByRole, onClose, onUpdate } = renderModal();
+    fireEvent.press(getByRole('button', { name: EDIT_HABIT_CLOSE_LABEL }));
     expect(onClose).toHaveBeenCalledTimes(1);
     expect(onUpdate).not.toHaveBeenCalled();
   });

@@ -57,7 +57,7 @@ from datetime import UTC, datetime
 from sqlalchemy import CheckConstraint, Column, DateTime, Index, text
 from sqlmodel import Field, SQLModel
 
-from domain.creek_vault import VaultPipelineStage
+from domain.creek_vault import VaultJobFailureCode, VaultPipelineStage
 
 # A stage reaches fragments or it reaches none; it cannot reach a negative
 # number of them, and a negative count would read as a sentinel nobody defined.
@@ -71,6 +71,7 @@ _STAGE_WIDTH = 20
 _OUTCOME_WIDTH = 20
 _TRIGGER_WIDTH = 20
 _JOB_ID_WIDTH = 36
+_FAILURE_CODE_WIDTH = 32
 _MIN_ATTEMPTS = 1
 
 
@@ -79,12 +80,11 @@ class VaultPipelineOutcome(enum.StrEnum):
 
     Six members, separating promised work, uncertain admission, incomplete work,
     failure, and ambiguity.
-    ``INCOMPLETE`` is Creek's ``complete: false`` — a classification pass that
-    skipped some fragments — and it is neither a success nor a failure: the pass
-    is resumable, so it means the honest next step is to call again, while the
-    labels it did write are real and the stages that read them may run. Folding
-    it into ``COMPLETED`` would lose the reason to come back; folding it into
-    ``FAILED`` would stand down a stage that in fact did most of its work.
+    ``INCOMPLETE`` covers Creek's ``complete: false`` and a managed rules
+    fallback: semantic classification still has work to do. The labels already
+    written are real and the stages that read them may run. Folding this into
+    ``COMPLETED`` would lose the reason to come back; folding it into ``FAILED``
+    would stand down a stage that in fact wrote usable labels.
 
     Values are stored, so they are a persisted vocabulary and must not be
     reworded without a migration.
@@ -102,9 +102,10 @@ class VaultPipelineOutcome(enum.StrEnum):
             unknown": it holds the interval closed, and it does not count as a
             classification having landed.
         COMPLETED: The vault ran the stage and reported it clean.
-        INCOMPLETE: The vault ran the stage and reported that some fragments
-            were skipped. Only a classification pass can report this; the linker
-            has no per-fragment error accumulator to collapse.
+        INCOMPLETE: Classification skipped some fragments or used only the
+            rules floor instead of the requested semantic pass. Only a
+            classification pass can report this; the linker has no
+            per-fragment error accumulator to collapse.
         FAILED: The stage definitively failed or was refused after its bounded
             retry path. A timeout or lost answer alone is not sufficient.
         AMBIGUOUS: Bounded retries were exhausted without a terminal answer.
@@ -181,6 +182,15 @@ def _follow_up_trigger_check() -> CheckConstraint:
     )
 
 
+def _failure_code_check() -> CheckConstraint:
+    """CHECK that a reason is a published code, and is recorded only on a failure."""
+    codes = _quoted(tuple(code.value for code in VaultJobFailureCode))
+    return CheckConstraint(
+        f"failure_code IS NULL OR (outcome = 'failed' AND failure_code IN ({codes}))",
+        name="ck_vaultpipelinerun_failure_code_valid",
+    )
+
+
 def _attempt_count_check() -> CheckConstraint:
     """CHECK that only a durably queued follow-up has no wire attempt yet."""
     return CheckConstraint(
@@ -249,6 +259,7 @@ class VaultPipelineRun(SQLModel, table=True):
         _trigger_check(),
         _follow_up_trigger_check(),
         _attempt_count_check(),
+        _failure_code_check(),
         _resume_claim_check(),
         _fragments_seen_check(),
         _fragments_touched_check(),
@@ -262,6 +273,11 @@ class VaultPipelineRun(SQLModel, table=True):
     trigger: str | None = Field(default=None, max_length=_TRIGGER_WIDTH)
     follow_up_trigger: str | None = Field(default=None, max_length=_TRIGGER_WIDTH)
     job_id: str | None = Field(default=None, max_length=_JOB_ID_WIDTH)
+    #: Why a ``failed`` run failed, when the vault published a reason the writer
+    #: can act on (a :class:`~domain.creek_vault.VaultJobFailureCode` value, Creek
+    #: contract 0.26). A symbolic token, never vendor text; ``NULL`` on every
+    #: other row. It is what lets Settings say a writer's key was refused.
+    failure_code: str | None = Field(default=None, max_length=_FAILURE_CODE_WIDTH)
     attempt_count: int = Field(default=_MIN_ATTEMPTS, nullable=False)
     resume_claim_id: str | None = Field(default=None, max_length=_JOB_ID_WIDTH)
     resume_claimed_at: datetime | None = Field(

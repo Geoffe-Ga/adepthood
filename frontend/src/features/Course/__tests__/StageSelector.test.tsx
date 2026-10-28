@@ -94,6 +94,18 @@ describe('StageSelector', () => {
     onSelectStage = jest.fn() as any;
   });
 
+  it('offers an always-available Start Here before the numbered stages', () => {
+    const screen = render(
+      <StageSelector stages={sampleStages} selectedStage={0} onSelectStage={onSelectStage} />,
+    );
+    const choices = screen.getAllByRole('button');
+    expect(choices[0]?.props.accessibilityLabel).toBe('Start Here');
+    expect(choices[0]?.props.accessibilityState).toMatchObject({ selected: true, disabled: false });
+    fireEvent.press(choices[0]!);
+    expect(onSelectStage).toHaveBeenCalledWith(0);
+    expect(choices[1]?.props.accessibilityLabel).toContain('Stage 1');
+  });
+
   it('renders one pill per stage from API data', () => {
     const { getByTestId, queryByTestId } = render(
       <StageSelector stages={sampleStages} selectedStage={1} onSelectStage={onSelectStage} />,

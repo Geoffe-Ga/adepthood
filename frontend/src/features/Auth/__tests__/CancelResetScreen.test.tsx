@@ -61,13 +61,13 @@ describe('CancelResetScreen', () => {
     const { findByText } = render(
       <CancelResetScreen navigation={navigation} route={{ params: { token: VALID_TOKEN } }} />,
     );
-    expect(await findByText('Could Not Reach Server')).toBeTruthy();
+    expect(await findByText('We couldn’t connect')).toBeTruthy();
   });
 
   it('renders the invalid-link body with an em dash, never an ASCII double hyphen (#2823)', () => {
     const { getByText, queryByText } = render(<CancelResetScreen navigation={navigation} />);
     expect(
-      getByText(/the original email — nothing happens until the link is clicked\./),
+      getByText(/the original email — nothing changes unless someone taps its link\./),
     ).toBeTruthy();
     expect(queryByText(/ -- /)).toBeNull();
   });

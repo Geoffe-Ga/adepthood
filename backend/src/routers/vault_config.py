@@ -56,11 +56,16 @@ from schemas.vault_config import (
     VaultConnectionResponse,
     credential_is_usable,
 )
+from services.creek_vault_agent_connection import managed_agent_address
 from services.creek_vault_url import classify_vault_url
 from services.creek_vault_url_resolution import (
     classify_resolved_user_vault_url_off_the_pool,
 )
 from services.creek_vault_url_user import classify_user_vault_url_host, vault_url_host
+from services.oauth_authorization import (
+    normalize_resource,
+    vault_mcp_url,
+)
 from services.user_vault_config import (
     clear_vault_config,
     load_vault_config,
@@ -68,6 +73,7 @@ from services.user_vault_config import (
     managed_vault_owns_connection,
     store_vault_config,
 )
+from services.vault_classification_status import classification_key_rejected
 
 router = build_router(prefix="/vault", tags=["vault"], extra_statuses=(status.HTTP_409_CONFLICT,))
 
@@ -139,16 +145,26 @@ async def _require_unmanaged_connection(session: AsyncSession, user_id: int) -> 
 def _to_response(config: UserVaultConfig | None) -> VaultConnectionResponse:
     """Project a stored row, or its absence, onto the response DTO.
 
+    The agent address is written in the one spelling the authorization server
+    compares a ``resource`` in, so what a person pastes into an agent is
+    exactly the audience its tokens will name.
+
     A fresh instance every time, including for the "nothing connected" answer.
     A module-level singleton would read as the cheaper spelling of the same
     thing and is not: pydantic models are mutable, so one shared instance is a
     value every request holds a reference to.
     """
     if config is None:
-        return VaultConnectionResponse(connected=False, vault_url=None)
+        return VaultConnectionResponse(connected=False, vault_url=None, mcp_address=None)
     if config.provisioned:
-        return VaultConnectionResponse(connected=True, vault_url=None)
-    return VaultConnectionResponse(connected=True, vault_url=config.vault_url)
+        # The private /v1 binding is never returned. A separate authenticated
+        # discovery read below may name its public agent resource.
+        return VaultConnectionResponse(connected=True, vault_url=None, mcp_address=None)
+    return VaultConnectionResponse(
+        connected=True,
+        vault_url=config.vault_url,
+        mcp_address=normalize_resource(vault_mcp_url(config.vault_url)),
+    )
 
 
 @router.get("/connection", response_model=VaultConnectionResponse)
@@ -163,7 +179,12 @@ async def get_vault_connection(
     not a missing resource, and answering it plainly is what lets a client
     render the connect affordance without first handling an error.
     """
-    return _to_response(await load_vault_config(session, user_id))
+    config = await load_vault_config(session, user_id)
+    response = _to_response(config)
+    response.classification_key_rejected = await classification_key_rejected(session, user_id)
+    if config is not None and config.provisioned:
+        response.mcp_address = await managed_agent_address(session, user_id, config)
+    return response
 
 
 @router.put("/connection", response_model=VaultConnectionResponse)
@@ -195,7 +216,9 @@ async def put_vault_connection(
     config = await store_vault_config(
         session, user_id, vault_url=payload.vault_url, api_key=payload.api_key
     )
-    return _to_response(config)
+    response = _to_response(config)
+    response.classification_key_rejected = await classification_key_rejected(session, user_id)
+    return response
 
 
 @router.delete("/connection", status_code=status.HTTP_204_NO_CONTENT)

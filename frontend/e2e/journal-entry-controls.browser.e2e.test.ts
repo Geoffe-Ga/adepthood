@@ -1,15 +1,16 @@
 import { expect, test, type Locator, type Page } from '@playwright/test';
 
 import { setProgramAnchorSixDaysAgo, signUp } from './journalHabitsBrowserSupport';
+import { openPrompts } from './journalHabitsBrowserSupport';
 
 /**
  * Every control on the journal entry screen has one home, at every width
- * (#2975, #3002, #3004):
+ * (#2975, #3004, #3250):
  *
  * - the exit row holds the page-level doors as glyphs:
  *   [Return?][Key][Sources? (writing a reflection)][Edit (reading) | Camera (writing)][X];
- * - under the body sit the body's own tools: the formatting toolbar, the save
- *   footer, then Finish alone and centred (writing), or Promote (reading);
+ * - the formatting toolbar leads the body below the exit row; the save footer
+ *   and Finish alone and centred follow the body (writing), or Promote (reading);
  * - the margin hosts Get resonance, beside the page on a wide screen and
  *   stacked under it on a phone — never floating over the writing.
  */
@@ -34,6 +35,11 @@ const WRITING_ORDER = [
   'journal-photograph-page',
   'journal-close-entry',
   'journal-title-input',
+  'journal-format-bold',
+  'journal-format-italic',
+  'journal-format-underline',
+  'journal-body-input',
+  'journal-finish-button',
 ];
 /** The same while writing a reflection: Sources joins the doors, left of the camera. */
 const REFLECTION_ORDER = [
@@ -42,6 +48,11 @@ const REFLECTION_ORDER = [
   'journal-photograph-page',
   'journal-close-entry',
   'journal-title-input',
+  'journal-format-bold',
+  'journal-format-italic',
+  'journal-format-underline',
+  'journal-body-input',
+  'journal-finish-button',
 ];
 
 interface RowGeometry {
@@ -99,6 +110,13 @@ async function rowGeometry(row: Locator): Promise<RowGeometry> {
  */
 async function settledFrame(page: Page, order: string[]): Promise<EntryFrame> {
   return page.evaluate(async (ids) => {
+    // Real Tab navigation scrolls the body into view. Return the writing
+    // surface to its top before comparing it with the fixed exit row.
+    let parent = document.querySelector('[data-testid="journal-body-input"]')?.parentElement;
+    while (parent) {
+      parent.scrollTop = 0;
+      parent = parent.parentElement;
+    }
     await new Promise<void>((resolve) => {
       requestAnimationFrame(() => requestAnimationFrame(() => resolve()));
     });
@@ -165,8 +183,8 @@ function expectOneLine(row: RowGeometry): void {
 }
 
 /**
- * The camera sits beside the X on one exit-row line; under the body come the
- * toolbar, the save footer, then Finish centred; nothing scrolls sideways.
+ * The camera sits beside the X on one exit-row line; the toolbar leads the
+ * body, then the save footer and Finish centred; nothing scrolls sideways.
  */
 function expectWritingLayout(frame: EntryFrame): void {
   expect(Math.abs(centreY(frame.camera) - centreY(frame.close))).toBeLessThanOrEqual(
@@ -177,13 +195,28 @@ function expectWritingLayout(frame: EntryFrame): void {
   expect(frame.camera.height).toBeGreaterThanOrEqual(TOUCH_TARGET_MIN);
   expectOneLine(frame.exitRow);
   expect(frame.documentScrollWidth).toBeLessThanOrEqual(frame.innerWidth);
-  expect(frame.toolbar.top).toBeGreaterThanOrEqual(frame.input.bottom);
-  expect(frame.wordCount.top).toBeGreaterThanOrEqual(frame.toolbar.bottom);
+  expect(frame.toolbar.top).toBeGreaterThanOrEqual(frame.close.bottom);
+  expect(frame.input.top).toBeGreaterThanOrEqual(frame.toolbar.bottom);
+  expect(frame.wordCount.top).toBeGreaterThanOrEqual(frame.input.bottom);
   expect(frame.finish.top).toBeGreaterThanOrEqual(frame.wordCount.bottom);
   expect(Math.abs(centreX(frame.finish) - centreX(frame.input))).toBeLessThanOrEqual(
     CENTRE_TOLERANCE,
   );
   expect(frame.focusOrderHolds).toBe(true);
+}
+
+/** Actual Tab navigation follows the title, formatting controls and body. */
+async function expectWritingTabOrder(page: Page): Promise<void> {
+  await page.getByTestId('journal-title-input').focus();
+  for (const id of [
+    'journal-format-bold',
+    'journal-format-italic',
+    'journal-format-underline',
+    'journal-body-input',
+  ]) {
+    await page.keyboard.press('Tab');
+    await expect(page.getByTestId(id)).toBeFocused();
+  }
 }
 
 /** Get resonance sits in the margin, in the page flow, and nowhere else. */
@@ -229,6 +262,8 @@ test('journal entry controls keep one home each while writing and reading, at ph
   await expect(page.getByTestId('journal-page')).toHaveCSS('flex-direction', 'row');
   expectWritingLayout(await settledFrame(page, WRITING_ORDER));
   expectOneLine(await rowGeometry(row));
+  await page.screenshot({ path: test.info().outputPath('writing-controls-1280.png') });
+  await expectWritingTabOrder(page);
 
   const margin = page.getByTestId('journal-margin-column');
   const resonance = margin.getByTestId('get-resonance-button');
@@ -279,6 +314,8 @@ test('journal entry controls keep one home each while writing and reading, at ph
   await resize(page, PHONE);
   expectWritingLayout(await settledFrame(page, WRITING_ORDER));
   expectOneLine(await rowGeometry(row));
+  await page.screenshot({ path: test.info().outputPath('writing-controls-390.png') });
+  await expectWritingTabOrder(page);
   expect(await photograph.getAttribute('aria-label')).toBe(PHOTOGRAPH_NAME);
   await expectResonanceInMargin(page);
 
@@ -332,6 +369,7 @@ test('journal entry controls keep one home each while writing and reading, at ph
   await page.reload();
   // The shelf, not the page, is on screen here; the loop below waits on the page.
   await page.setViewportSize(BREAKPOINT);
+  await openPrompts(page);
   await page.getByTestId('journal-reflection-band').click();
   const sources = exitRow.getByRole('button', { name: SOURCES_NAME });
   await expect(sources).toBeVisible();
@@ -346,5 +384,9 @@ test('journal entry controls keep one home each while writing and reading, at ph
     await expect(row.getByTestId('journal-photograph-page')).toHaveCount(0);
     expectWritingLayout(await settledFrame(page, REFLECTION_ORDER));
     expectOneLine(await rowGeometry(row));
+    await page.screenshot({
+      path: test.info().outputPath(`reflection-controls-${size.width}.png`),
+    });
+    await expectWritingTabOrder(page);
   }
 });

@@ -17,6 +17,8 @@ so the two providers need their own transports and their own request types.
 
 from __future__ import annotations
 
+import json
+import os
 from typing import TYPE_CHECKING, Any, cast
 
 import anthropic
@@ -33,6 +35,17 @@ OPENAI_KEY = "sk-abcdef1234567890abcdef1234567890"  # pragma: allowlist secret
 ANTHROPIC_KEY = "sk-ant-abcdef1234567890abcdef1234567890"  # pragma: allowlist secret
 OPENAI_MODEL = "gpt-4o-mini"
 ANTHROPIC_MODEL = "claude-sonnet-5"
+_KEY_FOR_PROVIDER = {"openai": OPENAI_KEY, "anthropic": ANTHROPIC_KEY}
+
+
+def armed_key() -> str:
+    """The writer's own key for the provider the last ``use_*`` armed.
+
+    Since ADR 0009 phase (a) (#3067) a provider is reached only with the
+    writer's own key: the server's ``LLM_API_KEY`` is not read. So a test that
+    drives the SDK through a mock transport passes this as ``api_key``.
+    """
+    return _KEY_FOR_PROVIDER[os.environ["BOTMASON_PROVIDER"]]
 
 
 class TransportStub:
@@ -55,10 +68,14 @@ class TransportStub:
         self.body = body if body is not None else {}
         self.raises = raises
         self.request_count = 0
+        #: Each request's parsed JSON body, in arrival order: what the SDK put on the wire.
+        self.bodies: list[dict[str, Any]] = []
 
-    def record(self) -> None:
-        """Count one request, and raise the canned transport failure if there is one."""
+    def record(self, content: bytes = b"") -> None:
+        """Count one request and keep its body, then raise the canned failure if there is one."""
         self.request_count += 1
+        if content:
+            self.bodies.append(cast("dict[str, Any]", json.loads(content)))
         if self.raises is not None:
             raise self.raises
 
@@ -75,7 +92,7 @@ def use_openai(
     real_client = openai.AsyncOpenAI
 
     def _handle(request: httpx2.Request) -> httpx2.Response:
-        stub.record()
+        stub.record(request.content)
         return httpx2.Response(stub.status_code, json=stub.body, request=request)
 
     def _factory(**kwargs: object) -> openai.AsyncOpenAI:
@@ -83,7 +100,6 @@ def use_openai(
         return real_client(**cast("dict[str, Any]", kwargs))
 
     monkeypatch.setenv("BOTMASON_PROVIDER", "openai")
-    monkeypatch.setenv("LLM_API_KEY", OPENAI_KEY)
     monkeypatch.setenv("LLM_MODEL", OPENAI_MODEL)
     monkeypatch.setattr(botmason.openai, "AsyncOpenAI", _factory)
     return stub
@@ -101,7 +117,7 @@ def use_anthropic(
     real_client = anthropic.AsyncAnthropic
 
     def _handle(request: httpx.Request) -> httpx.Response:
-        stub.record()
+        stub.record(request.content)
         return httpx.Response(stub.status_code, json=stub.body, request=request)
 
     def _factory(**kwargs: object) -> anthropic.AsyncAnthropic:
@@ -109,7 +125,6 @@ def use_anthropic(
         return real_client(**cast("dict[str, Any]", kwargs))
 
     monkeypatch.setenv("BOTMASON_PROVIDER", "anthropic")
-    monkeypatch.setenv("LLM_API_KEY", ANTHROPIC_KEY)
     monkeypatch.setenv("LLM_MODEL", ANTHROPIC_MODEL)
     monkeypatch.setattr(botmason.anthropic, "AsyncAnthropic", _factory)
     return stub

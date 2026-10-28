@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, jest } from '@jest/globals';
-import { act, fireEvent, render, within } from '@testing-library/react-native';
+import { fireEvent, render, within } from '@testing-library/react-native';
 import React from 'react';
 import { ScrollView, StyleSheet } from 'react-native';
 
@@ -161,21 +161,20 @@ describe('MindfulAnchorView', () => {
     expect(queryByTestId('mindful-anchor-elapsed')).toBeTruthy();
   });
 
-  it('ticks the elapsed counter once per second and announces it politely', () => {
-    const { getByTestId } = render(
+  it('shows the engine clock and announces it politely', () => {
+    const element = (elapsedMs: number): React.JSX.Element => (
       <MindfulAnchorView
         config={bareConfig}
-        state={fakeState({ status: 'running' })}
+        state={fakeState({ status: 'running', elapsedMs })}
         controls={fakeControls()}
         onComplete={jest.fn()}
-      />,
+      />
     );
+    const { getByTestId, rerender } = render(element(0));
     const elapsed = getByTestId('mindful-anchor-elapsed');
     expect(elapsed.props.accessibilityLiveRegion).toBe('polite');
     expect(getByTestId('mindful-anchor-elapsed-time').props.children).toBe('00:00');
-    act(() => {
-      jest.advanceTimersByTime(3000);
-    });
+    rerender(element(3000));
     expect(getByTestId('mindful-anchor-elapsed-time').props.children).toBe('00:03');
   });
 
@@ -185,14 +184,11 @@ describe('MindfulAnchorView', () => {
     const { getByTestId, queryByTestId } = render(
       <MindfulAnchorView
         config={optionConfig}
-        state={fakeState({ status: 'running' })}
+        state={fakeState({ status: 'running', elapsedMs: 5000 })}
         controls={controls}
         onComplete={onComplete}
       />,
     );
-    act(() => {
-      jest.advanceTimersByTime(5000);
-    });
     fireEvent.press(getByTestId('mindful-anchor-save'));
     expect(getByTestId('mindful-anchor-confirm')).toBeTruthy();
     expect(getByTestId('mindful-anchor-confirm-message')).toHaveTextContent(
@@ -217,14 +213,11 @@ describe('MindfulAnchorView', () => {
     const { getByTestId } = render(
       <MindfulAnchorView
         config={optionConfig}
-        state={fakeState({ status: 'running' })}
+        state={fakeState({ status: 'running', elapsedMs: 1000 })}
         controls={fakeControls()}
         onComplete={jest.fn()}
       />,
     );
-    act(() => {
-      jest.advanceTimersByTime(1000);
-    });
     fireEvent.press(getByTestId('mindful-anchor-save'));
     expect(getByTestId('mindful-anchor-confirm-message')).toHaveTextContent(
       /only spent 1 second here/,
@@ -237,14 +230,11 @@ describe('MindfulAnchorView', () => {
     const { getByTestId, queryByTestId } = render(
       <MindfulAnchorView
         config={optionConfig}
-        state={fakeState({ status: 'running' })}
+        state={fakeState({ status: 'running', elapsedMs: 5000 })}
         controls={controls}
         onComplete={onComplete}
       />,
     );
-    act(() => {
-      jest.advanceTimersByTime(5000);
-    });
     fireEvent.press(getByTestId('mindful-anchor-save'));
     fireEvent.press(getByTestId('mindful-anchor-confirm-cancel'));
     expect(queryByTestId('mindful-anchor-confirm')).toBeNull();
@@ -258,14 +248,11 @@ describe('MindfulAnchorView', () => {
     const { getByTestId, queryByTestId } = render(
       <MindfulAnchorView
         config={bareConfig}
-        state={fakeState({ status: 'running' })}
+        state={fakeState({ status: 'running', elapsedMs: 5000 })}
         controls={controls}
         onComplete={onComplete}
       />,
     );
-    act(() => {
-      jest.advanceTimersByTime(5000);
-    });
     fireEvent.press(getByTestId('mindful-anchor-save'));
     expect(queryByTestId('mindful-anchor-confirm')).toBeNull();
     expect(controls.complete).toHaveBeenCalledTimes(1);
@@ -292,14 +279,11 @@ describe('MindfulAnchorView', () => {
     rerender(
       <MindfulAnchorView
         config={optionConfig}
-        state={fakeState({ status: 'running' })}
+        state={fakeState({ status: 'running', elapsedMs: 125000 })}
         controls={controls}
         onComplete={onComplete}
       />,
     );
-    act(() => {
-      jest.advanceTimersByTime(125000);
-    });
     fireEvent.press(getByTestId('mindful-anchor-save'));
     expect(onComplete).toHaveBeenCalledWith({
       mode: 'mindful_anchor',
@@ -323,14 +307,11 @@ describe('MindfulAnchorView', () => {
     rerender(
       <MindfulAnchorView
         config={optionConfig}
-        state={fakeState({ status: 'running' })}
+        state={fakeState({ status: 'running', elapsedMs: 4000 })}
         controls={controls}
         onComplete={jest.fn()}
       />,
     );
-    act(() => {
-      jest.advanceTimersByTime(4000);
-    });
     rerender(
       <MindfulAnchorView
         config={optionConfig}

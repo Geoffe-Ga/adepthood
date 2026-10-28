@@ -264,6 +264,27 @@ _TIMER_ALTERNATIVE_SPECS: tuple[tuple[int, str, float, bool], ...] = (
     (8, "Sangha Field Tuning", 15, False),
     (8, "Reflective Tarot Draw", 5, False),
     (8, "Sacred Pause", 5, False),
+    # Stage 7 YELLOW — the six 45-minute alternatives the course itself lists
+    # (yellow-10, "Alternatives for Yellow Practice"). The chapter sets the
+    # length ("at least 45 minutes") and names no halfway bell.
+    (7, "Walking Meditation", 45, False),
+    (7, "Yoga Practice", 45, False),
+    (7, "Free-Writing", 45, False),
+    (7, "Subtle Energy Scanning", 45, False),
+    (7, "Chanting / Kirtan", 45, False),
+    (7, "Noting Practice", 45, False),
+    # Stage 9 ULTRAVIOLET — the six 45-minute alternatives the course lists
+    # (ultraviolet-7, "Alternatives for Ultraviolet Practice"). The writing
+    # alternative keeps the chapter's "(45 min)" heading so its name stays
+    # distinct from the open-ended stage-8 "Channeling Writing".
+    (9, "Vipassana Noting", 45, False),
+    (9, "Metta Jhanas", 45, False),
+    (9, "Kasina Practice", 45, False),
+    (9, "Body Scanning for Jhana", 45, False),
+    (9, "Mantra Repetition", 45, False),
+    (9, "Channeling Writing (45 min)", 45, False),
+    # Stage 10 CLEAR LIGHT has no alternatives chapter in the course, so no
+    # alternative is seeded here: inventing one is a content decision.
 )
 
 #: Flat spec rows for count_up alternative presets: ``(stage_number, name)``.

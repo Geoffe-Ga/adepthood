@@ -19,7 +19,7 @@ const REALISTIC_MANIFESTATIONS: StageManifestation[] = [
   {
     phase: 'Rising',
     integrated: { name: 'Commitment', description: 'A grounded promise to begin showing up.' },
-    shadow: { name: 'Over-commitment', description: 'Taking on too much too fast.' },
+    shadow: { name: 'Overcommitment', description: 'Taking on too much too fast.' },
   },
   {
     phase: 'Peaking',

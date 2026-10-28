@@ -1,15 +1,20 @@
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
 
+import { useTimezoneRecovery } from './useTimezoneRecovery';
+
 import {
   ApiError,
   auth as authApi,
+  refreshSessionToken,
   resetLlmApiKey,
+  resetTokenRotations,
   setOnTokenRefreshed,
   setOnUnauthorized,
   setTokenGetter,
   type AuthResponse,
   type UnauthorizedReason,
 } from '@/api';
+import { reportDiagnostic } from '@/observability/diagnostics';
 import {
   clearLogoutPending,
   clearToken,
@@ -21,11 +26,19 @@ import {
   saveToken,
   saveUserTimezone,
 } from '@/storage/authStorage';
+import { clearCheckInReplayState } from '@/storage/checkInReplayState';
+import { readDeviceOwner, stampDeviceOwner } from '@/storage/deviceOwnerStamp';
 import { clearFeedbackDraft } from '@/storage/feedbackDraftStorage';
 import { clearDroppedCheckIns, clearHabits, clearPendingCheckIns } from '@/storage/habitStorage';
 import { clearLlmApiKey } from '@/storage/llmKeyStorage';
 import { clearAllNotificationData } from '@/storage/notificationStorage';
-import { loadDeviceOwner, parseUserId, saveDeviceOwner, setActiveUser } from '@/storage/userScope';
+import { setUserTimezonePending } from '@/storage/userCalendar';
+import {
+  getActiveUser,
+  beginActiveUserTransition,
+  parseUserId,
+  setActiveUser,
+} from '@/storage/userScope';
 import { resetAllStores } from '@/store/registry';
 import { detectDeviceTimezone } from '@/utils/dateUtils';
 import {
@@ -113,9 +126,13 @@ interface AuthContextValue {
    * `'authenticated'`, so an authenticated render never computes "today" in
    * UTC for a user who is not in it (#2847).  The one exception is a session
    * stored before that cache existed, which holds the default until
-   * `backfillResumedTimezone` returns.
+   * the authoritative refresh returns.
    */
   userTimezone: string;
+  /** False only while the calendar is a provisional bootstrap fallback. */
+  userTimezoneReady: boolean;
+  /** Retry a provisional calendar after connectivity returns, within the refresh cooldown. */
+  recoverUserTimezone: () => Promise<void>;
   /**
    * Push a server-confirmed IANA zone into ``userTimezone`` (issue #261).
    * Call this ONLY with the zone echoed back by ``PUT /users/me/timezone``
@@ -155,11 +172,22 @@ interface AuthContextValue {
 
 const AuthContext = createContext<AuthContextValue | null>(null);
 
+/**
+ * Refresh ``currentToken`` in the background. It goes through the HTTP
+ * client's session coalescer, never the raw endpoint, so the backfill and both
+ * proactive paths share one refresh with any 401 that races them: the server
+ * revokes the token on refresh and allows one a minute, so a second refresh of
+ * the same token is a 429 that would sign the user out (#3034).
+ *
+ * The coalescer also publishes the rotation through ``onTokenRefreshed``;
+ * ``onSuccess`` applying the same token again is harmless, because both go
+ * through ``saveTokenThenApply``'s identity guard with the same prior token.
+ */
 function silentRefresh(
   currentToken: string,
   onSuccess: (t: string, timezone: string | undefined, expectedPriorToken: string) => void,
 ): void {
-  authApi.refresh(currentToken).then(
+  refreshSessionToken(currentToken).then(
     (res) => onSuccess(res.token, res.timezone, currentToken),
     () => {
       /* silent fail — 401 retry is the fallback */
@@ -234,6 +262,7 @@ interface AuthMutators {
   setToken: React.Dispatch<React.SetStateAction<string | null>>;
   setAuthStatus: React.Dispatch<React.SetStateAction<AuthStatus>>;
   setUserTimezone: React.Dispatch<React.SetStateAction<string>>;
+  setUserTimezoneReady: (_ready: boolean) => void;
 }
 
 /**
@@ -250,6 +279,7 @@ interface AuthMutators {
 function adoptUserTimezone(mutators: AuthMutators, timezone: string | undefined): void {
   const zone = timezone ?? 'UTC';
   mutators.setUserTimezone(zone);
+  mutators.setUserTimezoneReady(true);
   void saveUserTimezone(zone);
 }
 
@@ -269,12 +299,15 @@ function adoptUserTimezone(mutators: AuthMutators, timezone: string | undefined)
  * the wipe half-done.
  */
 async function wipeUserState(): Promise<void> {
+  beginActiveUserTransition();
   resetLlmApiKey();
   resetAllStores();
   const clears: Array<[string, Promise<void>]> = [
     ['habits', clearHabits()],
     ['pending check-ins', clearPendingCheckIns()],
     ['dropped check-ins', clearDroppedCheckIns()],
+    // #2473: the queue head's retry record names one of this user's check-ins.
+    ['check-in replay state', clearCheckInReplayState()],
     ['LLM API key', clearLlmApiKey()],
     ['notification data', clearAllNotificationData()],
     // #2847: the cached zone is this user's calendar, so it leaves with the
@@ -287,10 +320,9 @@ async function wipeUserState(): Promise<void> {
   // but surface every failure via ``allSettled`` so one dead key doesn't
   // silently strand the others.
   const results = await Promise.allSettled(clears.map(([, promise]) => promise));
-  results.forEach((result, index) => {
+  results.forEach((result) => {
     if (result.status === 'rejected') {
-      const label = clears[index]?.[0] ?? 'unknown';
-      console.warn(`[auth] failed to clear ${label} on logout`, result.reason);
+      reportDiagnostic('auth_storage_failed');
     }
   });
 }
@@ -311,8 +343,9 @@ async function wipeUserState(): Promise<void> {
  * re-authentication must keep that user's pending check-in queue: it is unsent
  * work, and discarding it would lose check-ins the user believes they logged.
  * The comparison is therefore deliberately one-sided — we wipe unless the
- * stored stamp *positively* names the incoming user, so an unstamped device or
- * a failed read errs toward the wipe rather than toward the leak.
+ * live owner (the stamp, or the account this process could not stamp yet)
+ * *positively* names the incoming user, so an unstamped device or a failed
+ * read errs toward the wipe rather than toward the leak.
  *
  * The wipe runs against the OUTGOING owner's namespace (hence the
  * ``setActiveUser(previousOwner)`` before it), then the scope moves to the
@@ -320,40 +353,18 @@ async function wipeUserState(): Promise<void> {
  * new session's first render cannot see the old session's rows.
  *
  * Recording the stamp is deliberately NOT part of this function — see
- * {@link commitDeviceOwner} for why the two writes must not be adjacent.
+ * ``stampDeviceOwner`` for why the two writes must not be adjacent.
  */
-async function adoptDeviceOwner(userId: number): Promise<void> {
-  const previousOwner = await loadDeviceOwner();
+async function adoptDeviceOwner(userId: number): Promise<boolean> {
+  // #3333: the live owner, not merely the stamp — a stamp a provenance failure
+  // held back still names the account before the one signed in now.
+  const { liveOwner: previousOwner, provenanceSaved } = await readDeviceOwner();
   if (previousOwner !== userId) {
     setActiveUser(previousOwner);
     await wipeUserState();
   }
   setActiveUser(userId);
-}
-
-/**
- * Record ``userId`` as the owner of this device's caches — and never before
- * that user's token is on disk.
- *
- * A sign-in persists two things, and nothing makes the pair atomic. Stamping
- * first meant a kill (or a rejected write) between them left the device
- * holding one account's JWT under another account's stamp, and because the
- * stamp is what the *next* sign-in compares against, that sign-in then took
- * the "same owner, nothing to wipe" branch. The divergence cemented itself
- * rather than healing. Ordering the token write first makes every torn
- * interleaving safe: the stamp may lag the token, and a lagging stamp costs
- * at worst a wipe aimed at an already-clean namespace.
- *
- * Failure is swallowed for the same reason: with the ordering right, a stamp
- * that never lands cannot mis-scope anyone, because no session takes its
- * namespace from the stamp.
- */
-async function commitDeviceOwner(userId: number): Promise<void> {
-  try {
-    await saveDeviceOwner(userId);
-  } catch (err: unknown) {
-    console.warn('[auth] failed to record the device owner', err);
-  }
+  return provenanceSaved;
 }
 
 /**
@@ -362,12 +373,12 @@ async function commitDeviceOwner(userId: number): Promise<void> {
  * the caller can decide whether to arm the BUG-FE-STATE-001 logout-pending
  * marker.
  */
-async function clearTokenSafely(label: string): Promise<boolean> {
+async function clearTokenSafely(): Promise<boolean> {
   try {
     await clearToken();
     return true;
-  } catch (err: unknown) {
-    console.warn(`clearToken failed in ${label}`, err);
+  } catch {
+    reportDiagnostic('auth_storage_failed');
     return false;
   }
 }
@@ -377,11 +388,11 @@ async function clearTokenSafely(label: string): Promise<boolean> {
  * resurrect on cold start. Arm the logout-pending marker (best-effort) so the
  * next bootstrap retries the delete before hydrating.
  */
-async function armLogoutPending(label: string): Promise<void> {
+async function armLogoutPending(): Promise<void> {
   try {
     await markLogoutPending();
-  } catch (err: unknown) {
-    console.warn(`markLogoutPending failed in ${label}`, err);
+  } catch {
+    reportDiagnostic('auth_storage_failed');
   }
 }
 
@@ -396,22 +407,42 @@ async function armLogoutPending(label: string): Promise<void> {
  * client.  ``'not_authenticated'`` means an anonymous request hit a
  * protected endpoint -- the user never had a session, so we collapse to
  * ``'anonymous'`` rather than showing the misleading "session expired"
- * re-auth sheet.  ``'session_expired'`` and ``'invalid_token'`` keep the
- * existing re-auth flow.
+ * re-auth sheet -- unless that sheet is already open (#3396, see
+ * {@link keepsReauth}).  ``'session_expired'`` and ``'invalid_token'`` keep
+ * the existing re-auth flow.
  */
 async function clearTokenForReauth(
   mutators: AuthMutators,
   reason: UnauthorizedReason,
 ): Promise<void> {
-  if (!(await clearTokenSafely('onUnauthorized'))) {
-    await armLogoutPending('onUnauthorized');
+  // The session is over: no request may be forwarded to one of its tokens.
+  resetTokenRotations();
+  if (!(await clearTokenSafely())) {
+    await armLogoutPending();
   }
   mutators.setToken(null);
   mutators.setAuthStatus((prev) => {
     if (prev === 'loading') return 'anonymous';
+    // #3396: the handler checked a rendered status; this is the committed one.
+    if (keepsReauth(prev, reason)) return prev;
     if (reason === 'not_authenticated') return 'anonymous';
     return 'reauth-required';
   });
+}
+
+/**
+ * #3396: whether a 401 leaves an open re-auth sheet exactly as it is.
+ *
+ * ``reauth-required`` holds no token, so every request a still-mounted screen
+ * sends meanwhile goes out anonymous and its 401 reports ``not_authenticated``.
+ * That says nothing the sheet does not already know (the session is over), and
+ * the same person is about to sign back in from it. Collapsing to
+ * ``'anonymous'`` would close the sheet onto Get Started and drop the session
+ * context it exists to keep. Only the user leaves the sheet: by signing in, or
+ * by dismissing it.
+ */
+function keepsReauth(status: AuthStatus, reason: UnauthorizedReason): boolean {
+  return status === 'reauth-required' && reason === 'not_authenticated';
 }
 
 /**
@@ -432,7 +463,6 @@ async function saveTokenThenApply(
   newTimezone: string | undefined,
   mutators: AuthMutators,
   tokenRef: React.MutableRefObject<string | null>,
-  warnLabel: string,
   expectedPriorToken: string,
 ): Promise<boolean> {
   if (tokenRef.current !== expectedPriorToken) {
@@ -441,8 +471,8 @@ async function saveTokenThenApply(
   }
   try {
     await saveToken(newToken);
-  } catch (err: unknown) {
-    console.warn(`saveToken failed in ${warnLabel}`, err);
+  } catch {
+    reportDiagnostic('auth_storage_failed');
     return false;
   }
   if (tokenRef.current !== expectedPriorToken) return false;
@@ -459,6 +489,7 @@ async function saveTokenThenApply(
 /** Register API-layer callbacks that bridge token state to the HTTP client. */
 function useApiCallbacks(
   tokenRef: React.MutableRefObject<string | null>,
+  authStatusRef: React.MutableRefObject<AuthStatus>,
   mutators: AuthMutators,
 ): void {
   // BUG-FRONTEND-INFRA-013: hold the getter in a ref that outlives the effect
@@ -470,17 +501,20 @@ function useApiCallbacks(
   useEffect(() => {
     setTokenGetter(stableGetter);
     setOnUnauthorized((reason: UnauthorizedReason) => {
+      // An open sheet has nothing left to tear down: no storage write that
+      // could race the sign-in it is waiting for (#3396).
+      if (keepsReauth(authStatusRef.current, reason)) return;
       void clearTokenForReauth(mutators, reason);
     });
     setOnTokenRefreshed((t: string, tz: string | undefined, prior: string) => {
-      void saveTokenThenApply(t, tz, mutators, tokenRef, 'onTokenRefreshed', prior);
+      void saveTokenThenApply(t, tz, mutators, tokenRef, prior);
     });
     return () => {
       setTokenGetter(null);
       setOnUnauthorized(null);
       setOnTokenRefreshed(null);
     };
-  }, [stableGetter, mutators, tokenRef]);
+  }, [stableGetter, mutators, tokenRef, authStatusRef]);
 }
 
 /**
@@ -490,11 +524,11 @@ function useApiCallbacks(
  * launch. Either way the session lands ``'anonymous'``.
  */
 async function drainPendingLogout(mutators: AuthMutators): Promise<void> {
-  if (await clearTokenSafely('bootstrap')) {
+  if (await clearTokenSafely()) {
     try {
       await clearLogoutPending();
-    } catch (err: unknown) {
-      console.warn('clearLogoutPending failed on bootstrap', err);
+    } catch {
+      reportDiagnostic('auth_storage_failed');
     }
   }
   mutators.setAuthStatus('anonymous');
@@ -524,50 +558,9 @@ async function scopeResumedSession(token: string): Promise<void> {
   const owner = parseUserId(decodeJwtPayload(token)?.sub);
   setActiveUser(owner);
   if (owner === null) return;
-  if ((await loadDeviceOwner()) === owner) return;
-  await commitDeviceOwner(owner);
-}
-
-/**
- * Ask the server for a zone this device has never been told (#2847).
- *
- * Only for a session stored before the zone was cached at all — an install
- * upgraded mid-session, which is precisely the population the bug was reported
- * from. ``/auth/refresh`` is the one endpoint that reports the stored zone
- * (``routers/auth.py``: "re-asserts the stored ``timezone``"), so it is the
- * one asked; it is *not* asked on an ordinary resume, because it is rate
- * limited to one call a minute and rotates the token, which makes it the wrong
- * thing to spend on every cold start.
- *
- * Deliberately fire-and-forget rather than awaited: an offline resume must
- * still reach the user's data, and a 30-second fetch timeout is not a splash
- * screen. Until it lands the session holds the pre-#2847 ``'UTC'`` default —
- * never the device's own zone, which is the one source #261 forbids.
- *
- * The result goes through ``saveTokenThenApply``, so the
- * BUG-FRONTEND-INFRA-012 identity guard applies unchanged: a backfill that
- * resolves after a logout, or after a login that won the race, is dropped
- * rather than allowed to resurrect the session it was issued for.
- */
-function backfillResumedTimezone(
-  stored: string,
-  mutators: AuthMutators,
-  tokenRef: React.MutableRefObject<string | null>,
-): void {
-  // Already due: ``useProactiveRefresh`` fires its own refresh for this token
-  // the moment it lands in state, and that response carries the zone too. A
-  // second call would only spend the one-a-minute budget on a 429.
-  if (shouldRefreshToken(stored)) return;
-  silentRefresh(stored, (newToken, timezone, expectedPriorToken) => {
-    void saveTokenThenApply(
-      newToken,
-      timezone,
-      mutators,
-      tokenRef,
-      'bootstrap timezone backfill',
-      expectedPriorToken,
-    );
-  });
+  const { stamp, provenanceSaved } = await readDeviceOwner();
+  if (provenanceSaved && stamp === owner) return;
+  await stampDeviceOwner(owner, provenanceSaved);
 }
 
 /**
@@ -585,6 +578,7 @@ async function bootstrapStoredToken(
   mutators: AuthMutators,
   tokenRef: React.MutableRefObject<string | null>,
 ): Promise<void> {
+  mutators.setUserTimezoneReady(false);
   if (await isLogoutPending()) {
     await drainPendingLogout(mutators);
     return;
@@ -596,6 +590,7 @@ async function bootstrapStoredToken(
     await scopeResumedSession(stored);
     const cachedZone = await loadUserTimezone();
     if (cachedZone !== null) mutators.setUserTimezone(cachedZone);
+    mutators.setUserTimezoneReady(cachedZone !== null);
     // The ref is what every identity guard compares against (and what the API
     // layer's token getter reads), and it is otherwise only written during
     // render. Claiming the resumed token here rather than a render later
@@ -605,13 +600,12 @@ async function bootstrapStoredToken(
     tokenRef.current = stored;
     mutators.setToken(stored);
     mutators.setAuthStatus('authenticated');
-    if (cachedZone === null) backfillResumedTimezone(stored, mutators, tokenRef);
     return;
   }
   if (stored) {
     // Expired token: discard without arming the marker — the user did not ask
     // to log out, so a failed clear should not force a wipe next launch.
-    await clearTokenSafely('bootstrap discard expired');
+    await clearTokenSafely();
   }
   mutators.setAuthStatus('anonymous');
 }
@@ -621,8 +615,8 @@ function useLoadStoredToken(
   tokenRef: React.MutableRefObject<string | null>,
 ): void {
   useEffect(() => {
-    bootstrapStoredToken(mutators, tokenRef).catch((err: unknown) => {
-      console.warn('loadToken failed on bootstrap', err);
+    bootstrapStoredToken(mutators, tokenRef).catch(() => {
+      reportDiagnostic('auth_storage_failed');
       mutators.setAuthStatus('anonymous');
     });
   }, [mutators, tokenRef]);
@@ -654,19 +648,22 @@ interface AuthActions extends SocialLogins {
  * device storage knows nothing about.
  */
 async function applyAuthResponse(response: AuthResponse, mutators: AuthMutators): Promise<void> {
+  // A fresh sign-in starts a fresh rotation history (#3034): a late request of
+  // the previous session must never be forwarded to that session's successor.
+  resetTokenRotations();
   // BUG-FE-STATE-001: before anything else, and before any state the navigator
   // renders from — a device whose owner just changed must not carry the
   // previous owner's rows into this session.
-  await adoptDeviceOwner(response.user_id);
+  const provenanceSaved = await adoptDeviceOwner(response.user_id);
   await saveToken(response.token);
   // Only now: the stamp must never name an account whose token failed to land.
-  await commitDeviceOwner(response.user_id);
+  await stampDeviceOwner(response.user_id, provenanceSaved);
   // BUG-FE-STATE-001: a fresh auth supersedes any stale pending-logout marker;
   // a clear failure here must not break login / signup / password-reset.
   try {
     await clearLogoutPending();
-  } catch (err: unknown) {
-    console.warn('clearLogoutPending failed in applyAuthResponse', err);
+  } catch {
+    reportDiagnostic('auth_storage_failed');
   }
   mutators.setToken(response.token);
   adoptUserTimezone(mutators, response.timezone);
@@ -823,9 +820,10 @@ function useSocialLogins(mutators: AuthMutators): SocialLogins {
  * then clear in-memory state) lives here in one place rather than
  * duplicated across two callbacks.
  */
-async function tearDownSession(mutators: AuthMutators, where: string): Promise<void> {
-  if (!(await clearTokenSafely(where))) {
-    await armLogoutPending(where);
+async function tearDownSession(mutators: AuthMutators): Promise<void> {
+  resetTokenRotations();
+  if (!(await clearTokenSafely())) {
+    await armLogoutPending();
   }
   await wipeUserState();
   // Release the scope only after the wipe, so the clears above target the
@@ -835,6 +833,7 @@ async function tearDownSession(mutators: AuthMutators, where: string): Promise<v
   setActiveUser(null);
   mutators.setToken(null);
   mutators.setUserTimezone('UTC');
+  mutators.setUserTimezoneReady(false);
   mutators.setAuthStatus('anonymous');
 }
 
@@ -857,7 +856,7 @@ function useAuthActions(mutators: AuthMutators): AuthActions {
 
   const socialLogins = useSocialLogins(mutators);
 
-  const logout = useCallback(() => tearDownSession(mutators, 'logout'), [mutators]);
+  const logout = useCallback(() => tearDownSession(mutators), [mutators]);
 
   // BUG-AUTH-005: mirror the persistence-first ordering used by the API-layer
   // onUnauthorized hook so callers of the context-exposed helper get the same
@@ -869,7 +868,7 @@ function useAuthActions(mutators: AuthMutators): AuthActions {
     void clearTokenForReauth(mutators, 'session_expired');
   }, [mutators]);
 
-  const dismissReauth = useCallback(() => tearDownSession(mutators, 'dismissReauth'), [mutators]);
+  const dismissReauth = useCallback(() => tearDownSession(mutators), [mutators]);
 
   const confirmPasswordReset = useCallback<ConfirmReset>(
     async (token, newPassword) => {
@@ -898,21 +897,24 @@ function useAuthActions(mutators: AuthMutators): AuthActions {
   );
 }
 
-export function AuthProvider({ children }: { children: React.ReactNode }) {
-  const [token, setToken] = useState<string | null>(null);
-  const [authStatus, setAuthStatus] = useState<AuthStatus>('loading');
+function useUserCalendar() {
   // ``userTimezone`` defaults to ``"UTC"`` so consumers never see a null
   // value -- the same default the user-local helpers fall back to when
   // the column is unset, so behavior is identical across the brief
   // pre-auth window.
   const [userTimezone, setUserTimezone] = useState<string>('UTC');
+  const [userTimezoneReady, setReady] = useState(false);
+  const setUserTimezoneReady = useCallback((ready: boolean) => {
+    setUserTimezonePending(getActiveUser(), !ready);
+    setReady(ready);
+  }, []);
+  return { userTimezone, setUserTimezone, userTimezoneReady, setUserTimezoneReady };
+}
 
-  const tokenRef = React.useRef<string | null>(null);
-  tokenRef.current = token;
-
-  // Stable handle so effects depending on the mutators don't thrash.
-  const mutators = useMemo<AuthMutators>(() => ({ setToken, setAuthStatus, setUserTimezone }), []);
-
+function useSessionRefresh(
+  mutators: AuthMutators,
+  tokenRef: React.MutableRefObject<string | null>,
+) {
   // ``applyNewToken`` accepts the server's stored timezone from the
   // refresh response so the cold-start → proactive-refresh path keeps
   // ``userTimezone`` aligned with the authenticated user's IANA zone.
@@ -924,35 +926,59 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   // ``tokenRef.current`` still equals it, so a logout OR a logout->re-login
   // that wins the race against the refresh does NOT resurrect a prior
   // session by re-applying its stale token.
-  const applyNewToken = useCallback(
+  return useCallback(
     async (newToken: string, newTimezone: string | undefined, expectedPriorToken: string) => {
-      await saveTokenThenApply(
-        newToken,
-        newTimezone,
-        mutators,
-        tokenRef,
-        'applyNewToken',
-        expectedPriorToken,
-      );
+      await saveTokenThenApply(newToken, newTimezone, mutators, tokenRef, expectedPriorToken);
     },
-    [mutators],
+    [mutators, tokenRef],
   );
+}
 
+function useCorrectedTimezone(mutators: AuthMutators) {
   // #2847: a zone the user corrects in Settings is a zone the server now has
   // on record, so it is cached like every other server-confirmed one. Without
   // this the correction would survive only until the next cold start read back
   // the zone it replaced.
-  const adoptCorrectedTimezone = useCallback(
+  return useCallback(
     (timezone: string) => {
       adoptUserTimezone(mutators, timezone);
     },
     [mutators],
   );
+}
 
-  useApiCallbacks(tokenRef, mutators);
+export function AuthProvider({ children }: { children: React.ReactNode }) {
+  const [token, setToken] = useState<string | null>(null);
+  const [authStatus, setAuthStatus] = useState<AuthStatus>('loading');
+  const { userTimezone, setUserTimezone, userTimezoneReady, setUserTimezoneReady } =
+    useUserCalendar();
+
+  const tokenRef = React.useRef<string | null>(null);
+  tokenRef.current = token;
+  const authStatusRef = React.useRef<AuthStatus>(authStatus);
+  authStatusRef.current = authStatus;
+
+  // Stable handle so effects depending on the mutators don't thrash.
+  const mutators = useMemo<AuthMutators>(
+    () => ({ setToken, setAuthStatus, setUserTimezone, setUserTimezoneReady }),
+    [setUserTimezone, setUserTimezoneReady],
+  );
+
+  const applyNewToken = useSessionRefresh(mutators, tokenRef);
+
+  const adoptCorrectedTimezone = useCorrectedTimezone(mutators);
+
+  useApiCallbacks(tokenRef, authStatusRef, mutators);
   useProactiveRefresh(token, tokenRef, applyNewToken);
   useLoadStoredToken(mutators, tokenRef);
 
+  const recoverUserTimezone = useTimezoneRecovery({
+    token,
+    authStatus,
+    ready: userTimezoneReady,
+    tokenRef,
+    applyNewToken,
+  });
   const actions = useAuthActions(mutators);
 
   const value = useMemo(
@@ -960,10 +986,20 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       token,
       authStatus,
       userTimezone,
+      userTimezoneReady,
+      recoverUserTimezone,
       setUserTimezone: adoptCorrectedTimezone,
       ...actions,
     }),
-    [token, authStatus, userTimezone, adoptCorrectedTimezone, actions],
+    [
+      token,
+      authStatus,
+      userTimezone,
+      userTimezoneReady,
+      recoverUserTimezone,
+      adoptCorrectedTimezone,
+      actions,
+    ],
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

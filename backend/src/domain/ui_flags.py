@@ -7,6 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import col, select, update
 
 from dependencies.ownership import resolve_owned_habit
+from domain.habit_links import assert_habit_goals_linkable
 from models.user_ui_flags import UserUiFlags
 from schemas.ui_flags import UiFlagsUpdate
 
@@ -57,12 +58,17 @@ async def apply_ui_flags_update(
     (404 missing / 403 another user's habit) leaves the whole row untouched --
     a boolean sent in the same body is not applied either. An explicit ``null``
     link needs no authorisation: clearing your own link names no other row.
+
+    An owned habit must also count in a unit the writing timer can measure
+    (#3150): goals on anything but ``minutes``/``sessions``, or scored over a
+    period other than a day or a week, are a 422 that likewise writes nothing.
     The caller commits.
     """
     changes = update_body.model_dump(exclude_unset=True)
     habit_id = changes.get(_WRITING_HABIT_FIELD)
     if habit_id is not None:
         await resolve_owned_habit(session, habit_id, user_id)
+        await assert_habit_goals_linkable(session, habit_id)
     for field, value in changes.items():
         setattr(flags, field, value)
     session.add(flags)
@@ -80,3 +86,22 @@ async def clear_writing_habit_links(session: AsyncSession, habit_id: int) -> Non
         .where(col(UserUiFlags.writing_session_habit_id) == habit_id)
         .values(writing_session_habit_id=None)
     )
+
+
+async def advance_course_reading_stage(
+    session: AsyncSession, user_id: int, stage_number: int
+) -> None:
+    """Remember the highest read Frequency, including concurrent mark-read calls.
+
+    Compare in the UPDATE itself so a slower earlier-stage request cannot
+    overwrite a later-stage request that has already committed.
+    """
+    await ensure_ui_flags(session, user_id)
+    last_stage = col(UserUiFlags.course_last_stage)
+    await session.execute(
+        update(UserUiFlags)
+        .where(col(UserUiFlags.user_id) == user_id)
+        .where(last_stage.is_(None) | (last_stage < stage_number))
+        .values(course_last_stage=stage_number)
+    )
+    await session.commit()

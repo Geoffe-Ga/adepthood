@@ -72,6 +72,13 @@ SECRET_KEY_ENV = "SECRET_KEY"  # pragma: allowlist secret -- a variable name, no
 #: Line the caller waits for; the port is chosen by the kernel, not guessed.
 READY_PREFIX = "E2E_READY port="
 
+#: How long an idle keep-alive connection stays open. Playwright's request
+#: context reuses idle connections; at uvicorn's 5 s default a request sent on
+#: one that had sat quiet through a reload or a UI wait raced the server closing
+#: it and failed as ``socket hang up`` / ``ECONNRESET``. Holding idle sockets on
+#: a loopback test server costs nothing, so this outlasts any quiet stretch.
+IDLE_KEEP_ALIVE_SECONDS = 300
+
 _LOOPBACK_HOST = "127.0.0.1"
 _POSTGRESQL_DIALECT = "postgresql"
 
@@ -225,6 +232,10 @@ async def _stub_license_check(
         email=_STUB_LICENSE_PURCHASER_EMAIL,
         product_id=_STUB_LICENSE_PRODUCT_ID,
         sale_id=f"{_STUB_LICENSE_SALE_PREFIX}{(license_key or '').strip()}",
+        # An explicit zero-price fixture, not evidence about Gumroad itself.
+        # The browser lane proves what the product does after verification;
+        # integrations.gumroad keeps the real response-contract coverage.
+        price=0,
         refunded=False,
         chargebacked=False,
     )
@@ -265,10 +276,20 @@ class _AnnouncingServer(uvicorn.Server):
         sys.stdout.flush()
 
 
+def _server_config(port: int) -> uvicorn.Config:
+    """Return the loopback server config, keeping idle connections open long."""
+    return uvicorn.Config(
+        app,
+        host=_LOOPBACK_HOST,
+        port=port,
+        log_level="info",
+        timeout_keep_alive=IDLE_KEEP_ALIVE_SECONDS,
+    )
+
+
 async def _serve(port: int) -> None:
     """Serve the app on ``port`` until the process is asked to stop."""
-    config = uvicorn.Config(app, host=_LOOPBACK_HOST, port=port, log_level="info")
-    await _AnnouncingServer(config, port).serve()
+    await _AnnouncingServer(_server_config(port), port).serve()
 
 
 def _reserve_port() -> int:

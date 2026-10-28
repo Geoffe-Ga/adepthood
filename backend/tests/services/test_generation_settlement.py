@@ -16,6 +16,7 @@ import pytest
 from models.wallet_audit import (
     BUCKET_MONTHLY,
     GENERATION_REFUND_REASONS,
+    REASON_REFUND_DEMO,
     REASON_REFUND_FAILED_ESSAY,
     REASON_REFUND_FAILED_RESONANCE,
     REASON_REFUND_NO_ESSAY,
@@ -111,6 +112,7 @@ def test_every_generation_refund_reason_names_an_outcome() -> None:
         REASON_REFUND_FAILED_RESONANCE: GenerationOutcome.REFUNDED_FAILED,
         REASON_REFUND_FAILED_ESSAY: GenerationOutcome.REFUNDED_FAILED,
         REASON_REFUND_NO_ESSAY: GenerationOutcome.REFUSED,
+        REASON_REFUND_DEMO: GenerationOutcome.REFUNDED_DEMO,
     }
 
 

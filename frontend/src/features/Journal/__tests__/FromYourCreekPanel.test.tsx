@@ -54,7 +54,7 @@ describe('FromYourCreekPanel', () => {
     expect(view.getByText(PRAXIS.excerpt)).toBeTruthy();
     expect(view.getByText(EDDY.title)).toBeTruthy();
     expect(view.getByText(EDDY.description)).toBeTruthy();
-    expect(view.getByText('12 fragments since March')).toBeTruthy();
+    expect(view.getByText('12 pieces of your writing since March')).toBeTruthy();
     const bodyStyle = StyleSheet.flatten(view.getByTestId('from-your-creek-body').props.style);
     expect(bodyStyle.maxHeight).toBeLessThan(Dimensions.get('window').height);
     expect(
@@ -64,7 +64,7 @@ describe('FromYourCreekPanel', () => {
     ).toBeTruthy();
     expect(
       view.getByLabelText(
-        'Returning to water. Images of rivers and rain gather around this thread. 12 fragments since March.',
+        'Returning to water. Images of rivers and rain gather around this thread. 12 pieces of your writing since March.',
       ),
     ).toBeTruthy();
   });
@@ -74,21 +74,21 @@ describe('FromYourCreekPanel', () => {
 
     fireEvent.press(view.getByTestId('from-your-creek-toggle'));
 
-    expect(view.getByText('Praxis')).toBeTruthy();
-    expect(view.queryByText('Eddies')).toBeNull();
+    expect(view.getByText("Praxis — what you're putting into practice")).toBeTruthy();
+    expect(view.queryByText('Eddies — where your writing keeps circling')).toBeNull();
     expect(view.getByText(PRAXIS.title)).toBeTruthy();
   });
 
-  it('renders an eddy-only response and uses singular fragment copy', () => {
+  it('renders an eddy-only response and uses the singular caption', () => {
     const view = render(
       <FromYourCreekPanel praxis={[]} eddies={[{ ...EDDY, fragment_count: 1 }]} />,
     );
 
     fireEvent.press(view.getByTestId('from-your-creek-toggle'));
 
-    expect(view.queryByText('Praxis')).toBeNull();
-    expect(view.getByText('Eddies')).toBeTruthy();
-    expect(view.getByText('1 fragment since March')).toBeTruthy();
+    expect(view.queryByText("Praxis — what you're putting into practice")).toBeNull();
+    expect(view.getByText('Eddies — where your writing keeps circling')).toBeTruthy();
+    expect(view.getByText('1 piece of your writing since March')).toBeTruthy();
   });
 
   it('uses accessible token colours and the interactive type floor on its trigger', () => {

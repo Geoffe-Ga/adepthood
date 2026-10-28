@@ -31,6 +31,13 @@ import {
   type WalkContext,
 } from './routeWalk';
 
+// A routed read can still be awaiting `route.fetch()` when the test ends, and
+// that fetch then rejects with "Test ended" outside any test (#3481). Unroute
+// first so a straggler's late error is dropped rather than failing the run.
+test.afterEach(async ({ page }) => {
+  await page.unrouteAll({ behavior: 'ignoreErrors' });
+});
+
 /**
  * The action-row sweep (#2860): every reachable route, at the phone and
  * desktop profiles, screenshotted and reduced to one line per visible element
@@ -94,6 +101,13 @@ const SKIPPED_ROUTES: readonly { name: string; reason: string }[] = [
       'headless Chromium has no camera or picker to feed it, and a page it did read ' +
       'would be a paid transcription',
   },
+  {
+    name: 'CorpusSweep',
+    reason:
+      'its Settings row shows only under a standing yes to sorting with writing still ' +
+      'unsorted (#3499); the walking account has neither, and granting would send its ' +
+      'writing to the provider -- the screen is pinned by CorpusSweepScreen.test.tsx',
+  },
 ];
 
 /**
@@ -123,7 +137,8 @@ const SKIPPED_BUTTONS: readonly ButtonSkip[] = [
  * ran under its own corner X, and the sweep saw it one run in several).
  */
 const SETTLES_ON: Readonly<Record<string, readonly string[]>> = {
-  Journal: ['journal-voice-readiness-band', 'journal-voice-readiness-dismiss'],
+  Prompts: ['journal-voice-readiness-band', 'journal-voice-readiness-dismiss'],
+  JournalNotifications: ['journal-voice-readiness-band', 'journal-voice-readiness-dismiss'],
 };
 
 /**
@@ -157,6 +172,14 @@ const EXTRA_ROUTES: readonly Route[] = [
       await page.goto(`${frontendUrl()}/journal`);
       await page.getByRole('button', { name: 'Open Journal menu' }).click();
       await page.getByRole('dialog').getByTestId('journal-drawer-promoted-quotes').click();
+    },
+  },
+  {
+    name: 'JournalNotifications',
+    label: 'Prompts (legacy link)',
+    anchor: 'journal-notification-center',
+    open: async (page) => {
+      await page.goto(`${frontendUrl()}/journal/notifications`);
     },
   },
 ];

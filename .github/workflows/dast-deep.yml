@@ -147,10 +147,13 @@ jobs:
           # PYTHONPATH=src, not ``src.main`` -- so this job exercises the same
           # import layout production runs.
           #
-          # `info`, not `warning`: uvicorn's access logger emits at INFO, and
-          # those request lines are the only record anywhere in this job of what
-          # the scanner actually got back. At `warning` the evidence step below
-          # would read an empty file and every scan would look identical.
+          # The evidence step below reads the app's own access record
+          # (`request_completed method=... route=<template> status=...`), which
+          # the app writes to stderr at INFO -- the only record anywhere in this
+          # job of what the scanner actually got back. uvicorn's own access line
+          # is switched off by the app (it carries the raw query string, #3064),
+          # so LOG_LEVEL must stay at INFO or below and stderr must land in the
+          # log. `--log-level info` keeps uvicorn's own lines at the same level.
           PYTHONPATH=src python -m uvicorn main:app \
             --host 127.0.0.1 --port 8000 --log-level info > "$UVICORN_LOG" 2>&1 &
 

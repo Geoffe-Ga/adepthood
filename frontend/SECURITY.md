@@ -135,6 +135,7 @@ time:
 ## Where to file new concerns
 
 Open an issue tagged `security` in the project tracker and link this
-file in the description. Critical findings (account takeover,
-data-exfil, RCE) should also page the on-call directly per the project
-incident runbook.
+file in the description. There is no staffed on-call rotation. For a
+critical finding (account takeover, data exfiltration, RCE), follow the
+draft privacy incident runbook in `docs/ops/privacy-incident-response.md`.
+It is not yet ratified, and it names no owner or response target.

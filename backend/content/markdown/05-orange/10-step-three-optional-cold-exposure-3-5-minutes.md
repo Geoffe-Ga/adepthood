@@ -22,7 +22,7 @@ Your body will want to panic. It will activate the same fight-or-flight response
 
 Cold exposure is a form of voluntary stress—what biologists call *hormesis*. It activates your immune system, sharpens your focus, and trains resilience at the cellular level. It's uncomfortable. But discomfort is not danger. And learning that distinction is one of the most valuable skills you can develop.
 
-When you step out of the cold, dry off slowly. Notice the warmth returning to your skin. The tingling. The aliveness. You just collaborated with your autonomic nervous system—and won.
+When you step out of the cold, dry off slowly. Notice the warmth returning to your skin. The tingling. The aliveness. You just collaborated with your autonomic nervous system—and it met you halfway.
 
 **Why It Works:**
 
@@ -30,6 +30,6 @@ The Wim Hof Method teaches you to *collaborate* with your autonomic nervous syst
 
 This is the essence of Orange: understanding the system (your physiology) so you can work *with* it more skillfully. You're not dominating your body (that's Red's shadow). You're optimizing it (that's Orange's gift).
 
-Over time, this practice doesn't just make you physically resilient. It makes you *psychologically* resilient. You learn that panic is optional. That discomfort can be sat with. That the edge of your capacity is not fixed—it's trainable.
+Over time, this practice doesn't just make you physically resilient. It makes you *psychologically* resilient. You learn that the panic signal can fire without you obeying it. That discomfort can be sat with—not always, but more often than you thought. That the edge of your capacity moves.
 
 And that's the kind of competence that changes everything.

@@ -773,9 +773,11 @@ async def test_stage_prompts_returns_four_prompts_each_with_its_cadence(
 ) -> None:
     """Blue is a four-prompt stage, and its prompts do not share one rhythm.
 
-    A single question per week cannot say that Blue's fourth prompt is written
-    half as often as its first; four prompts each carrying their own cadence
-    can, which is the whole point of the stage-scoped read.
+    A single question per week cannot say that Blue's fourth prompt carries a
+    cadence its first three do not; four prompts each carrying their own
+    cadence can, which is the whole point of the stage-scoped read. Prompts
+    1-3 state none since their "(At least 4x per week)" typo was removed
+    upstream (#3136); prompt 4's deliberate cadence survives.
     """
     headers = await _signup(async_client, "stage_blue")
     await _advance_to_week(async_client, headers, _BLUE_FIRST_WEEK)
@@ -787,8 +789,7 @@ async def test_stage_prompts_returns_four_prompts_each_with_its_cadence(
     assert body["stage_name"] == "Blue"
     assert len(body["prompts"]) == _BLUE_PROMPT_COUNT
     cadences = [p["cadence"] for p in body["prompts"]]
-    assert all(cadences)
-    assert len(set(cadences)) > 1
+    assert cadences == [None, None, None, "At least 2x per week"]
 
 
 @pytest.mark.asyncio

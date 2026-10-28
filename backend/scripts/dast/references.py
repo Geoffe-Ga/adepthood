@@ -323,6 +323,24 @@ REFERENCE_REGISTRY: ReferenceRegistry = MappingProxyType(
                 ),
             ),
         ),
+        # Story has the same owner-only aggregate witness as the legacy totals.
+        ("GET", "/practice-sessions/story"): ReferenceProbe(
+            method="GET",
+            path="/practice-sessions/story",
+            body={},
+            references=(
+                ObjectReference(
+                    field="user_practice_id",
+                    location=ReferenceLocation.QUERY,
+                    seed_key="logged_user_practice_id",
+                    evidence=EvidenceStrategy.ECHO,
+                    witness=EvidenceWitness(
+                        pointer=("total_sessions",),
+                        condition=WitnessCondition.AT_LEAST_ONE,
+                    ),
+                ),
+            ),
+        ),
         ("POST", "/practice-sessions/"): ReferenceProbe(
             method="POST",
             path="/practice-sessions/",
@@ -365,7 +383,9 @@ REFERENCE_REGISTRY: ReferenceRegistry = MappingProxyType(
         # The writing timer's habit link (#2861): the caller's own flags row is
         # the path's implicit object, and the habit in the body is the one under
         # test. The response echoes the linked id, so a cross-tenant link that
-        # landed would name the victim's habit in the caller's own answer.
+        # landed would name the victim's habit in the caller's own answer. The
+        # seed is a habit on timer goals: the route refuses to link any other
+        # (#3150), which would fail the positive control on domain grounds.
         ("PATCH", "/ui-flags"): ReferenceProbe(
             method="PATCH",
             path="/ui-flags",
@@ -374,7 +394,26 @@ REFERENCE_REGISTRY: ReferenceRegistry = MappingProxyType(
                 ObjectReference(
                     field="writing_session_habit_id",
                     location=ReferenceLocation.BODY,
-                    seed_key="habit_id",
+                    seed_key="timer_habit_id",
+                    evidence=EvidenceStrategy.ECHO,
+                ),
+            ),
+        ),
+        # A practice's own habit link (#3151): the selection in the path is the
+        # caller's own, seeded fresh, and the habit in the body is the one under
+        # test. The answer echoes the linked id, so a cross-tenant link that
+        # landed would name the victim's habit. Same timer-goal seed as the
+        # writing link, for the same reason: no other habit may be linked.
+        ("PATCH", "/user-practices/{user_practice_id}/habit"): ReferenceProbe(
+            method="PATCH",
+            path="/user-practices/{user_practice_id}/habit",
+            body={},
+            path_seeds=("user_practice_id",),
+            references=(
+                ObjectReference(
+                    field="habit_id",
+                    location=ReferenceLocation.BODY,
+                    seed_key="timer_habit_id",
                     evidence=EvidenceStrategy.ECHO,
                 ),
             ),

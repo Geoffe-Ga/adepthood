@@ -137,13 +137,22 @@ jest.mock('@/features/Journal/JournalEntryScreen', () => {
   return { __esModule: true, default: Stub };
 });
 
+jest.mock('@/features/Journal/NotificationCenterScreen', () => {
+  const React = require('react');
+  const { Text } = require('react-native');
+  const Stub = () => React.createElement(Text, null, 'JournalNotifications');
+  return { __esModule: true, default: Stub };
+});
+
 // Habit modals BottomTabs may import.
 jest.mock('@/features/Habits/components/GoalModal', () => () => null);
 jest.mock('@/features/Habits/components/HabitSettingsModal', () => () => null);
-jest.mock('@/features/Habits/components/MissedDaysModal', () => () => null);
 jest.mock('@/features/Habits/components/OnboardingModal', () => () => null);
 jest.mock('@/features/Habits/components/ReorderHabitsModal', () => () => null);
-jest.mock('@/features/Habits/components/StatsModal', () => () => null);
+jest.mock('@/features/Habits/story/HabitStorySheet', () => ({
+  __esModule: true,
+  HabitStorySheet: jest.fn(() => null),
+}));
 
 // Expo modules not available in Jest.
 jest.mock('expo-notifications', () => ({

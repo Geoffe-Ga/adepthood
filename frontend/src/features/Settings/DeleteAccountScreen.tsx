@@ -15,6 +15,7 @@ import { useSettingsFormState, useSettingsSubmit } from './shared/useSettingsFor
 
 import { ApiError, users, type AccountDeletionReceipt } from '@/api';
 import { ScreenScaffold } from '@/components/layout/ScreenScaffold';
+import { OLDEST_LIVE_BACKUP_DAYS } from '@/constants/backupSchedule';
 import { useAuth } from '@/context/AuthContext';
 import { BORDER_RADIUS, SPACING, colors, ink, surface } from '@/design/tokens';
 
@@ -23,17 +24,28 @@ import { BORDER_RADIUS, SPACING, colors, ink, surface } from '@/design/tokens';
  * requires of any app that lets people sign up, and the honest end of a
  * journal-first product's promise that the writing is theirs.
  *
- * Two things this screen refuses to do. It does not soften: deletion is
- * immediate, irreversible, and says so before the button is pressable. And it
- * does not overclaim: what survives — the anonymous catalogue contribution,
- * the purchase receipt, a Creek Vault the app cannot reach — is listed beside
- * what goes, because a promise of total erasure that is not quite true is
+ * Two things this screen refuses to do. It does not soften: deletion from the
+ * live service is immediate and cannot be undone, and it says so before the
+ * button is pressable, along with how long a backup taken beforehand may still
+ * hold a copy. And it does not overclaim: what survives — the anonymous
+ * catalogue contribution, the purchase receipt, a Creek Vault the app cannot
+ * reach — is listed beside what goes, because a promise of total erasure that is not quite true is
  * worse than an accurate one.
  */
 
 const IRREVERSIBLE_LEAD =
-  'Deleting your account is immediate and irreversible. There is no grace period, ' +
-  'and afterwards there is nothing left to restore — not by us, not by support.';
+  'Deleting your account removes it from Adepthood immediately and is irreversible. ' +
+  'There is no grace period, and no way back — not in the app, not through support. ' +
+  'Backups made before you delete still hold a copy until they age out — ' +
+  `on our backup schedule, within about ${OLDEST_LIVE_BACKUP_DAYS} days.`;
+
+/** The receipt's account of what was removed, and of what ages out after. */
+function receiptSummary(rowsErased: number): string {
+  return (
+    `We removed ${rowsErased} records belonging to you. ` +
+    `On our backup schedule, backups made before now age out within about ${OLDEST_LIVE_BACKUP_DAYS} days.`
+  );
+}
 
 /** What the server's policy erases, in the language of the app rather than of tables. */
 const WHAT_GOES = [
@@ -41,13 +53,15 @@ const WHAT_GOES = [
   'Your habits, goals, check-ins and streaks.',
   'Your practices, sessions, recipes and tags.',
   'Your course progress, reflections, margin notes and promoted passages.',
-  'Your account, your sign-in methods, and every session on every device.',
+  'Your account, your sign-in methods, and every place you are signed in.',
 ];
 
 /** What deliberately survives — stated here rather than discovered later. */
 const WHAT_STAYS = [
   'Practices you contributed to the shared catalogue stay in it, no longer linked to you.',
-  'Purchase receipts stay, including the address on them, so a licence you paid for still works if you ever come back.',
+  'Purchase receipts stay, but the email address is removed from every purchase linked to this account; ' +
+    'a licence key you paid for can still be redeemed if you ever come back. ' +
+    'A purchase never linked to any account keeps its address, because that is how it is claimed.',
   'A dated note that a deletion happened — counts only, none of what you wrote.',
 ];
 
@@ -126,8 +140,8 @@ const Receipt = ({
       <Text style={[face.title, settingsFormStyles.title]} accessibilityRole="header">
         Your account is gone
       </Text>
-      <Text style={settingsFormStyles.body}>
-        {`We removed ${receipt.rows_erased} records belonging to you. There is nothing left to restore.`}
+      <Text style={settingsFormStyles.body} testID="delete-account-receipt-summary">
+        {receiptSummary(receipt.rows_erased)}
       </Text>
       <Text style={styles.vaultGuidance} testID="delete-account-vault-guidance">
         {receipt.vault.guidance}

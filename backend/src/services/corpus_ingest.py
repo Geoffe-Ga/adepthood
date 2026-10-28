@@ -89,23 +89,39 @@ import enum
 import logging
 from collections.abc import Mapping
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from types import MappingProxyType
 from typing import Final
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from domain.privacy_tier import admits_egress
 from models.corpus_fragment import CorpusFragment, CorpusSource
 from models.journal_entry import JournalClassification, JournalEntry
 from security import sanitize_user_text
 from services.botmason import LLMCreditExhaustedError
+from services.classification_ceiling import (
+    classifications_today,
+    record_classification_attempt,
+)
 from services.corpus_consent import load_consent
 from services.corpus_store import FragmentDraft, delete_fragments_for_entry, record_fragment
 from services.frequency_classification import (
     IntimateContentRefusedError,
     classify_frequencies,
 )
+from services.privacy_lineage import LineageOperation, observe_entry_lineage
+from services.reflection_boundary import ReflectionBoundary
+from services.usage import get_daily_classification_ceiling
 
 logger = logging.getLogger(__name__)
+
+#: The log line written when an account's day's allowance of server-paid
+#: classifications is spent: the account and this word only, no writing. It is
+#: a WARNING rather than INFO because it is the condition an operator wants to
+#: see before a bill arrives, and the only signal that says so -- a refused
+#: classification writes no usage row, so nothing downstream would report it.
+CLASSIFICATION_CEILING_EVENT: Final[str] = "corpus_classification_ceiling_reached"
 
 #: The source every fragment this module writes carries, and the source whose
 #: consent it reads. Journal writing is what an account composes here, as
@@ -122,7 +138,7 @@ CLASSIFICATION_CALLS_PER_INGEST: Final[int] = 1
 class IngestOutcome(enum.StrEnum):
     """What became of one attempt to put writing into a corpus.
 
-    Four outcomes and exactly one of them stores anything. They are named
+    Six outcomes and exactly one of them stores anything. They are named
     rather than collapsed into ``fragment is None`` because a *caller with a
     user in front of it* has to say which of them happened: "you have not
     agreed to this yet", "that tier never enters the corpus" and "nothing in
@@ -134,6 +150,17 @@ class IngestOutcome(enum.StrEnum):
     NO_CONSENT = "no_consent"
     TIER_REFUSED = "tier_refused"
     UNCLASSIFIED = "unclassified"
+    #: The writer's AI operations are bound to their vault, and the only
+    #: classifier this spine can call is the app provider's (#3156). Not
+    #: :attr:`UNCLASSIFIED`: nothing was asked, so nothing was found wanting.
+    BOUNDARY_REFUSED = "boundary_refused"
+    #: This account has already used its day's allowance of server-paid
+    #: classifications (:func:`services.usage.get_daily_classification_ceiling`).
+    #: Not :attr:`UNCLASSIFIED`, for the reason :attr:`BOUNDARY_REFUSED` is not:
+    #: no provider was asked, so nothing was found wanting. The writing keeps no
+    #: fragment and stays pending, so the next edit or sweep offers it again --
+    #: tomorrow, against a fresh day's allowance.
+    CEILING_REACHED = "ceiling_reached"
 
 
 @dataclass(frozen=True)
@@ -173,6 +200,8 @@ class IngestResult:
 _NO_CONSENT_RESULT = IngestResult(IngestOutcome.NO_CONSENT)
 _TIER_REFUSED_RESULT = IngestResult(IngestOutcome.TIER_REFUSED)
 _UNCLASSIFIED_RESULT = IngestResult(IngestOutcome.UNCLASSIFIED)
+_BOUNDARY_REFUSED_RESULT = IngestResult(IngestOutcome.BOUNDARY_REFUSED)
+_CEILING_REACHED_RESULT = IngestResult(IngestOutcome.CEILING_REACHED)
 
 # What the journal path's log line calls each non-storing outcome. A mapping
 # rather than a chain of branches so it is total by construction: an outcome
@@ -183,6 +212,8 @@ _JOURNAL_LOG_OUTCOMES: Final[Mapping[IngestOutcome, str]] = MappingProxyType(
         IngestOutcome.NO_CONSENT: "no_consent",
         IngestOutcome.TIER_REFUSED: "withdrawn",
         IngestOutcome.UNCLASSIFIED: "unclassified",
+        IngestOutcome.BOUNDARY_REFUSED: "boundary_refused",
+        IngestOutcome.CEILING_REACHED: "ceiling_reached",
     }
 )
 
@@ -192,6 +223,7 @@ async def _classify_and_record(
     *,
     user_id: int,
     request: IngestRequest,
+    boundary: ReflectionBoundary,
     timeout_seconds: float | None,
 ) -> IngestResult:
     """Classify this writing and store it, or report that it recognised nothing.
@@ -231,7 +263,10 @@ async def _classify_and_record(
     """
     await session.commit()
     classification = await classify_frequencies(
-        request.content, classification=request.tier, timeout_seconds=timeout_seconds
+        request.content,
+        classification=request.tier,
+        boundary=boundary,
+        timeout_seconds=timeout_seconds,
     )
     if not classification.is_classified():
         return _UNCLASSIFIED_RESULT
@@ -249,11 +284,102 @@ async def _classify_and_record(
     return IngestResult(IngestOutcome.STORED, fragment)
 
 
+async def _afford_one_classification(session: AsyncSession, user_id: int) -> bool:
+    """Spend one of ``user_id``'s day's server-paid classifications, or refuse.
+
+    Called after both of the spine's refusals and before the dial, so an
+    account is charged for a call only once every reason not to make one has
+    been ruled out, and is never charged for one that did not happen.
+
+    **The attempt is recorded, not the outcome.** The provider call is what the
+    deployment pays for, so a classification that fails or recognises nothing
+    has still spent one. Recording successes only would leave a degraded
+    provider free to retry against, which is the condition under which a bill
+    runs away fastest.
+
+    The row is staged rather than committed: it lands in the commit
+    :func:`_classify_and_record` makes immediately before the provider call, so
+    it is durable by the time the dial happens and survives the caller rolling
+    back whatever came after.
+
+    Returns:
+        ``True`` when a classification may be made, with the attempt already
+        staged against the account. ``False`` when the day's allowance is
+        spent, having staged nothing.
+    """
+    now = datetime.now(UTC)
+    if await classifications_today(session, user_id, now) >= get_daily_classification_ceiling():
+        logger.warning(CLASSIFICATION_CEILING_EVENT, extra={"user_id": user_id})
+        return False
+    await record_classification_attempt(session, user_id, now)
+    return True
+
+
+async def _refusal_before_classifying(
+    session: AsyncSession,
+    *,
+    user_id: int,
+    source: CorpusSource,
+    tier: JournalClassification,
+    boundary: ReflectionBoundary,
+) -> IngestResult | None:
+    """Every reason not to classify this writing, or ``None`` and a call reserved.
+
+    Four refusals in one place, because they are one question -- may this
+    deployment ask the app provider about this writing, on this account's
+    behalf, right now? They are ordered cheapest and most categorical first: a
+    permission not given, then a writer whose AI operations are somebody else's
+    to answer, then writing that never leaves this boundary at all, then an
+    allowance already spent. An account must not spend its day's allowance on a
+    call that any of the first three would have refused anyway, which is why
+    the ceiling is asked last.
+
+    Consent is read against *this request's own source*, so agreeing to
+    ontologize journal entries is not agreement to ontologize imported
+    documents -- ADR 0005 rejects reading one permission off another in as many
+    words.
+
+    **The tier is asked here as well as below, and that is not redundant.**
+    :func:`services.frequency_classification.classify_frequencies` refuses an
+    intimate tier before it constructs a provider call, and the store refuses
+    one again before it writes; both still stand, and the ``except`` in
+    :func:`ingest_content` still reports them. What this adds is only
+    *ordering*: without it the ceiling is charged before either refusal is
+    reached, so an account journalling privately would spend its day's
+    allowance on calls that were never going to be made and find its later
+    personal entries refused for it. Asking :func:`admits_egress` is not this
+    module stating a tier rule of its own -- it is the one predicate that owns
+    the rule, the same one the classifier and the store consult, and the same
+    one :func:`_withheld_from_classifier`'s ``RETRIEVABLE_TIERS`` is read off.
+
+    **It reserves as well as refuses.** Returning ``None`` has staged one
+    attempt against the account, because the only honest moment to record a
+    call is the one after which it is going to be made. There is no separate
+    "now actually spend it" step a caller could forget, and no path from here
+    to the provider that skips the meter.
+
+    Returns:
+        The refusal to report, or ``None`` when the classifier may be called
+        and the attempt has been staged.
+    """
+    consent = await load_consent(session, user_id=user_id, source=source)
+    if not consent.granted:
+        return _NO_CONSENT_RESULT
+    if boundary is ReflectionBoundary.VAULT_BOUND:
+        return _BOUNDARY_REFUSED_RESULT
+    if not admits_egress(tier.value):
+        return _TIER_REFUSED_RESULT
+    if not await _afford_one_classification(session, user_id):
+        return _CEILING_REACHED_RESULT
+    return None
+
+
 async def ingest_content(
     session: AsyncSession,
     *,
     user_id: int,
     request: IngestRequest,
+    boundary: ReflectionBoundary,
     timeout_seconds: float | None = None,
 ) -> IngestResult:
     """Put one piece of writing into ``user_id``'s corpus, or say why not.
@@ -282,6 +408,18 @@ async def ingest_content(
     on paying for that answer. Callers that offer one piece of writing catch it
     and carry on; the one that offers a batch stops.
 
+    ``boundary`` is the writer's
+    :class:`~services.reflection_boundary.ReflectionBoundary`, resolved by the
+    caller from server state and required so that no caller can omit it
+    (#3156). Under ``VAULT_BOUND`` this answers
+    :attr:`IngestOutcome.BOUNDARY_REFUSED` after the consent gate and before the
+    commit and the classifier: the only classifier this spine can call is the
+    app provider, and a writer who connected a vault never has their writing
+    answered by it. No vault classification is asked for instead -- no vault
+    serves a classify adepthood may call yet (see
+    :mod:`services.frequency_source`) -- so the honest answer is "not ingested",
+    and the next edit or sweep offers the entry again.
+
     ``timeout_seconds`` is passed straight to the classifier and bounds only
     the provider call. It is stated at the call rather than carried on
     :class:`IngestRequest` because it is a fact about *this caller's patience*,
@@ -290,12 +428,22 @@ async def ingest_content(
     budgets. ``None`` -- the default -- leaves the provider layer's own timeout
     and retry budget in charge, which is what every interactive write wants.
     """
-    consent = await load_consent(session, user_id=user_id, source=request.source)
-    if not consent.granted:
-        return _NO_CONSENT_RESULT
+    refusal = await _refusal_before_classifying(
+        session,
+        user_id=user_id,
+        source=request.source,
+        tier=request.tier,
+        boundary=boundary,
+    )
+    if refusal is not None:
+        return refusal
     try:
         return await _classify_and_record(
-            session, user_id=user_id, request=request, timeout_seconds=timeout_seconds
+            session,
+            user_id=user_id,
+            request=request,
+            boundary=boundary,
+            timeout_seconds=timeout_seconds,
         )
     except IntimateContentRefusedError:
         return _TIER_REFUSED_RESULT
@@ -305,7 +453,11 @@ async def ingest_content(
 
 
 async def ingest_journal_entry(
-    session: AsyncSession, entry: JournalEntry, *, timeout_seconds: float | None = None
+    session: AsyncSession,
+    entry: JournalEntry,
+    *,
+    boundary: ReflectionBoundary,
+    timeout_seconds: float | None = None,
 ) -> CorpusFragment | None:
     """Write ``entry`` into its account's corpus, replacing what it had there.
 
@@ -341,6 +493,13 @@ async def ingest_journal_entry(
     therefore leaves no fragment rather than a stale one, durably; the entry
     stays a candidate and the next edit or sweep offers it again.
 
+    ``boundary`` is the entry owner's resolved boundary. Under ``VAULT_BOUND``
+    the previous fragment is still withdrawn -- the corpus must not go on
+    quoting what the entry no longer says -- but nothing is classified and the
+    outcome is logged as ``boundary_refused``: ids and that word only. The
+    shadow lineage observation is skipped too, because no body is about to
+    leave. See :func:`ingest_content`.
+
     ``timeout_seconds`` bounds the provider call and nothing else; see
     :func:`ingest_content`.
     """
@@ -363,12 +522,14 @@ async def ingest_journal_entry(
     if not consent.granted:
         return None
     removed = await delete_fragments_for_entry(session, user_id=entry.user_id, entry_id=entry_id)
-    if entry.deleted_at is not None:
-        # A soft-deleted row is invisible to every other read path and must not
-        # be classified back into view. Read off the persisted row rather than
-        # off anything a client sent.
-        _log_outcome(entry.user_id, entry_id, "withdrawn", removed)
+    withheld = _withheld_from_classifier(entry, boundary)
+    if withheld is not None:
+        _log_outcome(entry.user_id, entry_id, withheld, removed)
         return None
+    # Shadow only (#3059): consent is granted and the entry is live, so its body
+    # is about to go to the classifier. ``_classify_and_record`` commits before
+    # it dials, so this read is released with the rest.
+    await observe_entry_lineage(session, LineageOperation.CORPUS_INGEST, entry)
     result = await ingest_content(
         session,
         user_id=entry.user_id,
@@ -378,9 +539,26 @@ async def ingest_journal_entry(
             source=INGEST_SOURCE,
             source_entry_id=entry_id,
         ),
+        boundary=boundary,
         timeout_seconds=timeout_seconds,
     )
     return _journal_fragment(result, user_id=entry.user_id, entry_id=entry_id, removed=removed)
+
+
+def _withheld_from_classifier(entry: JournalEntry, boundary: ReflectionBoundary) -> str | None:
+    """Why a consented entry's old fragment is withdrawn and nothing replaces it, if it is.
+
+    ``"withdrawn"`` for a soft-deleted row: invisible to every other read path,
+    it must not be classified back into view, and the deletion is read off the
+    persisted row rather than off anything a client sent. ``"boundary_refused"``
+    for a vault-bound owner (#3156): the classifier is the app provider, which
+    never answers them. ``None`` when the entry may be offered.
+    """
+    if entry.deleted_at is not None:
+        return "withdrawn"
+    if boundary is ReflectionBoundary.VAULT_BOUND:
+        return _JOURNAL_LOG_OUTCOMES[IngestOutcome.BOUNDARY_REFUSED]
+    return None
 
 
 def _journal_fragment(

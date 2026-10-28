@@ -264,7 +264,7 @@ const ConfiguratorHeader = ({
 const renderUnknownModeNotice = (): React.JSX.Element => (
   <View testID="ritual-configurator-unknown">
     <Text style={styles.unknownText}>
-      Configuration not yet available — long-press to replace this practice.
+      {"You can't adjust this practice yet — long-press to swap it for another."}
     </Text>
   </View>
 );

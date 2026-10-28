@@ -11,6 +11,11 @@ This script replaces transcription with generation:
     python -m scripts.build_stage_correspondence           # (re)write the artifact
     python -m scripts.build_stage_correspondence --check   # CI drift gate
 
+``--check`` runs in the ``content-drift`` job of ``.github/workflows/backend-ci.yml``
+(#2667), right after ``sync_content --check``;
+``tests/scripts/test_stage_correspondence_drift_gate.py`` fails if that step is
+removed, reordered, commented out or allowed to swallow its exit code.
+
 Inputs, all local (no network, so the CI drift-check job can run it):
 
 * ``backend/content/curriculum/aptitude_complete_map.csv``, vendored

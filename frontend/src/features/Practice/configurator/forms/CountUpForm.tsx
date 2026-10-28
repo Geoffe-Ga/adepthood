@@ -12,7 +12,7 @@ interface Props {
 
 const CountUpForm = ({ value, onChange }: Props): React.JSX.Element => (
   <View testID="count-up-form">
-    <LabeledRow label="Soft cap (minutes, optional)">
+    <LabeledRow label="Nudge me after (minutes, optional)">
       <NumericField
         value={value.soft_cap_minutes ?? null}
         onChange={(soft_cap_minutes) => onChange({ ...value, soft_cap_minutes })}

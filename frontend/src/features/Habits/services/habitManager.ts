@@ -11,30 +11,54 @@ import { Alert } from 'react-native';
 import { v4 as uuidv4 } from 'uuid';
 
 import {
-  ApiError,
-  ApiValidationError,
   habits as habitsApi,
   goalCompletions as goalCompletionsApi,
   goalGroups as goalGroupsApi,
   goals as goalsApi,
   toLocalHabit,
 } from '../../../api';
-import type { ApiHabit, CheckInResult, GoalUnitsPayload, GoalUpdatePayload } from '../../../api';
+import type {
+  ApiHabit,
+  CheckInResult,
+  GoalLogSource,
+  GoalUnitsPayload,
+  GoalUpdatePayload,
+} from '../../../api';
 import { formatApiError } from '../../../api/errorMessages';
+import { captureSessionToken, getAuthSession } from '../../../api/sessionToken';
 import type { ToastConfig } from '../../../components/Toast';
 import { HABIT_DEMO_MODE } from '../../../config';
 import { colors } from '../../../design/tokens';
+import {
+  clearCheckInReplayState,
+  loadCheckInReplayState,
+  saveCheckInReplayState,
+} from '../../../storage/checkInReplayState';
+import type { ReplayHeadState } from '../../../storage/checkInReplayState';
 import {
   saveHabits as saveHabitsToDisk,
   loadHabits as loadCachedHabits,
   loadPendingCheckIns,
   clearDroppedCheckIns,
-  clearPendingCheckIns,
+  capturePendingCheckInScope,
   loadDroppedCheckIns,
   recordDroppedCheckIn,
-  replacePendingCheckIns,
+  removePendingCheckIns,
 } from '../../../storage/habitStorage';
-import type { DroppedCheckIn, PendingCheckIn } from '../../../storage/habitStorage';
+import type {
+  DroppedCheckIn,
+  DroppedCheckInReason,
+  PendingCheckIn,
+  PendingCheckInScope,
+} from '../../../storage/habitStorage';
+import { isUserTimezonePending } from '../../../storage/userCalendar';
+import {
+  getActiveUser,
+  getActiveUserGeneration,
+  isActiveUserTransitioning,
+  parseUserId,
+  subscribeActiveUser,
+} from '../../../storage/userScope';
 import { useDroppedCheckInStore } from '../../../store/useDroppedCheckInStore';
 import { useHabitStore } from '../../../store/useHabitStore';
 import { useProgramStore } from '../../../store/useProgramStore';
@@ -51,13 +75,14 @@ import {
   getGoalTier,
   getGoalTarget,
   calculateHabitStartDate,
-  calculateTodaysProgress,
   completionDayKey,
   carryoverSlot,
   countCarryover,
   isNotCarryoverHabit,
   logHabitUnits,
   stageAtIndex,
+  streakPeriodKind,
+  unitsInCurrentPeriod,
 } from '../HabitUtils';
 import { updateHabitNotifications, cancelForHabit } from '../hooks/useHabitNotifications';
 
@@ -70,6 +95,20 @@ import {
   toApiPayload,
 } from './habitMerge';
 import { clampPosition, insertAt, stampPositionalOrder } from './habitOrdering';
+import { habitSyncScopeKey } from './habitSyncScope';
+import {
+  clearLogUnitRollbackBaseline,
+  enqueueLogUnit,
+  forgetLogUnit,
+  laterOptimisticLogUnits,
+  rememberLogUnit,
+  rebasePendingLogUnitRollbacks,
+  takeLogUnitRollbackBaseline,
+} from './logUnitOrder';
+import { milestoneLine } from './milestoneCopy';
+import { ReplayCalendarRegistry } from './replayCalendarRegistry';
+import type { ReplayCalendar } from './replayCalendarRegistry';
+import { classifyReplayFailure, hasExhaustedRetries, nextHeadState } from './replayPolicy';
 import {
   ClientMintedIdError,
   isNotDemoSeed,
@@ -77,6 +116,9 @@ import {
   isServerBackedHabit,
   isServerIssuedId,
 } from './serverIds';
+
+import { reportDiagnostic } from '@/observability/diagnostics';
+import { decodeJwtPayload } from '@/utils/token';
 
 export type ShowToast = (_config: ToastConfig) => void;
 
@@ -190,13 +232,13 @@ const buildMilestoneToast = (
 
   if (currentGoal.tier === 'low') {
     return {
-      message: `Low Goal achieved for ${habitName}! Keep going for the Clear Goal.`,
+      message: `Low Goal met for ${habitName}. That counts — the Clear Goal is there if you want it.`,
       icon: MILESTONE_ICONS.low,
       color: colors.tier.low,
     };
   } else if (currentGoal.tier === 'clear' && nextGoal) {
     return {
-      message: 'Clear Goal achieved! Keep going for the Stretch Goal!',
+      message: `Clear Goal met for ${habitName}. The Stretch Goal is optional from here.`,
       icon: MILESTONE_ICONS.clear,
       color: colors.tier.clear,
     };
@@ -211,6 +253,24 @@ const buildMilestoneToast = (
 };
 
 /**
+ * Name a run milestone the server says this check-in crossed (D18), as one
+ * line under whatever the log's own toast already says.
+ */
+const withRunMilestone = (
+  toast: ToastConfig,
+  ctx: LogUnitContext,
+  result: CheckInResult | undefined,
+): ToastConfig => {
+  const habit = ctx.next.find((candidate) => candidate.id === ctx.habitId);
+  const line = milestoneLine(
+    result?.milestones,
+    ctx.habitName,
+    habit ? streakPeriodKind(habit) : 'day',
+  );
+  return line === null ? toast : { ...toast, message: `${toast.message}\n${line}` };
+};
+
+/**
  * Generic "we recorded your log" toast. Surfaces when a unit log doesn't
  * cross a tier threshold so the user always gets explicit confirmation,
  * not just a few-pixel progress-bar redraw — closes the user-reported
@@ -220,32 +280,6 @@ const buildLogConfirmationToast = (habitName: string, amount: number): ToastConf
   message: `Logged ${amount} for ${habitName}`,
   icon: LOG_CONFIRMATION_ICON,
   color: colors.success,
-});
-
-const backfillHabit = (habit: Habit, days: Date[], timezone: string): Habit => {
-  const newCompletions = days.map((day) => ({
-    id: uuidv4(),
-    timestamp: day,
-    local_day: dayKeyInTZ(day, timezone),
-    completed_units: 1,
-  }));
-  const updatedCompletions = habit.completions
-    ? [...habit.completions, ...newCompletions]
-    : newCompletions;
-  return {
-    ...habit,
-    streak: habit.streak + days.length,
-    last_completion_date: new Date(),
-    completions: updatedCompletions,
-  };
-};
-
-const resetHabitStart = (habit: Habit, newDate: Date): Habit => ({
-  ...habit,
-  start_date: newDate,
-  streak: 0,
-  last_completion_date: undefined,
-  completions: [],
 });
 
 /**
@@ -278,6 +312,14 @@ const startDateForAdd = (
   const base = programCadenceBase(prev, tz);
   return base === null ? new Date() : calculateHabitStartDate(base, slotIndex);
 };
+
+/** Keep the optimistic ladder consistent with an atomic timer-habit create. */
+const buildAddedGoals = (name: string, tempId: number, input: AddHabitInput): Goal[] =>
+  buildTierGoals(name, (ti) => tempId - ti - 1).map((goal) => {
+    if (!input.goals) return goal;
+    const { target_unit, frequency, frequency_unit } = input.goals;
+    return { ...goal, target_unit, frequency, frequency_unit, target: input.goals[goal.tier] };
+  });
 
 /**
  * Build a brand-new habit row from a minimal user input. Stage cycles through
@@ -324,9 +366,9 @@ const buildAddedHabitAtSlot = (
     energy_cost: input.energy_cost ?? 5,
     energy_return: input.energy_return ?? 5,
     start_date: startDateForAdd(prev, isCarryover, slotIndex, tz),
-    goals: buildTierGoals(name, (ti) => tempId - ti - 1),
+    goals: buildAddedGoals(name, tempId, input),
     completions: [],
-    revealed: false,
+    revealed: input.revealed ?? false,
     hasClientMintedIds: true,
     // Partition-scoped ordinal, not a global one: carryover and program slots
     // each restart at 0, so read sort_order only after splitting by is_carryover.
@@ -434,7 +476,7 @@ const syncOnboardingHabits = async (fullHabits: readonly Habit[], tz: string): P
     try {
       await habitsApi.create(toApiPayload(habit, tz));
     } catch {
-      console.error(`Failed to save habit "${habit.name}" to server`);
+      reportDiagnostic('habit_save_failed');
     }
   }
 };
@@ -495,7 +537,7 @@ const pushHabitUpdates = async (updates: readonly Habit[], tz: string): Promise<
     try {
       await habitsApi.update(habit.id, toApiPayload(habit, tz));
     } catch {
-      console.error(`Failed to update habit "${habit.name}" on server`);
+      reportDiagnostic('habit_update_failed');
     }
   }
 };
@@ -530,20 +572,26 @@ const commitHabitMerge = async (ops: HabitMergeOps, tz: string): Promise<Habit[]
   return stillHere;
 };
 
+/** Cadence for a habit with no goals yet: score by the day, as before. */
+const DAILY_CADENCE: Pick<Goal, 'frequency_unit'> = { frequency_unit: 'per_day' };
+
 const applyLogUnit = (
   habit: Habit,
   amount: number,
   tz: string,
   date?: Date,
 ): { updatedHabit: Habit; oldProgress: number; newProgress: number } => {
-  // Today-only progress so milestone toasts fire when the user crosses a
-  // tier *today*, not based on yesterday's all-time total. The caller
-  // forwards the user's IANA zone so the bucket boundary matches the tile.
-  // ``date`` backfills a missed day; a past-day log leaves today's
+  // Current-period progress -- the same total ``getGoalTarget`` scores --
+  // so a milestone toast fires when this log crosses a tier *in the goal's
+  // own period*: today for a daily goal, this ISO week / calendar month for a
+  // weekly / monthly one (every tier shares one cadence). The caller forwards
+  // the user's IANA zone so the bucket boundary matches the tile. ``date``
+  // backfills a missed day; a log outside the current period leaves its
   // progress untouched so no milestone celebration fires for it.
-  const oldProgress = calculateTodaysProgress(habit, tz);
+  const cadence = habit.goals[0] ?? DAILY_CADENCE;
+  const oldProgress = unitsInCurrentPeriod(habit, cadence, tz);
   const updatedHabit = logHabitUnits(habit, amount, date, tz);
-  const newProgress = calculateTodaysProgress(updatedHabit, tz);
+  const newProgress = unitsInCurrentPeriod(updatedHabit, cadence, tz);
   return { updatedHabit, oldProgress, newProgress };
 };
 
@@ -555,6 +603,8 @@ const applyLogUnit = (
  * own context and rolls back to the right baseline.
  */
 export interface LogUnitContext {
+  /** Captured before computation; later account lifecycles cannot reuse this act. */
+  scope: HabitMutationScope;
   /** Habit whose optimistic row and authoritative server streak this operation owns. */
   habitId: number;
   prev: Habit[];
@@ -685,6 +735,38 @@ const reconcileStoredHabitDay = (
   void persistHabits(next);
 };
 
+/** Confirm measured time without inventing an optimistic history row. */
+const withQuietLogConfirmation = (
+  habits: Habit[],
+  ctx: LogUnitContext,
+  result: CheckInResult,
+  later: ReadonlySet<string>,
+): Habit[] => {
+  const prepared = ctx.next.find((habit) => habit.id === ctx.habitId)!;
+  const timestamp = prepared.completions!.find(
+    (completion) => completion.id === ctx.operationId,
+  )!.timestamp;
+  const confirm = (habit: Habit): Habit => ({
+    ...habit,
+    streak: result.streak,
+    last_completion_date:
+      habit.last_completion_date && new Date(habit.last_completion_date) > new Date(timestamp)
+        ? habit.last_completion_date
+        : timestamp,
+    completions: [
+      ...(habit.completions ?? []).filter(
+        (completion) => completionDayKey(completion, ctx.timezone) !== ctx.dayKey,
+      ),
+      { id: ctx.operationId, timestamp, local_day: ctx.dayKey, completed_units: result.day_units },
+      ...(habit.completions ?? []).filter(
+        (completion) => completion.id !== undefined && later.has(completion.id),
+      ),
+    ],
+  });
+  if (!habits.some((habit) => habit.id === ctx.habitId)) return [...habits, confirm(prepared)];
+  return habits.map((habit) => (habit.id === ctx.habitId ? confirm(habit) : habit));
+};
+
 /**
  * Per-habit promise mutex for notification rescheduling (BUG-FE-HABIT-005).
  *
@@ -697,16 +779,18 @@ const reconcileStoredHabitDay = (
  */
 const rescheduleQueue: Map<number, Promise<void>> = new Map();
 
-const rescheduleAndPersist = (habit: Habit): Promise<void> => {
+const rescheduleAndPersist = (habit: Habit, scope: HabitMutationScope): Promise<void> => {
   if (!habit.id) return Promise.resolve();
   const habitId = habit.id;
   const prior = rescheduleQueue.get(habitId) ?? Promise.resolve();
   const next = prior
     .catch(() => undefined)
     .then(async () => {
+      if (!scope.current()) return;
       const live = getHabits().find((h) => h.id === habitId);
       const target: Habit = live ?? habit;
       const ids = await updateHabitNotifications(target);
+      if (!scope.current()) return;
       const refreshed: Habit = { ...target, notificationIds: ids };
       setHabits(getHabits().map((h) => (h.id === habitId ? refreshed : h)));
       await persistHabits(getHabits());
@@ -723,7 +807,9 @@ const rescheduleAndPersist = (habit: Habit): Promise<void> => {
 const handleApiSuccess = async (
   apiHabits: Awaited<ReturnType<typeof habitsApi.listAll>>,
   tz: string,
+  scope: HabitMutationScope,
 ): Promise<void> => {
+  if (!scope.current()) return;
   // A 200 is authoritative even when it is empty. Strip any demo tiles left by
   // an earlier failed request so recovered connectivity cannot keep presenting
   // fictional history as though the server returned it. Real optimistic/cache
@@ -734,6 +820,7 @@ const handleApiSuccess = async (
     setHabits(liveWithoutDemo);
     await persistHabits(liveWithoutDemo);
   }
+  if (!scope.current()) return;
   if (apiHabits.length > 0) {
     const mapped = mapApiHabits(apiHabits, tz);
     setHabits(mapped);
@@ -742,7 +829,7 @@ const handleApiSuccess = async (
 };
 
 const handleApiError = (err: unknown, hasCachedData: boolean): void => {
-  console.error('Failed to load habits:', err);
+  reportDiagnostic('habits_load_failed');
   // A legacy cache or an earlier demo request may still have fixture rows in
   // memory. Outside explicit demo mode they are not data and cannot suppress
   // the real error state.
@@ -760,32 +847,45 @@ const handleApiError = (err: unknown, hasCachedData: boolean): void => {
   if (HABIT_DEMO_MODE) setHabits(FALLBACK_HABITS);
 };
 
-type FetchResult = { kind: 'ok'; count: number } | { kind: 'error' };
+type FetchResult = { kind: 'ok'; count: number } | { kind: 'error' } | { kind: 'stale' };
 
-const fetchFromApi = async (hasCachedData: boolean, tz: string): Promise<FetchResult> => {
+const fetchFromApi = async (
+  hasCachedData: boolean,
+  tz: string,
+  scope: HabitMutationScope,
+): Promise<FetchResult> => {
   try {
-    const apiHabits = await habitsApi.listAll();
-    await handleApiSuccess(apiHabits, tz);
+    if (!scope.current()) return { kind: 'stale' };
+    const apiHabits = await habitsApi.listAll(...scope.credentials);
+    if (!scope.current()) return { kind: 'stale' };
+    await handleApiSuccess(apiHabits, tz, scope);
+    if (!scope.current()) return { kind: 'stale' };
     setError(null);
     return { kind: 'ok', count: apiHabits.length };
   } catch (err) {
+    if (!scope.current()) return { kind: 'stale' };
     handleApiError(err, hasCachedData);
     return { kind: 'error' };
   }
 };
 
 /** Re-push cached habits when the server has none — the caller re-fetches. */
-const recoverStuckHabits = async (cached: Habit[], tz: string): Promise<void> => {
+const recoverStuckHabits = async (
+  cached: Habit[],
+  tz: string,
+  scope: HabitMutationScope,
+): Promise<void> => {
   for (const habit of cached) {
+    if (!scope.current()) return;
     try {
       // ``POST /habits/`` seeds default goal targets; the caller re-fetches
       // and then replays cached customizations via
       // ``replayCachedGoalTargets`` (#286).
-      await habitsApi.create(toApiPayload(habit, tz));
-    } catch (err) {
+      await habitsApi.create(toApiPayload(habit, tz), ...scope.credentials);
+    } catch {
       // Best-effort; partial recovery is still better than the stuck state.
       // Surface to console so Sentry / CI can flag chronic recovery failures.
-      console.warn('recoverStuckHabits: failed to re-push', habit.name, err);
+      if (scope.current()) reportDiagnostic('habit_recovery_failed');
     }
   }
 };
@@ -808,9 +908,9 @@ const sanitizedGroupId = (cached: Goal, validGroupIds: Set<number>): number | nu
     : null;
 
 /** Server-side goal-group ids, for validating cached associations. */
-const fetchServerGroupIds = async (): Promise<Set<number>> => {
+const fetchServerGroupIds = async (scope: HabitMutationScope): Promise<Set<number>> => {
   try {
-    const groups = await goalGroupsApi.list();
+    const groups = await goalGroupsApi.list(...scope.credentials);
     return new Set(groups.map((g) => g.id));
   } catch {
     // Best-effort: with no list, replay proceeds without associations.
@@ -834,19 +934,24 @@ const replayOneGoal = async (
   freshGoalId: number,
   title: string,
   validGroupIds: Set<number>,
+  scope: HabitMutationScope,
 ): Promise<void> => {
-  await goalsApi.update(freshGoalId, {
-    title,
-    tier: cached.tier,
-    target: cached.target,
-    target_unit: cached.target_unit,
-    frequency: cached.frequency,
-    frequency_unit: cached.frequency_unit,
-    is_additive: cached.is_additive,
-    // Full-replace PUT: omitting these would wipe surviving values.
-    goal_group_id: sanitizedGroupId(cached, validGroupIds),
-    days_of_week: cached.days_of_week ?? null,
-  });
+  await goalsApi.update(
+    freshGoalId,
+    {
+      title,
+      tier: cached.tier,
+      target: cached.target,
+      target_unit: cached.target_unit,
+      frequency: cached.frequency,
+      frequency_unit: cached.frequency_unit,
+      is_additive: cached.is_additive,
+      // Full-replace PUT: omitting these would wipe surviving values.
+      goal_group_id: sanitizedGroupId(cached, validGroupIds),
+      days_of_week: cached.days_of_week ?? null,
+    },
+    ...scope.credentials,
+  );
 };
 
 /** Copy cached values onto each fresh goal whose tier the server accepted. */
@@ -880,16 +985,18 @@ const replayHabitGoals = async (
   cachedHabit: Habit,
   freshHabit: Habit,
   validGroupIds: Set<number>,
+  scope: HabitMutationScope,
 ): Promise<Set<string>> => {
   const replayedTiers = new Set<string>();
   for (const cachedGoal of cachedHabit.goals) {
+    if (!scope.current()) return replayedTiers;
     const freshGoal = freshHabit.goals.find((g) => g.tier === cachedGoal.tier);
     if (!freshGoal?.id || !goalNeedsReplay(cachedGoal, freshGoal, validGroupIds)) continue;
     try {
-      await replayOneGoal(cachedGoal, freshGoal.id, freshGoal.title, validGroupIds);
+      await replayOneGoal(cachedGoal, freshGoal.id, freshGoal.title, validGroupIds, scope);
       replayedTiers.add(cachedGoal.tier);
-    } catch (err) {
-      console.warn('replayCachedGoalTargets: failed for', cachedHabit.name, cachedGoal.tier, err);
+    } catch {
+      if (scope.current()) reportDiagnostic('goal_recovery_failed');
     }
   }
   return replayedTiers;
@@ -903,12 +1010,19 @@ const replayHabitGoals = async (
  * would cascade phantom replays. Goal-group associations replay only when
  * the group still exists server-side; days_of_week replays verbatim.
  */
-const replayCachedGoalTargets = async (cached: Habit[], fresh: Habit[]): Promise<void> => {
-  const validGroupIds = await fetchServerGroupIds();
+const replayCachedGoalTargets = async (
+  cached: Habit[],
+  fresh: Habit[],
+  scope: HabitMutationScope,
+): Promise<void> => {
+  if (!scope.current()) return;
+  const validGroupIds = await fetchServerGroupIds(scope);
   for (const cachedHabit of cached) {
+    if (!scope.current()) return;
     const freshHabit = fresh.find((h) => h.name === cachedHabit.name);
     if (!freshHabit?.id) continue;
-    const replayedTiers = await replayHabitGoals(cachedHabit, freshHabit, validGroupIds);
+    const replayedTiers = await replayHabitGoals(cachedHabit, freshHabit, validGroupIds, scope);
+    if (!scope.current()) return;
     if (replayedTiers.size === 0) continue;
     const next = getHabits().map((h) =>
       h.id === freshHabit.id ? mergeReplayedGoals(h, cachedHabit, replayedTiers, validGroupIds) : h,
@@ -916,6 +1030,40 @@ const replayCachedGoalTargets = async (cached: Habit[], fresh: Habit[]): Promise
     setHabits(next);
     void persistHabits(next);
   }
+};
+
+interface HabitMutationScope {
+  credentials: [] | [string];
+  current: () => boolean;
+  authorized: boolean;
+  /** `habitSyncScopeKey` of the account and session captured (#3328). */
+  syncKey: string;
+}
+
+/**
+ * Pin a mutation to the account AND the authentication session that started
+ * it. The account generation alone misses an in-place reauthentication: a 401
+ * keeps the active account, and the same account signing back in is a no-op
+ * for the generation, so an old create/log could roll back or confirm over the
+ * rows the new session hydrated (#3326). The auth session moves at
+ * reauthentication entry and on every sign-in, but not on a token refresh, so
+ * a renewed credential keeps its in-flight work.
+ */
+const captureHabitMutationScope = (): HabitMutationScope => {
+  const generation = getActiveUserGeneration();
+  const session = getAuthSession();
+  const token = captureSessionToken();
+  const owner = getActiveUser();
+  return {
+    credentials: token === undefined ? [] : [token],
+    current: () => generation === getActiveUserGeneration() && session === getAuthSession(),
+    syncKey: habitSyncScopeKey(generation, session),
+    authorized:
+      !isActiveUserTransitioning() &&
+      (owner === null
+        ? token === undefined
+        : token !== undefined && parseUserId(decodeJwtPayload(token)?.sub) === owner),
+  };
 };
 
 /**
@@ -935,22 +1083,15 @@ const replayCachedGoalTargets = async (cached: Habit[], fresh: Habit[]): Promise
  * the cold-rehydrate failure mode this PR's emoji/order fixes set out
  * to close. Mirrors the pattern in ``rollbackLogUnitContext``.
  */
-const revertOnFailure = (prev: Habit[], fallback: string): ((err: unknown) => void) => {
+const revertOnFailure = (
+  prev: Habit[],
+  fallback: string,
+  scope = captureHabitMutationScope(),
+): ((err: unknown) => void) => {
   return (err: unknown) => {
+    if (!scope.current()) return;
     setHabits(prev);
     void persistHabits(prev);
-    Alert.alert(SYNC_FAILURE_TITLE, formatApiError(err, { fallback }));
-  };
-};
-
-/**
- * Build a rejection handler that only alerts, leaving local state untouched.
- * Used when an earlier write already succeeded durably (e.g. the start-date
- * PUT) so a later step's failure must not roll the durable change back — it
- * only surfaces that the follow-up step did not complete.
- */
-const warnOnFailure = (fallback: string): ((err: unknown) => void) => {
-  return (err: unknown) => {
     Alert.alert(SYNC_FAILURE_TITLE, formatApiError(err, { fallback }));
   };
 };
@@ -968,6 +1109,8 @@ const warnOnFailure = (fallback: string): ((err: unknown) => void) => {
  * for the write to land on.
  */
 const syncRevealState = (next: Habit[], failureMessage: string, tz: string): void => {
+  const scope = captureHabitMutationScope();
+  if (!scope.authorized) return;
   const prev = getHabits();
   const revealedBefore = new Map(prev.map((h) => [h.id, h.revealed]));
   setHabits(next);
@@ -978,49 +1121,26 @@ const syncRevealState = (next: Habit[], failureMessage: string, tz: string): voi
     // Only PUT rows whose unlock flag actually flipped, so a single unlock
     // does not rewrite every untouched row.
     if (habit.revealed === revealedBefore.get(habit.id)) continue;
-    updates.push(habitsApi.update(habit.id, toApiPayload(habit, tz)));
+    updates.push(habitsApi.update(habit.id, toApiPayload(habit, tz), ...scope.credentials));
   }
   if (updates.length === 0) return;
-  Promise.all(updates).catch(revertOnFailure(prev, failureMessage));
+  Promise.all(updates).catch(revertOnFailure(prev, failureMessage, scope));
 };
 
-/**
- * Statuses that mean this queued check-in will never post, however many
- * times we try it. Deliberately a closed allowlist: an unrecognised status
- * falls through to "transient", because mis-reading a transient failure as
- * permanent destroys a check-in the user actually made, while the reverse
- * only costs one retry.
- *
- * NOT the complement of ``TRANSIENT_STATUSES`` in ``api/index.ts``, and the
- * two must not be unified. That set governs an in-flight retry milliseconds
- * apart, where re-sending an expired token is pointless, so it excludes 401.
- * This queue spans app launches and ``AuthContext`` re-hydrates the token at
- * launch, so a 401 here means "not signed in right now", never "this
- * check-in is invalid" — dropping on it would wipe the queue of exactly the
- * user who has one.
- */
-const PERMANENT_REJECTION_STATUSES: ReadonlySet<number> = new Set([400, 403, 404, 409, 422]);
-
-/** Whether a replay failure is futile to retry, so the entry is dropped. */
-const isPermanentRejection = (err: unknown): err is ApiError | ApiValidationError => {
-  // Checked before any status lookup: ApiValidationError does not extend
-  // ApiError and carries the response's own status, which can be a 2xx. It is
-  // raised only when a received body failed its Zod schema — a deterministic
-  // client/server contract defect, so a retry receives the same shape and
-  // fails identically, forever. Retrying is harmful for a signed-unit entry:
-  // unlike the legacy amount-less natural-key no-op, each explicit replay is a
-  // fresh delta. Drop this known-bad response rather than both applying the
-  // arithmetic again and wedging every genuine check-in behind it.
-  if (err instanceof ApiValidationError) return true;
-  return err instanceof ApiError && PERMANENT_REJECTION_STATUSES.has(err.status);
-};
+/** Keep replay credentials and idempotency pinned to the initiating lifecycle. */
+const pendingCompletionOptions = (checkIn: PendingCheckIn, scope: HabitMutationScope) => ({
+  ...(scope.credentials.length === 0 ? {} : { token: scope.credentials[0] }),
+  ...(checkIn.operation_id ? { idempotencyKey: logUnitIdempotencyKey(checkIn.operation_id) } : {}),
+});
 
 /** POST one queued check-in, bucketing its day into the user's zone. */
 const postPendingCheckIn = async (
   checkIn: PendingCheckIn,
   zone: string,
   today: string,
+  scope: HabitMutationScope,
 ): Promise<void> => {
+  if (!scope.current()) return;
   const dayKey = dayKeyInTZ(checkIn.timestamp, zone);
   const payload = {
     goal_id: checkIn.goal_id,
@@ -1030,11 +1150,12 @@ const postPendingCheckIn = async (
     completed_on: checkIn.completed_on ?? (dayKey !== today ? dayKey : undefined),
     ...(checkIn.completed_units === undefined ? {} : { completed_units: checkIn.completed_units }),
   };
-  const result = checkIn.operation_id
-    ? await goalCompletionsApi.create(payload, {
-        idempotencyKey: logUnitIdempotencyKey(checkIn.operation_id),
-      })
-    : await goalCompletionsApi.create(payload);
+  const options = pendingCompletionOptions(checkIn, scope);
+  const result =
+    Object.keys(options).length > 0
+      ? await goalCompletionsApi.create(payload, options)
+      : await goalCompletionsApi.create(payload);
+  if (!scope.current()) return;
   const habit = getHabits().find((candidate) =>
     candidate.goals.some((goal) => goal.id === checkIn.goal_id),
   );
@@ -1049,24 +1170,93 @@ const postPendingCheckIn = async (
  * reportable to the user who made the check-in. ``loadHabits`` has already
  * overwritten their optimistic completion with the server's canonical state by
  * the time we get here, so without the quarantine the action vanishes with no
- * trace anyone will ever see.
+ * trace anyone will ever see. A give-up (#2473) takes exactly this path, so it
+ * is never quieter than an outright rejection.
+ *
+ * The record is built field by field rather than spread from the entry, so
+ * nothing the queue might one day carry leaks into the quarantine unnamed.
  */
-const warnDroppedCheckIn = async (
+const quarantineCheckIn = async (
   checkIn: PendingCheckIn,
-  err: ApiError | ApiValidationError,
+  status: number,
+  reason: DroppedCheckInReason,
+  scope: HabitMutationScope,
 ): Promise<void> => {
-  console.warn(
-    'replayPendingCheckIns: dropping permanently rejected check-in for goal',
-    checkIn.goal_id,
-    'status',
-    err.status,
-  );
+  if (!scope.current()) return;
+  reportDiagnostic(reason === 'gave_up' ? 'checkin_gave_up' : 'checkin_rejected', { status });
   const quarantined: DroppedCheckIn = {
-    ...checkIn,
-    status: err.status,
+    goal_id: checkIn.goal_id,
+    did_complete: checkIn.did_complete,
+    ...(checkIn.completed_units === undefined ? {} : { completed_units: checkIn.completed_units }),
+    ...(checkIn.operation_id === undefined ? {} : { operation_id: checkIn.operation_id }),
+    ...(checkIn.replay_id === undefined ? {} : { replay_id: checkIn.replay_id }),
+    timestamp: checkIn.timestamp,
+    ...(checkIn.completed_on === undefined ? {} : { completed_on: checkIn.completed_on }),
+    status,
     dropped_at: new Date().toISOString(),
+    reason,
   };
   await recordDroppedCheckIn(quarantined);
+};
+
+/** Whether the drain moves on to the next entry or stops for this pass. */
+type DrainStep = 'continue' | 'stop';
+
+/**
+ * Settle the failure of the current head. A permanent
+ * rejection, or a counted one that has now exhausted its retries, is
+ * quarantined and the drain continues. Anything else keeps the unprocessed
+ * suffix byte-identical and stops,
+ * so the next replay does not repost the prefix (the BUG-FE-HABIT-205
+ * partial-success regression). Only a counted rejection touches the retry
+ * record; an offline or availability failure leaves it exactly as it was.
+ */
+const handleReplayFailure = async (
+  checkIn: PendingCheckIn,
+  err: unknown,
+  headState: ReplayHeadState | null,
+  nowMs: number,
+  owner: number | null,
+  scope: HabitMutationScope,
+): Promise<DrainStep> => {
+  if (!scope.current()) return 'stop';
+  const failure = classifyReplayFailure(err);
+  if (failure.kind === 'permanent') {
+    // Awaited, not fired and forgotten: a floating quarantine write can
+    // outlive the drain and lose the record it exists to keep.
+    await quarantineCheckIn(checkIn, failure.status, 'rejected', scope);
+    return 'continue';
+  }
+  if (failure.kind === 'counted') {
+    const next = nextHeadState(headState, checkIn, failure.status, nowMs);
+    if (hasExhaustedRetries(next, nowMs)) {
+      await quarantineCheckIn(checkIn, failure.status, 'gave_up', scope);
+      if (!scope.current()) return 'stop';
+      await clearCheckInReplayState(owner);
+      return 'continue';
+    }
+    await saveCheckInReplayState(next, owner);
+  }
+  return 'stop';
+};
+
+/** Settle one POST without letting a switched account inherit its failure. */
+const replayCheckIn = async (
+  checkIn: PendingCheckIn,
+  zone: string,
+  today: string,
+  headState: ReplayHeadState | null,
+  nowMs: number,
+  owner: number | null,
+  scope: HabitMutationScope,
+): Promise<DrainStep> => {
+  try {
+    await postPendingCheckIn(checkIn, zone, today, scope);
+    return 'continue';
+  } catch (err) {
+    if (!scope.current()) return 'stop';
+    return handleReplayFailure(checkIn, err, headState, nowMs, owner, scope);
+  }
 };
 
 /**
@@ -1075,9 +1265,13 @@ const warnDroppedCheckIn = async (
  * quarantined in a previous session must still surface at launch, and an empty
  * list is what retracts a notice the user has since dismissed.
  */
-const hydrateDroppedCheckIns = async (): Promise<void> => {
+const hydrateDroppedCheckIns = async (
+  owner: number | null,
+  scope: HabitMutationScope,
+): Promise<void> => {
+  if (!scope.current()) return;
   const entries = await loadDroppedCheckIns();
-  useDroppedCheckInStore.getState().setEntries(entries);
+  if (scope.current()) useDroppedCheckInStore.getState().setEntries(entries);
 };
 
 /**
@@ -1085,7 +1279,11 @@ const hydrateDroppedCheckIns = async (): Promise<void> => {
  * transient failure, the suffix that didn't post is rewritten back to
  * disk so we don't double-post on the next replay; a permanently rejected
  * entry is dropped so it cannot wedge the queue ahead of everything the
- * user logged behind it.
+ * user logged behind it. So, eventually, is a head whose unclassified
+ * rejection keeps recurring — but only after both
+ * ``MAX_CHECK_IN_REPLAY_ATTEMPTS`` counted rejections and
+ * ``MIN_POISON_AGE_MS`` since the first (#2473); offline, timeout, 401 and
+ * availability failures never count toward that.
  *
  * Each queued timestamp is forwarded as ``completed_on`` (the user-local
  * calendar day) so a check-in queued offline on Monday lands on Monday's
@@ -1093,32 +1291,49 @@ const hydrateDroppedCheckIns = async (): Promise<void> => {
  * BUG-FE-HABIT-205). Same-day replays omit the field so the server
  * stamps real wall-clock time — the online path's genuine-backfill rule.
  */
-const drainPendingCheckIns = async (tz?: string): Promise<void> => {
-  const pending = await loadPendingCheckIns();
-  if (pending.length === 0) return;
-  // Device zone is the stand-in until auth hydrates the stored zone.
-  const zone = tz ?? detectDeviceTimezone();
-  const today = todayInUserTZ(zone);
+const hasReplayWork = (pending: PendingCheckIn[], scope: HabitMutationScope): boolean =>
+  pending.length > 0 && scope.current();
+
+const canReplayCheckIns = (scope: HabitMutationScope, owner: number | null): boolean =>
+  scope.current() && !isUserTimezonePending(owner);
+
+const settlePendingReplay = async (
+  completed: PendingCheckIn[],
+  queueScope: PendingCheckInScope,
+  drained: boolean,
+  scope: HabitMutationScope,
+): Promise<void> => {
+  await removePendingCheckIns(completed, queueScope);
+  if (scope.current() && drained) await clearCheckInReplayState(queueScope.owner);
+};
+
+const drainPendingCheckIns = async (
+  owner: number | null,
+  calendar: ReplayCalendar,
+  scope: HabitMutationScope,
+): Promise<void> => {
+  if (!scope.current()) return;
+  const queueScope = capturePendingCheckInScope();
+  const pending = await loadPendingCheckIns(queueScope, true);
+  if (!hasReplayWork(pending, scope)) return;
+  // One clock read and one record read per pass: the policy is pure, and
+  // only the head can carry a retry record, so a stale read cannot matter.
+  const nowMs = Date.now();
+  const headState = await loadCheckInReplayState();
+  if (!scope.current()) return;
+  const completed: PendingCheckIn[] = [];
   for (let i = 0; i < pending.length; i += 1) {
-    const checkIn = pending[i]!;
-    try {
-      await postPendingCheckIn(checkIn, zone, today);
-    } catch (err) {
-      if (isPermanentRejection(err)) {
-        // Awaited, not fired and forgotten: a floating quarantine write can
-        // outlive the drain and lose the record it exists to keep.
-        await warnDroppedCheckIn(checkIn, err);
-        continue;
-      }
-      // Still offline, or a failure worth retrying. Persist only the
-      // unprocessed suffix so the next replay doesn't repost the prefix —
-      // every index below ``i`` is terminal, posted or dropped. That was
-      // the BUG-FE-HABIT-205 partial-success regression.
-      await replacePendingCheckIns(pending.slice(i));
-      return;
-    }
+    if (!canReplayCheckIns(scope, owner)) return;
+    // A newer authoritative calendar can arrive during storage reads or the
+    // preceding POST. Read it immediately before sending each unsent entry.
+    const zone = calendar.zone;
+    const today = todayInUserTZ(zone);
+    const step = await replayCheckIn(pending[i]!, zone, today, headState, nowMs, owner, scope);
+    if (!scope.current()) return;
+    if (step === 'stop') break;
+    completed.push(pending[i]!);
   }
-  await clearPendingCheckIns();
+  await settlePendingReplay(completed, queueScope, completed.length === pending.length, scope);
 };
 
 /**
@@ -1127,9 +1342,48 @@ const drainPendingCheckIns = async (tz?: string): Promise<void> => {
  * queued, a transient abort, or a full pass — because a check-in dropped in an
  * earlier session is only real to the user once the notice can read it.
  */
-const replayPendingCheckIns = async (tz?: string): Promise<void> => {
-  await drainPendingCheckIns(tz);
-  await hydrateDroppedCheckIns();
+const activeReplays = new Map<
+  number | null,
+  { scope: HabitMutationScope; promise: Promise<void> }
+>();
+const replayCalendars = new ReplayCalendarRegistry({
+  currentOwner: getActiveUser,
+  transitioning: isActiveUserTransitioning,
+  // A transition invalidates the departing scope before its storage wipe
+  // starts. The registry drops only calendar lookup state: an in-flight drain
+  // still owns its object and remains in activeReplays until its finally block.
+  subscribe: (listener) => {
+    subscribeActiveUser(listener);
+  },
+});
+
+const replayPendingCheckIns = (
+  owner: number | null,
+  calendar: ReplayCalendar,
+  scope: HabitMutationScope,
+): Promise<void> => {
+  const active = activeReplays.get(owner);
+  if (active?.scope.current()) return active.promise;
+
+  // A stale replay can still have a POST on the wire after A -> B -> A. Keep
+  // it as an owner-level serialization barrier: the returning session must
+  // retry after that request settles, never concurrently with it. Publishing
+  // this chained promise before waiting also makes every overlapping caller
+  // in the returning session converge on the same follow-up drain.
+  const predecessor = active?.promise;
+  let replay!: Promise<void>;
+  replay = (async () => {
+    try {
+      if (predecessor) await predecessor.catch(() => undefined);
+      if (!scope.current()) return;
+      await drainPendingCheckIns(owner, calendar, scope);
+      if (scope.current()) await hydrateDroppedCheckIns(owner, scope);
+    } finally {
+      if (activeReplays.get(owner)?.promise === replay) activeReplays.delete(owner);
+    }
+  })();
+  activeReplays.set(owner, { scope, promise: replay });
+  return replay;
 };
 
 /**
@@ -1140,42 +1394,21 @@ const replayPendingCheckIns = async (tz?: string): Promise<void> => {
  * cache would let fictional history outrank both a healthy empty response and
  * the real error state.
  */
-const hydrateRealHabitCache = async (cached: Habit[] | null): Promise<Habit[]> => {
+const hydrateRealHabitCache = async (
+  cached: Habit[] | null,
+  scope: HabitMutationScope,
+): Promise<Habit[]> => {
+  if (!scope.current()) return [];
   const real = (cached ?? []).filter(isNotDemoSeed);
   if (cached !== null && real.length !== cached.length) {
     await persistHabits(real);
   }
+  if (!scope.current()) return [];
   if (real.length > 0) {
     setHabits(real);
     setLoading(false);
   }
   return real;
-};
-
-/**
- * Build one goal-completion POST per backfilled day, bucketing each day into
- * the user's IANA zone. A day that resolves to "today" omits ``completed_on``
- * so the server stamps real wall-clock time — the same genuine-backfill rule
- * the online log path uses; any earlier day sends its ``YYYY-MM-DD`` key so
- * the completion lands on the calendar day the user actually missed, not on
- * the wall-clock day the request happened to fire. Extracted so the caller
- * stays a flat, low-complexity sequence of guarded steps.
- */
-const postBackfillCompletions = (
-  lowGoalId: number,
-  days: Date[],
-  zone: string,
-): Array<Promise<unknown>> => {
-  const today = todayInUserTZ(zone);
-  return days.map((day) => {
-    const dayKey = dayKeyInTZ(day, zone);
-    const completedOn = dayKey !== today ? dayKey : undefined;
-    return goalCompletionsApi.create({
-      goal_id: lowGoalId,
-      did_complete: true,
-      completed_on: completedOn,
-    });
-  });
 };
 
 // ---------------------------------------------------------------------------
@@ -1198,31 +1431,91 @@ let lastKnownTz: string | undefined;
  * cannot say whether what it holds is fresh. A caller about to act on today's
  * server total (the writing-timer check-off, #2861) needs exactly that answer.
  */
-const refreshHabits = async (tz?: string): Promise<boolean> => {
+interface HabitRefreshOptions {
+  /** Read cached/server habits while waiting for the account's calendar. */
+  replayCheckIns?: boolean;
+}
+
+const prepareRefreshCalendar = (tz: string | undefined, options: HabitRefreshOptions) => {
   if (tz !== undefined) lastKnownTz = tz;
   const zone = tz ?? lastKnownTz ?? detectDeviceTimezone();
+  const owner = getActiveUser();
+  const replayReady = options.replayCheckIns !== false && !isUserTimezonePending(owner);
+  // Register at request entry, so an older fetch finishing later cannot
+  // overwrite the calendar carried by a newer authenticated refresh.
+  const prepared = replayCalendars.prepare(owner, zone, replayReady);
+  return { owner, calendar: prepared.calendar, zone, replayReady: prepared.replayReady };
+};
+
+const refreshReplayState = async (
+  owner: number | null,
+  calendar: ReplayCalendar,
+  replayReady: boolean,
+  scope: HabitMutationScope,
+): Promise<void> => {
+  if (!scope.current()) return;
+  if (replayReady) await replayPendingCheckIns(owner, calendar, scope);
+  else await hydrateDroppedCheckIns(owner, scope);
+};
+
+/** Recover only the initiating account's cached rows and custom goal targets. */
+const refreshRecoveredHabits = async (
+  recoverable: Habit[],
+  zone: string,
+  scope: HabitMutationScope,
+): Promise<boolean> => {
+  await recoverStuckHabits(recoverable, zone, scope);
+  if (!scope.current()) return false;
+  const refetch = await fetchFromApi(true, zone, scope);
+  if (!scope.current() || refetch.kind !== 'ok') return false;
+  await replayCachedGoalTargets(recoverable, getHabits(), scope);
+  return scope.current();
+};
+
+const needsHabitRecovery = (result: FetchResult, cached: Habit[]): boolean =>
+  result.kind === 'ok' && result.count === 0 && cached.length > 0;
+
+const confirmedFor = (scope: HabitMutationScope): boolean => {
+  const { serverSync } = useHabitStore.getState();
+  return serverSync?.scope === scope.syncKey && serverSync.status === 'ok';
+};
+
+/**
+ * A retry of a failed read is pending again, not failed, until it answers.
+ * A read this session already confirmed stays confirmed through a later
+ * refetch, failed or not: the rows it loaded are still the account's, and a
+ * warm tab is not made to wait on every return (#3328).
+ */
+const beginServerSync = (scope: HabitMutationScope): void => {
+  if (!confirmedFor(scope)) useHabitStore.getState().setServerSync(null);
+};
+
+const finishServerSync = (scope: HabitMutationScope, fresh: boolean): void => {
+  if (confirmedFor(scope)) return;
+  useHabitStore.getState().setServerSync({ scope: scope.syncKey, status: fresh ? 'ok' : 'failed' });
+};
+
+const refreshHabits = async (tz?: string, options: HabitRefreshOptions = {}): Promise<boolean> => {
+  const scope = captureHabitMutationScope();
+  if (!scope.authorized) return false;
+  const { owner, calendar, zone, replayReady } = prepareRefreshCalendar(tz, options);
   setLoading(true);
   setError(null);
+  beginServerSync(scope);
   const cached = await loadCachedHabits();
-  const recoverable = await hydrateRealHabitCache(cached);
+  if (!scope.current()) return false;
+  const recoverable = await hydrateRealHabitCache(cached, scope);
+  if (!scope.current()) return false;
   const hasCachedData = recoverable.length > 0;
-  const result = await fetchFromApi(hasCachedData, zone);
+  const result = await fetchFromApi(hasCachedData, zone, scope);
+  if (!scope.current()) return false;
   let fresh = result.kind === 'ok';
-  // Stuck-user recovery: cache has real habits, server returned an empty list.
-  // Push those back, then re-fetch so the store gets the server's ids. Demo
-  // tiles left in an older cache are skipped on both legs, so a cache holding
-  // nothing else means the user was never stuck.
-  if (result.kind === 'ok' && result.count === 0 && recoverable.length > 0) {
-    await recoverStuckHabits(recoverable, zone);
-    const refetch = await fetchFromApi(true, zone);
-    fresh = refetch.kind === 'ok';
-    // #286: the recovery push seeded default goal targets — replay any
-    // cached customizations onto the fresh server goals.
-    if (refetch.kind === 'ok') {
-      await replayCachedGoalTargets(recoverable, getHabits());
-    }
+  if (needsHabitRecovery(result, recoverable)) {
+    fresh = await refreshRecoveredHabits(recoverable, zone, scope);
   }
+  if (!scope.current()) return false;
   setLoading(false);
+  finishServerSync(scope, fresh);
 
   // Give Map/Practice/Course/Journal an anchor to read if none is stored yet,
   // by deriving one from the habits just loaded. A stored anchor is left alone:
@@ -1235,13 +1528,17 @@ const refreshHabits = async (tz?: string): Promise<boolean> => {
   // ``return``-ed from the first failure with the successful prefix still
   // in the queue, so on the next load every check-in that had already
   // posted would post AGAIN — silent duplication of the user's streak.
-  await replayPendingCheckIns(zone);
-  return fresh;
+  await refreshReplayState(owner, calendar, replayReady, scope);
+  return scope.current() && fresh;
 };
 
-const loadHabits = async (tz?: string): Promise<void> => {
-  await refreshHabits(tz);
+const loadHabits = async (tz?: string, options?: HabitRefreshOptions): Promise<void> => {
+  await refreshHabits(tz, options);
 };
+
+/** A unit change the server did not take, when it gave no reason of its own. */
+export const GOAL_UNITS_NOT_SAVED_COPY =
+  "We couldn't save those goal units. They're back to what they were — check your connection and try again.";
 
 /**
  * What the user is told when the server refuses to delete their habit.
@@ -1337,10 +1634,13 @@ const INSERT_UNCONFIRMED_COPY =
  * it can carry no completions and no goal groups, so the server's cascade can
  * take nothing with it beyond the default goals its own POST seeded.
  */
-const removeOrphanedInsert = async (created: ApiHabit | undefined): Promise<boolean> => {
+const removeOrphanedInsert = async (
+  created: ApiHabit | undefined,
+  scope: HabitMutationScope,
+): Promise<boolean> => {
   if (created === undefined) return true;
   if (!isServerIssuedId(created.id)) return false;
-  return habitsApi.delete(created.id).then(
+  return habitsApi.delete(created.id, ...scope.credentials).then(
     () => true,
     () => false,
   );
@@ -1365,9 +1665,13 @@ const settleFailedInsert = async (
   prev: Habit[],
   created: ApiHabit | undefined,
   err: unknown,
+  scope: HabitMutationScope,
 ): Promise<boolean> => {
-  if (await removeOrphanedInsert(created)) {
-    revertOnFailure(prev, INSERT_NOT_KEPT_COPY)(err);
+  if (!scope.current()) return false;
+  const removed = await removeOrphanedInsert(created, scope);
+  if (!scope.current()) return false;
+  if (removed) {
+    revertOnFailure(prev, INSERT_NOT_KEPT_COPY, scope)(err);
     return false;
   }
   setHabits(prev);
@@ -1376,8 +1680,53 @@ const settleFailedInsert = async (
   // Best effort, so the list can show the row the sentence above just
   // promised. Its own failure needs no second alert: "once the list refreshes"
   // is already what the writer was told.
-  await loadHabits().catch(() => undefined);
+  await confirmCreatedHabits(detectDeviceTimezone(), scope).catch(() => undefined);
   return true;
+};
+
+/** Preserve the server result while explaining a device-cache failure truthfully. */
+const persistCreatedHabitIds = async (
+  confirmed: Habit[],
+  scope: HabitMutationScope,
+): Promise<boolean> => {
+  try {
+    await persistHabits(confirmed);
+    return true;
+  } catch {
+    if (scope.current())
+      Alert.alert(
+        SYNC_FAILURE_TITLE,
+        "Your habit is saved on the server, but we couldn't save its confirmed details on this device. Try refreshing before closing the app.",
+      );
+    return false;
+  }
+};
+
+/** A create confirmation must not hydrate an old owner's cache into a new one. */
+const confirmCreatedHabits = async (zone: string, scope: HabitMutationScope): Promise<void> => {
+  const rows = await habitsApi.listAll(...scope.credentials);
+  if (!scope.current()) return;
+  if (rows.length === 0) throw new Error('The created habit could not be confirmed.');
+  const confirmed = mapApiHabits(rows, zone);
+  setHabits(confirmed);
+  setError(null);
+  if (!(await persistCreatedHabitIds(confirmed, scope))) return;
+  if (!scope.current()) return;
+  syncProgramAnchorFromHabits(zone);
+  const { owner, calendar, replayReady } = prepareRefreshCalendar(zone, {});
+  await refreshReplayState(owner, calendar, replayReady, scope);
+};
+
+/** Report an unconfirmed create only to the account that started it. */
+const confirmCreatedHabitsOrExplain = async (
+  zone: string,
+  scope: HabitMutationScope,
+): Promise<void> => {
+  try {
+    await confirmCreatedHabits(zone, scope);
+  } catch {
+    if (scope.current()) Alert.alert(SYNC_FAILURE_TITLE, INSERT_UNCONFIRMED_COPY);
+  }
 };
 
 /** What an insert kept, and the server id of the row it kept (see ``insertHabitAtWithId``). */
@@ -1395,6 +1744,8 @@ const insertHabitAtWithId = async (
   position: number,
   tz?: string,
 ): Promise<InsertOutcome> => {
+  const scope = captureHabitMutationScope();
+  if (!scope.authorized) return { kept: false, habitId: null };
   const prev = getHabits();
   const at = clampPosition(prev.length, position);
   const zone = tz ?? detectDeviceTimezone();
@@ -1412,21 +1763,28 @@ const insertHabitAtWithId = async (
   // "a row exists and these writes did not place it".
   let created: ApiHabit | undefined;
   try {
-    created = await habitsApi.create(toApiPayload(next[at] ?? newHabit, zone));
+    created = await habitsApi.create(
+      {
+        ...toApiPayload(next[at] ?? newHabit, zone),
+        ...(input.goals ? { goals: input.goals } : {}),
+      },
+      ...scope.credentials,
+    );
+    if (!scope.current()) return { kept: false, habitId: null };
     await Promise.all(
       next
         .filter((habit) => habit.id !== newHabit.id && isServerBackedHabit(habit))
-        .map((habit) => habitsApi.update(habit.id, toApiPayload(habit, zone))),
+        .map((habit) =>
+          habitsApi.update(habit.id, toApiPayload(habit, zone), ...scope.credentials),
+        ),
     );
   } catch (err) {
-    const kept = await settleFailedInsert(prev, created, err);
+    const kept = await settleFailedInsert(prev, created, err, scope);
     return { kept, habitId: kept ? createdId(created) : null };
   }
-  try {
-    await loadHabits(zone);
-  } catch {
-    Alert.alert(SYNC_FAILURE_TITLE, INSERT_UNCONFIRMED_COPY);
-  }
+  if (!scope.current()) return { kept: false, habitId: null };
+  await confirmCreatedHabitsOrExplain(zone, scope);
+  if (!scope.current()) return { kept: false, habitId: null };
   return { kept: true, habitId: createdId(created) };
 };
 
@@ -1448,14 +1806,16 @@ export const habitManager = {
   dismissDroppedCheckIns: async (): Promise<void> => {
     try {
       await clearDroppedCheckIns();
-    } catch (err: unknown) {
-      console.warn('[habits] could not erase the dropped check-in quarantine', err);
+    } catch {
+      reportDiagnostic('quarantine_clear_failed');
       return;
     }
     useDroppedCheckInStore.getState().setEntries([]);
   },
 
   updateGoal: (habitId: number, updatedGoal: Goal): void => {
+    const scope = captureHabitMutationScope();
+    if (!scope.authorized) return;
     const prev = getHabits();
     const parent = prev.find((h) => h.id === habitId);
     const next = applyGoalUpdate(prev, habitId, updatedGoal);
@@ -1479,11 +1839,12 @@ export const habitManager = {
       days_of_week: updatedGoal.days_of_week ?? null,
     };
     goalsApi
-      .update(updatedGoal.id, payload)
+      .update(updatedGoal.id, payload, ...scope.credentials)
       .catch(
         revertOnFailure(
           prev,
-          "We couldn't save that goal change. Your local copy was restored — check your connection and try again.",
+          "We couldn't save that goal change, so it's back to what it was — check your connection and try again.",
+          scope,
         ),
       );
   },
@@ -1492,11 +1853,18 @@ export const habitManager = {
    * Atomically update the shared unit fields across every tier goal of a
    * habit: one optimistic apply, one batch PUT, one rollback closure — so a
    * partial failure can never split tiers between old and new units.
+   *
+   * ``onFailure`` lets the caller say why the change did not stick (#3154):
+   * the habit actions hand the refusal to the toast, which renders on web
+   * where ``Alert`` is a no-op. Without it the rollback still alerts.
    */
   updateGoalUnits: (
     habitId: number,
     changes: Partial<Pick<Goal, 'target_unit' | 'frequency' | 'frequency_unit'>>,
+    onFailure?: (_err: unknown) => void,
   ): void => {
+    const scope = captureHabitMutationScope();
+    if (!scope.authorized) return;
     const prev = getHabits();
     const habit = prev.find((h) => h.id === habitId);
     const reference = habit?.goals[0];
@@ -1520,32 +1888,41 @@ export const habitManager = {
       frequency: changes.frequency ?? reference.frequency,
       frequency_unit: changes.frequency_unit ?? reference.frequency_unit,
     };
-    habitsApi
-      .updateGoalUnits(habitId, payload)
-      .catch(
-        revertOnFailure(
-          prev,
-          "We couldn't update those goal units on the server. Your changes were rolled back — check your connection and try again.",
-        ),
-      );
+    habitsApi.updateGoalUnits(habitId, payload, ...scope.credentials).catch((err: unknown) => {
+      if (!onFailure) {
+        revertOnFailure(prev, GOAL_UNITS_NOT_SAVED_COPY, scope)(err);
+        return;
+      }
+      if (!scope.current()) return;
+      setHabits(prev);
+      void persistHabits(prev);
+      onFailure(err);
+    });
   },
 
   updateHabit: (updatedHabit: Habit, tz?: string): void => {
+    const scope = captureHabitMutationScope();
+    if (!scope.authorized) return;
     const prev = getHabits();
     const next = prev.map((h) => (h.id === updatedHabit.id ? updatedHabit : h));
     setHabits(next);
     // Serialize per-habit notification rescheduling and write the freshly
     // returned ids back onto the habit before persisting, so a rapid second
     // edit reschedules against fresh ``notificationIds`` instead of double-scheduling.
-    if (updatedHabit.id) void rescheduleAndPersist(updatedHabit);
+    if (updatedHabit.id) void rescheduleAndPersist(updatedHabit, scope);
     else void persistHabits(next);
     if (!isServerBackedHabit(updatedHabit)) return;
     habitsApi
-      .update(updatedHabit.id, toApiPayload(updatedHabit, tz ?? detectDeviceTimezone()))
+      .update(
+        updatedHabit.id,
+        toApiPayload(updatedHabit, tz ?? detectDeviceTimezone()),
+        ...scope.credentials,
+      )
       .catch(
         revertOnFailure(
           prev,
-          "We couldn't save the changes to that habit. Your local copy was restored — check your connection and try again.",
+          "We couldn't save those changes, so the habit is back to how it was — check your connection and try again.",
+          scope,
         ),
       );
   },
@@ -1559,6 +1936,8 @@ export const habitManager = {
    * the user's own row of that number.
    */
   deleteHabit: (habitId: number): void => {
+    const scope = captureHabitMutationScope();
+    if (!scope.authorized) return;
     const prev = getHabits();
     const target = prev.find((h) => h.id === habitId);
     const next = prev.filter((h) => h.id !== habitId);
@@ -1567,11 +1946,13 @@ export const habitManager = {
     void cancelForHabit(habitId);
     if (!isServerBackedHabit(target)) return;
     habitsApi
-      .delete(habitId)
+      .delete(habitId, ...scope.credentials)
       // The server unlinks a deleted habit from the writing timer itself
       // (#2861); this keeps the on-device mirror from checking off a ghost.
-      .then(() => useWritingHabitLinkStore.getState().forgetHabit(habitId))
-      .catch(revertOnFailure(prev, DELETE_FAILED_COPY));
+      .then(() => {
+        if (scope.current()) useWritingHabitLinkStore.getState().forgetHabit(habitId);
+      })
+      .catch(revertOnFailure(prev, DELETE_FAILED_COPY, scope));
   },
 
   /**
@@ -1587,6 +1968,8 @@ export const habitManager = {
    * date is the rung its stage badge names, not the day it was added.
    */
   addHabit: async (input: AddHabitInput, isCarryover = false, tz?: string): Promise<void> => {
+    const scope = captureHabitMutationScope();
+    if (!scope.authorized) return;
     const prev = getHabits();
     const zone = tz ?? detectDeviceTimezone();
     const newHabit = buildAddedHabit(input, prev, isCarryover, zone);
@@ -1594,12 +1977,20 @@ export const habitManager = {
     setHabits(next);
     void persistHabits(next);
     try {
-      await habitsApi.create(toApiPayload(newHabit, zone));
-      await loadHabits(zone);
+      await habitsApi.create(
+        {
+          ...toApiPayload(newHabit, zone),
+          ...(input.goals ? { goals: input.goals } : {}),
+        },
+        ...scope.credentials,
+      );
+      if (!scope.current()) return;
+      await confirmCreatedHabitsOrExplain(zone, scope);
     } catch (err) {
       revertOnFailure(
         prev,
         "We couldn't create that habit on the server. Check your connection and try again.",
+        scope,
       )(err);
     }
   },
@@ -1746,6 +2137,8 @@ export const habitManager = {
     tz: string,
     date?: Date,
   ): LogUnitContext | null => {
+    const scope = captureHabitMutationScope();
+    if (!scope.authorized) return null;
     const prev = getHabits();
     // The matched row is the only place the goal's provenance is recorded, so
     // keep a handle on it for the ``isServerBackedGoal`` check below.
@@ -1773,6 +2166,7 @@ export const habitManager = {
     const dayKey = date ? dayKeyInTZ(date, tz) : todayInUserTZ(tz);
     const completedOn = dayKey !== todayInUserTZ(tz) ? dayKey : undefined;
     return {
+      scope,
       habitId,
       prev,
       next,
@@ -1796,8 +2190,21 @@ export const habitManager = {
    * computed `next` list to the store and persist it to disk.
    */
   applyLogUnitContext: (ctx: LogUnitContext): void => {
+    if (!ctx.scope.current()) return;
+    if (!ctx.isDemoSeed && ctx.serverGoalId !== null) rememberLogUnit(ctx, true);
     setHabits(ctx.next);
     void persistHabits(ctx.next);
+  },
+
+  /** Reserve request order without claiming an unconfirmed timer completion. */
+  reserveLogUnitContext: (ctx: LogUnitContext): void => {
+    if (!ctx.scope.current()) return;
+    rememberLogUnit(ctx, false);
+  },
+
+  /** Cancel an internal reservation; confirmed store and disk remain untouched. */
+  discardLogUnitContext: (ctx: LogUnitContext): void => {
+    forgetLogUnit(ctx);
   },
 
   /**
@@ -1805,8 +2212,24 @@ export const habitManager = {
    * placeholder, and rejects with `ClientMintedIdError` when this device minted
    * the goal id — the caller turns that into a resync.
    */
-  commitLogUnitContext: async (ctx: LogUnitContext): Promise<CheckInResult | null> => {
-    if (ctx.isDemoSeed === true) return null;
+  commitLogUnitContext: async (
+    ctx: LogUnitContext,
+    {
+      viaTimer = false,
+      source,
+      isCurrent = () => true,
+      onCommitted,
+    }: {
+      viaTimer?: boolean;
+      source?: GoalLogSource;
+      isCurrent?: () => boolean;
+      onCommitted?: (_result: CheckInResult) => void;
+    } = {},
+  ): Promise<CheckInResult | null> => {
+    if (!ctx.scope.current() || ctx.isDemoSeed === true) {
+      forgetLogUnit(ctx);
+      return null;
+    }
     // A non-server goal id used to be posted on purpose, to draw the 404
     // ``goal_not_found`` that triggers the stale-scaffold resync. That trade
     // cannot hold: an onboarding scaffold's goal id is a positive integer in
@@ -1818,27 +2241,60 @@ export const habitManager = {
     // build predating the marker, or a real server id whose goal was deleted
     // server-side, is visible only in the server's answer.
     if (ctx.serverGoalId === null) {
+      forgetLogUnit(ctx);
       throw new ClientMintedIdError(
         'This habit has not finished saving to your account, so its goal id names no server row.',
       );
     }
     const serverGoalId = ctx.serverGoalId;
-    return serializeLogUnitCommit(`${ctx.habitId}:${ctx.dayKey}`, () =>
-      goalCompletionsApi.create(
-        {
-          goal_id: serverGoalId,
-          did_complete: ctx.amount !== 0,
-          completed_on: ctx.completedOn,
-          completed_units: ctx.amount,
-        },
-        { idempotencyKey: logUnitIdempotencyKey(ctx.operationId) },
-      ),
-    );
+    enqueueLogUnit(ctx);
+    return serializeLogUnitCommit(`${ctx.habitId}:${ctx.dayKey}`, async () => {
+      try {
+        if (!ctx.scope.current() || !isCurrent()) return null;
+        const result = await goalCompletionsApi.create(
+          {
+            goal_id: serverGoalId,
+            did_complete: ctx.amount !== 0,
+            completed_on: ctx.completedOn,
+            completed_units: ctx.amount,
+            ...(viaTimer ? { via_timer: true } : {}),
+            ...(source ? { source } : {}),
+          },
+          {
+            idempotencyKey: logUnitIdempotencyKey(ctx.operationId),
+            ...(ctx.scope.credentials.length ? { token: ctx.scope.credentials[0] } : {}),
+          },
+        );
+        if (ctx.scope.current()) onCommitted?.(result);
+        return result;
+      } finally {
+        forgetLogUnit(ctx);
+      }
+    });
   },
 
   /** Replace this habit/day's optimistic rows with the confirmed server total. */
   reconcileLogUnitContext: (ctx: LogUnitContext, result: CheckInResult): void => {
+    if (!ctx.scope.current()) return;
     reconcileStoredHabitDay(ctx.habitId, ctx.dayKey, ctx.timezone, result, ctx.operationId);
+    forgetLogUnit(ctx);
+    clearLogUnitRollbackBaseline(ctx);
+  },
+
+  /** Confirm a quiet log before the next request in this habit/day's stream. */
+  reconcileReservedLogUnitContext: (ctx: LogUnitContext, result: CheckInResult): void => {
+    if (!ctx.scope.current()) return;
+    if (!getHabits().some((habit) => habit.id === ctx.habitId)) {
+      forgetLogUnit(ctx);
+      return;
+    }
+    const later = laterOptimisticLogUnits(ctx);
+    const confirm = (habits: Habit[]) => withQuietLogConfirmation(habits, ctx, result, later);
+    rebasePendingLogUnitRollbacks(confirm);
+    const next = confirm(getHabits());
+    setHabits(next);
+    void persistHabits(next);
+    forgetLogUnit(ctx);
   },
 
   /**
@@ -1848,8 +2304,11 @@ export const habitManager = {
    * from the server (BUG-FE-HABIT-001).
    */
   rollbackLogUnitContext: (ctx: LogUnitContext): void => {
-    setHabits(ctx.prev);
-    void persistHabits(ctx.prev);
+    if (!ctx.scope.current()) return;
+    forgetLogUnit(ctx);
+    const baseline = takeLogUnitRollbackBaseline(ctx);
+    setHabits(baseline);
+    void persistHabits(baseline);
   },
 
   /**
@@ -1882,92 +2341,11 @@ export const habitManager = {
       ctx.currentGoal,
       ctx.nextGoal,
     );
-    return milestone ?? buildLogConfirmationToast(ctx.habitName, ctx.amount);
-  },
-
-  /**
-   * Backfill missed days: bump the local streak + completions, persist the
-   * optimistic state, then POST one goal completion per day against the
-   * habit's LOW-tier goal so the backfill survives the next ``loadHabits``
-   * reload (which trusts the server as the source of truth). A single
-   * ``Promise.all`` rejection rolls the store AND the on-disk snapshot back
-   * to ``prev`` and alerts the user — the same deterministic single-rollback
-   * pattern as ``saveHabitOrder``. When the habit is a demo tile, or it or its
-   * low goal carries an id no server issued, we keep the optimistic update but
-   * skip the network call: a pre-sync habit still shows the backfill locally,
-   * and no fabricated id can trigger the rollback that would erase it.
-   *
-   * ``tz`` is the user's stored IANA zone forwarded by the hook; direct
-   * service callers without auth context fall back to the device zone.
-   */
-  backfillMissedDays: (habitId: number, days: Date[], tz?: string): void => {
-    const zone = tz ?? detectDeviceTimezone();
-    const prev = getHabits();
-    const next = prev.map((h) => (h.id === habitId ? backfillHabit(h, days, zone) : h));
-    setHabits(next);
-    void persistHabits(next);
-    const parent = prev.find((h) => h.id === habitId);
-    if (!isServerBackedHabit(parent)) return;
-    const lowGoalId = parent.goals.find((g) => g.tier === 'low')?.id;
-    if (!isServerIssuedId(lowGoalId)) return;
-    const updates = postBackfillCompletions(lowGoalId, days, zone);
-    Promise.all(updates).catch(
-      revertOnFailure(
-        prev,
-        "We couldn't save those backfilled days. Your previous state was restored — check your connection and try again.",
-      ),
+    return withRunMilestone(
+      milestone ?? buildLogConfirmationToast(ctx.habitName, ctx.amount),
+      ctx,
+      result,
     );
-  },
-
-  /**
-   * Reset a habit's start date: clear the streak + completions locally,
-   * persist, then run two server writes in sequence — first PUT the new start
-   * date, and only once that resolves bulk-clear the habit's server-side
-   * goal-completion rows via the clear-completions endpoint. Clearing
-   * server-side means a later ``loadHabits`` refetch shows no stale
-   * completions rather than rebuilding a streak from rows the reset was meant
-   * to wipe. Without the PUT even the new start date would revert to the stale
-   * server value. Sequencing matters because the clear is irreversible: if it
-   * ran concurrently and the PUT failed, the rollback would restore the local
-   * completions while the server had already dropped them, silently losing
-   * history behind a "previous state was restored" message. Ordering the
-   * reversible PUT first means a PUT failure never reaches the clear.
-   *
-   * The two stages fail differently and are handled separately. A PUT failure
-   * changes nothing durably, so it fully rolls the store + on-disk snapshot
-   * back to the previous state. A clear failure happens only after the PUT has
-   * already persisted the new start date, so a full rollback would wrongly
-   * revert that durable date; instead the optimistic reset is kept and the
-   * user is told only the check-in clear failed, so retrying re-runs the
-   * idempotent reset.
-   */
-  setNewStartDate: (habitId: number, newDate: Date, tz?: string): void => {
-    const prev = getHabits();
-    const next = prev.map((h) => (h.id === habitId ? resetHabitStart(h, newDate) : h));
-    setHabits(next);
-    void persistHabits(next);
-    const updated = next.find((h) => h.id === habitId);
-    // Suppresses the PUT *and* the chained clear: a demo tile's fabricated id
-    // would point the irreversible clear-completions call at whichever real
-    // habit of the user's happens to carry that number.
-    if (!isServerBackedHabit(updated)) return;
-    const updatedId = updated.id;
-    habitsApi
-      .update(updatedId, toApiPayload(updated, tz ?? detectDeviceTimezone()))
-      .then(
-        () =>
-          habitsApi
-            .clearCompletions(updatedId)
-            .catch(
-              warnOnFailure(
-                "Your new start date was saved, but we couldn't clear the old check-ins. Try the reset again.",
-              ),
-            ),
-        revertOnFailure(
-          prev,
-          "We couldn't save the new start date. Your previous state was restored — check your connection and try again.",
-        ),
-      );
   },
 
   /**
@@ -2023,7 +2401,7 @@ export const habitManager = {
     const next = getHabits().map((h) => ({ ...h, revealed: true }));
     syncRevealState(
       next,
-      "We couldn't unlock every habit. Your previous state was restored — check your connection and try again.",
+      "We couldn't open every habit. They're back as they were — check your connection and try again.",
       tz ?? detectDeviceTimezone(),
     );
   },
@@ -2042,7 +2420,7 @@ export const habitManager = {
     }));
     syncRevealState(
       next,
-      "We couldn't re-lock those habits. Your previous state was restored — check your connection and try again.",
+      "We couldn't set those habits aside. They're back as they were — check your connection and try again.",
       tz ?? detectDeviceTimezone(),
     );
   },
@@ -2051,7 +2429,7 @@ export const habitManager = {
     const next = getHabits().map((h) => (h.id === habitId ? { ...h, revealed: true } : h));
     syncRevealState(
       next,
-      "We couldn't unlock that habit. Your previous state was restored — check your connection and try again.",
+      "We couldn't open that habit. It's back as it was — check your connection and try again.",
       tz ?? detectDeviceTimezone(),
     );
   },

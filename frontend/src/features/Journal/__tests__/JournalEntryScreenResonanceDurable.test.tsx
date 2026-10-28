@@ -46,6 +46,8 @@ jest.mock('@/context/AuthContext', () => require('./authContextTestKit'));
 jest.mock('@/context/ApiKeyContext', () => require('./apiKeyContextTestKit'));
 
 jest.mock('@/api', () => ({
+  ...require('./journalUiFlagsTestKit'),
+  ...require('./readingRouteTestKit'),
   // NetworkStatusProvider registers the client's online getter on mount.
   setNetworkOnlineGetter: jest.fn(),
   journal: {

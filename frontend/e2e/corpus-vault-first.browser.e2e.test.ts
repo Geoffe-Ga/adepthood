@@ -29,7 +29,7 @@ test('an account with no vault is shown where its corpus lives before the picker
 
   const seedRow = page.getByTestId('settings-row-seed-corpus');
   await expect(seedRow).toContainText('Bring in your writing');
-  await expect(seedRow).toContainText('Where your corpus lives');
+  await expect(seedRow).toContainText('Where your writing lives');
 
   await seedRow.click();
 

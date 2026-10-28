@@ -9,6 +9,21 @@ import ReturnRestingCard from './ReturnRestingCard';
 import { useMettaReturn } from './useMettaReturn';
 
 import type { ReleasedHabit } from '@/api';
+import { useReportNotificationPresence } from '@/features/Journal/notificationPresence';
+
+/**
+ * Whether the Return surface shows a card at all: a running arc (in any of its
+ * moments), the soft-landing offer, or a habit still resting. Exactly the cases
+ * ``ReturnStack`` renders, so the Notification Center's count (#3142) cannot
+ * disagree with what the writer sees.
+ */
+export function returnSurfaceVisible(state: {
+  arc: unknown;
+  offerVisible: boolean;
+  releasedHabits: ReleasedHabit[];
+}): boolean {
+  return state.arc !== null || state.offerVisible || restingHabits(state.releasedHabits).length > 0;
+}
 
 /**
  * What the Return surface shows when no arc is running: the soft-landing offer
@@ -43,6 +58,14 @@ function ReturnIdleStack({
   );
 }
 
+/** The Return state, reported to an enclosing Notification Center as one card or none. */
+function useReportedMettaReturn(): ReturnType<typeof useMettaReturn> {
+  const metta = useMettaReturn();
+  const visible = returnSurfaceVisible(metta);
+  useReportNotificationPresence('return', visible, visible ? 1 : 0);
+  return metta;
+}
+
 /** The Return surface: the soft-landing offer when invited, or the active arc. */
 const ReturnStack = (): React.JSX.Element | null => {
   const {
@@ -59,7 +82,7 @@ const ReturnStack = (): React.JSX.Element | null => {
     release,
     recommit,
     skipLetGo,
-  } = useMettaReturn();
+  } = useReportedMettaReturn();
   if (arc !== null && arc.complete) {
     return (
       <ReturnCompletionCard

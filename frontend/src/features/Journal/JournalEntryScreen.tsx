@@ -28,7 +28,9 @@ import CompletionSuggestionNote from './CompletionSuggestionNote';
 import ContractionReflectionNote from './ContractionReflectionNote';
 import type { CorpusDestination } from './corpusDestination';
 import CorpusInvitationNote from './CorpusInvitationNote';
+import CorpusSweepOfferNote from './CorpusSweepOfferNote';
 import { claimCreateAttempt, type CreateKey, type CreateKeyRef } from './createKey';
+import { DELETION_PENDING_DETAIL, WITHDRAWAL_PENDING_LOCATIONS } from './deleteEntryCopy';
 import EditConfirmDialog from './EditConfirmDialog';
 import { FocusScrollProvider, useFocusScrollHost, type FocusScrollHost } from './focusSpanScroll';
 import FromYourCreekPanel from './FromYourCreekPanel';
@@ -38,7 +40,7 @@ import HeldWordsLeaveDialog from './HeldWordsLeaveDialog';
 import HighlightedBody from './HighlightedBody';
 import type { FocusSpan } from './highlightSegments';
 import { JournalScreenDrawer } from './JournalDrawer';
-import styles from './JournalEntry.styles';
+import styles, { WRITING_TIMER_CLEARANCE } from './JournalEntry.styles';
 import {
   LOADED_TIER_STATE,
   carriedTierEscalation,
@@ -51,7 +53,9 @@ import { isTierLooser, type RetryFailure, type SaveState } from './journalSaveRe
 import LinkHabitNudge from './LinkHabitNudge';
 import LiveMarkdownBody, { type LiveMarkdownBodyProps } from './LiveMarkdownBody';
 import { buildMarginItems, drawnNoteIds, type MarginItem } from './marginLayout';
+import { MarginNavigationProvider } from './marginNavigation';
 import MarginNote from './MarginNote';
+import PassReceiptNotice from './PassReceiptNotice';
 import PrivacyTierControl, { DEFAULT_TIER, tierLabel } from './PrivacyTierControl';
 import { PROMOTED_NOTICE_COPY } from './promoteExplainerCopy';
 import PromoteExplainerDialog from './PromoteExplainerDialog';
@@ -59,13 +63,18 @@ import QuoteInclusionHint from './QuoteInclusionHint';
 import QuoteSelectionSurface, { type CodePointSpan } from './QuoteSelectionSurface';
 import { readingScrollStyle } from './readingSurfaceStyles';
 import { formatQuotePrefill } from './reflectionCopy';
-import ReflectionSourcesPanel from './ReflectionSourcesPanel';
+import ReflectionSourcesPanel, {
+  SIDE_PANE_BREAKPOINT,
+  SOURCES_PANE_OCCUPIED_WIDTH,
+} from './ReflectionSourcesPanel';
 import { useRefreshAfterEdit } from './refreshAfterEdit';
 import { isStoredAs, replayReconcilePatch, type SentPage } from './replayReconcile';
 import ResonanceEssayModal from './ResonanceEssayModal';
 import ResonanceExplainerDialog from './ResonanceExplainerDialog';
 import ResonanceRefillDialog from './ResonanceRefillDialog';
 import { describeCardFacts } from './suggestionFacts';
+import { taskOrdinalAt, toggleTaskAtOrdinal } from './toggleTaskAt';
+import { useAspectOptions } from './useAspectOptions';
 import { useEntryLoad } from './useEntryLoad';
 import { useGrowingFieldHeight } from './useGrowingFieldHeight';
 import { useLinkedHabitCheckOff } from './useLinkedHabitCheckOff';
@@ -86,8 +95,9 @@ import {
   type SaveRetry,
 } from './useSaveRetry';
 import { useTierWriteQueue, type TierWriteKind } from './useTierWriteQueue';
+import { vaultKeyVendorFor } from './vaultKeyCopy';
 import { countWords, wordCountLabel } from './wordCount';
-import type { WritingSessionResult } from './writingSession';
+import type { LoggedWritingSession, WritingSessionResult } from './writingSession';
 import WritingSessionOffer from './WritingSessionOffer';
 import WritingSessionSurface from './WritingSessionSurface';
 
@@ -121,6 +131,7 @@ import {
   writingField,
   writingFieldFocus,
 } from '@/design/tokens';
+import DepthGate from '@/features/Depth/DepthGate';
 import { useEntrance } from '@/hooks/useEntrance';
 import { useIdle } from '@/hooks/useIdle';
 import { useRestoreFocusOnClose } from '@/hooks/useRestoreFocusOnClose';
@@ -190,7 +201,17 @@ const BLANK_HINT = ' ';
  */
 const WEEK_TAKEN_HINT = 'Already answered this week — copy this into a new page to keep it.';
 const VAULT_WITHDRAWAL_PENDING_HINT =
-  'Intimate here. Creek has not confirmed removal yet — bring your vault online, then choose Intimate again.';
+  'Intimate here. Removal of the copy in your vault has not been confirmed yet. Adepthood will retry when that vault is reachable.';
+// DRAFT copy (#3094 review), pending owner review. The copy is in a vault this
+// account is no longer connected to, so choosing Intimate again cannot reach it.
+const VAULT_WITHDRAWAL_RECONNECT_HINT =
+  'Intimate here. A copy of this page is in a Creek vault you’re no longer connected to — reconnect that vault in Settings so it can remove the copy.';
+const VAULT_WITHDRAWAL_UNRECORDED_HINT =
+  'Intimate here. Adepthood cannot identify the vault that received this older copy, so removal cannot be confirmed. It may remain in a vault you connected earlier.';
+// A recorded DELETE locks edits. Its 409 omits the destination, so no known
+// vault or eventual confirmation can be promised for an older unrecorded copy.
+const DELETION_PENDING_HINT =
+  'This page is set to be deleted, so it can’t be edited. Deletion has not finished. Return to your journal to retry or delete it only here.';
 
 /**
  * The state the save hint should show while a quote is being folded in.
@@ -250,6 +271,9 @@ function savedHintLabel(state: SaveState): string {
   if (state === 'saved') return SAVED_HINT;
   if (state === 'weekTaken') return WEEK_TAKEN_HINT;
   if (state === 'vaultWithdrawalPending') return VAULT_WITHDRAWAL_PENDING_HINT;
+  if (state === 'vaultWithdrawalReconnect') return VAULT_WITHDRAWAL_RECONNECT_HINT;
+  if (state === 'vaultWithdrawalUnrecorded') return VAULT_WITHDRAWAL_UNRECORDED_HINT;
+  if (state === 'deletionPending') return DELETION_PENDING_HINT;
   if (state === 'error') return "Couldn't save — keep writing, we'll retry";
   return BLANK_HINT;
 }
@@ -284,13 +308,33 @@ function isCreateConflict(error: unknown): boolean {
   );
 }
 
-/** True only for the stable failure emitted after local privacy commits first. */
-function isVaultWithdrawalPending(error: unknown): boolean {
-  return (
-    typeof error === 'object' &&
-    error !== null &&
-    (error as { detail?: unknown }).detail === 'vault_withdrawal_pending'
-  );
+/** The server's detail on a failed write, when it sent one. */
+function errorDetail(error: unknown): string | null {
+  if (typeof error !== 'object' || error === null) return null;
+  const { detail } = error as { detail?: unknown };
+  return typeof detail === 'string' ? detail : null;
+}
+
+/**
+ * The state for a stable failure emitted after local privacy commits first,
+ * chosen by where the copy is (#3094): the connected vault has not confirmed
+ * (retried when reachable), the copy is in a known disconnected vault, or
+ * the destination was never recorded. In every case the
+ * stricter tier is already stored. Null for any other failure.
+ */
+function withdrawalPendingState(
+  error: unknown,
+): 'vaultWithdrawalPending' | 'vaultWithdrawalReconnect' | 'vaultWithdrawalUnrecorded' | null {
+  const detail = errorDetail(error);
+  if (detail === null || !Object.hasOwn(WITHDRAWAL_PENDING_LOCATIONS, detail)) return null;
+  const location = WITHDRAWAL_PENDING_LOCATIONS[detail];
+  if (location === 'connected_vault') return 'vaultWithdrawalPending';
+  return location === 'unrecorded_vault' ? 'vaultWithdrawalUnrecorded' : 'vaultWithdrawalReconnect';
+}
+
+/** True for the 409 a page answers while its deletion is in progress (#3098). */
+function isDeletionPending(error: unknown): boolean {
+  return errorDetail(error) === DELETION_PENDING_DETAIL;
 }
 
 interface WriteEntryRefs {
@@ -477,6 +521,8 @@ interface AutosaveApi {
   chord: AspectChordValue;
   onChangeTitle: (_next: string) => void;
   onChangeBody: (_next: string) => void;
+  /** Optimistically flip and serialize a task while this finished entry stays read-only. */
+  toggleFinishedTask: (_lineStart: number) => void;
   /** Set the privacy tier: updates the control and persists (create/PATCH). */
   onChangeClassification: (_tier: JournalClassification) => void;
   /** Set the Aspect chord: updates the control and persists (create/PATCH). */
@@ -579,7 +625,14 @@ function useTimerCleanup(timerRef: TimerRef): () => void {
 }
 
 /** A tier/chord PATCH's result; null when nothing was sent or a later change superseded it. */
-type PersistState = 'saved' | 'failed' | 'vaultWithdrawalPending' | null;
+type PersistState =
+  | 'saved'
+  | 'failed'
+  | 'vaultWithdrawalPending'
+  | 'vaultWithdrawalReconnect'
+  | 'vaultWithdrawalUnrecorded'
+  | 'deletionPending'
+  | null;
 
 interface PersistResult<T> {
   revertTo: T | null;
@@ -673,18 +726,19 @@ function failedWrite<T>({
   ref,
   report,
 }: FailedWrite<T>): PersistResult<T> {
-  const withdrawalPending = isVaultWithdrawalPending(error);
+  const withdrawalPending = withdrawalPendingState(error);
   // A failed response does not say what the server committed (#2935), except a
   // pending vault withdrawal: the server commits Intimate before asking Creek.
   report?.(withdrawalPending ? { seq, ok: true, value, stored: null } : { seq, ok: false });
   // A rapid superseding change already owns the ref and the UI — leave both
   // to it rather than reverting to this now-stale value.
   if (ref.current !== value) return { revertTo: null, state: null };
-  // Keep that safer truth selected and expose its retry path; reverting to
+  // Keep that safer truth selected and expose its way forward; reverting to
   // Personal would visually contradict persisted privacy.
-  if (withdrawalPending) return { revertTo: null, state: 'vaultWithdrawalPending' };
+  if (withdrawalPending) return { revertTo: null, state: withdrawalPending };
   ref.current = previous;
-  return { revertTo: previous, state: 'failed' };
+  // A page being deleted refuses every edit; no retry can land it (#3098).
+  return { revertTo: previous, state: isDeletionPending(error) ? 'deletionPending' : 'failed' };
 }
 
 // Module-level so the mappers stay referentially stable across renders, keeping
@@ -794,7 +848,7 @@ const chordFailure = (chord: AspectChordValue): RetryFailure => ({ lane: 'chord'
 
 interface WriteOutcome {
   durable: boolean;
-  state: 'saved' | 'failed' | 'weekTaken';
+  state: 'saved' | 'failed' | 'weekTaken' | 'deletionPending';
   /** The body the server holds when it is not the body sent (#2936). */
   durableBody?: string;
 }
@@ -815,6 +869,9 @@ function trackedWrite(
       if (heldAnswer != null) return { durable: true, state: 'weekTaken', durableBody: heldAnswer };
       return { durable: true, state: 'saved' };
     } catch (error) {
+      // A page being deleted refuses every edit (#3098). Not a create conflict,
+      // and not retryable: it names itself in the hint instead.
+      if (isDeletionPending(error)) return { durable: false, state: 'deletionPending' };
       // Surface a distinct error state so the hint isn't mistaken for "untouched".
       // A 409 on the weekly-prompt path is not retryable — the week already holds
       // its one response — so it gets its own state rather than the retry hint.
@@ -977,6 +1034,18 @@ const UNSETTLED_FINISH_ERROR = 'Cannot finish an entry that has not finished loa
 type RunFinish = (_title: string, _body: string) => Promise<FinishedEntry>;
 
 /**
+ * Record a Finish that failed. A page being deleted refuses Finish like every
+ * edit (#3098): no retry can land it, so its lane settles and the hint names
+ * the reason. Any other failure stays owed for Retry.
+ */
+function settleFailedFinish(error: unknown, reporter: SaveReporter, isCurrent: boolean): void {
+  const deleting = isDeletionPending(error);
+  if (deleting) reporter.succeed('finish');
+  else reporter.fail({ lane: 'finish' });
+  if (isCurrent) reporter.publish(deleting ? 'deletionPending' : 'idle');
+}
+
+/**
  * The Finish action: cancel any pending debounce, drain in-flight autosaves so a
  * shorter one can't land after us, then issue the single atomic Finish write.
  * Tracks the save state and rethrows on failure so the caller keeps the draft.
@@ -1016,8 +1085,7 @@ function useFinishWriter(refs: FinishRunnerRefs, reporter: SaveReporter): RunFin
         if (generationRef.current === generation) reporter.publish('saved');
         return finished;
       } catch (error) {
-        reporter.fail({ lane: 'finish' });
-        if (generationRef.current === generation) reporter.publish('idle');
+        settleFailedFinish(error, reporter, generationRef.current === generation);
         throw error;
       } finally {
         if (inFlightRef.current === shadow) inFlightRef.current = null;
@@ -1243,6 +1311,7 @@ function useDebouncedSave(
     delayMs,
     reporter,
   );
+  const persistFinishedBody = useFinishedBodyWriter(refs, reporter);
   const flushAndTrack = useCallback(
     async (...args: Parameters<typeof flush>) => {
       const result = await flush(...args);
@@ -1268,10 +1337,61 @@ function useDebouncedSave(
     save,
     flush: flushAndTrack,
     finish: finishAndTrack,
+    persistFinishedBody,
     ...persistPorts(persist),
     seedDurableText: useDurableTextSeeder(refs.durableTextRef),
     cancelPending,
   };
+}
+
+/** A read-mode task PATCH, serialized through the draft/Finish single-flight lane. */
+type PersistFinishedBody = (_body: string) => Promise<string>;
+
+function useFinishedBodyWriter(
+  refs: Pick<SaveRunnerRefs, 'entryIdRef' | 'entryUnsettledRef' | 'inFlightRef' | 'durableTextRef'>,
+  reporter: SaveReporter,
+): PersistFinishedBody {
+  const { entryIdRef, entryUnsettledRef, inFlightRef, durableTextRef } = refs;
+  return useCallback(
+    async (body: string): Promise<string> => {
+      while (inFlightRef.current) await inFlightRef.current;
+      const id = entryIdRef.current;
+      if (id == null || entryUnsettledRef.current) {
+        throw new Error('Cannot update a task before its entry has loaded.');
+      }
+      // This request carries only ``message``. A title typed while task writes
+      // are queued is still local until the draft writer sends it, so never bless
+      // the latest local title as durable after this body-only PATCH.
+      const durableTitle = durableTextRef.current?.title;
+      reporter.publish('saving');
+      const request = journal.update(id, { message: body });
+      const shadow = request.then(
+        () => undefined,
+        () => undefined,
+      );
+      inFlightRef.current = shadow;
+      try {
+        const stored = await request;
+        durableTextRef.current =
+          durableTitle == null ? null : { title: durableTitle, body: stored.message };
+        reporter.succeed('body');
+        reporter.publish('saved');
+        return stored.message;
+      } catch (error) {
+        if (isDeletionPending(error)) {
+          reporter.succeed('body');
+          reporter.publish('deletionPending');
+        } else {
+          reporter.fail({ lane: 'body' });
+          reporter.publish('idle');
+        }
+        throw error;
+      } finally {
+        if (inFlightRef.current === shadow) inFlightRef.current = null;
+      }
+    },
+    [entryIdRef, entryUnsettledRef, inFlightRef, durableTextRef, reporter],
+  );
 }
 
 type StrRef = React.MutableRefObject<string>;
@@ -2145,6 +2265,7 @@ interface AutosaveBindings extends ChoiceHandlers {
   flushForPass: () => Promise<PassFlushResult>;
   flushForExit: () => Promise<boolean>;
   finish: () => Promise<number>;
+  toggleFinishedTask: (_lineStart: number) => void;
 }
 
 /** Project internal entry/persistence state onto the screen's autosave contract. */
@@ -2199,6 +2320,7 @@ function useAdoptStoredBody(bodyRef: StrRef, setBody: (_v: string) => void) {
 function useAutosaveBindings(
   entry: EntryState,
   saving: ReturnType<typeof useDebouncedSave>,
+  onFinishedTaskSaved: () => void,
 ): AutosaveBindings {
   const { onChangeTitle, onChangeBody } = useFieldHandlers(
     entry.titleRef,
@@ -2215,7 +2337,21 @@ function useAutosaveBindings(
     saving,
     saving.changeChord,
   );
-  const retrySource = useRetrySource(saving, flushNow, { applyClassification, applyChord });
+  const finishedTasks = useFinishedTaskToggles(
+    entry,
+    saving.persistFinishedBody,
+    flushNow,
+    onFinishedTaskSaved,
+  );
+  const flushForExit = useCallback(async () => {
+    const taskFlush = finishedTasks.flushForExit();
+    if (taskFlush !== true && !(await taskFlush)) return false;
+    return flushForExitNow();
+  }, [finishedTasks, flushForExitNow]);
+  const retrySource = useRetrySource(saving, finishedTasks.retry, {
+    applyClassification,
+    applyChord,
+  });
   return {
     entryId: saving.entryId,
     saveState: saving.saveState,
@@ -2225,10 +2361,272 @@ function useAutosaveBindings(
     flush: flushNow,
     flushDurable: flushDurableNow,
     flushForPass: flushForPassNow,
-    flushForExit: flushForExitNow,
+    flushForExit,
     finish: finishNow,
+    toggleFinishedTask: finishedTasks.toggle,
     ...choices,
   };
+}
+
+interface PendingTaskToggle {
+  ordinal: number;
+}
+
+/** Replay pending presses over the last server-confirmed body for honest rollback. */
+function applyPendingTaskToggles(body: string, pending: readonly PendingTaskToggle[]): string {
+  return pending.reduce((next, operation) => toggleTaskAtOrdinal(next, operation.ordinal), body);
+}
+
+interface FinishedTaskToggles {
+  toggle: (_lineStart: number) => void;
+  retry: () => Promise<unknown>;
+  flushForExit: () => boolean | Promise<boolean>;
+}
+
+interface FinishedTaskQueueRefs {
+  committedRef: React.MutableRefObject<string>;
+  projectedRef: React.MutableRefObject<string>;
+  pendingRef: React.MutableRefObject<PendingTaskToggle[]>;
+  drainRef: React.MutableRefObject<Promise<void> | null>;
+  blockedRef: React.MutableRefObject<boolean>;
+  terminalRef: React.MutableRefObject<boolean>;
+}
+
+/** Stable mutable queue state, re-seeded from React only while fully idle. */
+function useFinishedTaskQueueRefs(body: string): FinishedTaskQueueRefs {
+  const committedRef = useRef(body);
+  const projectedRef = useRef(body);
+  const pendingRef = useRef<PendingTaskToggle[]>([]);
+  const drainRef = useRef<Promise<void> | null>(null);
+  const blockedRef = useRef(false);
+  const terminalRef = useRef(false);
+  if (pendingRef.current.length === 0 && drainRef.current == null) {
+    committedRef.current = body;
+    projectedRef.current = body;
+  }
+  return { committedRef, projectedRef, pendingRef, drainRef, blockedRef, terminalRef };
+}
+
+/** Keep the synchronous body ref and the rendered read surface on the same truth. */
+function useShowFinishedTaskBody(
+  entry: Pick<EntryState, 'bodyRef' | 'setBody'>,
+): (_body: string) => void {
+  const { bodyRef, setBody } = entry;
+  return useCallback(
+    (body: string): void => {
+      bodyRef.current = body;
+      setBody(body);
+    },
+    [bodyRef, setBody],
+  );
+}
+
+/** Update the rendered body only while it is still the queue projection we own. */
+function showFinishedTaskProjectionIfOwned(
+  bodyRef: React.MutableRefObject<string>,
+  projectedRef: React.MutableRefObject<string>,
+  next: string,
+  show: (_body: string) => void,
+): void {
+  if (bodyRef.current !== projectedRef.current) return;
+  projectedRef.current = next;
+  show(next);
+}
+
+/** Retry a blocked head before allowing its later optimistic operations through. */
+async function retryFinishedTaskQueue(
+  blockedRef: React.MutableRefObject<boolean>,
+  pendingRef: React.MutableRefObject<PendingTaskToggle[]>,
+  committedRef: React.MutableRefObject<string>,
+  projectedRef: React.MutableRefObject<string>,
+  drainRef: React.MutableRefObject<Promise<void> | null>,
+  bodyRef: React.MutableRefObject<string>,
+  show: (_body: string) => void,
+  drain: () => Promise<void>,
+  fallbackRetry: () => Promise<unknown>,
+): Promise<unknown> {
+  if (!blockedRef.current) return fallbackRetry();
+  if (bodyRef.current !== projectedRef.current) {
+    // The editor has replaced the read-mode projection since this task failed.
+    // Its full body is now authoritative: replaying the old delta would land a
+    // stale message-only PATCH after that newer body and overwrite it.
+    blockedRef.current = false;
+    pendingRef.current = [];
+    committedRef.current = bodyRef.current;
+    projectedRef.current = bodyRef.current;
+    return fallbackRetry();
+  }
+  blockedRef.current = false;
+  showFinishedTaskProjectionIfOwned(
+    bodyRef,
+    projectedRef,
+    applyPendingTaskToggles(committedRef.current, pendingRef.current),
+    show,
+  );
+  if (drainRef.current != null) await drainRef.current;
+  return drain();
+}
+
+interface FinishedTaskDrainContext extends FinishedTaskQueueRefs {
+  bodyRef: React.MutableRefObject<string>;
+  persist: PersistFinishedBody;
+  show: (_body: string) => void;
+  onSaved: () => void;
+}
+
+/** Persist one queue head; false means a failure blocked or ended the queue. */
+async function persistFinishedTaskHead(ctx: FinishedTaskDrainContext): Promise<boolean> {
+  const { committedRef, projectedRef, pendingRef, blockedRef, terminalRef } = ctx;
+  const operation = pendingRef.current[0]!;
+  const requested = toggleTaskAtOrdinal(committedRef.current, operation.ordinal);
+  try {
+    if (requested !== committedRef.current) {
+      committedRef.current = await ctx.persist(requested);
+      ctx.onSaved();
+    }
+  } catch (error) {
+    if (isDeletionPending(error)) {
+      terminalRef.current = true;
+      blockedRef.current = false;
+      pendingRef.current = [];
+      showFinishedTaskProjectionIfOwned(ctx.bodyRef, projectedRef, committedRef.current, ctx.show);
+    } else if (ctx.bodyRef.current !== projectedRef.current) {
+      // Edit mode now owns the full body (including every optimistic glyph).
+      // Its serialized autosave is the only write allowed to follow this failure.
+      blockedRef.current = false;
+      pendingRef.current = [];
+    } else {
+      blockedRef.current = true;
+      const tail = applyPendingTaskToggles(committedRef.current, pendingRef.current.slice(1));
+      showFinishedTaskProjectionIfOwned(ctx.bodyRef, projectedRef, tail, ctx.show);
+    }
+    return false;
+  }
+  if (ctx.bodyRef.current !== projectedRef.current) {
+    // Do not let queued read-mode deltas land after a newer full-body editor save.
+    pendingRef.current = [];
+    return false;
+  }
+  pendingRef.current.shift();
+  const next = applyPendingTaskToggles(committedRef.current, pendingRef.current);
+  showFinishedTaskProjectionIfOwned(ctx.bodyRef, projectedRef, next, ctx.show);
+  return true;
+}
+
+async function runFinishedTaskQueue(ctx: FinishedTaskDrainContext): Promise<void> {
+  while (!ctx.blockedRef.current && ctx.pendingRef.current.length > 0)
+    if (!(await persistFinishedTaskHead(ctx))) break;
+}
+
+/** Build the one-at-a-time server drain behind optimistic finished-task presses. */
+function useFinishedTaskDrain(ctx: FinishedTaskDrainContext): () => Promise<void> {
+  const { drainRef } = ctx;
+  return useCallback((): Promise<void> => {
+    if (drainRef.current != null) return drainRef.current;
+    const run = runFinishedTaskQueue(ctx);
+    drainRef.current = run;
+    void run.finally(() => {
+      if (drainRef.current === run) drainRef.current = null;
+    });
+    return run;
+  }, [ctx, drainRef]);
+}
+
+function useToggleFinishedTask(
+  refs: FinishedTaskQueueRefs,
+  bodyRef: React.MutableRefObject<string>,
+  show: (_body: string) => void,
+  drain: () => Promise<void>,
+): (_lineStart: number) => void {
+  const { blockedRef, pendingRef, projectedRef, terminalRef } = refs;
+  return useCallback(
+    (lineStart: number): void => {
+      if (terminalRef.current || blockedRef.current) return;
+      const ordinal = taskOrdinalAt(bodyRef.current, lineStart);
+      if (ordinal == null) return;
+      const optimistic = toggleTaskAtOrdinal(bodyRef.current, ordinal);
+      pendingRef.current.push({ ordinal });
+      projectedRef.current = optimistic;
+      show(optimistic);
+      void drain();
+    },
+    [blockedRef, bodyRef, pendingRef, projectedRef, show, drain, terminalRef],
+  );
+}
+
+function useRetryFinishedTask(
+  refs: FinishedTaskQueueRefs,
+  bodyRef: React.MutableRefObject<string>,
+  show: (_body: string) => void,
+  drain: () => Promise<void>,
+  fallbackRetry: () => Promise<unknown>,
+): () => Promise<unknown> {
+  const { blockedRef, pendingRef, committedRef, projectedRef, drainRef } = refs;
+  return useCallback(
+    () =>
+      retryFinishedTaskQueue(
+        blockedRef,
+        pendingRef,
+        committedRef,
+        projectedRef,
+        drainRef,
+        bodyRef,
+        show,
+        drain,
+        fallbackRetry,
+      ),
+    [
+      blockedRef,
+      bodyRef,
+      committedRef,
+      drainRef,
+      fallbackRetry,
+      pendingRef,
+      projectedRef,
+      show,
+      drain,
+    ],
+  );
+}
+
+function useFlushFinishedTasksForExit(
+  refs: FinishedTaskQueueRefs,
+  retry: () => Promise<unknown>,
+): () => boolean | Promise<boolean> {
+  const { blockedRef, drainRef, pendingRef, terminalRef } = refs;
+  return useCallback((): boolean | Promise<boolean> => {
+    if (terminalRef.current) return true;
+    if (drainRef.current == null && !blockedRef.current && pendingRef.current.length === 0)
+      return true;
+    return (async () => {
+      if (drainRef.current != null) await drainRef.current;
+      if (blockedRef.current) await retry();
+      if (drainRef.current != null) await drainRef.current;
+      return !blockedRef.current && pendingRef.current.length === 0;
+    })();
+  }, [blockedRef, drainRef, pendingRef, retry, terminalRef]);
+}
+
+/**
+ * Finished-entry task queue: every tap paints immediately, while PATCHes run one
+ * at a time. A failed head blocks for Retry while later optimistic presses are
+ * replayed over server truth, so rollback never erases a later tap.
+ */
+function useFinishedTaskToggles(
+  entry: EntryState,
+  persist: PersistFinishedBody,
+  fallbackRetry: () => Promise<unknown>,
+  onSaved: () => void,
+): FinishedTaskToggles {
+  const refs = useFinishedTaskQueueRefs(entry.body);
+  const { bodyRef, setBody } = entry;
+  const show = useShowFinishedTaskBody({ bodyRef, setBody });
+  const drain = useFinishedTaskDrain({ ...refs, bodyRef, persist, show, onSaved });
+  const toggle = useToggleFinishedTask(refs, bodyRef, show, drain);
+  const retry = useRetryFinishedTask(refs, bodyRef, show, drain, fallbackRetry);
+  const flushForExit = useFlushFinishedTasksForExit(refs, retry);
+
+  return { toggle, retry, flushForExit };
 }
 
 /** Owns the entry's text + debounced draft autosave (create-then-update). */
@@ -2239,6 +2637,7 @@ function useJournalAutosave(
   initialText: InitialText,
   initialClassification: JournalClassification,
   onSaved?: () => void,
+  onFinishedTaskSaved: () => void = () => undefined,
   onConflict?: () => void,
 ): AutosaveApi {
   const entry = useEntryState(
@@ -2259,7 +2658,7 @@ function useJournalAutosave(
   useDropStaleSaveOnLoad(entry.loaded, saving.cancelPending);
   useSeedPersistOnNew(routeEntryId, initialClassification, saving.seedPersist);
   const gate = useHeldTextGate(saving, entry.carryHold != null);
-  const bindings = useAutosaveBindings(entry, gate.saving);
+  const bindings = useAutosaveBindings(entry, gate.saving, onFinishedTaskSaved);
   const carry = useCarryRelease(entry, saving.save, bindings.retrySource, gate);
   return buildAutosaveApi(
     entry,
@@ -2332,6 +2731,9 @@ function EntryTagControls({
   WritingColumnProps,
   'classification' | 'chord' | 'onChangeClassification' | 'onChangeChord' | 'controlsDisabled'
 >) {
+  // The chord's personas come from the server, never from GET /stages, whose
+  // read counts as a program visit (#2666); see useAspectOptions.
+  const aspectOptions = useAspectOptions();
   return (
     <>
       <PrivacyTierControl
@@ -2339,7 +2741,12 @@ function EntryTagControls({
         onChange={onChangeClassification}
         disabled={controlsDisabled}
       />
-      <AspectChordControl value={chord} onChange={onChangeChord} disabled={controlsDisabled} />
+      <AspectChordControl
+        value={chord}
+        onChange={onChangeChord}
+        disabled={controlsDisabled}
+        options={aspectOptions}
+      />
     </>
   );
 }
@@ -2360,6 +2767,7 @@ function GrowingTitle({
       value={title}
       onChangeText={(next) => onChangeTitle(singleLineTitle(next))}
       onContentSizeChange={growth.onContentSizeChange}
+      onLayout={growth.onLayout}
       onSubmitEditing={onSubmit}
       placeholder="Title"
       placeholderTextColor={colors.paper.inkSoft}
@@ -2776,8 +3184,14 @@ interface ResonanceAction {
   disabled: boolean;
   loading: boolean;
   checking: boolean;
-  /** Why resonance is withheld, shown only while it is disabled. */
+  /** Why resonance is withheld, shown while it is disabled or the server withheld it. */
   reason: string;
+  /**
+   * The server answered the latest press with its privacy floor: it holds the
+   * entry as intimate even though this screen's copy does not, so the reason
+   * is shown with the button still enabled (#3389).
+   */
+  withheld: boolean;
   onPress: () => Promise<void>;
 }
 
@@ -2795,6 +3209,8 @@ function ReadActions({ quote }: { quote: QuotePromotion }): React.JSX.Element {
         accessibilityLabel="Promote a quote"
         testID="promote-quote-button"
         label="Promote a quote"
+        style={styles.readActionButton}
+        labelStyle={styles.readActionLabel}
         busy={quote.promoting}
       />
     </View>
@@ -2891,11 +3307,13 @@ function ReadBodyContent({
   notes,
   quote,
   onOpen,
+  onTaskPress,
 }: {
   body: string;
   notes: Marginalia[];
   quote: QuotePromotion;
   onOpen: (_note: Marginalia) => void;
+  onTaskPress: (_lineStart: number) => void;
 }): React.JSX.Element {
   return (
     <>
@@ -2908,10 +3326,24 @@ function ReadBodyContent({
         removeTargetId={quote.removeTargetId}
         onConfirmRemove={quote.confirmRemove}
         onDismissRemove={quote.dismissRemove}
+        onTaskPress={onTaskPress}
       />
       <QuotePromotionFeedback quote={quote} />
     </>
   );
+}
+
+interface ReadColumnProps {
+  title: string;
+  body: string;
+  notes: Marginalia[];
+  quote: QuotePromotion;
+  /** True when this entry was just saved from photograph capture; shows "Saved". */
+  justSaved: boolean;
+  onOpen: (_note: Marginalia) => void;
+  saveState: SaveState;
+  onRetrySave: () => Promise<void>;
+  onTaskPress: (_lineStart: number) => void;
 }
 
 /** Read-mode body: the title + the highlighted passage tree + the action row. */
@@ -2922,15 +3354,10 @@ function ReadColumn({
   quote,
   justSaved,
   onOpen,
-}: {
-  title: string;
-  body: string;
-  notes: Marginalia[];
-  quote: QuotePromotion;
-  /** True when this entry was just saved from photograph capture; shows "Saved". */
-  justSaved: boolean;
-  onOpen: (_note: Marginalia) => void;
-}) {
+  saveState,
+  onRetrySave,
+  onTaskPress,
+}: ReadColumnProps) {
   return (
     <View style={[styles.writingColumn, readingScrollStyle]}>
       <View style={styles.writingColumnContent}>
@@ -2944,13 +3371,48 @@ function ReadColumn({
             onCancel={quote.cancelSelecting}
           />
         ) : (
-          <ReadBodyContent body={body} notes={notes} quote={quote} onOpen={onOpen} />
+          <ReadBodyContent
+            body={body}
+            notes={notes}
+            quote={quote}
+            onOpen={onOpen}
+            onTaskPress={onTaskPress}
+          />
         )}
-        <Text style={styles.savedHint} testID="journal-save-hint">
-          {justSaved ? SAVED_HINT : BLANK_HINT}
-        </Text>
+        <ReadSaveStatus saveState={saveState} justSaved={justSaved} onRetry={onRetrySave} />
         {quote.selecting ? null : <ReadModeControls quote={quote} />}
       </View>
+    </View>
+  );
+}
+
+/** Read-mode reuse of the ordinary save hint and retry affordance. */
+function ReadSaveStatus({
+  saveState,
+  justSaved,
+  onRetry,
+}: {
+  saveState: SaveState;
+  justSaved: boolean;
+  onRetry: () => Promise<void>;
+}): React.JSX.Element {
+  return (
+    <View style={styles.saveStatusRow}>
+      <Text style={styles.savedHint} testID="journal-save-hint">
+        {justSaved && saveState === 'idle' ? SAVED_HINT : savedHintLabel(saveState)}
+      </Text>
+      {saveState === 'error' ? (
+        <TouchableOpacity
+          style={styles.saveRetry}
+          onPress={() => void onRetry()}
+          accessibilityRole="button"
+          accessibilityLabel="Retry saving this entry"
+          testID="journal-save-retry"
+        >
+          <RefreshCw color={accent.primary} size={18} {...decorativeHidden()} />
+          <Text style={styles.saveRetryLabel}>Retry</Text>
+        </TouchableOpacity>
+      ) : null}
     </View>
   );
 }
@@ -3113,7 +3575,8 @@ function useEditGate({ status, setStatus, finish, body, navigation, onConfirmEdi
     navigation.push('JournalEntry');
   }, [navigation]);
   // Only flip to finished once the single atomic write resolves; on failure the
-  // entry stays a draft (editable) and the error invites a retry.
+  // page stays editable (a draft stays a draft, a re-edited entry keeps its
+  // server status) and the error invites a retry.
   const markFinished = useCallback(async () => {
     setFinishError(null);
     setFinishing(true);
@@ -3121,14 +3584,17 @@ function useEditGate({ status, setStatus, finish, body, navigation, onConfirmEdi
       await finish();
       setStatus('finished');
       setEditing(false);
-    } catch {
-      setFinishError(FINISH_ERROR_MESSAGE);
+    } catch (error) {
+      setFinishError(isDeletionPending(error) ? DELETION_PENDING_HINT : FINISH_ERROR_MESSAGE);
     } finally {
       setFinishing(false);
     }
   }, [finish, setStatus]);
 
-  const canFinish = status === 'draft' && body.trim().length > 0;
+  // Finish is offered whenever the page is editable: a draft, or a finished
+  // entry the writer chose to edit (#3447). The edit never demotes the entry
+  // to a draft; Finish re-sends ``finished`` with the edited body and closes it.
+  const canFinish = editMode && body.trim().length > 0;
   return {
     editMode,
     confirmOpen,
@@ -3314,7 +3780,7 @@ interface PhotographedPage {
  */
 function usePhotographedPage(
   navigation: ScreenNavigation,
-  body: string,
+  { body, classification }: Pick<AutosaveApi, 'body' | 'classification'>,
   onChangeBody: (_next: string) => void,
 ): PhotographedPage {
   const pending = useCapturedTranscriptStore((store) => store.pending);
@@ -3325,10 +3791,17 @@ function usePhotographedPage(
   const bodyRef = useRef(body);
   bodyRef.current = body;
   const tokenRef = useRef<string | null>(null);
+  // The page's tier as it stands when the camera is pressed: the capture
+  // declares it on every read, so an Intimate page is never read (#3059 AC15).
+  const tierRef = useRef(classification);
+  tierRef.current = classification;
 
   const openCapture = useCallback(() => {
     tokenRef.current = openHandoff();
-    navigation.navigate('JournalPhotograph', { appendTo: tokenRef.current });
+    navigation.navigate('JournalPhotograph', {
+      appendTo: tokenRef.current,
+      appendTier: tierRef.current,
+    });
   }, [navigation, openHandoff]);
 
   useEffect(() => {
@@ -3352,7 +3825,7 @@ function usePhotographedPage(
 function useWritingSeams(navigation: ScreenNavigation, autosave: AutosaveApi, bump: () => void) {
   const { handleTitle, handleBody } = useBumpedHandlers(bump, autosave);
   const reflection = useReflectionComposer(autosave);
-  const photograph = usePhotographedPage(navigation, autosave.body, handleBody);
+  const photograph = usePhotographedPage(navigation, autosave, handleBody);
   return { handleTitle, handleBody, reflection, photograph };
 }
 
@@ -3459,7 +3932,7 @@ interface ResonanceSeamInput {
  */
 function useResonanceSeam({ routeEntryId, autosave, ctx, isIdle, justSaved }: ResonanceSeamInput) {
   const { resonance, userTimezone } = useEntryResonance(routeEntryId, autosave.flushForPass);
-  const explainer = useResonanceExplainer(resonance.requestResonance);
+  const explainer = useResonanceExplainer(resonance.requestResonance, resonance.requestFreeExits);
   const gate = deriveResonanceGate({
     // A photograph-capture handoff (justSaved) offers resonance immediately,
     // without waiting for the usual post-typing idle pause.
@@ -3482,7 +3955,7 @@ function useJournalEntryController(
   justSaved: boolean,
   initialClassification: JournalClassification,
 ) {
-  const { refreshersRef, handleSaved, onConfirmEdit } = useRefreshAfterEdit();
+  const { refreshersRef, handleSaved, refreshNow, onConfirmEdit } = useRefreshAfterEdit();
   const onCreateConflict = useCreateConflictHandler(ctx, navigation);
   const autosave = useJournalAutosave(
     routeEntryId,
@@ -3491,6 +3964,7 @@ function useJournalEntryController(
     initialText,
     initialClassification,
     handleSaved,
+    refreshNow,
     onCreateConflict,
   );
   const { isIdle, bump } = useResonanceIdle(autosave);
@@ -3550,6 +4024,7 @@ function resonanceActionFor(ctl: Controller): ResonanceAction {
     loading: ctl.resonance.loading,
     checking: ctl.explainer.pending,
     reason: ctl.resonanceReason,
+    withheld: ctl.resonance.privateMessage != null,
     onPress: ctl.explainer.onPress,
   };
 }
@@ -3601,6 +4076,9 @@ function PageBodyColumn({ ctl, bodyPlaceholder }: { ctl: Controller; bodyPlaceho
       quote={ctl.quote}
       justSaved={ctl.justSaved && !ctl.autosave.carryHeld}
       onOpen={ctl.modal.onOpenNote}
+      saveState={saveState}
+      onRetrySave={() => ctl.saveRetry.retryFailedSave('tap')}
+      onTaskPress={ctl.autosave.toggleFinishedTask}
     />
   );
 }
@@ -3644,6 +4122,10 @@ function JournalMargin({
       testID="journal-margin-column"
     >
       <View onLayout={bumpHeadTick} testID="journal-margin-head">
+        <PassReceiptNotice
+          provenance={ctl.resonance.passProvenance}
+          empty={ctl.resonance.noNotesMessage != null}
+        />
         <NoNotesNotice message={ctl.resonance.noNotesMessage} />
         <ResonanceMargin error={ctl.resonance.error} />
       </View>
@@ -3670,11 +4152,13 @@ function JournalPageSurface({
   bodyPlaceholder,
   narrow,
   focus,
+  writingClearance,
 }: {
   ctl: Controller;
   bodyPlaceholder: string;
   narrow: boolean;
   focus: FocusScrollHost;
+  writingClearance: number;
 }): React.JSX.Element {
   const [layoutTick, bumpLayoutTick] = useReducer((tick: number) => tick + 1, 0);
   const onPageLayout = focus.onPageLayout;
@@ -3692,14 +4176,23 @@ function JournalPageSurface({
       style={[
         styles.page,
         narrow && styles.pageNarrow,
-        ctl.editGate.editMode && styles.pageWithFloatingAction,
+        ctl.editGate.editMode && { paddingBottom: writingClearance },
       ]}
       testID="journal-page"
     >
-      <FocusScrollProvider value={focus.value}>
-        <PageBodyColumn ctl={ctl} bodyPlaceholder={bodyPlaceholder} />
-      </FocusScrollProvider>
-      <JournalMargin ctl={ctl} narrow={narrow} layoutTick={layoutTick} />
+      <MarginNavigationProvider
+        enabled={!ctl.editGate.editMode}
+        body={ctl.autosave.body}
+        notes={ctl.resonance.marginalia}
+        quotes={ctl.quote.quotes}
+        pageRef={focus.pageRef}
+        scrollRef={focus.scrollRef}
+      >
+        <FocusScrollProvider value={focus.value}>
+          <PageBodyColumn ctl={ctl} bodyPlaceholder={bodyPlaceholder} />
+        </FocusScrollProvider>
+        <JournalMargin ctl={ctl} narrow={narrow} layoutTick={layoutTick} />
+      </MarginNavigationProvider>
     </View>
   );
 }
@@ -3708,11 +4201,14 @@ function JournalPage({
   ctl,
   bodyPlaceholder,
   focusSpan,
+  writingClearance,
 }: {
   ctl: Controller;
   bodyPlaceholder: string;
   /** A quote the reader arrived to see; read mode scrolls it into view. */
   focusSpan?: FocusSpan;
+  /** Measured floating note and timer band; the editor always reserves its minimum. */
+  writingClearance: number;
 }) {
   const narrow = useWindowDimensions().width < NARROW_BREAKPOINT;
   const settle = useEntrance();
@@ -3738,6 +4234,7 @@ function JournalPage({
             bodyPlaceholder={bodyPlaceholder}
             narrow={narrow}
             focus={focus}
+            writingClearance={writingClearance}
           />
         </ScrollView>
       </Animated.View>
@@ -4165,14 +4662,23 @@ function EntryComposeRow({
   ctl,
   bodyPlaceholder,
   focusSpan,
+  writingClearance,
+  bottomInset = 0,
 }: {
   ctl: Controller;
   bodyPlaceholder: string;
   focusSpan?: FocusSpan;
+  writingClearance: number;
+  bottomInset?: number;
 }): React.JSX.Element {
   return (
-    <View style={styles.composeRow} testID="journal-compose-row">
-      <JournalPage ctl={ctl} bodyPlaceholder={bodyPlaceholder} focusSpan={focusSpan} />
+    <View style={[styles.composeRow, { marginBottom: bottomInset }]} testID="journal-compose-row">
+      <JournalPage
+        ctl={ctl}
+        bodyPlaceholder={bodyPlaceholder}
+        focusSpan={focusSpan}
+        writingClearance={writingClearance}
+      />
       <ReflectionSourcesDock reflection={ctl.reflection} />
     </View>
   );
@@ -4278,6 +4784,11 @@ function ResonanceOverlays({
     explainer.onCancelRefill();
     onOpenApiKey();
   }, [explainer, onOpenApiKey]);
+  // Only a key could pay (#3262): close the note, then go and add one.
+  const openSettingsFromExplainer = useCallback(() => {
+    explainer.onCancel();
+    onOpenApiKey();
+  }, [explainer, onOpenApiKey]);
   return (
     <>
       <ResonanceExplainerDialog
@@ -4288,6 +4799,9 @@ function ResonanceOverlays({
         onToggleDontShowAgain={explainer.onToggleDontShowAgain}
         onContinue={explainer.onContinue}
         onCancel={explainer.onCancel}
+        keyNeeded={explainer.keyNeeded}
+        onOpenSettings={openSettingsFromExplainer}
+        payerChanged={explainer.payerChanged}
       />
       <ResonanceRefillDialog
         visible={explainer.refillVisible}
@@ -4319,6 +4833,43 @@ function useEssayFundingRequired(
   );
 }
 
+/** A keyless letter can be paid for only by a key (#3262): close the note, then go add one. */
+function useOpenSettingsFromEssay(onCloseNote: () => void, onOpenApiKey: () => void): () => void {
+  return useCallback(() => {
+    onCloseNote();
+    onOpenApiKey();
+  }, [onCloseNote, onOpenApiKey]);
+}
+
+/** A note's letter, priced for whoever pays, with the pass's own refill remedy. */
+function EssayOverlay({
+  modal,
+  explainer,
+  onOpenApiKey,
+}: {
+  modal: Controller['modal'];
+  explainer: Controller['explainer'];
+  onOpenApiKey: () => void;
+}): React.JSX.Element {
+  const { apiKey } = useApiKey();
+  const onEssayFundingRequired = useEssayFundingRequired(
+    modal.onCloseNote,
+    explainer.showRefillFor,
+  );
+  const openSettingsFromEssay = useOpenSettingsFromEssay(modal.onCloseNote, onOpenApiKey);
+  return (
+    <ResonanceEssayModal
+      note={modal.openNote}
+      onClose={modal.onCloseNote}
+      onEssayLoaded={modal.onEssayLoaded}
+      hasOwnKey={apiKey !== null}
+      ownKeyVendor={vaultKeyVendorFor(apiKey)}
+      onFundingRequired={onEssayFundingRequired}
+      onOpenSettings={openSettingsFromEssay}
+    />
+  );
+}
+
 /** The screen's floating layers: the essay modal, the edit-confirm dialog, and
  *  the header drawer — grouped so the screen component stays under the line cap. */
 function EntryOverlays({
@@ -4336,21 +4887,10 @@ function EntryOverlays({
   currentEntryId: number | null;
   onOpenApiKey: () => void;
 }): React.JSX.Element {
-  const { apiKey } = useApiKey();
-  const onEssayFundingRequired = useEssayFundingRequired(
-    modal.onCloseNote,
-    explainer.showRefillFor,
-  );
   return (
     <>
       <ResonanceOverlays explainer={explainer} onOpenApiKey={onOpenApiKey} />
-      <ResonanceEssayModal
-        note={modal.openNote}
-        onClose={modal.onCloseNote}
-        onEssayLoaded={modal.onEssayLoaded}
-        hasOwnKey={apiKey !== null}
-        onFundingRequired={onEssayFundingRequired}
-      />
+      <EssayOverlay modal={modal} explainer={explainer} onOpenApiKey={onOpenApiKey} />
       <EditConfirmDialog
         visible={editGate.confirmOpen}
         carriedWords={editGate.carriedWords}
@@ -4379,13 +4919,13 @@ function EntryOverlays({
  * reach, so the margin keeps no phantom gap.
  */
 function ResonanceControls({ action }: { action: ResonanceAction }): React.JSX.Element {
-  const { visible, disabled } = action;
+  const { visible, disabled, withheld } = action;
   return (
     <View
       style={visible ? styles.marginResonanceControls : styles.marginResonanceControlsHidden}
       testID="journal-margin-resonance-controls"
     >
-      <PrivacyResonanceReason visible={visible && disabled} reason={action.reason} />
+      <PrivacyResonanceReason visible={visible && (disabled || withheld)} reason={action.reason} />
       <GetResonanceButton
         visible={visible}
         loading={action.loading}
@@ -4415,12 +4955,16 @@ function ResonanceControls({ action }: { action: ResonanceAction }): React.JSX.E
  *
  * The link-a-habit note (#3006) sits beside it and waits for the offer to have
  * been answered, so the two never share a note: the offer while it is
- * unanswered, the pointer to Settings after.
+ * unanswered, the pointer to Settings after. The note points at a habit, so a
+ * declined habits ring never mounts it (#3073); the offer gates its own two
+ * depths.
  */
 const renderSessionOffer = (result: WritingSessionResult): React.ReactNode => (
   <>
     <WritingSessionOffer result={result} />
-    <LinkHabitNudge waitForAnsweredOffer />
+    <DepthGate ring="habits">
+      <LinkHabitNudge waitForAnsweredOffer />
+    </DepthGate>
   </>
 );
 
@@ -4430,7 +4974,11 @@ const renderSessionOffer = (result: WritingSessionResult): React.ReactNode => (
  * linked — a writer who launches a practice may never have been asked (#3006).
  * Module-level for the same stable identity as ``renderSessionOffer``.
  */
-const renderLaunchedSessionNote = (): React.ReactNode => <LinkHabitNudge />;
+const renderLaunchedSessionNote = (): React.ReactNode => (
+  <DepthGate ring="habits">
+    <LinkHabitNudge />
+  </DepthGate>
+);
 
 /** The launch this page was opened with, when it was opened to run a practice. */
 type WritingLaunchParam = NonNullable<RootStackParamList['JournalEntry']>['writingSession'];
@@ -4447,23 +4995,74 @@ type WritingLaunchParam = NonNullable<RootStackParamList['JournalEntry']>['writi
 function EntryWritingSurfaces({
   ctl,
   launch,
+  onWritingClearanceChange,
+  onIdleDockHeightChange,
 }: {
   ctl: Controller;
   launch: WritingLaunchParam;
+  onWritingClearanceChange: (_clearance: number) => void;
+  onIdleDockHeightChange: (_height: number) => void;
 }): React.JSX.Element | null {
   const session = useQuickLaunchedSession(launch);
+  const width = useWindowDimensions().width;
+  const rightInset =
+    ctl.reflection.active && ctl.reflection.sourcesOpen && width >= SIDE_PANE_BREAKPOINT
+      ? SOURCES_PANE_OCCUPIED_WIDTH
+      : 0;
   // Above the edit-mode return, beside the practice hook it wraps: both kinds
   // of page finish through this one handler, so a linked habit is checked off
   // on either (#2861).
-  const onSession = useLinkedHabitCheckOff(session.onSession);
+  const [loggedSession, setLoggedSession] = useState<LoggedWritingSession>();
+  const onSession = useLinkedHabitCheckOff(session.onSession, setLoggedSession);
   if (!ctl.editGate.editMode) return null;
   return (
     <WritingSessionSurface
+      rightInset={rightInset}
       initialMinutes={session.initialMinutes}
       autoStart={session.autoStart}
       onSession={onSession}
+      loggedSession={loggedSession}
+      onClearanceChange={onWritingClearanceChange}
+      onIdleDockHeightChange={onIdleDockHeightChange}
       renderOffer={session.launched ? renderLaunchedSessionNote : renderSessionOffer}
     />
+  );
+}
+
+/** Keep scroll reachability aligned with the floating band's measured height. */
+function EntryWritingCanvas({
+  ctl,
+  bodyPlaceholder,
+  focusSpan,
+  launch,
+}: {
+  ctl: Controller;
+  bodyPlaceholder: string;
+  focusSpan?: FocusSpan;
+  launch: WritingLaunchParam;
+}): React.JSX.Element {
+  // Reserve the timer before its first layout, then include a finished note
+  // at its measured height so every offer and completion control remains reachable.
+  const [writingClearance, setWritingClearance] = useState(WRITING_TIMER_CLEARANCE);
+  const [idleDockHeight, setIdleDockHeight] = useState(0);
+  return (
+    <>
+      <View style={{ flex: 1, marginBottom: idleDockHeight }} testID="journal-compose-stack">
+        <EntryComposeRow
+          ctl={ctl}
+          bodyPlaceholder={bodyPlaceholder}
+          focusSpan={focusSpan}
+          writingClearance={writingClearance}
+        />
+        <ReflectionComposer reflection={ctl.reflection} />
+      </View>
+      <EntryWritingSurfaces
+        ctl={ctl}
+        launch={launch}
+        onWritingClearanceChange={setWritingClearance}
+        onIdleDockHeightChange={setIdleDockHeight}
+      />
+    </>
   );
 }
 
@@ -4477,7 +5076,11 @@ function EntryCareSurfaces({ ctl }: { ctl: Controller }): React.JSX.Element {
   return (
     <>
       <CareSupportNote care={ctl.resonance.care} />
-      <ContractionReflectionNote contraction={ctl.resonance.contraction} />
+      {/* Names a thinning habit foundation, so a declined habits ring quiets it
+          here as well as on the server (#3073). */}
+      <DepthGate ring="habits">
+        <ContractionReflectionNote contraction={ctl.resonance.contraction} />
+      </DepthGate>
     </>
   );
 }
@@ -4495,6 +5098,10 @@ function EntryCreekSurface({ ctl }: { ctl: Controller }): React.JSX.Element | nu
  * never in the margin column -- and, like them, silent unless the server says
  * otherwise. Looking at the decision is routed here because the screen owns
  * navigation; the note owns everything else.
+ *
+ * The offer to sort the rest of the writing (#3500) shares this host so the
+ * page carries one offer at a time: it gives way while the invitation shows,
+ * because the decision about sorting outranks an offer to sort.
  */
 function EntryCorpusInvitation({
   ctl,
@@ -4503,8 +5110,23 @@ function EntryCorpusInvitation({
   ctl: Controller;
   navigation: ScreenNavigation;
 }): React.JSX.Element {
+  const [invitationShowing, setInvitationShowing] = useState(false);
   const onOpen = useCallback(() => navigation.navigate('CorpusConsent'), [navigation]);
-  return <CorpusInvitationNote completedPasses={ctl.resonance.completedPasses} onOpen={onOpen} />;
+  const onOpenSweep = useCallback(() => navigation.navigate('CorpusSweep'), [navigation]);
+  return (
+    <>
+      <CorpusInvitationNote
+        completedPasses={ctl.resonance.completedPasses}
+        onOpen={onOpen}
+        onOfferChange={setInvitationShowing}
+      />
+      <CorpusSweepOfferNote
+        completedPasses={ctl.resonance.completedPasses}
+        onOpen={onOpenSweep}
+        suppressed={invitationShowing}
+      />
+    </>
+  );
 }
 
 /**
@@ -4566,13 +5188,12 @@ function JournalEntryScreen({
         returnTo={route.params?.returnTo}
         onOpenApiKey={openApiKey}
       />
-      <EntryComposeRow
+      <EntryWritingCanvas
         ctl={ctl}
         bodyPlaceholder={bodyPlaceholder}
         focusSpan={route.params?.highlightSpan}
+        launch={route.params?.writingSession}
       />
-      <ReflectionComposer reflection={ctl.reflection} />
-      <EntryWritingSurfaces ctl={ctl} launch={route.params?.writingSession} />
       <EntryOverlays
         modal={ctl.modal}
         editGate={ctl.editGate}

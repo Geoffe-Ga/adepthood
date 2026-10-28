@@ -1,13 +1,14 @@
 import React, { useEffect } from 'react';
-import { StyleSheet, Switch, Text, useWindowDimensions, View } from 'react-native';
+import { StyleSheet, Text, useWindowDimensions, View } from 'react-native';
 
 import { sanghaInviteUrl } from './sanghaInvite';
+import { SettingsSwitch } from './shared/SettingsSwitch';
 
 import type { DepthPreferencesUpdate } from '@/api';
 import { EditorialSection } from '@/components/layout/EditorialSection';
 import { SANGHA_INVITE_URL } from '@/config';
 import { useAuth } from '@/context/AuthContext';
-import { accent, ink, rhythm, surface, touchTarget, type as typeRamp } from '@/design/tokens';
+import { ink, rhythm, surface, touchTarget, type as typeRamp } from '@/design/tokens';
 import {
   load,
   selectEnableCourse,
@@ -42,14 +43,19 @@ const SECTION_TITLE = 'Choose your depths';
 const FLOOR_STATEMENT =
   'Your journal is always here — the floor beneath everything. Nothing below is required.';
 
-/** Framing caption: turning a depth off is a choice, not a loss. */
+/**
+ * Framing caption: turning a depth off is a choice, not a loss. Optional is
+ * not ungated, so it also says the Course's readings follow a schedule.
+ */
 const FRAMING_CAPTION =
-  'Turn any depth on or off whenever it fits your life. Turning one off is a choice, not a loss.';
+  'Turn any depth on or off whenever it fits your life. Turning one off is a choice, not a loss. ' +
+  'Some readings follow a schedule.';
 
 /** One optional depth: its label, store key, and stable testID slug. */
 interface DepthDefinition {
   key: 'habits' | 'practices' | 'course' | 'sangha';
   label: string;
+  gain: string;
   enableKey: keyof DepthPreferencesUpdate;
   /**
    * Whether this build has a destination for the depth. Absent means the
@@ -62,12 +68,28 @@ interface DepthDefinition {
 }
 
 const DEPTHS: readonly DepthDefinition[] = [
-  { key: 'habits', label: 'Habits', enableKey: 'enable_habits' },
-  { key: 'practices', label: 'Practices', enableKey: 'enable_practices' },
-  { key: 'course', label: 'Course', enableKey: 'enable_course' },
+  {
+    key: 'habits',
+    label: 'Habits',
+    gain: 'Build one habit from one minute a day across three weeks.',
+    enableKey: 'enable_habits',
+  },
+  {
+    key: 'practices',
+    label: 'Practices',
+    gain: 'Grow a practice from one minute to 45 minutes across the arc.',
+    enableKey: 'enable_practices',
+  },
+  {
+    key: 'course',
+    label: 'Course',
+    gain: 'Explore ten capacities through readings paced by the calendar.',
+    enableKey: 'enable_course',
+  },
   {
     key: 'sangha',
     label: 'Sangha',
+    gain: 'Find company that helps you feel less alone in the room you are actually in.',
     enableKey: 'enable_sangha',
     // The Sangha's only destination is the door ``SanghaSection`` opens. Both
     // gates read the same resolver over the same config constant, at render
@@ -82,6 +104,8 @@ const isOffered = (depth: DepthDefinition): boolean =>
 
 interface DepthToggleRowProps {
   label: string;
+  gain: string;
+  gainTestID: string;
   value: boolean;
   testID: string;
   rowTestID: string;
@@ -91,6 +115,8 @@ interface DepthToggleRowProps {
 /** A single ring row: a labelled switch on a >=44dp touch target. */
 const DepthToggleRow = ({
   label,
+  gain,
+  gainTestID,
   value,
   testID,
   rowTestID,
@@ -100,16 +126,19 @@ const DepthToggleRow = ({
   const t = typeRamp(width);
   return (
     <View style={styles.row} testID={rowTestID}>
-      <Text style={[t.body, styles.rowLabel]}>{label}</Text>
-      <Switch
+      <View style={styles.rowCopy}>
+        <Text style={[t.body, styles.rowLabel]}>{label}</Text>
+        <Text style={[t.caption, styles.rowGain]} testID={gainTestID}>
+          {gain}
+        </Text>
+      </View>
+      <SettingsSwitch
         testID={testID}
-        accessibilityRole="switch"
         accessibilityLabel={label}
+        accessibilityHint={gain}
         accessibilityState={{ checked: value }}
         value={value}
         onValueChange={onValueChange}
-        trackColor={{ false: surface.hairline, true: accent.primary }}
-        thumbColor={surface.raised}
       />
     </View>
   );
@@ -148,6 +177,8 @@ const ChooseDepthsSection = (): React.JSX.Element => {
         <DepthToggleRow
           key={depth.key}
           label={depth.label}
+          gain={depth.gain}
+          gainTestID={`depth-gain-${depth.key}`}
           value={enabled[depth.key]}
           testID={`depth-toggle-${depth.key}`}
           rowTestID={`depth-row-${depth.key}`}
@@ -178,6 +209,15 @@ const styles = StyleSheet.create({
   },
   rowLabel: {
     color: ink.primary,
+  },
+  rowCopy: {
+    flex: 1,
+    minWidth: 0,
+    paddingRight: rhythm.blockGap,
+  },
+  rowGain: {
+    color: ink.soft,
+    marginTop: rhythm.blockGap / 3,
   },
 });
 

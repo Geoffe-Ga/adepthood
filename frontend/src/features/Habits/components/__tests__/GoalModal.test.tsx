@@ -22,6 +22,7 @@ import { dayKeyInTZ } from '../../../../utils/dateUtils';
 import { TARGET_UNITS, FREQUENCY_UNITS } from '../../constants';
 import type { Goal, Habit } from '../../Habits.types';
 import { describeCadence, GoalModal } from '../GoalModal';
+import { GOAL_CLOSE_LABEL, MODAL_CLOSE_LABEL } from '../modalCloseLabels';
 
 const makeGoal = (tier: 'low' | 'clear' | 'stretch', overrides: Partial<Goal> = {}): Goal => ({
   id: tier === 'low' ? 1 : tier === 'clear' ? 2 : 3,
@@ -336,7 +337,34 @@ describe('GoalModal cadence copy', () => {
         frequency: 3,
         frequency_unit: 'per_week',
       }),
-      '1 session, 3 times per week',
+      '1 session, 3 times a week',
+    ],
+    [
+      makeGoal('low', {
+        target: 1,
+        target_unit: 'sessions',
+        frequency: 4,
+        frequency_unit: 'per_week',
+      }),
+      '1 session, 4 times a week',
+    ],
+    [
+      makeGoal('low', {
+        target: 20,
+        target_unit: 'minutes',
+        frequency: 1,
+        frequency_unit: 'per_week',
+      }),
+      '20 minutes, once a week',
+    ],
+    [
+      makeGoal('low', {
+        target: 2,
+        target_unit: 'sessions',
+        frequency: 2,
+        frequency_unit: 'per_day',
+      }),
+      '2 sessions, 2 times a day',
     ],
     [
       makeGoal('low', {
@@ -345,7 +373,7 @@ describe('GoalModal cadence copy', () => {
         frequency: 4,
         frequency_unit: 'per_month',
       }),
-      '4 sessions, 4 times per month',
+      '4 sessions, 4 times a month',
     ],
     [
       makeGoal('low', {
@@ -361,11 +389,11 @@ describe('GoalModal cadence copy', () => {
 
   it('uses the same weekly sentence in the tier row and tooltip without duplicated prepositions', () => {
     const { getByLabelText, getByTestId, getByText } = renderModal(weeklyHabit);
-    expect(getByLabelText('Low Grit · 1 session, 3 times per week')).toBeTruthy();
-    expect(getByText('session, 3 times per week')).toBeTruthy();
+    expect(getByLabelText('Low Grit · 1 session, 3 times a week')).toBeTruthy();
+    expect(getByText('session, 3 times a week')).toBeTruthy();
 
     fireEvent(getByTestId('modal-marker-low'), 'mouseEnter');
-    expect(getByText('Low Grit · 1 session, 3 times per week')).toBeTruthy();
+    expect(getByText('Low Grit · 1 session, 3 times a week')).toBeTruthy();
     expect(() => getByText(/per per/)).toThrow();
   });
 });
@@ -810,6 +838,17 @@ describe('GoalModal progress-bar zero/equal-target guards', () => {
     expect(String(width)).not.toContain('NaN');
   });
 
+  it('keeps the fill capped while moving stretch behind progress that is twice its target', () => {
+    const habit = makeHabit({
+      completions: [{ timestamp: new Date(), completed_units: 6 }],
+    });
+    const { getByTestId } = renderModal(habit);
+    const stretchStyle = StyleSheet.flatten(getByTestId('modal-marker-stretch').props.style);
+
+    expect(getByTestId('modal-progress-fill').props.style.width).toBe('100%');
+    expect(stretchStyle.left).toBe('50%');
+  });
+
   it('falls back to the low goal for the progress percentage when no stretch goal exists', () => {
     const habit = makeHabit({
       goals: [makeGoal('low', { target: 4, frequency_unit: 'per_day' })],
@@ -1030,5 +1069,21 @@ describe('GoalModal chip-row scroll affordance', () => {
     for (const unit of FREQUENCY_UNITS) {
       expect(getByTestId(`goal-frequency-unit-${unit}`)).toBeTruthy();
     }
+  });
+});
+
+describe('GoalModal header close button', () => {
+  it('carries a name of its own, distinct from the backdrop that is already "Close"', () => {
+    const { getAllByRole, getByRole, props } = renderModal();
+    expect(getAllByRole('button', { name: GOAL_CLOSE_LABEL })).toHaveLength(1);
+    const close = getByRole('button', { name: GOAL_CLOSE_LABEL });
+    expect(close.props.testID).not.toBe('goal-modal-backdrop');
+    // RNTL matches a string name exactly, so this resolves only the backdrop.
+    expect(getByRole('button', { name: MODAL_CLOSE_LABEL }).props.testID).toBe(
+      'goal-modal-backdrop',
+    );
+
+    fireEvent.press(close);
+    expect(props.onClose).toHaveBeenCalledTimes(1);
   });
 });

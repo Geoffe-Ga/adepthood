@@ -1,6 +1,5 @@
 /* eslint-env jest */
 /* global describe, it, expect */
-import { STAGE_DISPLAY } from '../mapLayout';
 import {
   balanceLabelSuffix,
   drawerStageLabel,
@@ -10,11 +9,10 @@ import {
 } from '../stageLegend';
 import { FULLNESS_ALIVE_THRESHOLD } from '../wheelBalance';
 
-const requireDisplay = (stageNumber: number) => {
-  const display = STAGE_DISPLAY[stageNumber];
-  if (!display) throw new Error(`no STAGE_DISPLAY entry for stage ${stageNumber}`);
-  return display;
-};
+import { goldenStage } from './stageVocabularyGolden';
+
+/** A stage's persona and descriptor as a seeded server serves them. */
+const requireDisplay = (stageNumber: number) => goldenStage(stageNumber);
 
 describe('balanceLabelSuffix', () => {
   it('reads full at exactly the alive threshold', () => {

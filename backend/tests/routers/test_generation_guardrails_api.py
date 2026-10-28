@@ -42,6 +42,7 @@ from services.generation_guardrails import (
 )
 from services.usage import DAILY_GENERATION_CEILING_ENV, get_monthly_cap
 from services.wallet import DAILY_GENERATION_LIMIT_REACHED, net_charged_generations_since
+from tests.support.fake_llm import real_provider_response
 from tests.transcription_helpers import JPEG_BYTES, payload
 
 _BODY = "I walked by the river and the willow bent without breaking."
@@ -77,13 +78,9 @@ class _Provider:
         self.calls += 1
         if self.gate is not None:
             await self.gate.wait()
-        return LLMResponse(
-            text=_NOTES,
-            provider="stub",
-            model=STUB_MODEL_NAME,
-            prompt_tokens=0,
-            completion_tokens=0,
-        )
+        # A real provider's answer: a stub answer is a refunded demo (#3062),
+        # which would net every generation out of the daily count.
+        return real_provider_response(_NOTES)
 
 
 class _Transcriber:
@@ -530,7 +527,12 @@ async def test_byok_is_never_counted_against_the_daily_ceiling(
     transcriber: _Transcriber,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """With the brake on, a caller's own key still generates on all three routes."""
+    """With the brake on, a caller's own key still generates on both relayed routes.
+
+    Page reading takes no key at the server any more (ADR 0009 phase (a),
+    #3067): a device with one reads the page itself. A key header sent to it
+    anyway is not a payer, so the brake refuses that page like any keyless one.
+    """
     del provider, transcriber
     monkeypatch.setenv(DAILY_GENERATION_CEILING_ENV, "0")
     headers, user_id = await _signup(async_client, "byok_daily")
@@ -542,7 +544,7 @@ async def test_byok_is_never_counted_against_the_daily_ceiling(
     )
     assert letter.status_code == HTTPStatus.OK, letter.text
     page = await async_client.post(_TRANSCRIBE, headers=byok, json=payload(JPEG_BYTES))
-    assert page.status_code == HTTPStatus.OK, page.text
+    assert page.status_code == HTTPStatus.TOO_MANY_REQUESTS, page.text
     assert await _audit_rows(db_session, user_id) == 0
 
 

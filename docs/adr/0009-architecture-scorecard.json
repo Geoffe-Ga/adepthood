@@ -1,0 +1,593 @@
+{
+  "adr": "docs/adr/0009-privacy-custody-and-inference-architecture.md",
+  "status": "accepted",
+  "decider": "Geoff",
+  "decided_on": "2026-10-07",
+  "decision_source": "owner:2026-10-07#B12-premise",
+  "amendments": [
+    {
+      "date": "2026-10-20",
+      "source": "owner:2026-10-20#attested-inference-pool",
+      "authority": "creek-vault:#1849",
+      "unblocks": "creek-vault:creek-tools/docs/architecture/ADR/0016-shared-confidential-warm-inference-pool.md",
+      "changes": [
+        "Decision item 3 keeps its cloud-model definition and gains an explicit exception: a vendor-attested runtime verified under Creek-Vault ADR-0016 Decision 3 may be reached with the app's own credential.",
+        "Decision item 4's non-cloud payees become the vault-local model, a managed no-retention runtime we run, or a vendor-attested runtime verified under Creek-Vault ADR-0016 Decision 3.",
+        "Decision item 4's honest-limit paragraph and per-use label example cover the vendor-attested runtime.",
+        "The Threat-actors and Per-platform rows covering managed-runtime inference are updated, and an inference-vendor actor row is added.",
+        "D05 is reopened for the inference leg only, under Creek-Vault ADR-0016 Decision 3.3's substitute conditions."
+      ],
+      "d05_reopened_for": "inference leg only",
+      "d05_waivers": [
+        {
+          "condition": "c",
+          "name": "nonce freshness",
+          "status": "waived",
+          "substitute": "the vendor's binding of the attested measurement to the live session's key, verified on the vendor's design and exercised by Creek-Vault ADR-0016 T18"
+        },
+        {
+          "condition": "e",
+          "name": "a hostile-host lab",
+          "status": "waived",
+          "substitute": "vendor negative tests (Creek-Vault ADR-0016 T18)"
+        }
+      ],
+      "unchanged": [
+        "selected_option stays BD; status stays accepted on 2026-10-07.",
+        "Stored content, key custody and recovery are untouched (Decision items 1, 2 and 11).",
+        "unlocks_public_claims stays false; B24 still certifies every claim.",
+        "INTIMATE stays off the pool (Creek-Vault ADR-0016 Decision 5)."
+      ]
+    },
+    {
+      "date": "2026-10-21",
+      "source": "owner:2026-10-21#attested-vendor-and-waivers",
+      "authority": "creek-vault:#1896",
+      "extends": "owner:2026-10-20#attested-inference-pool",
+      "vendor": {
+        "name": "Privatemode",
+        "operator": "Edgeless Systems GmbH",
+        "jurisdiction": "Bochum, Germany",
+        "not_chosen": "Tinfoil, Inc., San Francisco, California",
+        "deployment_shape": "A loopback sidecar in each vault image with one pinned egress destination; the attestation is verified inside the vendor's client code rather than ours."
+      },
+      "changes": [
+        "The vendor is named, with its operator and jurisdiction, so Creek-Vault ADR-0016 Decision 3.3 condition (h) is a choice on the record rather than a default.",
+        "Condition (f) is waived on vendor-asserted evidence, and every artifact depending on it says vendor-asserted wherever it would otherwise imply verification.",
+        "Conditions (c) and (e) are waived with the substitutes the owner named, each cited wherever its waiver is.",
+        "Creek-Vault ADR-0016's Q2 answer, option (i), is admitted for grounding embeddings only while the embedding model is inside the attested measurement set; otherwise the managed vault stays ungrounded, that record's option (iii).",
+        "The 2026-10-07 D05 paragraph is restored verbatim and the amendment is appended to it, so the reopen condition it states is the one Q1's Yes meets."
+      ],
+      "d05_reopened_for": "inference leg only",
+      "d05_waivers": [
+        {
+          "condition": "c",
+          "name": "nonce freshness",
+          "status": "waived",
+          "unmeetable_under_o5": true,
+          "substitute": "the vendor's binding of the attested measurement to the live session key, verified against the vendor's design by the Creek build issue and exercised by Creek-Vault ADR-0016 T18"
+        },
+        {
+          "condition": "e",
+          "name": "a hostile-host lab",
+          "status": "waived",
+          "unmeetable_under_o5": true,
+          "substitute": "T18's negative tests: the vendor negative tests of Creek-Vault ADR-0016 T18, each of which must refuse with nothing sent"
+        },
+        {
+          "condition": "f",
+          "name": "reproducible builds",
+          "status": "waived",
+          "unmeetable_under_o5": false,
+          "evidence": "vendor-asserted",
+          "substitute": "vendor-asserted evidence in place of independent verification; a waiver of independent verification is not a claim that verification happened"
+        }
+      ],
+      "unchanged": [
+        "selected_option stays BD; status stays accepted on 2026-10-07.",
+        "Stored content, key custody and recovery are untouched (Decision items 1, 2 and 11).",
+        "unlocks_public_claims stays false; B24 (issue:#3076) still certifies every claim.",
+        "Creek-Vault ADR-0016 Decision 5 is untouched: INTIMATE content never reaches the pool, by any route, including the `default` rescue path.",
+        "No spend is authorized by this record, and no vendor resource is provisioned by it.",
+        "The decided D05 paragraph of 2026-10-07 is kept as written; the storage leg stays unpursued with its five conditions in full."
+      ],
+      "binding": {
+        "vendor_only": "The Decision item 3 exception and all three D05 waivers apply to Privatemode, operated by Edgeless Systems GmbH, and to no other vendor.",
+        "another_vendor": "Another vendor, or any other jurisdiction under Creek-Vault ADR-0016 Decision 3.3 condition (h), is a new owner decision and inherits none of these waivers.",
+        "who_dials": "The managed vault dials the vendor from inside the vault process; this exception admits no call from adepthood's server to the vendor."
+      },
+      "to_be_confirmed": [
+        "Whether Privatemode offers the per-activation caps of Creek-Vault ADR-0016 Decision 3 item 4, which that record documents on another vendor's admin API. The Creek build issue (creek-vault:#1896) confirms it; if it does not exist, the choice returns to the owner rather than proceeding without the brake."
+      ]
+    },
+    {
+      "date": "2026-10-27",
+      "source": "owner:2026-10-27#reviewer-gates-waived",
+      "authority": "repo:prompts/claude-comms/2026-10-27-release-decisions.md",
+      "release_decision": "R5-1",
+      "changes": [
+        "The four independent reviews in reviewers stop being phase gates: phases (b)-(d) may proceed on adversarial AI review plus owner review."
+      ],
+      "unchanged": [
+        "Every reviewers entry stays not_yet_consulted; no review has happened.",
+        "No public copy may say an independent, external or outside party has checked or will check this design.",
+        "unlocks_public_claims stays false; the claim that Adepthood cannot read your journal stays uncertified under B24 (#3076), and no end-to-end or operator-blind claim is made."
+      ],
+      "reentry_trigger": "Revisit when there are real paying users or budget allows."
+    }
+  ],
+  "selected_option": "BD",
+  "unlocks_public_claims": false,
+  "release_gate": "issue:#3076",
+  "reviewers": [
+    {
+      "role": "independent cryptography and client-protocol reviewer",
+      "status": "not_yet_consulted",
+      "required_before": "phase b enrols any real account"
+    },
+    {
+      "role": "independent application-security reviewer (hostile-admin test)",
+      "status": "not_yet_consulted",
+      "required_before": "phase c retires the server-held keys"
+    },
+    {
+      "role": "privacy and vendor-terms reviewer",
+      "status": "not_yet_consulted",
+      "required_before": "phase a changes any user-facing promise (with B01 and B11)"
+    },
+    {
+      "role": "Creek maintainer",
+      "status": "not_yet_consulted",
+      "required_before": "phase d moves any feature into the vault"
+    }
+  ],
+  "rejected": [
+    {
+      "option": "status_quo",
+      "reason": "The operator reads every journal entry; contradicts the owner's premise."
+    },
+    {
+      "option": "A",
+      "reason": "Truthful but operator-readable; the owner rejected the dossier's 'A for beta' recommendation on 2026-10-07."
+    },
+    {
+      "option": "C",
+      "reason": "Needs vendor hardware, spend and a real attestation spike, and is not required for the stored-data guarantee; reopen trigger only."
+    },
+    {
+      "option": "E",
+      "reason": "Provider-managed custody is not operator-blind; only its vault-local inference is kept, inside BD."
+    }
+  ],
+  "journal_scope_proposal": {
+    "status": "decided: owner:2026-10-07#followup-scope",
+    "in_scope": [
+      "completionsuggestion.anchor_text",
+      "completionsuggestion.label",
+      "corpusfragment.content",
+      "corpusfragment.embedding",
+      "journalentry.message",
+      "journalentry.title",
+      "journalentry.vault_tags",
+      "marginalia.anchor_text",
+      "marginalia.essay",
+      "marginalia.note",
+      "practicesession.insight",
+      "practicesession.reflection",
+      "promotedquote.anchor_text",
+      "promptresponse.response"
+    ],
+    "proposed_out_of_scope": [
+      "feedbacknote.body",
+      "feedbackreport.actual",
+      "feedbackreport.expected",
+      "feedbackreport.intent",
+      "feedbackreport.summary",
+      "uservaultconfig.api_key"
+    ]
+  },
+  "phases": [
+    {
+      "id": "a",
+      "name": "BYOK-only cloud and non-cloud credits",
+      "composes_with": "issue:#3096"
+    },
+    {
+      "id": "b",
+      "name": "Client key generation and encrypted-sync envelope",
+      "composes_with": "issue:#3067"
+    },
+    {
+      "id": "c",
+      "name": "Migration and plaintext retirement",
+      "composes_with": "issue:#3063"
+    },
+    {
+      "id": "d",
+      "name": "Plaintext-needing server features move to the device or vault",
+      "composes_with": "issue:#1849"
+    }
+  ],
+  "open_owner_questions": [
+    {
+      "id": "D03",
+      "question": "Pairing, revocation, death or incapacity, malicious support requests, shared devices and offline export. Recovery factors and double loss are decided."
+    },
+    {
+      "id": "MIGRATION-RETIREMENT",
+      "question": "The retirement date for server-held keys, dormant accounts, backup expiry values, and whether the protected label waits for backup expiry."
+    },
+    {
+      "id": "D02-PRIMITIVES",
+      "question": "Reviewer confirmation of the proposed libsodium sealed boxes and XChaCha20-Poly1305, and the envelope format."
+    },
+    {
+      "id": "BYOK-CONSENT",
+      "question": "Proposal only: whether BYOK consent is granted once per key, per feature, or per call."
+    },
+    {
+      "id": "INTIMATE-DEVICE",
+      "question": "Whether device-side inference (never remote) may ever process INTIMATE; ADR 0002 Decision 1 is unchanged until then."
+    },
+    {
+      "id": "BUDGET",
+      "question": "Answered for now on 2026-10-14: no paid runtime, no paid reviews. Still open: any budget or staffing figure, if that changes."
+    },
+    {
+      "id": "REVIEWERS",
+      "question": "Answered for now on 2026-10-14: adversarial AI reviews plus the owner's own. Still open: who the independent reviewers are, if one is ever engaged; until then the independent-review gate is unmet."
+    }
+  ],
+  "options": {
+    "status_quo": {
+      "boundary": {
+        "value": "The Adepthood server process, its database and backups, Creek on ordinary Fly, and every configured model vendor all see plaintext; provider-managed custody is not operator-blind.",
+        "source": "repo:backend/src/services/journal_encryption.py::KEYS_ENV_VAR"
+      },
+      "key_custody": {
+        "value": "Server env var JOURNAL_ENCRYPTION_KEYS holds every key; EncryptedString decrypts on every ORM read. No per-person key exists.",
+        "source": "repo:backend/tests/test_custody_decision_record.py::test_custody_codec_has_no_per_principal_key"
+      },
+      "recovery": {
+        "value": "Operator restores from backup with the env keys; password reset restores full access.",
+        "source": "repo:backend/src/services/journal_encryption.py::KEYS_ENV_VAR"
+      },
+      "metadata_leakage": {
+        "value": "Everything: content, sizes, timestamps, counts, tiers, ids, network metadata.",
+        "source": "repo:backend/tests/test_column_classification.py::_PLAINTEXT_COLUMNS"
+      },
+      "inference_location": {
+        "value": "Pre-phase-(a) baseline: server-side cloud calls paid by the app's own LLM_API_KEY unless the person supplies a key; Creek reflection when a vault is bound. Phase (a)'s first slice (#3067) removed the app-key payer.",
+        "source": "repo:backend/src/services/botmason.py::resolve_chat_api_key"
+      },
+      "supported_platforms": {
+        "value": "Web only ships; native is configured but unshipped.",
+        "source": "repo:DEPLOYMENT.md"
+      },
+      "update_trust": {
+        "value": "Operator-served web bundle with an enforced CSP and SRI; a modified bundle is undetectable to the person, because both are served by us.",
+        "source": "repo:frontend/nginx.conf"
+      },
+      "primary_copy_removal": {
+        "value": "Nothing removed: 20 EncryptedString columns across 10 tables, DERIVED_FROM_PROSE plaintext, backups, Creek copies and vendor copies all persist under operator control.",
+        "source": "repo:backend/src/services/encryption_inventory.py::encrypted_columns"
+      },
+      "threat_actors": {
+        "value": "Defends a database or backup thief only while the env keys stay separate; nothing against operator, host, compelled update, subpoena or support pressure.",
+        "source": "repo:backend/tests/test_journal_text_at_rest.py::test_every_encrypted_column_stores_ciphertext"
+      },
+      "budget_usd_per_active_account_month": {
+        "status": "unknown",
+        "owner_input_required": true
+      },
+      "staffing": {
+        "status": "unknown",
+        "owner_input_required": true
+      },
+      "reopen_triggers": {
+        "value": "Not a selectable end state; the owner's premise rules it out.",
+        "source": "owner:2026-10-07#B12-premise"
+      }
+    },
+    "A": {
+      "boundary": {
+        "value": "Same as HEAD, with copy that says the operator can read; provider-managed custody is not operator-blind.",
+        "source": "repo:docs/adr/0007-demand-provisioned-confidential-vaults.md"
+      },
+      "key_custody": {
+        "value": "Server-held env keys, least privilege and audit; operator trust remains.",
+        "source": "repo:backend/src/services/journal_encryption.py::KEYS_ENV_VAR"
+      },
+      "recovery": {
+        "value": "Operator-assisted restore and ordinary password reset.",
+        "source": "repo:backend/src/services/journal_encryption.py::KEYS_ENV_VAR"
+      },
+      "metadata_leakage": {
+        "value": "Content and all metadata are visible to the operator.",
+        "source": "repo:backend/tests/test_column_classification.py::_PLAINTEXT_COLUMNS"
+      },
+      "inference_location": {
+        "value": "Server-side, under an explicit destination policy.",
+        "source": "repo:backend/src/services/botmason.py::resolve_chat_api_key"
+      },
+      "supported_platforms": {
+        "value": "Web and any future native client equally.",
+        "source": "repo:DEPLOYMENT.md"
+      },
+      "update_trust": {
+        "value": "Not a decision input: the operator can already read stored data.",
+        "source": "repo:frontend/nginx.conf"
+      },
+      "primary_copy_removal": {
+        "value": "None required; cleanup and honest copy only.",
+        "source": "repo:backend/src/services/encryption_inventory.py::encrypted_columns"
+      },
+      "threat_actors": {
+        "value": "DB thief and backup holder only; privileged operator, host and subpoena all succeed.",
+        "source": "repo:backend/tests/test_journal_text_at_rest.py::test_every_encrypted_column_stores_ciphertext"
+      },
+      "budget_usd_per_active_account_month": {
+        "status": "unknown",
+        "owner_input_required": true
+      },
+      "staffing": {
+        "status": "unknown",
+        "owner_input_required": true
+      },
+      "reopen_triggers": {
+        "value": "Rejected by the owner on 2026-10-07: it contradicts the decided premise that the operator cannot read journal entries.",
+        "source": "owner:2026-10-07#B12-premise"
+      }
+    },
+    "B": {
+      "boundary": {
+        "value": "Under this option's target, stored prose would be ciphertext the server cannot decrypt; the person's devices hold plaintext.",
+        "source": "issue:#3067"
+      },
+      "key_custody": {
+        "value": "Keys generated on the person's device; no operator escrow; AEAD bound to owner, object and version.",
+        "source": "issue:#3067"
+      },
+      "recovery": {
+        "status": "unknown",
+        "owner_input_required": true
+      },
+      "metadata_leakage": {
+        "value": "Sizes, timestamps, counts, object ids, tier labels and network metadata remain visible.",
+        "source": "repo:backend/tests/test_column_classification.py::_PLAINTEXT_COLUMNS"
+      },
+      "inference_location": {
+        "value": "None on the server; any AI needs a separate location (D, a vault, or BYOK).",
+        "source": "repo:backend/src/services/botmason.py::resolve_chat_api_key"
+      },
+      "supported_platforms": {
+        "value": "Native and web; web depends on trusting the served bundle.",
+        "source": "repo:DEPLOYMENT.md"
+      },
+      "update_trust": {
+        "value": "Native: store-signed builds. Web: operator-served code can exfiltrate keys unless signed or pinned delivery is built.",
+        "source": "repo:frontend/nginx.conf"
+      },
+      "primary_copy_removal": {
+        "value": "Every server-readable copy must be re-encrypted client-side or deleted, including derived plaintext and backups.",
+        "source": "repo:backend/src/services/encryption_inventory.py::encrypted_columns"
+      },
+      "threat_actors": {
+        "value": "Defeats DB thief, backup holder, host and stored-data subpoena. A malicious or compelled update (on web, any served bundle) captures the key and reads all stored history; a compromised device also succeeds.",
+        "source": "repo:backend/tests/test_journal_text_at_rest.py::test_every_encrypted_column_stores_ciphertext"
+      },
+      "budget_usd_per_active_account_month": {
+        "status": "unknown",
+        "owner_input_required": true
+      },
+      "staffing": {
+        "status": "unknown",
+        "owner_input_required": true
+      },
+      "reopen_triggers": {
+        "value": "Selected as half of BD; reopen if a key-non-possession prototype fails.",
+        "source": "owner:2026-10-07#B12-premise"
+      }
+    },
+    "C": {
+      "boundary": {
+        "value": "Hardware-isolated runtime; the operator is excluded only if attestation and key release are proven on real hardware.",
+        "source": "creek-vault:creek-tools/docs/architecture/ADR/0006-enclave-attestation-trust-model.md"
+      },
+      "key_custody": {
+        "value": "User-authorized key release into a measured enclave; no operator-reusable unlock material.",
+        "source": "creek-vault:creek-tools/docs/architecture/ADR/0005-confidential-volume-key-no-escrow.md"
+      },
+      "recovery": {
+        "status": "unknown",
+        "owner_input_required": true
+      },
+      "metadata_leakage": {
+        "value": "Runtime metadata, sizes and timing remain visible to the host.",
+        "source": "creek-vault:creek-tools/docs/architecture/ADR/0014-provider-managed-custody-for-ordinary-fly.md"
+      },
+      "inference_location": {
+        "value": "Remote, inside the attested enclave.",
+        "source": "creek-vault:creek-tools/docs/architecture/ADR/0006-enclave-attestation-trust-model.md"
+      },
+      "supported_platforms": {
+        "value": "Any client that can verify attestation.",
+        "source": "issue:#3068"
+      },
+      "update_trust": {
+        "value": "Measured image plus verifier governance; client trust problem from B persists.",
+        "source": "creek-vault:creek-tools/docs/architecture/ADR/0006-enclave-attestation-trust-model.md"
+      },
+      "primary_copy_removal": {
+        "value": "Same removal burden as B, plus the attestation chain.",
+        "source": "repo:backend/src/services/encryption_inventory.py::encrypted_columns"
+      },
+      "threat_actors": {
+        "value": "Defeats host and operator under the hardware threat model; vendor flaws and compelled updates remain.",
+        "source": "creek-vault:creek-tools/docs/architecture/ADR/0006-enclave-attestation-trust-model.md"
+      },
+      "budget_usd_per_active_account_month": {
+        "status": "unknown",
+        "owner_input_required": true
+      },
+      "staffing": {
+        "status": "unknown",
+        "owner_input_required": true
+      },
+      "reopen_triggers": {
+        "value": "Reopen if confidential compute becomes a cheap way to reach an operator-blind target for the runtime we control.",
+        "source": "issue:#3068"
+      }
+    },
+    "D": {
+      "boundary": {
+        "value": "Content never leaves the device when sync is off; with B it syncs as ciphertext.",
+        "source": "issue:#3067"
+      },
+      "key_custody": {
+        "value": "OS keystore and a local encrypted database.",
+        "source": "repo:frontend/src/storage/secureStringStore.ts"
+      },
+      "recovery": {
+        "status": "unknown",
+        "owner_input_required": true
+      },
+      "metadata_leakage": {
+        "value": "None to the server when unsynced; B's metadata when synced.",
+        "source": "issue:#3067"
+      },
+      "inference_location": {
+        "value": "On the device, on capability-verified hardware only.",
+        "source": "issue:#1850"
+      },
+      "supported_platforms": {
+        "value": "Capable native devices; web limited by browser runtime and storage.",
+        "source": "repo:frontend/eas.json"
+      },
+      "update_trust": {
+        "value": "Signed native builds; web has the same served-code problem as B.",
+        "source": "repo:frontend/nginx.conf"
+      },
+      "primary_copy_removal": {
+        "value": "Does not by itself remove existing server copies; needs B's migration.",
+        "source": "repo:backend/src/services/encryption_inventory.py::encrypted_columns"
+      },
+      "threat_actors": {
+        "value": "Defeats every remote passive actor for unsent content; a compromised device, and a malicious update that captures the key (and with it any synced history), still succeed.",
+        "source": "issue:#3067"
+      },
+      "budget_usd_per_active_account_month": {
+        "status": "unknown",
+        "owner_input_required": true
+      },
+      "staffing": {
+        "status": "unknown",
+        "owner_input_required": true
+      },
+      "reopen_triggers": {
+        "value": "Selected as half of BD; reopen if B09 finds no supported-device configuration.",
+        "source": "issue:#1850"
+      }
+    },
+    "E": {
+      "boundary": {
+        "value": "Per-account Fly vault and the Adepthood server both see plaintext; provider-managed custody is not operator-blind.",
+        "source": "creek-vault:creek-tools/docs/architecture/ADR/0014-provider-managed-custody-for-ordinary-fly.md"
+      },
+      "key_custody": {
+        "value": "Provider-managed keys; Fly supplies the unlock capability.",
+        "source": "creek-vault:creek-tools/docs/architecture/ADR/0014-provider-managed-custody-for-ordinary-fly.md"
+      },
+      "recovery": {
+        "value": "Provider backup and restore; no user-held guarantee.",
+        "source": "creek-vault:creek-tools/docs/architecture/ADR/0014-provider-managed-custody-for-ordinary-fly.md"
+      },
+      "metadata_leakage": {
+        "value": "Content and metadata are visible to host and operator.",
+        "source": "creek-vault:creek-tools/docs/architecture/ADR/0014-provider-managed-custody-for-ordinary-fly.md"
+      },
+      "inference_location": {
+        "value": "Vault-local model on ordinary Fly.",
+        "source": "issue:#1849"
+      },
+      "supported_platforms": {
+        "value": "Any client.",
+        "source": "repo:docs/adr/0007-demand-provisioned-confidential-vaults.md"
+      },
+      "update_trust": {
+        "value": "Not a decision input: the operator can already read stored data.",
+        "source": "creek-vault:creek-tools/docs/architecture/ADR/0014-provider-managed-custody-for-ordinary-fly.md"
+      },
+      "primary_copy_removal": {
+        "value": "Adds a copy; the Adepthood primary copy remains.",
+        "source": "repo:backend/src/services/creek_vault_withdraw.py"
+      },
+      "threat_actors": {
+        "value": "Defeats external AI vendors only; operator, host and subpoena succeed.",
+        "source": "creek-vault:creek-tools/docs/architecture/ADR/0014-provider-managed-custody-for-ordinary-fly.md"
+      },
+      "budget_usd_per_active_account_month": {
+        "status": "unknown",
+        "owner_input_required": true
+      },
+      "staffing": {
+        "status": "unknown",
+        "owner_input_required": true
+      },
+      "reopen_triggers": {
+        "value": "Rejected as a custody model; its vault-local inference survives inside BD for consented, non-retained processing.",
+        "source": "owner:2026-10-07#B12-premise"
+      }
+    },
+    "BD": {
+      "boundary": {
+        "value": "Under the target, stored journal content and its prose derivatives will be ciphertext the operator cannot decrypt. Under the target, plaintext will exist only on the person's devices, in a vault they choose for inference, in the managed no-retention runtime while a labelled request runs there (not operator-blind while it runs), inside the enclave of a vendor-attested runtime verified under Creek-Vault ADR-0016 Decision 3 while a labelled request runs there, and at a cloud vendor under their own key sent from the device; until phase (a), BYOK is relayed through our server. Amended 2026-10-16 (#3437): with a managed vault, the writer's key and writing are relayed through our server to their vault per request, and the vault sends them to the writer's vendor, labelled on each use.",
+        "source": "owner:2026-10-07#B12-premise"
+      },
+      "key_custody": {
+        "value": "User-held keys generated on the person's device; no operator escrow; the server stores ciphertext and public parameters only.",
+        "source": "owner:2026-10-07#B12-premise"
+      },
+      "recovery": {
+        "value": "A recovery phrase the person writes down plus their passphrase; either unlocks the data key. Losing both means the data is gone, agreed up front at enrolment. Pairing, revocation and the rest of D03 stay open.",
+        "source": "owner:2026-10-07#followup-recovery"
+      },
+      "metadata_leakage": {
+        "value": "Sizes, timestamps, counts, object ids, tier labels, credit receipts and network metadata stay visible to the operator; content does not.",
+        "source": "repo:backend/tests/test_column_classification.py::_PLAINTEXT_COLUMNS"
+      },
+      "inference_location": {
+        "value": "Device first; then the person's vault-local model, a managed no-retention runtime we run, or a vendor-attested runtime verified under Creek-Vault ADR-0016 Decision 3 (all paid by credits and labelled on each use; the first two are not operator-blind while they run, and the third is held to the operator-blind target, which is not met until B24 certifies it); cloud only with the person's own key, called from the device straight to the vendor. Today BYOK is server-proxied, a known gap until phase (a).",
+        "source": "owner:2026-10-07#B12-cloud-byok"
+      },
+      "supported_platforms": {
+        "value": "Web first, native later. Native apps carry the strongest guarantee; on web the guarantee rests on trusting the code we serve. Web accounts may not enrol until enforced CSP plus SRI is live; signed builds come later.",
+        "source": "owner:2026-10-07#B12-web"
+      },
+      "update_trust": {
+        "value": "Native: store-signed builds (later). Web: enforced CSP plus SRI now (live since phase (b)'s first slice), signed builds later; CSP plus SRI cannot stop us serving a different bundle.",
+        "source": "repo:frontend/nginx.conf"
+      },
+      "primary_copy_removal": {
+        "value": "The 14 in-scope EncryptedString columns of journal_scope_proposal (of the 20; feedback and the vault credential stay out), DERIVED_FROM_PROSE plaintext, completion detection output, Creek copies, vendor copies and backups are re-encrypted client-side, withdrawn or expired before an account is labelled protected.",
+        "source": "repo:backend/src/services/encryption_inventory.py::encrypted_columns"
+      },
+      "threat_actors": {
+        "value": "Defeats DB thief, backup holder, host-storage access and stored-data subpoena. Defeats the privileged operator only on native while the signed build is honest; on web the operator can capture the key through a served bundle and read all stored history until signed builds ship. A compromised device remains; inference in a managed runtime we run is not operator-blind while it runs (labelled on each use); a vendor-attested runtime verified under Creek-Vault ADR-0016 Decision 3 excludes the host and the operator from its enclave by hardware, on the vendor's attestation chain, but only while Decision 3.3 condition (f) holds, which the owner waived on 2026-10-21 and which is therefore vendor-asserted rather than verified, and the vendor keeps request metadata under condition (g); until phase (a) our server relays BYOK calls and sees their plaintext; with a managed vault it relays the key and the writing to the vault per request (amendment 2026-10-16, #3437), and neither is operator-blind while that request runs.",
+        "source": "repo:backend/src/services/botmason.py::resolve_chat_api_key"
+      },
+      "budget_usd_per_active_account_month": {
+        "status": "unknown",
+        "owner_input_required": true
+      },
+      "staffing": {
+        "status": "unknown",
+        "owner_input_required": true
+      },
+      "reopen_triggers": {
+        "value": "Key-non-possession prototype fails; no web anchor is buildable; D03 user testing shows unacceptable loss; B09 finds no supported non-cloud configuration.",
+        "source": "owner:2026-10-07#B12-premise"
+      }
+    }
+  }
+}

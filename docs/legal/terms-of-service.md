@@ -48,9 +48,11 @@ licence may be bought as a gift for someone else: the person who will use
 the account creates it themselves, with their own email address, and redeems
 the key. One licence unlocks one account at a time.
 
-You can delete your account from **Settings → Delete account**. It is
-immediate and irreversible, and what it reaches — and the little it does
-not — is set out in [Your data](../your-data.md).
+You can delete your account from **Settings → Delete account**. It takes
+effect on the live service immediately and cannot be undone; on our backup
+schedule, backups taken before then age out within about 97 days. What it
+reaches — and the little it does not — is set out in [Your
+data](../your-data.md).
 
 ## Your writing stays yours
 
@@ -86,7 +88,7 @@ a stranger to read.
 Purchases are handled by **Gumroad**, which is the seller and takes the
 payment. Adepthood verifies what you bought and credits it to your account:
 a licence, or a pack of tokens that pays for model calls. Card details are
-Gumroad's to handle and never reach Adepthood.
+Gumroad's to handle and are not sent to Adepthood.
 
 Refunds follow Gumroad's process. A refunded or revoked sale removes the
 entitlement it granted.
@@ -96,11 +98,11 @@ model answers does not cost you the tokens; a call the model answers does,
 whether or not you liked the answer.
 
 You may instead supply your **own provider key** in Settings. Between calls
-that key stays on your device. When you use it, the production app sends it
-over HTTPS to Adepthood's server, which forwards it over HTTPS to the
-selected model provider for that call. Adepthood never persists, logs or
-returns the key — but the calls it makes are billed to your account with
-that provider, and what they cost is between you and them.
+that key stays on your device. Page reading sends it from your device straight
+to the provider you chose. Other features send it over HTTPS to Adepthood's
+server, which forwards it over HTTPS to that provider for that call. Adepthood
+never persists, logs or returns the key. The calls made with it are billed to
+your account with that provider, and what they cost is between you and them.
 
 ## Availability
 

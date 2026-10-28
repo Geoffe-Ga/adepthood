@@ -3,14 +3,38 @@
 from __future__ import annotations
 
 from datetime import datetime
+from enum import StrEnum
+from typing import Literal
 
 from pydantic import BaseModel, Field
 
 from domain.care import CareKind
 from domain.contraction import ContractionVariant
 from domain.creek_vault import VaultPraxisKind, VaultPraxisStatus
-from models.marginalia import MarginaliaKind, MarginaliaStatus
+from models.marginalia import (
+    InferenceProvider,
+    MarginaliaKind,
+    MarginaliaSource,
+    MarginaliaStatus,
+)
+from schemas.botmason import PayerRoute
 from schemas.completion_suggestion import CompletionSuggestionResponse
+
+
+class OperationSource(StrEnum):
+    """Which side answered one operation of a pass, as a response reports it (#3062).
+
+    The persisted :class:`~models.marginalia.MarginaliaSource` values, plus
+    ``none``: the operation was not run at all (detection with no candidates,
+    or under a vault-bound boundary). ``none`` is a fact about this pass and is
+    never stored, so it can never be mistaken for a row whose source was not
+    recorded.
+    """
+
+    CREEK_VAULT = MarginaliaSource.CREEK_VAULT.value
+    APP_PROVIDER = MarginaliaSource.APP_PROVIDER.value
+    DEMO = MarginaliaSource.DEMO.value
+    NONE = "none"
 
 
 class MarginaliaResponse(BaseModel):
@@ -19,6 +43,13 @@ class MarginaliaResponse(BaseModel):
     ``user_id`` is intentionally excluded — the client already knows its own
     identity and exposing surrogate keys aids enumeration (mirrors the journal
     entry response).
+
+    The provenance fields (#3062) are the server's record of which side answered
+    the note (``source``) and its letter (``essay_source``), stamped when they
+    were written. Every one is ``None`` on a row written before receipts
+    existed -- "source not recorded" -- and none is ever inferred from the
+    account's current vault connection. ``source_model`` is the answering
+    side's own report, never an attestation.
     """
 
     id: int
@@ -33,6 +64,11 @@ class MarginaliaResponse(BaseModel):
     status: MarginaliaStatus
     created_at: datetime
     updated_at: datetime
+    source: MarginaliaSource | None = None
+    source_provider: InferenceProvider | None = None
+    source_model: str | None = None
+    essay_source: MarginaliaSource | None = None
+    receipt_version: int | None = None
 
 
 class EssayRequest(BaseModel):
@@ -44,23 +80,16 @@ class EssayRequest(BaseModel):
     server refuses to charge without it rather than trusting every installed
     client to have stopped asking on open. Cached, BYOK and intimate requests
     are never charged and need no body at all.
+
+    ``disclosed_route`` is the ``resonance_route`` the price was disclosed for
+    (#3385). When it is sent and the caller's route has changed since, the
+    letter is refused with the same 409 before anything is dialled or charged,
+    so the writer is shown the price that now applies. Omitting it keeps the
+    older contract.
     """
 
     price_acknowledged: bool = False
-
-
-class EssayResponse(MarginaliaResponse):
-    """A margin note after an essay request, plus the wallet it left behind.
-
-    The balances mirror :class:`ResonanceResponse` so a client reads one shape
-    for "what this cost me" on both charged journal depths. They sit on a
-    subclass rather than on :class:`MarginaliaResponse` itself so note listings
-    do not grow a wallet read per row.
-    """
-
-    remaining_messages: int
-    remaining_balance: int
-    monthly_reset_date: datetime
+    disclosed_route: PayerRoute | None = None
 
 
 class VoiceDraftResponse(BaseModel):
@@ -83,6 +112,8 @@ class VoiceDraftResponse(BaseModel):
     anchor_text: str
     essay: str
     essay_generated_at: datetime
+    # Which side wrote the letter (#3062); ``None`` when it was not recorded.
+    essay_source: MarginaliaSource | None = None
 
 
 class VoiceDraftListResponse(BaseModel):
@@ -119,6 +150,26 @@ class CareResponse(BaseModel):
     title: str = Field(min_length=1)
     message: str
     resources: list[CareResourceResponse]
+
+
+class EssayResponse(MarginaliaResponse):
+    """A margin note after an essay request, plus the wallet it left behind.
+
+    The balances mirror :class:`ResonanceResponse` so a client reads one shape
+    for "what this cost me" on both charged journal depths. They sit on a
+    subclass rather than on :class:`MarginaliaResponse` itself so note listings
+    do not grow a wallet read per row.
+
+    ``care`` is ``None`` on every ordinary answer. It carries adepthood's own
+    reviewed care surface only when a vault-bound writer's vault answered the
+    letter ask with its care escalation instead of a letter (#3380) -- the same
+    surface a resonance pass escalation returns, never the vault's own prose.
+    """
+
+    remaining_messages: int
+    remaining_balance: int
+    monthly_reset_date: datetime
+    care: CareResponse | None = None
 
 
 class ContractionReflectionResponse(BaseModel):
@@ -165,6 +216,42 @@ class RelatedEddyResponse(BaseModel):
     formed: str
 
 
+class ProvenanceReceipt(BaseModel):
+    """Which side answered one operation of a resonance pass (#3062).
+
+    Closed vocabulary throughout except ``model``, the answering side's own
+    report of itself. ``source`` is ``none`` when the operation was not run.
+    """
+
+    source: OperationSource
+    provider: InferenceProvider | None = None
+    model: str | None = None
+    receipt_version: int
+
+
+class PassProvenance(BaseModel):
+    """Who answered each operation of a resonance pass, and who paid for it (#3062).
+
+    ``notes`` is the reflection -- including one that answered with nothing, so
+    an empty pass still says which source was empty. ``detection`` is the
+    completion check, with ``detection_checked`` saying whether it actually
+    returned. ``paid_by`` is ``free`` for a demo and for a refunded empty pass,
+    ``own_key`` when the caller's key paid, and ``wallet`` when the deduction
+    stands.
+
+    ``own_key_vendor`` is set only when the caller's own key was relayed to
+    their vault and the vault wrote the notes with it (#3437): the vendor of
+    that key, so the client can say "Written by your own Anthropic key, through
+    your vault". ``None`` on every other pass.
+    """
+
+    notes: ProvenanceReceipt
+    detection: ProvenanceReceipt
+    detection_checked: bool
+    paid_by: Literal["own_key", "wallet", "free"]
+    own_key_vendor: Literal["anthropic", "openai"] | None = None
+
+
 class ResonanceResponse(BaseModel):
     """Result of a resonance pass: the new notes plus refreshed wallet balances.
 
@@ -202,6 +289,10 @@ class ResonanceResponse(BaseModel):
     Empty rather than absent, so a client never has to tell "this server does not
     send them" apart from "this pass surfaced none". Both are bounded at the
     seam that reads them, so the margin stays a note rather than a dashboard.
+
+    ``provenance`` says which side answered each operation of the pass and who
+    paid (#3062). ``None`` on the private and care-only paths, where no
+    operation ran.
     """
 
     marginalia: list[MarginaliaResponse]
@@ -216,6 +307,7 @@ class ResonanceResponse(BaseModel):
     no_notes_message: str | None = None
     related_praxis: list[RelatedPraxisResponse] = []
     related_eddies: list[RelatedEddyResponse] = []
+    provenance: PassProvenance | None = None
 
 
 class MarginaliaListResponse(BaseModel):

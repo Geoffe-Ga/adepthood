@@ -53,7 +53,7 @@ const PAST_COURSE_SCOPE = 'c1:course';
 const PAST_WEEK_SCOPE = 'c1:w1';
 /** The new cycle's first week, where the cycle-2 daily belongs. */
 const NEW_WEEK_SCOPE = 'c2:w1';
-const UNRECORDED_COPY = 'cannot be reconstructed';
+const UNRECORDED_COPY = 'can’t tell which dates this review covered';
 const EDIT_NAME = 'Edit this entry';
 
 test.use({ timezoneId: ACCOUNT_TIMEZONE });
@@ -266,7 +266,7 @@ test('a first-pass review, reopened after beginning again, gathers only that cyc
   await expect(page.getByRole('button', { name: 'Done' })).toBeVisible();
 });
 
-test('a first pass whose anchor was never recorded says its period cannot be reconstructed', async ({
+test('a first pass whose anchor was never recorded says it can’t tell which dates it covered', async ({
   page,
 }) => {
   const account = await loopedAccount(page, 'past-cycle-unrecorded');

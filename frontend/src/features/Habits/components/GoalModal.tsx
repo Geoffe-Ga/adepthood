@@ -22,6 +22,7 @@ import { Button } from '../../../components/Button';
 import { useAuth } from '../../../context/AuthContext';
 import {
   colors,
+  editorialType,
   spacing,
   SPACING,
   STAGE_COLORS,
@@ -30,7 +31,12 @@ import {
 } from '../../../design/tokens';
 import useResponsive from '../../../design/useResponsive';
 import { addDaysInTZ, dayKeyInTZ, todayInUserTZ } from '../../../utils/dateUtils';
-import { TARGET_UNITS, FREQUENCY_UNITS } from '../constants';
+import {
+  FREQUENCY_UNITS,
+  LINKED_HABIT_FREQUENCY_UNITS,
+  LINKED_HABIT_TARGET_UNITS,
+  TARGET_UNITS,
+} from '../constants';
 import { TIER_LABELS, type TierType } from '../goalMarker';
 import styles from '../Habits.styles';
 import type { GoalModalProps, Goal } from '../Habits.types';
@@ -42,7 +48,9 @@ import {
   isGoalAchieved,
   completionDayKey,
   targetForMarkerPercent,
+  unitsInCurrentPeriod,
 } from '../HabitUtils';
+import { useLinkedHabitIds } from '../hooks/useLinkedHabitIds';
 import { useStarFill, type StarFill, type StarFillControls } from '../hooks/useStarFill';
 import { createMarkerPanResponder, type DraggableTier, type MarkerDragPort } from '../markerDrag';
 import { STAR_LONG_PRESS_MS } from '../starFill';
@@ -54,6 +62,7 @@ import {
 
 import ConfirmDialog from './ConfirmDialog';
 import HabitEmojiPicker from './HabitEmojiPicker';
+import { GOAL_CLOSE_LABEL } from './modalCloseLabels';
 import ModalHeader from './ModalHeader';
 
 /** Height of the goal progress bar; tier star markers are centered on it. */
@@ -77,7 +86,10 @@ const targetPhrase = (goal: Goal, target: number): string => {
   return `${target} ${unit}`;
 };
 
-/** Describe a tier goal as one plain-language target-and-cadence sentence. */
+/**
+ * Describe a tier goal as one plain-language target-and-cadence sentence:
+ * "10 minutes a day", "1 session, 4 times a week" (#3154).
+ */
 export const describeCadence = (goal: Goal, target = goal.target): string => {
   const targetText = targetPhrase(goal, target);
   if (goal.frequency_unit === 'per_session') return `${targetText} per session`;
@@ -85,8 +97,23 @@ export const describeCadence = (goal: Goal, target = goal.target): string => {
 
   const period = goal.frequency_unit.replace(/^per_/, '').replace(/_/g, ' ');
   const repetition = goal.frequency === 1 ? 'once' : `${goal.frequency} times`;
-  return `${targetText}, ${repetition} per ${period}`;
+  return `${targetText}, ${repetition} a ${period}`;
 };
+
+/** Why a timer-fed habit's editor offers only two units (#3154). */
+export const LINKED_HABIT_UNITS_NOTE =
+  'Logged automatically by the timer — minutes, or one session per sitting.';
+
+/**
+ * The chips a timer-fed habit's row offers: the allowed values, plus the
+ * habit's current one when it predates the link (a legacy "reps" habit), so
+ * the user can see what it is and move it off. Kept in the canonical order.
+ */
+const timerFedOptions = (
+  all: readonly string[],
+  allowed: readonly string[],
+  selected: string,
+): string[] => all.filter((option) => allowed.includes(option) || option === selected);
 
 const cadenceAfterTarget = (goal: Goal): string =>
   describeCadence(goal).slice(String(goal.target).length + 1);
@@ -350,6 +377,7 @@ const LogUnitSection = ({
         value={logAmount}
         onChangeText={setLogAmount}
         keyboardType="numeric"
+        testID="goal-log-amount"
       />
       <Button label="Log Units" onPress={onLog} testID="goal-log-units" />
     </View>
@@ -452,9 +480,6 @@ const goalEditorStyles = StyleSheet.create({
     fontWeight: '600',
     fontSize: GOAL_SAVE_BUTTON_FONT_SIZE,
   },
-  frequencySaveButton: {
-    backgroundColor: colors.tier.clear,
-  },
   frequencyDisplay: {
     width: GOAL_FREQ_INPUT_WIDTH,
     marginLeft: 0,
@@ -468,6 +493,9 @@ const goalEditorStyles = StyleSheet.create({
     fontSize: GOAL_UNIT_FONT_SIZE,
     color: colors.text.secondary,
     minWidth: GOAL_UNIT_MIN_WIDTH,
+    // Wrap "sessions a day" under itself at large text instead of running
+    // into the card edge.
+    flexShrink: 1,
   },
   fieldLabel: {
     fontSize: GOAL_FIELD_LABEL_FONT_SIZE,
@@ -476,6 +504,23 @@ const goalEditorStyles = StyleSheet.create({
     minWidth: GOAL_UNIT_MIN_WIDTH,
   },
   chipRow: {
+    paddingVertical: SPACING.xs,
+  },
+  rowWrap: {
+    flexWrap: 'wrap',
+  },
+  /**
+   * A timer-fed habit's rows hold only two chips, so they wrap onto a second
+   * line rather than scroll a whole chip out of sight at large text (#3154).
+   */
+  chipWrap: {
+    // Basis = the chips on one line: if that does not fit beside the label,
+    // the row wraps it to a line of its own, where it may wrap again.
+    flexGrow: 1,
+    flexShrink: 1,
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    rowGap: SPACING.xs,
     paddingVertical: SPACING.xs,
   },
   // Trailing gap so the last chip clears the modal border with breathing room
@@ -491,6 +536,11 @@ const goalEditorStyles = StyleSheet.create({
     borderColor: colors.border,
     marginRight: SPACING.xs,
     backgroundColor: 'transparent',
+  },
+  timerTouchTarget: {
+    minHeight: touchTarget.minimum,
+    minWidth: touchTarget.minimum,
+    justifyContent: 'center',
   },
   chipSelected: {
     backgroundColor: colors.tier.clear,
@@ -524,9 +574,42 @@ const goalEditorStyles = StyleSheet.create({
     color: colors.text.secondary,
     fontSize: GOAL_INPUT_FONT_SIZE,
   },
+  timerNote: {
+    ...editorialType.note,
+    color: colors.text.secondary,
+    paddingTop: SPACING.xs,
+  },
 });
 
+const timerTouchStyle = (timerOnly: boolean) =>
+  timerOnly ? goalEditorStyles.timerTouchTarget : undefined;
+
+const GoalValueSave = ({
+  testID,
+  label,
+  onPress,
+  color,
+  timerOnly,
+}: {
+  testID: string;
+  label: string;
+  onPress: () => void;
+  color: string;
+  timerOnly: boolean;
+}) => (
+  <TouchableOpacity
+    testID={testID}
+    accessibilityRole="button"
+    accessibilityLabel={label}
+    onPress={onPress}
+    style={[goalEditorStyles.saveButton, timerTouchStyle(timerOnly), { backgroundColor: color }]}
+  >
+    <Text style={goalEditorStyles.saveButtonText}>Save</Text>
+  </TouchableOpacity>
+);
+
 interface GoalTargetRowProps {
+  timerOnly?: boolean;
   goal: Goal;
   onCommit: (_target: number) => void;
 }
@@ -580,7 +663,7 @@ const useNumericDraft = (
  *     filled tier-colored Save button — tap Save (or press Return / blur)
  *     to commit.
  */
-const GoalTargetRow = ({ goal, onCommit }: GoalTargetRowProps) => {
+const GoalTargetRow = ({ goal, onCommit, timerOnly = false }: GoalTargetRowProps) => {
   const { editing, draft, setDraft, startEdit, trySave } = useNumericDraft(goal.target, onCommit);
   const tierLabel = TIER_LABELS[goal.tier] ?? goal.tier;
   const tierColor = getTierColor(goal.tier);
@@ -595,7 +678,7 @@ const GoalTargetRow = ({ goal, onCommit }: GoalTargetRowProps) => {
         <>
           <TextInput
             testID={`goal-target-input-${goal.tier}`}
-            style={goalEditorStyles.input}
+            style={[goalEditorStyles.input, timerTouchStyle(timerOnly)]}
             value={draft}
             onChangeText={setDraft}
             // Both events back the same commit so return-key, blur, and
@@ -607,15 +690,13 @@ const GoalTargetRow = ({ goal, onCommit }: GoalTargetRowProps) => {
             keyboardType="numeric"
             returnKeyType="done"
           />
-          <TouchableOpacity
+          <GoalValueSave
             testID={`goal-target-save-${goal.tier}`}
-            accessibilityRole="button"
-            accessibilityLabel={`Save ${tierLabel} target`}
+            label={`Save ${tierLabel} target`}
             onPress={trySave}
-            style={[goalEditorStyles.saveButton, { backgroundColor: tierColor }]}
-          >
-            <Text style={goalEditorStyles.saveButtonText}>Save</Text>
-          </TouchableOpacity>
+            color={tierColor}
+            timerOnly={timerOnly}
+          />
         </>
       ) : (
         <TouchableOpacity
@@ -623,7 +704,7 @@ const GoalTargetRow = ({ goal, onCommit }: GoalTargetRowProps) => {
           accessibilityRole="button"
           accessibilityLabel={`Edit ${tierLabel} target, currently ${goal.target}`}
           onPress={startEdit}
-          style={goalEditorStyles.display}
+          style={[goalEditorStyles.display, timerTouchStyle(timerOnly)]}
         >
           <Text style={[goalEditorStyles.displayText, { color: tierColor }]}>{goal.target}</Text>
         </TouchableOpacity>
@@ -634,6 +715,7 @@ const GoalTargetRow = ({ goal, onCommit }: GoalTargetRowProps) => {
 };
 
 interface UnitChipRowProps {
+  timerOnly?: boolean;
   options: readonly string[];
   selected: string;
   testID: string;
@@ -679,8 +761,24 @@ const ChipScrollRow = ({ testID, children }: ChipScrollRowProps) => (
  * pinned to the formatted label so VoiceOver / TalkBack announce e.g.
  * "per day" rather than reading the raw "per_day" backend token.
  */
-const UnitChipRow = ({ options, selected, testID, onSelect }: UnitChipRowProps) => (
-  <ChipScrollRow testID={testID}>
+/** The few chips of a timer-fed row wrap; the long list keeps its scroller. */
+const ChipRowFrame = ({ wrap, testID, children }: ChipScrollRowProps & { wrap: boolean }) =>
+  wrap ? (
+    <View testID={testID} style={goalEditorStyles.chipWrap}>
+      {children}
+    </View>
+  ) : (
+    <ChipScrollRow testID={testID}>{children}</ChipScrollRow>
+  );
+
+const UnitChipRow = ({
+  options,
+  selected,
+  testID,
+  onSelect,
+  timerOnly = false,
+}: UnitChipRowProps) => (
+  <ChipRowFrame wrap={timerOnly} testID={testID}>
     {options.map((opt) => {
       const isSelected = opt === selected;
       const label = formatUnitLabel(opt);
@@ -689,7 +787,11 @@ const UnitChipRow = ({ options, selected, testID, onSelect }: UnitChipRowProps) 
           key={opt}
           testID={`${testID}-${opt}`}
           onPress={() => onSelect(opt)}
-          style={[goalEditorStyles.chip, isSelected && goalEditorStyles.chipSelected]}
+          style={[
+            goalEditorStyles.chip,
+            timerTouchStyle(timerOnly),
+            isSelected && goalEditorStyles.chipSelected,
+          ]}
           accessibilityRole="radio"
           accessibilityLabel={label}
           accessibilityState={{ checked: isSelected }}
@@ -702,7 +804,7 @@ const UnitChipRow = ({ options, selected, testID, onSelect }: UnitChipRowProps) 
         </TouchableOpacity>
       );
     })}
-  </ChipScrollRow>
+  </ChipRowFrame>
 );
 
 /**
@@ -715,6 +817,9 @@ const UnitChipRow = ({ options, selected, testID, onSelect }: UnitChipRowProps) 
 type NonEmptyGoals = [Goal, ...Goal[]];
 
 interface GoalUnitEditorProps {
+  timerOnly?: boolean;
+  /** Explain under the rows that the timer does the logging (#3154). */
+  showTimerNote?: boolean;
   /**
    * All tier goals belonging to the habit. Any one is a valid display
    * reference (units are normalized across tiers via ``normalizeGoalUnits``),
@@ -727,6 +832,7 @@ interface GoalUnitEditorProps {
 }
 
 interface FrequencyInputProps {
+  timerOnly?: boolean;
   editing: boolean;
   draft: string;
   setDraft: (_v: string) => void;
@@ -734,12 +840,19 @@ interface FrequencyInputProps {
   trySave: () => void;
 }
 
-const FrequencyInput = ({ editing, draft, setDraft, startEdit, trySave }: FrequencyInputProps) =>
+const FrequencyInput = ({
+  editing,
+  draft,
+  setDraft,
+  startEdit,
+  trySave,
+  timerOnly = false,
+}: FrequencyInputProps) =>
   editing ? (
     <>
       <TextInput
         testID="goal-frequency-input"
-        style={goalEditorStyles.freqInput}
+        style={[goalEditorStyles.freqInput, timerTouchStyle(timerOnly)]}
         value={draft}
         onChangeText={setDraft}
         onBlur={trySave}
@@ -749,15 +862,13 @@ const FrequencyInput = ({ editing, draft, setDraft, startEdit, trySave }: Freque
         keyboardType="numeric"
         returnKeyType="done"
       />
-      <TouchableOpacity
+      <GoalValueSave
         testID="goal-frequency-save"
-        accessibilityRole="button"
-        accessibilityLabel="Save cadence"
+        label="Save cadence"
         onPress={trySave}
-        style={[goalEditorStyles.saveButton, goalEditorStyles.frequencySaveButton]}
-      >
-        <Text style={goalEditorStyles.saveButtonText}>Save</Text>
-      </TouchableOpacity>
+        color={colors.tier.clear}
+        timerOnly={timerOnly}
+      />
     </>
   ) : (
     <TouchableOpacity
@@ -765,11 +876,38 @@ const FrequencyInput = ({ editing, draft, setDraft, startEdit, trySave }: Freque
       accessibilityRole="button"
       accessibilityLabel={`Edit cadence, currently ${draft}`}
       onPress={startEdit}
-      style={[goalEditorStyles.display, goalEditorStyles.frequencyDisplay]}
+      style={[
+        goalEditorStyles.display,
+        goalEditorStyles.frequencyDisplay,
+        timerTouchStyle(timerOnly),
+      ]}
     >
       <Text style={goalEditorStyles.displayText}>{draft}</Text>
     </TouchableOpacity>
   );
+
+/** The unit and cadence chips the editor offers: every one, or a timer's two (#3154). */
+const unitEditorOptions = (reference: Goal, timerOnly: boolean) =>
+  timerOnly
+    ? {
+        unitOptions: timerFedOptions(
+          TARGET_UNITS,
+          LINKED_HABIT_TARGET_UNITS,
+          reference.target_unit,
+        ),
+        frequencyUnitOptions: timerFedOptions(
+          FREQUENCY_UNITS,
+          LINKED_HABIT_FREQUENCY_UNITS,
+          reference.frequency_unit,
+        ),
+      }
+    : { unitOptions: TARGET_UNITS, frequencyUnitOptions: FREQUENCY_UNITS };
+
+const TimerNote = () => (
+  <Text testID="goal-timer-note" style={goalEditorStyles.timerNote}>
+    {LINKED_HABIT_UNITS_NOTE}
+  </Text>
+);
 
 /**
  * Edits ``target_unit`` / ``frequency`` / ``frequency_unit`` for a habit's
@@ -777,8 +915,15 @@ const FrequencyInput = ({ editing, draft, setDraft, startEdit, trySave }: Freque
  * once and commits through ``onUpdateGoalUnits`` — a single atomic batch
  * update that moves every tier together (#289).
  */
-const GoalUnitEditor = ({ goals, habitId, onUpdateGoalUnits }: GoalUnitEditorProps) => {
+const GoalUnitEditor = ({
+  goals,
+  habitId,
+  onUpdateGoalUnits,
+  timerOnly = false,
+  showTimerNote = false,
+}: GoalUnitEditorProps) => {
   const reference = goals[0];
+  const { unitOptions, frequencyUnitOptions } = unitEditorOptions(reference, timerOnly);
 
   // Issue #289: ONE consolidated call — the backend updates every tier
   // inside a single transaction, so a failure can never strand tiers on
@@ -795,28 +940,31 @@ const GoalUnitEditor = ({ goals, habitId, onUpdateGoalUnits }: GoalUnitEditorPro
 
   return (
     <View testID="goal-unit-editor">
-      <View style={goalEditorStyles.row}>
+      <View style={[goalEditorStyles.row, timerOnly && goalEditorStyles.rowWrap]}>
         <Text style={goalEditorStyles.fieldLabel}>Unit</Text>
         <UnitChipRow
-          options={TARGET_UNITS}
+          timerOnly={timerOnly}
+          options={unitOptions}
           selected={reference.target_unit}
           testID="goal-target-unit"
           onSelect={(value) => commit({ target_unit: value })}
         />
       </View>
-      <View style={goalEditorStyles.row}>
+      <View style={[goalEditorStyles.row, timerOnly && goalEditorStyles.rowWrap]}>
         <Text style={goalEditorStyles.fieldLabel}>How often</Text>
-        <FrequencyInput {...frequencyDraft} />
+        <FrequencyInput {...frequencyDraft} timerOnly={timerOnly} />
         <Text testID="goal-frequency-multiplier" style={goalEditorStyles.multiplier}>
           ×
         </Text>
         <UnitChipRow
-          options={FREQUENCY_UNITS}
+          timerOnly={timerOnly}
+          options={frequencyUnitOptions}
           selected={reference.frequency_unit}
           testID="goal-frequency-unit"
           onSelect={(value) => commit({ frequency_unit: value })}
         />
       </View>
+      {timerOnly && showTimerNote ? <TimerNote /> : null}
     </View>
   );
 };
@@ -875,6 +1023,10 @@ const buildDirectionChangePayloads = (goals: readonly Goal[], newIsAdditive: boo
 };
 
 interface GoalTargetEditorProps {
+  /** Timer linking can measure only additive minutes or complete sessions. */
+  timerOnly?: boolean;
+  /** Say, under the units, that the timer logs this habit (#3154). */
+  showTimerNote?: boolean;
   habit: NonNullable<GoalModalProps['habit']>;
   onUpdateGoal: GoalModalProps['onUpdateGoal'];
   onUpdateGoalUnits: GoalModalProps['onUpdateGoalUnits'];
@@ -887,7 +1039,13 @@ interface GoalTargetEditorProps {
  * triggered reliably under thumb input — closing the "no way to edit habit
  * goals on mobile" gap.
  */
-const GoalTargetEditor = ({ habit, onUpdateGoal, onUpdateGoalUnits }: GoalTargetEditorProps) => {
+export const GoalTargetEditor = ({
+  habit,
+  onUpdateGoal,
+  onUpdateGoalUnits,
+  timerOnly = false,
+  showTimerNote = false,
+}: GoalTargetEditorProps) => {
   // ``== null`` (not ``!habit.id``) so a hypothetical future habit with id 0
   // still surfaces the editor — falsy-zero is a real concern even if the
   // current backend autoincrements from 1.
@@ -910,16 +1068,21 @@ const GoalTargetEditor = ({ habit, onUpdateGoal, onUpdateGoalUnits }: GoalTarget
   return (
     <View style={goalEditorStyles.container} testID="goal-target-editor">
       <Text style={goalEditorStyles.sectionTitle}>Goals</Text>
-      <GoalDirectionRow isAdditive={head.is_additive} onChange={handleDirectionChange} />
+      {timerOnly ? null : (
+        <GoalDirectionRow isAdditive={head.is_additive} onChange={handleDirectionChange} />
+      )}
       {nonEmptyGoals.map((goal) => (
         <GoalTargetRow
           key={goal.id ?? goal.tier}
+          timerOnly={timerOnly}
           goal={goal}
           onCommit={(target) => onUpdateGoal(habitId, { ...goal, target })}
         />
       ))}
       <GoalUnitEditor
         goals={nonEmptyGoals}
+        timerOnly={timerOnly}
+        showTimerNote={showTimerNote}
         habitId={habitId}
         onUpdateGoalUnits={onUpdateGoalUnits}
       />
@@ -966,7 +1129,14 @@ const buildPendingGoalEdit = (
 ): PendingGoalEdit | null => {
   const { lowGoal, clearGoal, stretchGoal } = tiers;
   if (habitId == null || !lowGoal || !clearGoal || !stretchGoal) return null;
-  const newTarget = targetForMarkerPercent(percent, tier, lowGoal, clearGoal, stretchGoal);
+  const newTarget = targetForMarkerPercent(
+    percent,
+    tier,
+    lowGoal,
+    clearGoal,
+    stretchGoal,
+    tiers.periodProgress,
+  );
   if (newTarget === null) return null;
   const goal = tier === 'low' ? lowGoal : clearGoal;
   const tierLabel = TIER_LABELS[tier];
@@ -979,12 +1149,14 @@ const buildPendingGoalEdit = (
   };
 };
 
-function useGoalTiers(habit: GoalModalProps['habit']) {
+function useGoalTiers(habit: GoalModalProps['habit'], tz: string) {
   const lowGoal = habit?.goals.find((g) => g.tier === 'low');
   const clearGoal = habit?.goals.find((g) => g.tier === 'clear');
   const stretchGoal = habit?.goals.find((g) => g.tier === 'stretch');
-  const markers = getMarkerPositions(lowGoal, clearGoal, stretchGoal);
-  return { lowGoal, clearGoal, stretchGoal, markers };
+  const periodProgress =
+    habit && stretchGoal ? unitsInCurrentPeriod(habit, stretchGoal, tz) : undefined;
+  const markers = getMarkerPositions(lowGoal, clearGoal, stretchGoal, periodProgress);
+  return { lowGoal, clearGoal, stretchGoal, periodProgress, markers };
 }
 
 /**
@@ -1051,25 +1223,30 @@ const useMarkerDragPort = (build: () => MarkerDragPort): React.MutableRefObject<
   return port as React.MutableRefObject<MarkerDragPort>;
 };
 
+const useGoalBarWidth = () => {
+  const barWidth = useRef(0);
+  const handleBarLayout = (e: LayoutChangeEvent) => {
+    barWidth.current = e.nativeEvent.layout.width;
+  };
+  return { barWidth, handleBarLayout };
+};
+
 const useGoalMarkers = (
   habit: GoalModalProps['habit'],
   onUpdateGoal: GoalModalProps['onUpdateGoal'],
   starFill: React.MutableRefObject<StarFillControls>,
+  tz: string,
 ) => {
-  const barWidth = useRef(0);
+  const { barWidth, handleBarLayout } = useGoalBarWidth();
   const [lowMarker, setLowMarker] = useState(0);
   const [clearMarker, setClearMarker] = useState(0);
   const [tooltip, setTooltip] = useState<null | 'low' | 'clear' | 'stretch'>(null);
-  const tiers = useGoalTiers(habit);
+  const tiers = useGoalTiers(habit, tz);
 
   useEffect(() => {
     setLowMarker(tiers.markers.low);
     setClearMarker(tiers.markers.clear);
   }, [tiers.markers.low, tiers.markers.clear]);
-
-  const handleBarLayout = (e: LayoutChangeEvent) => {
-    barWidth.current = e.nativeEvent.layout.width;
-  };
 
   const { onConfirm, pending, cancelPending, applyPending } = useGoalConfirm(
     tiers,
@@ -1083,6 +1260,7 @@ const useGoalMarkers = (
     starFill,
     percent: { low: lowMarker, clear: clearMarker },
     canonical: { low: tiers.markers.low, clear: tiers.markers.clear },
+    stretchPercent: tiers.markers.stretch,
     setPercent: (tier, pct) => (tier === 'low' ? setLowMarker(pct) : setClearMarker(pct)),
     setTooltip,
     confirm: onConfirm,
@@ -1151,7 +1329,7 @@ const GoalModalHeader = ({
   onToggleEdit,
 }: GoalModalHeaderProps) => (
   <>
-    <ModalHeader title={habit.name} onClose={onClose}>
+    <ModalHeader title={habit.name} onClose={onClose} closeLabel={GOAL_CLOSE_LABEL}>
       <EditToggleButton isEditing={isEditing} onToggle={onToggleEdit} />
       <TouchableOpacity
         testID="goal-modal-icon-button"
@@ -1319,7 +1497,7 @@ const useMarkersWithStarFill = (
   tz: string,
 ) => {
   const starFillRef = useRef<StarFillControls>({ begin: () => {}, release: () => {} });
-  const m = useGoalMarkers(habit, onUpdateGoal, starFillRef);
+  const m = useGoalMarkers(habit, onUpdateGoal, starFillRef, tz);
   const fill = useStarFill({
     habit,
     tz,
@@ -1330,6 +1508,33 @@ const useMarkersWithStarFill = (
     starFillRef.current = fill;
   });
   return { m, fill };
+};
+
+/**
+ * The pencil-revealed goal editor. A habit the journal or a practice logs to is
+ * fed by the timer, so its editor speaks only minutes or sessions (#3154); the
+ * links are read when the editor opens. The region scrolls inside the card's
+ * 80% cap rather than pushing the log row out of it on a short phone or at
+ * large text.
+ */
+const GoalEditRegion = ({
+  habit,
+  onUpdateGoal,
+  onUpdateGoalUnits,
+}: Pick<GoalModalBodyProps, 'habit' | 'onUpdateGoal' | 'onUpdateGoalUnits'>) => {
+  const linkedHabitIds = useLinkedHabitIds();
+  const timerFed = habit.id != null && linkedHabitIds.has(habit.id);
+  return (
+    <ScrollView testID="goal-modal-edit-region" style={editRegionStyles.region}>
+      <GoalTargetEditor
+        habit={habit}
+        timerOnly={timerFed}
+        showTimerNote
+        onUpdateGoal={onUpdateGoal}
+        onUpdateGoalUnits={onUpdateGoalUnits}
+      />
+    </ScrollView>
+  );
 };
 
 const GoalModalBody = ({
@@ -1348,7 +1553,10 @@ const GoalModalBody = ({
   const log = useLogState(habit, onLogUnit, userTimezone);
 
   return (
-    <View style={[styles.modalContent, { borderTopColor: STAGE_COLORS[habit.stage] }]}>
+    <View
+      testID="goal-modal-card"
+      style={[styles.modalContent, { borderTopColor: STAGE_COLORS[habit.stage] }]}
+    >
       <GoalModalHeader
         habit={habit}
         goalGroup={goalGroup}
@@ -1362,13 +1570,11 @@ const GoalModalBody = ({
       {/* Progress bar stays visible; the pencil only collapses the editor. */}
       <GoalProgressBar {...buildProgressBarProps(habit, m, userTimezone, fill)} />
       {isEditing && (
-        <View testID="goal-modal-edit-region">
-          <GoalTargetEditor
-            habit={habit}
-            onUpdateGoal={onUpdateGoal}
-            onUpdateGoalUnits={onUpdateGoalUnits}
-          />
-        </View>
+        <GoalEditRegion
+          habit={habit}
+          onUpdateGoal={onUpdateGoal}
+          onUpdateGoalUnits={onUpdateGoalUnits}
+        />
       )}
       <LogUnitSection {...log} />
       <GoalEditConfirmDialog m={m} />
@@ -1425,6 +1631,10 @@ const goalGroupBadgeStyles = StyleSheet.create({
     color: '#555',
     fontStyle: 'italic',
   },
+});
+
+const editRegionStyles = StyleSheet.create({
+  region: { flexShrink: 1 },
 });
 
 const editToggleStyles = StyleSheet.create({

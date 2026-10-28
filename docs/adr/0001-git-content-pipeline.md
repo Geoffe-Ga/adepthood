@@ -103,6 +103,14 @@ assets to a site resource validate. Purely additive — a resource without `medi
 stays valid, and `additionalProperties: false` still rejects unknown keys. This
 matched the shape the `aptitude-course` content pin already publishes.
 
+**2026-10-14 — `schema_version 1.3.0` (additive here).** Upstream
+`aptitude-course#76` named site resources `NN-slug.md` and added a required
+1-based integer `order` to `site_resource`, numbered `1.3.0` because this ADR
+had already spent `1.2.0`. The local schema accepts `order` as optional (an
+integer, minimum 1), so older manifests still validate, and the reader does
+not yet use it; ordering the Start Here list is #3148. A future
+`stage_correspondence[]` tier therefore needs the next free minor, not `1.3.0`.
+
 **2026-09-25 — temporary vendoring of the Complete Map CSV (#2664).**
 Under the owner ruling of 2026-09-23 on #2664, `scripts/sync_content.py`
 also copies `google_docs/database_of_course_curriculum/APTITUDE Complete
@@ -120,6 +128,9 @@ exception is declared as the single entry of `VENDORED_EXTRA_FILES`, and
 `backend/src/curriculum/stage_correspondence.json` from it. **Exit plan:** once
 the upstream manifest carries `stage_correspondence[]`, empty
 `VENDORED_EXTRA_FILES` and point the generator at the manifest tier.
+Until then, the step-by-step path for a correspondence change (re-pin,
+regenerate, supersessions, reconcile, verify, rollback) is the runbook in
+`docs/curriculum.md`, "Updating stage correspondences" (#2667).
 
 Two notes for that upstream bump. First, **pick `schema_version 1.3.0`, not
 `1.2.0`**. This ADR already spends `1.2.0` on `site_resource.media[]` (the

@@ -37,23 +37,23 @@ export const WELCOME_PANELS: readonly WelcomePanel[] = [
   {
     eyebrow: 'Welcome',
     title: 'Begin the 36-week journey',
-    body: 'APTITUDE is a slow, deliberate path of becoming. Take a breath — there is no rushing this work, and nothing here expires.',
+    body: 'APTITUDE gives you a place to hear your own words again and ten capacities to practice in daily life. The course runs over thirty-six weeks, slowly enough to make room for living. Take the time you need; the course stays here.',
   },
   {
     eyebrow: 'Five pillars',
     title: 'How the work holds together',
-    body: 'Each week weaves the same five threads. Lean on whichever the day asks for.',
+    body: 'Your journal keeps words you can return to for counsel. The other pillars give you ways to put that counsel to work. Choose the parts that serve your days.',
     pillars: WELCOME_PILLARS,
     note: WELCOME_PRIVACY_NOTE,
   },
   {
     eyebrow: 'A week, lived',
     title: 'How a week works',
-    body: 'Plant a small habit, sit with a practice, read the week’s course, and reflect in your journal. The map shows how far you have come.',
+    body: 'Habits lets you name a habit and record your check-ins. Practice offers grounding exercises and timed sessions. The readings give each capacity a name and something to try. Your journal keeps what you notice; the Map lays out the ten capacities and their course stages.',
   },
   {
     eyebrow: 'Ready',
     title: 'Let’s begin',
-    body: 'Press Begin to land on your Journal, your daily home. From the Habits tab you can plant your first habits whenever you’re ready.',
+    body: 'Press Begin to land on your Journal, your daily home, and put a first thought on the page. Your journal can be the whole practice. To explore habits, open the Habits tab to name a habit and record your check-ins. You choose your depth.',
   },
 ] as const;

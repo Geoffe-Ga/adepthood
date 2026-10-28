@@ -44,6 +44,13 @@
  * choice honestly, and that lookup has states of its own. What stays here is
  * the switch and the gate: which branch is open, and whether the offer is.
  *
+ * Only the depths the writer has kept are offered (#3073). A declined habits
+ * ring drops "Keep this as a habit" and swaps its prompt for a practice-worded
+ * one, so the note always says what it offers; a declined practices ring
+ * drops "Keep this as a practice"; with both declined there is nothing to
+ * offer and the note carries no invitation at all. The decline stays beside
+ * whichever accept remains.
+ *
  * Placing the habit is a list, not a drag. ``ReorderHabitsModal`` is where
  * dragging belongs — a management surface, on a screen, with room. This is one
  * row moving inside a note on the page someone is still writing on, so it is
@@ -56,6 +63,7 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { StyleSheet, Text, View } from 'react-native';
 
+import { JOURNAL_HABIT_DEFAULT_GOALS } from './journalHabitDefaults';
 import type { FinishedWriting } from './keepAsPractice';
 import OfferAction from './OfferAction';
 import {
@@ -82,16 +90,23 @@ import {
   savedHabitConfirmation,
   stagePreviewLabel,
 } from './saveAsHabitCopy';
-import { SAVE_AS_PRACTICE_ACCEPT, SAVE_AS_PRACTICE_ACCEPT_A11Y } from './saveAsPracticeCopy';
+import {
+  SAVE_AS_PRACTICE_ACCEPT,
+  SAVE_AS_PRACTICE_ACCEPT_A11Y,
+  SAVE_AS_PRACTICE_PROMPT,
+} from './saveAsPracticeCopy';
 import SaveAsPracticeStep from './SaveAsPracticeStep';
 import WritingHabitPicker from './WritingHabitPicker';
 import type { WritingSessionResult } from './writingSession';
 
+import { decorativeHidden } from '@/components/a11yHidden';
 import { useAuth } from '@/context/AuthContext';
 import { BORDER_RADIUS, SPACING, colors, editorialType } from '@/design/tokens';
-import type { Habit } from '@/features/Habits/Habits.types';
+import { useRingEnabled } from '@/features/Depth/depthRings';
+import type { Habit, HabitGoalSetup } from '@/features/Habits/Habits.types';
 import { habitManager } from '@/features/Habits/services/habitManager';
 import { clampPosition, insertAt, stagePreview } from '@/features/Habits/services/habitOrdering';
+import { useAccountScope } from '@/storage/useActiveUser';
 import { loadWritingOfferAnswered, saveWritingOfferAnswered } from '@/storage/writingOfferStorage';
 import { useHabitStore } from '@/store/useHabitStore';
 import { useWritingHabitLinkStore } from '@/store/useWritingHabitLinkStore';
@@ -174,19 +189,26 @@ function PreviewList({
  * asking again would nag and, if taken up, file a second one beside it.
  */
 function useOfferGate(): { answered: boolean | null; settle: () => void } {
-  const [answered, setAnswered] = useState<boolean | null>(null);
+  const { owner, epoch, isCurrent } = useAccountScope();
+  const [answer, setAnswer] = useState<{
+    owner: number | null;
+    epoch: number;
+    value: boolean;
+  } | null>(null);
+  const answered = answer?.epoch === epoch ? answer.value : null;
   useEffect(() => {
     let mounted = true;
     void loadWritingOfferAnswered().then((stored) => {
-      if (mounted) setAnswered(stored);
+      if (mounted && isCurrent()) setAnswer({ owner, epoch, value: stored });
     });
     return () => {
       mounted = false;
     };
-  }, []);
+  }, [owner, epoch, isCurrent]);
   const settle = useCallback(() => {
+    if (!isCurrent()) return;
     void saveWritingOfferAnswered(true);
-  }, []);
+  }, [isCurrent]);
   return { answered, settle };
 }
 
@@ -215,6 +237,17 @@ function toPreviewRows(
   }));
 }
 
+/** Which ways of keeping the session the writer's depth choices still allow. */
+interface OfferedDepths {
+  habit: boolean;
+  practice: boolean;
+}
+
+/** The two depths this note can offer, read from the writer's ring toggles. */
+function useOfferedDepths(): OfferedDepths {
+  return { habit: useRingEnabled('habits'), practice: useRingEnabled('practices') };
+}
+
 /** The row standing in for the habit that does not exist yet. */
 const NEW_ROW: PreviewRow = { key: 'new', name: JOURNALING_HABIT_NAME };
 
@@ -226,32 +259,40 @@ const NEW_ROW: PreviewRow = { key: 'new', name: JOURNALING_HABIT_NAME };
  * one shallow exit must not make the exit the hardest of the three to find.
  */
 function Invitation({
+  offers,
   onKeepAsHabit,
   onKeepAsPractice,
   onDecline,
 }: {
+  offers: OfferedDepths;
   onKeepAsHabit: () => void;
   onKeepAsPractice: () => void;
   onDecline: () => void;
 }): React.JSX.Element {
   return (
     <View style={styles.offer} testID="save-as-habit-offer">
-      <Text style={styles.prompt}>{SAVE_AS_HABIT_PROMPT}</Text>
+      <Text style={styles.prompt}>
+        {offers.habit ? SAVE_AS_HABIT_PROMPT : SAVE_AS_PRACTICE_PROMPT}
+      </Text>
       <View style={styles.actions}>
-        <OfferAction
-          label={SAVE_AS_HABIT_ACCEPT}
-          a11yLabel={SAVE_AS_HABIT_ACCEPT_A11Y}
-          onPress={onKeepAsHabit}
-          emphasis
-          testID="save-as-habit-accept"
-        />
-        <OfferAction
-          label={SAVE_AS_PRACTICE_ACCEPT}
-          a11yLabel={SAVE_AS_PRACTICE_ACCEPT_A11Y}
-          onPress={onKeepAsPractice}
-          emphasis
-          testID="save-as-practice-accept"
-        />
+        {offers.habit ? (
+          <OfferAction
+            label={SAVE_AS_HABIT_ACCEPT}
+            a11yLabel={SAVE_AS_HABIT_ACCEPT_A11Y}
+            onPress={onKeepAsHabit}
+            emphasis
+            testID="save-as-habit-accept"
+          />
+        ) : null}
+        {offers.practice ? (
+          <OfferAction
+            label={SAVE_AS_PRACTICE_ACCEPT}
+            a11yLabel={SAVE_AS_PRACTICE_ACCEPT_A11Y}
+            onPress={onKeepAsPractice}
+            emphasis
+            testID="save-as-practice-accept"
+          />
+        ) : null}
         <OfferAction
           label={SAVE_AS_HABIT_DECLINE}
           a11yLabel={SAVE_AS_HABIT_DECLINE_A11Y}
@@ -329,7 +370,7 @@ interface OfferMoves {
   practiceKept: () => void;
   confirmHabit: () => void;
   backToOffer: () => void;
-  chooseNew: () => void;
+  chooseNew: (_setup: HabitGoalSetup) => void;
   chooseExisting: (_habit: Habit) => void;
   /** The habit an existing-habit link landed on, for the confirmation. */
   linkedName: string | null;
@@ -389,12 +430,14 @@ function useHabitChoiceMoves(
  * Split out of ``useOfferMoves`` so each hook stays one readable thing.
  */
 function useConfirmNewHabit({
+  goals,
   settle,
   setPhase,
   linkNew,
   position,
   tz,
 }: {
+  goals: HabitGoalSetup;
   settle: () => void;
   setPhase: (_phase: Phase) => void;
   linkNew: (_habitId: number) => Promise<void>;
@@ -405,7 +448,7 @@ function useConfirmNewHabit({
     setPhase('saving');
     void habitManager
       .insertHabitAtWithId(
-        { name: JOURNALING_HABIT_NAME, icon: JOURNALING_HABIT_ICON },
+        { name: JOURNALING_HABIT_NAME, icon: JOURNALING_HABIT_ICON, goals, revealed: true },
         position,
         tz,
       )
@@ -420,7 +463,25 @@ function useConfirmNewHabit({
         if (habitId !== null) await linkNew(habitId);
         setPhase('saved');
       });
-  }, [linkNew, position, setPhase, settle, tz]);
+  }, [goals, linkNew, position, setPhase, settle, tz]);
+}
+
+/** Keep the chosen goal ladder while the writer places the new habit. */
+function useNewHabitGoals(
+  placement: ReturnType<typeof usePlacement>,
+  setPhase: (_phase: Phase) => void,
+) {
+  const [goals, setGoals] = useState<HabitGoalSetup>(JOURNAL_HABIT_DEFAULT_GOALS);
+  const chooseNew = useCallback(
+    (setup: HabitGoalSetup) => {
+      setGoals(setup);
+      placement.reset();
+      setPhase('placing');
+    },
+    [placement, setPhase],
+  );
+
+  return { goals, chooseNew };
 }
 
 /**
@@ -438,6 +499,7 @@ function useOfferMoves(
   token: string | undefined,
 ): OfferMoves {
   const [phase, setPhase] = useState<Phase>('offered');
+  const { goals, chooseNew } = useNewHabitGoals(placement, setPhase);
   const { chooseExisting, linkedName, linkNew, newLinked } = useHabitChoiceMoves(
     settle,
     setPhase,
@@ -457,12 +519,8 @@ function useOfferMoves(
     setPhase('choosing');
   }, [tz]);
 
-  const chooseNew = useCallback(() => {
-    placement.reset();
-    setPhase('placing');
-  }, [placement]);
-
   const confirmHabit = useConfirmNewHabit({
+    goals,
     settle,
     setPhase,
     linkNew,
@@ -500,6 +558,7 @@ function WritingSessionOffer({
   const placement = usePlacement(habits.length);
   const moves = useOfferMoves(settle, placement, userTimezone, token ?? undefined);
   const knownLink = useKnownLink();
+  const offers = useOfferedDepths();
   // Stamped ONCE, at mount, and never re-read. The note appears when the session
   // ends and is keyed to it, so mount time is the session's own end instant;
   // reading the clock again at the tap would post-date the writing to whenever
@@ -513,11 +572,42 @@ function WritingSessionOffer({
 
   const { phase } = moves;
   if (answered !== false || phase === 'declined') return null;
-  // A link the server already holds is this account's answer, on any device.
-  // Only the untouched invitation is withheld: a writer mid-choice keeps it.
-  if (phase === 'offered' && knownLink) return null;
+  if (phase === 'offered') {
+    const withheld = withheldInvitation(knownLink, offers);
+    if (withheld !== undefined) return withheld;
+  }
 
-  return renderHabitChoice(moves, habits) ?? renderPhase(moves, habits, placement, writing);
+  return renderHabitChoice(moves, habits) ?? renderPhase(moves, habits, placement, writing, offers);
+}
+
+/**
+ * What stands in for the untouched invitation when it is withheld, or
+ * ``undefined`` when it is not. A link the server already holds is this
+ * account's answer, on any device, and the note says nothing. With both depths
+ * the note invites into declined (#3073) there is nothing left to offer, and
+ * the note holds only the settle point below. A writer mid-choice keeps the
+ * note either way, which is why only the ``offered`` phase asks.
+ */
+function withheldInvitation(
+  knownLink: boolean,
+  offers: OfferedDepths,
+): React.JSX.Element | null | undefined {
+  if (knownLink) return null;
+  if (!offers.habit && !offers.practice) return <WithheldMarker />;
+  return undefined;
+}
+
+/**
+ * What the note holds when both depths it invites into were declined (#3073):
+ * nothing a writer can see or hear, only a settle point. It renders once the
+ * stored answer has been read, so a test can tell "the rings withheld the
+ * offer" apart from "the offer is still reading its stored answer", which also
+ * renders nothing.
+ */
+function WithheldMarker(): React.JSX.Element {
+  return (
+    <View testID="writing-session-offer-withheld" {...decorativeHidden()} pointerEvents="none" />
+  );
 }
 
 /** The "which habit?" phases, or ``null`` when the offer is in another one. */
@@ -548,6 +638,7 @@ function renderPhase(
   habits: readonly Habit[],
   placement: ReturnType<typeof usePlacement>,
   writing: FinishedWriting,
+  offers: OfferedDepths,
 ): React.JSX.Element {
   const { phase } = moves;
   if (phase === 'saved') {
@@ -585,6 +676,7 @@ function renderPhase(
 
   return (
     <Invitation
+      offers={offers}
       onKeepAsHabit={moves.keepAsHabit}
       onKeepAsPractice={moves.keepAsPractice}
       onDecline={moves.decline}
@@ -617,6 +709,8 @@ const styles = StyleSheet.create({
   },
   /** The row being placed, marked so the eye finds it without a colour claim. */
   rowNew: {
+    flexDirection: 'column',
+    alignItems: 'stretch',
     backgroundColor: colors.paper.anchorHighlight,
     borderRadius: BORDER_RADIUS.sm,
     paddingHorizontal: SPACING.xs,
@@ -628,6 +722,8 @@ const styles = StyleSheet.create({
   },
   rowControls: {
     flexDirection: 'row',
+    flexWrap: 'wrap',
+    maxWidth: '100%',
     gap: SPACING.xs,
   },
   actions: {

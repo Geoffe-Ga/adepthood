@@ -156,8 +156,8 @@ account. If that was you, this is the way back in.</p>
 you open it.</p>
 <hr style="{rule}">
 <p style="{muted_text}">Didn't ask for this? You can ignore this email — or
-<a href="{cancel_url}" style="{soft_link}">cancel the request</a> to invalidate
-the link immediately.</p>
+<a href="{cancel_url}" style="{soft_link}">cancel the request</a> and the link
+stops working right away.</p>
 <p style="{muted_text}padding-top:14px;">Have the app installed?
 <a href="{app_url}" style="{soft_link}">Open it there instead</a>.</p>
 </td></tr>

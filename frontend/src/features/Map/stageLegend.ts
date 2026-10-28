@@ -5,7 +5,7 @@
  * functions — no React.
  */
 
-import type { StageDisplay } from './mapLayout';
+import type { StageVocabulary } from './stageVocabulary';
 import { FULLNESS_ALIVE_THRESHOLD } from './wheelBalance';
 
 /** Fallback fullness for a stage with no wheel reading; it announces as thin. */
@@ -34,7 +34,7 @@ export const stateLabelSuffix = (state: StageState): string =>
 
 /** Full a11y label for a stage node: persona/descriptor, the balance read, then state. */
 export const stageNodeLabel = (
-  display: StageDisplay,
+  display: Pick<StageVocabulary, 'persona' | 'descriptor'>,
   fullness: number,
   state: StageState,
 ): string =>

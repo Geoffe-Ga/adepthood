@@ -479,3 +479,17 @@ describe('CareSupportNote — focus handoff', () => {
     expect(mockMoveFocus).not.toHaveBeenCalled();
   });
 });
+
+describe('CareSupportNote placement (#3380)', () => {
+  it('insets the card from the page edge by default', () => {
+    const { getByTestId } = render(<CareSupportNote care={carePayload()} />);
+    expect(StyleSheet.flatten(getByTestId('care-support-card').props.style).margin).toBeGreaterThan(
+      0,
+    );
+  });
+
+  it('seats the card flush inside a host card that already supplies the gutter', () => {
+    const { getByTestId } = render(<CareSupportNote care={carePayload()} flush />);
+    expect(StyleSheet.flatten(getByTestId('care-support-card').props.style).margin).toBe(0);
+  });
+});

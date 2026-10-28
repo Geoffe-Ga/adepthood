@@ -7,6 +7,19 @@ from datetime import datetime
 from pydantic import BaseModel
 
 
+class ReadingInvitation(BaseModel):
+    """A specific chapter and the current writing behind its model explanation."""
+
+    content_id: int
+    stage_number: int
+    title: str
+    entry_id: int
+    entry_title: str | None
+    quote: str
+    reason: str
+    benefit: str
+
+
 class InvitationResponse(BaseModel):
     """One pending invitation projected for the caller.
 
@@ -22,3 +35,4 @@ class InvitationResponse(BaseModel):
     target_id: int | None
     kind: str
     created_at: datetime
+    reading: ReadingInvitation | None = None

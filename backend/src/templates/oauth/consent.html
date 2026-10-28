@@ -1,0 +1,23 @@
+{% extends "base.html" %}
+{% block content %}
+<h1><span class="agent">{{ agent_name }}</span> {{ copy.CONSENT_HEADING_SUFFIX }}</h1>
+{% if named %}<p class="muted">{{ copy.CONSENT_NAME_NOTE }}</p>{% endif %}
+<form method="post" action="{{ action }}" class="decision">
+<input type="hidden" name="ticket" value="{{ ticket }}">
+<fieldset class="grants">
+<legend>{{ copy.CONSENT_GRANTS_HEADING }}</legend>
+<p id="grant-note" class="muted">{{ copy.CONSENT_GRANTS_NOTE }}</p>
+{% for name, sentence, checked in grants %}<label class="grant-choice">
+<input type="checkbox" name="{{ name }}" value="{{ checked_value }}" aria-describedby="grant-note"{% if checked %} checked{% endif %}>
+<span>{{ sentence }}</span>
+</label>
+{% endfor %}</fieldset>
+<p class="floor">{{ copy.CONSENT_FLOOR }}</p>
+<p>{{ copy.CONSENT_RETURN_PREFIX }} <strong class="return-host">{{ return_host }}</strong>.</p>
+{% if local_program %}<p class="notice">{{ copy.CONSENT_LOCAL_PROGRAM_NOTE }}</p>{% endif %}
+<div class="decision-buttons">
+<button type="submit" name="decision" value="approve" class="primary">{{ copy.CONSENT_APPROVE }}</button>
+<button type="submit" name="decision" value="decline" class="secondary">{{ copy.CONSENT_DECLINE }}</button>
+</div>
+</form>
+{% endblock %}

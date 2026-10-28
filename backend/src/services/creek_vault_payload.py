@@ -57,6 +57,7 @@ from uuid import UUID
 
 from domain.constants import TOTAL_STAGES
 from domain.creek_vault import (
+    INFERENCE_SOURCE_PATTERN,
     CreekCapability,
     CreekVaultCareEscalationError,
     CreekVaultPayloadError,
@@ -65,7 +66,10 @@ from domain.creek_vault import (
     VaultIngestAction,
     VaultIngestRequest,
     VaultIngestResult,
+    VaultJobFailureCode,
     VaultJournalWithdrawResult,
+    VaultLetter,
+    VaultLetterRequest,
     VaultLinkPass,
     VaultLinkStage,
     VaultPipelineJob,
@@ -212,6 +216,7 @@ def _capability_message(prefix: str, capability: CreekCapability) -> str:
 
 
 _REFLECT_UNREADABLE_MESSAGE = _capability_message(_RESPONSE_UNREADABLE, CreekCapability.REFLECT)
+_LETTER_UNREADABLE_MESSAGE = _capability_message(_RESPONSE_UNREADABLE, CreekCapability.LETTERS)
 
 
 def _bounded_text(raw: object, limit: int) -> str | None:
@@ -330,7 +335,8 @@ def _reflection_notes(raw: object) -> list[dict[str, str]]:
     """Narrow a vault's note list to the ones adepthood can actually render.
 
     A :func:`_bounded_items` read over :data:`_MAX_REFLECT_NOTES`, so a malformed
-    reflection defers to the cloud rather than breaking the resonance pass, and
+    note list reads as no notes -- a pass that keeps none -- rather than breaking
+    the resonance pass, and
     an over-eager or hostile vault cannot grow this work (or the JSON it feeds)
     without bound.
     """
@@ -550,6 +556,20 @@ def _reflection_status(raw: object) -> VaultReflectionStatus | None:
     return None if value is None else VaultReflectionStatus(value)
 
 
+def _inference_source(raw: object) -> str | None:
+    """Return the vault's route receipt when it is a published value, else ``None`` (#3483).
+
+    Contract 0.19's ``inference_source`` names the route that answered. It is
+    optional -- an older vault, an unchanged letter and an unlabelled route all
+    omit it -- so absence is an ordinary answer, and so is anything outside the
+    published vocabulary: an unreadable label is read as no receipt at all, never
+    guessed into one, because what adepthood bills on is the receipt.
+    """
+    if isinstance(raw, str) and INFERENCE_SOURCE_PATTERN.fullmatch(raw):
+        return raw
+    return None
+
+
 def _reflection_essay(raw: object) -> str | None:
     """Return a reflection's free prose when it is prose, else ``None``.
 
@@ -645,6 +665,7 @@ def _readable_reflection(
         routed_tier=routed_tier,
         related_praxis=_related_praxis_pages(payload.get("related_praxis")),
         related_eddies=_related_eddy_pages(payload.get("related_eddies")),
+        inference_source=_inference_source(payload.get("inference_source")),
     )
 
 
@@ -928,6 +949,99 @@ def _parse_http_voice_draft_delete_result(
     return _NOT_DELETED_VOICE_DRAFT
 
 
+def _letter_body(request: VaultLetterRequest, tier: WireTierCeiling) -> Mapping[str, object]:
+    """Map a letter request onto exactly Creek's published ``LetterRequest`` fields.
+
+    ``external_id`` is the addressed resource and travels in the URL; the
+    admission ceiling travels in its header. No ``title`` is sent: Creek's
+    placeholder is content-free, and a title derived from the writer's prose
+    would put that prose in a vault filename.
+    """
+    return {
+        "content": request.content,
+        "note": {
+            "kind": request.kind,
+            "anchor_text": request.anchor_text,
+            "note": request.note,
+        },
+        "tier": tier.value,
+    }
+
+
+_LETTER_ACTIONS = frozenset({VaultIngestAction.CREATED, VaultIngestAction.UNCHANGED})
+
+
+def _letter_response_matches_request(
+    payload: Mapping[str, object], request: VaultLetterRequest
+) -> bool:
+    """Verify the letter's success, identity, privacy, and authorship claims."""
+    observed = (
+        payload.get("status"),
+        payload.get("external_id"),
+        payload.get("tier"),
+        payload.get("tier_ceiling"),
+    )
+    expected = (
+        _VOICE_DRAFT_OK_STATUS,
+        request.external_id,
+        request.tier.value,
+        request.tier.value,
+    )
+    return observed == expected and _fixed_ai_attribution(payload.get("attribution"))
+
+
+def _letter_action(payload: Mapping[str, object]) -> VaultIngestAction | None:
+    """The store action a letter may report -- ``created`` or ``unchanged`` -- else ``None``."""
+    action = _coerce_ingest_action(payload.get("action"))
+    return action if action in _LETTER_ACTIONS else None
+
+
+def _letter_text(payload: Mapping[str, object]) -> str | None:
+    """The letter itself when it is a non-blank string, else ``None``."""
+    letter = payload.get("letter")
+    return letter if isinstance(letter, str) and letter.strip() else None
+
+
+def _readable_letter(
+    payload: Mapping[str, object], request: VaultLetterRequest
+) -> VaultLetter | None:
+    """Project a verified letter response, or ``None`` when any claim fails."""
+    if not _letter_response_matches_request(payload, request):
+        return None
+    action = _letter_action(payload)
+    fragment_id = _usable_fragment_id(payload)
+    letter = _letter_text(payload)
+    if action is None or fragment_id is None or letter is None:
+        return None
+    return VaultLetter(
+        letter=letter,
+        vault_ref=fragment_id,
+        action=action,
+        inference_source=_inference_source(payload.get("inference_source")),
+    )
+
+
+def _parse_http_letter_result(
+    payload: Mapping[str, object], request: VaultLetterRequest
+) -> VaultLetter:
+    """Read one ``POST /v1/letters`` answer as the letter asked for, or refuse it whole.
+
+    A literal ``escalate`` status raises
+    :class:`~domain.creek_vault.CreekVaultCareEscalationError` before any other
+    field is read, as the reflection parser does: that document is a different
+    published shape. Anything else that does not verify -- identity, tiers,
+    attribution, action, fragment id, a non-blank letter -- is a
+    :class:`~domain.creek_vault.CreekVaultPayloadError`, because a 2xx alone
+    does not prove the intended draft was stored with the intended privacy.
+    """
+    if payload.get("status") == _REFLECT_ESCALATE_STATUS:
+        raise CreekVaultCareEscalationError
+    letter = _readable_letter(payload, request)
+    if letter is None:
+        raise CreekVaultPayloadError(_LETTER_UNREADABLE_MESSAGE)
+    return letter
+
+
 def _parse_http_journal_withdraw_result(
     payload: object,
     *,
@@ -1164,7 +1278,8 @@ def _parse_classification_pass(
     """
     if not _admissible_pipeline_body(payload, _CLASSIFICATION_RESPONSE_REQUIRED_FIELDS, accepted):
         return None
-    if _wire_value(VaultClassificationMethod, payload["method"]) != expected_method.value:
+    method = _wire_value(VaultClassificationMethod, payload["method"])
+    if method not in {expected_method.value, VaultClassificationMethod.RULES.value}:
         return None
     complete = payload["complete"]
     counts = _counts(payload, _CLASSIFICATION_COUNT_FIELDS)
@@ -1180,6 +1295,7 @@ def _parse_classification_pass(
         praxis_marked=counts["praxis_marked"],
         tags_extracted=counts["tags_extracted"],
         complete=complete,
+        method=VaultClassificationMethod(method),
     )
 
 
@@ -1252,11 +1368,31 @@ def _parse_pending_pipeline_job(
     """Project a non-success status only when it carries no terminal result."""
     if payload.get("result") is not None:
         return None
+    state = VaultPipelineJobState(str(raw_state))
     return VaultPipelineJob(
         job_id=job.job_id,
         stage=job.stage,
-        state=VaultPipelineJobState(str(raw_state)),
+        state=state,
+        failure_code=(
+            _job_failure_code(payload.get("failure_code"))
+            if state is VaultPipelineJobState.FAILED
+            else None
+        ),
     )
+
+
+_JOB_FAILURE_CODES = {code.value: code for code in VaultJobFailureCode}
+
+
+def _job_failure_code(raw: object) -> VaultJobFailureCode | None:
+    """Read Creek 0.26's ``failure_code`` leniently: a known code, else ``None``.
+
+    Absent (a vault below 0.26, or a caller that declared an older minor),
+    ``null``, wrong-typed, or a code published after this build all read as
+    "no reason given" -- the failed job is still a failed job, and only a code
+    adepthood can act on changes what it does next.
+    """
+    return _JOB_FAILURE_CODES.get(raw) if isinstance(raw, str) else None
 
 
 def _parse_succeeded_pipeline_job(

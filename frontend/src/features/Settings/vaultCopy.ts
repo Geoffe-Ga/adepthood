@@ -1,5 +1,5 @@
 /**
- * Copy for the "Where your corpus lives" Settings surface.
+ * Copy for the "Where your writing lives" Settings surface.
  *
  * A private vault is an optional depth, not a missing piece. Adepthood commits
  * every entry to its own store before a vault is ever contacted, replication is
@@ -37,16 +37,16 @@ export { HIGHER_SELF_GAIN } from './higherSelfCopy';
  * Hub row label, and the screen's name everywhere it is shown. Plain words for
  * the place, without the product name of the software a vault runs (#3007).
  */
-export const VAULT_ROW_LABEL = 'Where your corpus lives';
+export const VAULT_ROW_LABEL = 'Where your writing lives';
 
 /**
  * Hub row description. States the offer, both ways to take it, and the floor
  * together, so a user who never opens the screen still learns that declining
- * costs them nothing. The gain is named only as the separate yes to sorting,
- * because a vault turns no sorting on.
+ * costs them nothing. The sorting gain leads, then the copy keeps that yes
+ * separate from the vault because a vault turns no sorting on.
  */
 export const VAULT_ROW_DESCRIPTION =
-  'An optional copy of what you write, kept in a vault Adepthood manages or one you run. Saying yes to sorting your writing by Aspect is a separate choice, and the app is complete without either.';
+  'Sorting lets reflections reach beyond your last few entries. Saying yes to sorting is a separate choice from an optional copy of what you write, kept in a vault Adepthood manages or one you run. The app is complete without either.';
 
 /** Header eyebrow. Sets the register before the title: this is a choice. */
 export const VAULT_EYEBROW = 'Optional';
@@ -55,7 +55,7 @@ export const VAULT_EYEBROW = 'Optional';
  * Screen and navigation title. Descriptive, not an instruction to connect. The
  * stack header paints it, so the screen body does not (#2962).
  */
-export const VAULT_TITLE = 'Where your corpus lives';
+export const VAULT_TITLE = 'Where your writing lives';
 
 /**
  * The one promise. It says ownership and makes the choice specifically about
@@ -73,7 +73,7 @@ export const VAULT_PROMISE =
  * happens, so it describes an addition and never a transfer.
  */
 export const VAULT_WHAT_IT_IS =
-  'A vault holds an account-scoped copy of what you write. You can connect one you run or ask Adepthood to manage one. A managed vault is readable by privileged operators, and neither kind receives Intimate entries.';
+  'A vault holds a copy of what you write, kept for your account alone. You can connect one you run or ask Adepthood to manage one. The people who run a managed vault can read what is in it, and neither kind ever receives Intimate entries.';
 
 /**
  * The floor. Declining is a complete way to use Adepthood, so this says so
@@ -86,14 +86,15 @@ export const VAULT_WHAT_IT_IS =
  * a vault" stays true of the journal and reflections, which are what it names.
  */
 export const VAULT_FLOOR =
-  'Adepthood is complete without a vault. Your journal, your reflections, and every entry you have written are all here either way. A vault adds an optional account-scoped copy of your entries; it does not turn sorting on, which stays a separate choice.';
+  'Your journal, your reflections, and every entry you have written are all here either way. A vault adds an optional copy of your entries, kept for your account alone; it does not turn sorting on, which stays a separate choice. Adepthood is complete without a vault.';
 
 /**
  * Said where somebody is about to create a managed vault, so that the press
- * is not mistaken for the yes to sorting. It names where that yes lives.
+ * is not mistaken for the yes to sorting. It names where that yes lives: the
+ * switches under Your writing in Settings, beside the vault row itself.
  */
 export const VAULT_SORTING_CHOICE =
-  'Creating a vault does not turn sorting on; that stays a separate choice, under What reflections draw on in Settings.';
+  'Creating a vault does not turn sorting on; that stays a separate choice, a switch under Your writing in Settings.';
 
 /**
  * The Intimate boundary. No Intimate body is sent. A prior non-Intimate copy is
@@ -149,9 +150,9 @@ export const VAULT_ADVANCED_LEARN_MORE = 'Learn how to run one';
 export const VAULT_MANAGED_UNKNOWN_BODY =
   'You can try again later, or connect a vault you run yourself under Advanced, below.';
 
-/** Managed vaults are not open to this account yet. Keeps the floor, names the fold. */
+/** Managed vaults are not open yet. Names the available fold without echoing the floor. */
 export const VAULT_MANAGED_UNAVAILABLE_BODY =
-  'Creating one is not available for this account yet. Adepthood is complete without it, and you can still connect a vault you run yourself under Advanced, below.';
+  'Creating one is not available for this account yet. You can still connect a vault you run yourself under Advanced, below.';
 
 /** Form heading with nothing connected. A thing to do, not a step outstanding. */
 export const VAULT_ADD_HEADING = 'Connect your vault';
@@ -326,7 +327,7 @@ export const VAULT_DISCONNECT_FAILED =
  * by hand.
  */
 export const VAULT_ADDRESS_UNREADABLE =
-  'Adepthood cannot read that as an address. Copy it again from your vault.';
+  'Adepthood does not recognise that as an address. Copy it again from your vault.';
 
 /**
  * The address parsed but did not name a vault. One classifier defect covers
@@ -388,3 +389,10 @@ export const VAULT_ADDRESS_NOT_FOUND =
  */
 export const VAULT_KEY_REFUSED =
   'That key has a space or a character Adepthood cannot send. Copy it again from your vault.';
+
+/**
+ * What a managed vault does with the writer's own key (#3437, ADR 0009's
+ * 2026-10-16 amendment): what happens to the key, and to the writing.
+ */
+export const MANAGED_VAULT_OWN_KEY_NOTICE =
+  'If you save your own Anthropic or OpenAI key, your managed vault writes your readings and letters, and sorts new writing, with it. Each time, Adepthood passes the key to your vault and your vault sends that writing to your provider. Neither keeps the key, and nothing is drawn from your BotMason messages.';

@@ -24,10 +24,11 @@ import {
   nearestStage,
 } from '../magnifierGeometry';
 import styles from '../Map.styles';
-import { STAGE_DISPLAY, TITLE_BY_STAGE } from '../mapLayout';
 import { STAGE_COUNT } from '../stageData';
 import type { StageData } from '../stageData';
 import { centerColumnBounds, stageWavePoint } from '../waveGeometry';
+
+import { goldenStage, mockMakeCanonicalStage } from './stageVocabularyGolden';
 
 const GRID_WIDTH = 300;
 const GRID_HEIGHT = 600;
@@ -289,22 +290,26 @@ const makeStage = (overrides: Partial<StageData> = {}): StageData => ({
 
 describe('lensCaption', () => {
   it('surfaces the stage title and subtitle from backend data', () => {
-    const caption = lensCaption(makeStage());
+    const caption = lensCaption(makeStage(), 4);
     expect(caption.title).toBe('Stage 4');
     expect(caption.subtitle).toBe('Subtitle');
   });
 
   it('carries a distinct subtitle through unchanged', () => {
-    const caption = lensCaption(makeStage({ subtitle: 'Active Yes-And-Ness' }));
+    const caption = lensCaption(makeStage({ subtitle: 'Active Yes-And-Ness' }), 4);
     expect(caption.subtitle).toBe('Active Yes-And-Ness');
   });
 
   it('resolves missing stage data to empty strings instead of throwing', () => {
-    expect(lensCaption(undefined)).toEqual({ title: '', subtitle: '' });
+    expect(lensCaption(undefined, 4)).toEqual({
+      title: '',
+      subtitle: '',
+      identity: 'stage 4 · BLUE',
+    });
   });
 
   it('surfaces an empty subtitle without falling over', () => {
-    const caption = lensCaption(makeStage({ subtitle: '' }));
+    const caption = lensCaption(makeStage({ subtitle: '' }), 4);
     expect(caption.subtitle).toBe('');
     expect(caption.title).toBe('Stage 4');
   });
@@ -312,27 +317,34 @@ describe('lensCaption', () => {
 
 describe('lensStageIdentity', () => {
   it('identifies a stage by its Aspect word, number, colour, and persona', () => {
-    const identity = lensStageIdentity(3);
-    expect(identity).toContain('Self-Love');
-    expect(identity).toContain('3 · RED');
-    expect(identity).toContain(STAGE_DISPLAY[3]?.persona ?? '');
+    const identity = lensStageIdentity(mockMakeCanonicalStage(3), 3);
+    expect(identity).toBe('Self-Love, stage 3 · RED, Dominator');
   });
 
-  it('falls back to the UNITY / EMPTINESS titles for the top stages', () => {
-    expect(lensStageIdentity(9)).toContain(TITLE_BY_STAGE[9]);
-    expect(lensStageIdentity(10)).toContain(TITLE_BY_STAGE[10]);
+  it('heads the title stages with their UNITY / EMPTINESS watermark', () => {
+    expect(lensStageIdentity(mockMakeCanonicalStage(9), 9)).toContain('UNITY, stage 9');
+    expect(lensStageIdentity(mockMakeCanonicalStage(10), 10)).toContain('EMPTINESS, stage 10');
   });
 
-  it('names every stage with its number and uppercased spiral colour', () => {
+  it('names every stage with its number, uppercased spiral colour and served persona', () => {
     for (let stage = 1; stage <= STAGE_COUNT; stage += 1) {
-      const identity = lensStageIdentity(stage);
+      const identity = lensStageIdentity(mockMakeCanonicalStage(stage), stage);
       expect(identity).toContain(`${stage} · ${(STAGE_ORDER[stage - 1] ?? '').toUpperCase()}`);
-      expect(identity).toContain(STAGE_DISPLAY[stage]?.persona ?? '');
+      expect(identity).toContain(goldenStage(stage).persona);
     }
   });
 
-  it('resolves an unknown stage to an empty identity instead of throwing', () => {
-    expect(lensStageIdentity(99)).toBe('');
+  it('reads whatever the server serves, not a copy of the canon', () => {
+    const rewritten = mockMakeCanonicalStage(2, {
+      aspect: 'Quiet Listening',
+      relationshipToFreeWill: 'Sentinel Persona',
+    });
+    expect(lensStageIdentity(rewritten, 2)).toBe('Quiet, stage 2 · PURPLE, Sentinel Persona');
+  });
+
+  it('still names a stage that has not loaded, by number and colour', () => {
+    expect(lensStageIdentity(undefined, 4)).toBe('stage 4 · BLUE');
+    expect(lensStageIdentity(undefined, 99)).toBe('stage 99 · ');
   });
 });
 

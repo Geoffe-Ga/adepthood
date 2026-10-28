@@ -102,7 +102,7 @@ describe('useSaveSessionMutation', () => {
     expect(s.rollback).toHaveBeenCalledTimes(1);
     expect(s.commit).not.toHaveBeenCalled();
     expect(s.setSaveError).toHaveBeenLastCalledWith(
-      expect.stringContaining("You haven't unlocked this stage yet"),
+      expect.stringContaining("This stage hasn't opened yet"),
     );
   });
 
@@ -162,4 +162,81 @@ describe('useSaveSessionMutation', () => {
     });
     expect(result.current.pending).toBe(false);
   });
+});
+
+describe('confirmed session side effects', () => {
+  it('runs a linked-habit callback only after the practice is committed', async () => {
+    let resolve!: (_session: PracticeSessionResponse) => void;
+    mockCreate.mockReturnValueOnce(
+      new Promise((done) => {
+        resolve = done;
+      }),
+    );
+    const s = spies();
+    const onConfirmed = jest.fn(async (session: PracticeSessionResponse) => {
+      expect(s.commit).toHaveBeenCalledTimes(1);
+      expect(session.id).toBe(SAVED.id);
+    });
+    const { result } = renderHook(() =>
+      useSaveSessionMutation({ ...s, errorOptions: {}, onConfirmed }),
+    );
+    let pending!: Promise<PracticeSessionResponse>;
+    act(() => {
+      pending = result.current.mutate(PAYLOAD);
+    });
+    expect(onConfirmed).not.toHaveBeenCalled();
+    await act(async () => {
+      resolve(SAVED);
+      await pending;
+    });
+    expect(onConfirmed).toHaveBeenCalledTimes(1);
+    expect(onConfirmed).toHaveBeenCalledWith(SAVED, PAYLOAD);
+  });
+
+  it('never turns a failed habit write into a failed or repeated practice save', async () => {
+    mockCreate.mockResolvedValueOnce(SAVED);
+    const s = spies();
+    const onConfirmed = jest.fn(async () => {
+      throw new Error('habit unavailable');
+    });
+    const { result } = renderHook(() =>
+      useSaveSessionMutation({ ...s, errorOptions: {}, onConfirmed }),
+    );
+    await act(async () => {
+      await expect(result.current.mutate(PAYLOAD)).resolves.toEqual(SAVED);
+    });
+    expect(onConfirmed).toHaveBeenCalledTimes(1);
+    expect(s.rollback).not.toHaveBeenCalled();
+    expect(s.setSaveError).toHaveBeenCalledTimes(1);
+    expect(mockCreate).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not log a habit when practice persistence fails', async () => {
+    mockCreate.mockRejectedValueOnce(new Error('practice unavailable'));
+    const s = spies();
+    const onConfirmed = jest.fn(async () => {});
+    const { result } = renderHook(() =>
+      useSaveSessionMutation({ ...s, errorOptions: {}, onConfirmed }),
+    );
+    await act(async () => {
+      await expect(result.current.mutate(PAYLOAD)).rejects.toThrow('practice unavailable');
+    });
+    expect(onConfirmed).not.toHaveBeenCalled();
+    expect(s.rollback).toHaveBeenCalledTimes(1);
+  });
+});
+
+it('finishes the practice save while an independent habit write remains pending', async () => {
+  mockCreate.mockResolvedValueOnce(SAVED);
+  const s = spies();
+  const onConfirmed = jest.fn(() => new Promise<void>(() => {}));
+  const { result } = renderHook(() =>
+    useSaveSessionMutation({ ...s, errorOptions: {}, onConfirmed }),
+  );
+  await act(async () => {
+    await expect(result.current.mutate(PAYLOAD)).resolves.toEqual(SAVED);
+  });
+  expect(onConfirmed).toHaveBeenCalledWith(SAVED, PAYLOAD);
+  expect(result.current.pending).toBe(false);
+  expect(s.rollback).not.toHaveBeenCalled();
 });

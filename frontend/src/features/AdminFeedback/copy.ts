@@ -10,7 +10,7 @@
 export const INBOX_TITLE = 'Beta feedback inbox';
 export const INBOX_EYEBROW = 'Operators only';
 export const INBOX_LEAD =
-  'Read, sort and summarise what beta testers reported. Reporters never see anything you add here.';
+  'Read, sort and summarise what beta testers reported. Nothing you add here is shown to reporters.';
 
 export const SETTINGS_SECTION_TITLE = 'Beta operations';
 export const SETTINGS_ROW_LABEL = INBOX_TITLE;

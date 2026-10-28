@@ -1,16 +1,21 @@
 import { z } from 'zod';
 
+import { DirectVendorError, readImageDirect } from './byokDirect';
 import { flattenGoalCompletions } from './flattenGoalCompletions';
+import { habitStorySchema, type ApiHabitStory } from './habitStorySchema';
 import { isDeviceKnownOffline, setNetworkOnlineGetter } from './networkSignal';
 import {
   apiGoalGroupSchema,
   accountDeletionReceiptSchema,
+  journalErasureReceiptSchema,
   dataExportArchiveSchema,
   authResponseSchema,
   contentItemSchema,
   corpusConsentListSchema,
   corpusConsentSchema,
   corpusInvitationSchema,
+  corpusSweepEstimateSchema,
+  corpusSweepSchema,
   acceptSuggestionResultSchema,
   completionSuggestionListResponseSchema,
   completionDetectionResponseSchema,
@@ -33,6 +38,7 @@ import {
   practiceSessionResponseSchema,
   practiceTagSchema,
   programCalendarSchema,
+  stageCorrespondenceSchema,
   promotedQuoteListResponseSchema,
   promotedQuoteSchema,
   promptListResponseSchema,
@@ -42,7 +48,9 @@ import {
   resonanceResponseSchema,
   essayResponseSchema,
   botmasonUsageSchema,
+  vaultKeyVendorsSchema,
   stageIntroSchema,
+  nextUnreadSchema,
   userPracticeSchema,
   stageProgressRecordSchema,
   stagePromptsResponseSchema,
@@ -51,6 +59,7 @@ import {
   transcribePageSchema,
   uiFlagsSchema,
   vaultConnectionResponseSchema,
+  connectedAgentSchema,
   vaultActivationResponseSchema,
   documentImportSchema,
   voiceDraftListSchema,
@@ -58,10 +67,14 @@ import {
   wheelBalanceSchema,
   feedbackReceiptSchema,
   type AccountDeletionReceiptT,
+  type CopyLocationT,
+  type NextUnreadT,
+  type JournalErasureReceiptT,
   type DataExportArchiveT,
   type AcceptSuggestionResultT,
   type CareKindT,
   type BotmasonUsageT,
+  type VaultKeyVendorsT,
   type CareResourceT,
   type CareResponseT,
   type CompletionSuggestionT,
@@ -70,7 +83,11 @@ import {
   type CorpusConsentListT,
   type CorpusConsentT,
   type CorpusInvitationT,
+  type CorpusSweepEstimateT,
+  type CorpusSweepT,
   type VoiceDraftT,
+  type MarginaliaSourceT,
+  type PassProvenanceT,
   type VoiceDraftListT,
   type VoiceReadinessT,
   type CompletionTargetTypeT,
@@ -85,6 +102,7 @@ import {
   type ReturnWeekT,
   type PasswordResetAcceptedT,
   type ProgramCalendarT,
+  type StageCorrespondenceT,
   type StagePromptsResponseT,
   type PromotedQuoteListItemT,
   type PromotedQuoteListResponseT,
@@ -106,6 +124,9 @@ import {
   type TimezoneReadT,
   type TranscribePageT,
   type VaultConnectionT,
+  type ConnectedAgentT,
+  agentActivityResponseSchema,
+  type AgentActivityT,
   type VaultActivationT,
   type DocumentImportT,
   type WheelBalanceT,
@@ -119,10 +140,27 @@ import {
   type FeedbackTriageDetailT,
   type FeedbackTriageSummaryT,
 } from './schemas';
+import {
+  beginAuthSession,
+  captureAuthScope,
+  captureAnonymousScope,
+  captureSessionToken,
+  installSessionTokenGetter,
+  isAuthScopeCurrent,
+} from './sessionToken';
+import { createTokenRotation, type RecoveryMode } from './tokenRotation';
+import { classifyTranscription } from './transcriptionContract';
 
-import { API_BASE_URL } from '@/config';
-import type { Habit as LocalHabit } from '@/features/Habits/Habits.types';
+import { API_BASE_URL, KEYLESS_PAGE_READ_REACHES_SERVER } from '@/config';
+import type { Habit as LocalHabit, HabitGoalSetup } from '@/features/Habits/Habits.types';
+import { aiAccessRevoked } from '@/features/Journal/aiAccessRevoked';
+import { type VaultKeyVendor, vaultKeyVendorFor } from '@/features/Journal/vaultKeyCopy';
 import type { ModeConfig } from '@/features/Practice/engine/types';
+import {
+  diagnosticRoute,
+  reportDiagnostic,
+  safeDiagnosticRequestId,
+} from '@/observability/diagnostics';
 import { DEFAULT_TIMEZONE, dayKeyToInstant } from '@/utils/dateUtils';
 
 export type { Page } from './schemas';
@@ -197,13 +235,26 @@ export class ApiError extends Error {
    * carried no id, which includes every request that never reached the server.
    */
   requestId: string | null;
+  /**
+   * The whole seconds a 429's ``Retry-After`` asked the client to wait, when it
+   * sent a readable one; ``null`` otherwise, including for every other status.
+   * The backend sends it on every rate-limit refusal and exposes it to
+   * cross-origin browsers, so a caller that waits can wait exactly this long.
+   */
+  retryAfterSeconds: number | null;
 
-  constructor(status: number, detail: string, requestId: string | null = null) {
+  constructor(
+    status: number,
+    detail: string,
+    requestId: string | null = null,
+    retryAfterSeconds: number | null = null,
+  ) {
     super(`Request failed with status ${status}: ${detail}`);
     this.name = 'ApiError';
     this.status = status;
     this.detail = detail;
     this.requestId = requestId;
+    this.retryAfterSeconds = retryAfterSeconds;
   }
 }
 
@@ -249,25 +300,41 @@ export type {
 /** Image encodings the transcription endpoint accepts (mirrors the backend allowlist). */
 export type MediaType = 'image/jpeg' | 'image/png' | 'image/webp';
 
+/** One page to read, and the declared tier of the entry it belongs to (#3059 AC15). */
+export interface TranscribePageInput {
+  imageBase64: string;
+  mediaType: MediaType;
+  /** Judged by the server before anything else: only `personal` and `public` are read. */
+  classification: JournalClassification;
+}
+
 /**
  * The stable, UI-facing failure taxonomy for photographed-text transcription. Every
  * server / transport error is collapsed into one of these so callers branch on
  * a small closed set instead of raw HTTP status + detail strings.
  */
 export type TranscriptionErrorKind =
+  | 'ai_access_revoked'
   | 'invalid_image'
   | 'image_too_large'
-  | 'model_lacks_vision'
   // The server read the image but got nothing usable back: no text in it, or
   // the model declined. Neither is billed, and a fresh shot is the next move.
   | 'no_text_found'
   | 'transcription_refused'
+  // The server will not read a page of the tier it was told (#3059 AC15): any
+  // tier but `personal` or `public`. Defence in depth behind the capture
+  // screen's own Intimate gate (#1882), and terminal -- the same page declared
+  // the same way is refused the same way, so typing it is the way forward.
+  | 'tier_refused'
   | 'wallet_exhausted'
-  // A spent *provider* balance, which `wallet_exhausted` (our own monthly
-  // metering) is not: its remedy is the API key, not the next monthly reset.
-  // Split by whose key it was, because that decides who can act.
+  // No personal key, on a server with nothing credits could buy (#3096): only a
+  // key of the writer's own can read the page, so it is terminal until one is added.
+  | 'key_required'
+  // A spent *provider* balance on the writer's own key, which `wallet_exhausted`
+  // (our own monthly metering) is not: its remedy is topping up that key's
+  // account, not the next monthly reset. The server's own key never pays for a
+  // page (ADR 0009 phase (a), #3067), so there is no server-balance sibling.
   | 'credit_exhausted'
-  | 'service_credit_exhausted'
   | 'rate_limited'
   | 'provider_error'
   | 'network'
@@ -333,12 +400,20 @@ export const UPLOAD_DOCUMENT_TIMEOUT_MS = 120_000;
 export class DocumentUploadError extends Error {
   kind: DocumentUploadErrorKind;
   status: number | null;
+  /** For a `rate_limited` refusal, the server's `Retry-After` in seconds when it named one. */
+  retryAfterSeconds: number | null;
 
-  constructor(kind: DocumentUploadErrorKind, status: number | null, cause?: unknown) {
+  constructor(
+    kind: DocumentUploadErrorKind,
+    status: number | null,
+    cause?: unknown,
+    retryAfterSeconds: number | null = null,
+  ) {
     super(`document upload failed: ${kind}`, cause === undefined ? undefined : { cause });
     this.name = 'DocumentUploadError';
     this.kind = kind;
     this.status = status;
+    this.retryAfterSeconds = retryAfterSeconds;
   }
 }
 
@@ -347,7 +422,7 @@ export class DocumentUploadError extends Error {
 // because ``@/api`` is where the app has always registered it.
 export { isDeviceKnownOffline, setNetworkOnlineGetter };
 
-let tokenGetter: (() => string | null) | null = null;
+export { captureSessionToken };
 
 /**
  * Reason a 401 surfaced.  Threaded through the unauthorized callback so
@@ -428,8 +503,14 @@ export function idempotencyKey(intent: string, ...parts: (string | number)[]): s
   return parts.length === 0 ? intent : `${intent}:${parts.join(':')}`;
 }
 
+/**
+ * Install (or clear) the session token getter. Installing one means a new
+ * session owner, so every remembered rotation is forgotten first: a rotation
+ * learned under one owner must never forward another owner's requests (#3034).
+ */
 export function setTokenGetter(getter: (() => string | null) | null) {
-  tokenGetter = getter;
+  rotation.reset();
+  installSessionTokenGetter(getter);
 }
 
 export function setOnUnauthorized(callback: ((reason: UnauthorizedReason) => void) | null) {
@@ -469,7 +550,151 @@ export function setLlmApiKeyReset(reset: (() => void) | null) {
  * no-op when no provider has registered a reset.
  */
 export function resetLlmApiKey(): void {
+  vaultKeyVendors = null;
+  vaultKeyVendorsAt = 0;
+  vaultKeyRead = null;
+  vaultKeyEpoch += 1;
   llmApiKeyReset?.();
+}
+
+/**
+ * The vendors whose writer key this account's vault said, on its last vendor
+ * read, that it writes with (#3437); ``null`` until it has been asked. Cleared
+ * with the key on session teardown, so one account's answer never decides
+ * where another's key goes.
+ */
+let vaultKeyVendors: readonly VaultKeyVendor[] | null = null;
+/** When {@link vaultKeyVendors} was answered (``Date.now()``), so a save can tell it is stale. */
+let vaultKeyVendorsAt = 0;
+/** The vendor read a save is waiting on, shared so concurrent saves ask once. */
+let vaultKeyRead: Promise<readonly VaultKeyVendor[] | null> | null = null;
+/** Bumped on teardown, so a read in flight across it cannot refill the cache. */
+let vaultKeyEpoch = 0;
+
+/**
+ * How long a journal save waits for a vendor answer it does not have yet
+ * before it goes without the key. Short, because the writing is what matters:
+ * a slower answer still lands in the cache for the next save.
+ */
+export const SAVE_KEY_DISCOVERY_WAIT_MS = 1_500;
+/**
+ * How long journal saves trust a vendor answer. A Vault upgrade can start
+ * accepting a vendor, and an answer kept for the whole session would hold every
+ * later save keyless (#3550 follow-up).
+ */
+export const VAULT_KEY_VENDORS_TTL_MS = 5 * 60_000;
+
+/**
+ * Ask the server which vendors' writer keys this account's vault would write
+ * with (#3437). Its own read, apart from the usage snapshot, because answering
+ * it means the server asks the vault; an app-provider account is answered
+ * empty without that.
+ */
+export const vaultRequestKeys = {
+  async get(token?: string): Promise<readonly VaultKeyVendor[]> {
+    const epoch = vaultKeyEpoch;
+    const answer = await request<VaultKeyVendorsT>('/user/vault-key-vendors', {
+      token,
+      schema: vaultKeyVendorsSchema as unknown as z.ZodType<VaultKeyVendorsT>,
+    });
+    if (epoch === vaultKeyEpoch) {
+      vaultKeyVendors = answer.vendors;
+      vaultKeyVendorsAt = Date.now();
+    }
+    return answer.vendors;
+  },
+};
+
+/** A request's optional writer-key header. */
+type KeyHeaders = Record<string, string> | undefined;
+
+/**
+ * The key header for a request that hands the vault new writing -- a journal
+ * save or edit, or a document import -- whose onboarding classification a
+ * managed vault runs with the writer's own key (#3437). Attached only when the
+ * stored key's vendor is one of ``vendors``, the vault's own answer, so the key
+ * travels only when a feature uses it; every other request carries no key at
+ * all. Callers obtain ``vendors`` first: a journal save through
+ * {@link journalKeyHeaders}, an upload through {@link documentKeyVendors}.
+ */
+function onboardingKeyHeaders(vendors: readonly VaultKeyVendor[]): KeyHeaders {
+  const key = llmApiKeyGetter?.() ?? null;
+  const vendor = vaultKeyVendorFor(key);
+  if (key === null || vendor === null) return undefined;
+  return vendors.includes(vendor) ? { [LLM_API_KEY_HEADER]: key } : undefined;
+}
+
+/** One shared vendor read; a failed read answers ``null`` so no older answer is reused. */
+function readVaultKeyVendors(token?: string): Promise<readonly VaultKeyVendor[] | null> {
+  if (vaultKeyRead === null) {
+    const read = vaultRequestKeys.get(token).catch(() => null);
+    vaultKeyRead = read;
+    void read.finally(() => {
+      if (vaultKeyRead === read) vaultKeyRead = null;
+    });
+  }
+  return vaultKeyRead;
+}
+
+/** ``promise``'s answer, or ``null`` once ``ms`` have passed without one. */
+function withinMs<T>(promise: Promise<T>, ms: number): Promise<T | null> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const bound = new Promise<null>((resolve) => {
+    timer = setTimeout(() => resolve(null), ms);
+  });
+  return Promise.race([promise, bound]).finally(() => clearTimeout(timer));
+}
+
+/** Why a save that waited for vendor discovery was not sent: its session ended meanwhile. */
+export const SESSION_CHANGED_DETAIL = 'session_changed';
+
+/**
+ * The key header for a journal save. Answered synchronously -- so the save is
+ * sent in the same tick, inside the auth scope it was made in -- when there is
+ * no key or a fresh vendor answer. Otherwise (the first save of a session, or
+ * an answer older than {@link VAULT_KEY_VENDORS_TTL_MS}) it waits up to
+ * {@link SAVE_KEY_DISCOVERY_WAIT_MS} for a new answer, so the first page written
+ * after sign-in or a Vault upgrade is classified with the writer's key rather
+ * than by the rules fallback. A slow or failed answer sends the save without
+ * the key.
+ */
+function journalKeyHeaders(token?: string): KeyHeaders | Promise<KeyHeaders> {
+  if (vaultKeyVendorFor(llmApiKeyGetter?.() ?? null) === null) return undefined;
+  const age = Date.now() - vaultKeyVendorsAt;
+  if (vaultKeyVendors !== null && age < VAULT_KEY_VENDORS_TTL_MS) {
+    return onboardingKeyHeaders(vaultKeyVendors);
+  }
+  return discoveredKeyHeaders(token);
+}
+
+/**
+ * Wait for a vendor answer, then refuse to send at all if the session ended
+ * meanwhile: the request would otherwise carry whichever account holds the
+ * device by then, filing one account's writing under another.
+ */
+async function discoveredKeyHeaders(token?: string): Promise<KeyHeaders> {
+  const scope = captureAuthScope();
+  const epoch = vaultKeyEpoch;
+  const vendors = await withinMs(readVaultKeyVendors(token), SAVE_KEY_DISCOVERY_WAIT_MS);
+  if (epoch !== vaultKeyEpoch || !isAuthScopeCurrent(scope)) {
+    throw new ApiError(0, SESSION_CHANGED_DETAIL);
+  }
+  return vendors === null ? undefined : onboardingKeyHeaders(vendors);
+}
+
+/** Run ``send`` with the save's key header, in the same tick when no wait is needed. */
+function withJournalKey<T>(token: string | undefined, send: (_key: KeyHeaders) => Promise<T>) {
+  const key = journalKeyHeaders(token);
+  return key instanceof Promise ? key.then(send) : send(key);
+}
+
+/** Refresh key eligibility before an explicit upload, including after a Vault upgrade. */
+function documentKeyVendors(token?: string): Promise<readonly VaultKeyVendor[] | null> {
+  const vendor = vaultKeyVendorFor(llmApiKeyGetter?.() ?? null);
+  if (vendor === null) return Promise.resolve(null);
+  // Discovery has the ordinary HTTP timeout. An old empty answer can outlive
+  // a Vault upgrade; a failed refresh must not reuse an old affirmative one.
+  return vaultRequestKeys.get(token).catch(() => null);
 }
 
 /** How a successful response body is read. */
@@ -503,8 +728,27 @@ interface RequestOptions<TResponse = unknown> {
   responseType?: ResponseType;
 }
 
+/**
+ * The bearer token a request carries. An explicit override is sent verbatim;
+ * the session token is forwarded through every rotation the client already
+ * knows about, so a request built before React re-renders with the refreshed
+ * token never re-sends the one the server just revoked (#3034).
+ */
 function resolveToken(token?: string): string | null {
-  return token ?? tokenGetter?.() ?? null;
+  if (token === undefined) return rotation.current();
+  // Screens that pass the session token explicitly (read from the auth
+  // context, which lags a rotation by a render) get the same forwarding; a
+  // genuinely foreign override never reaches the session's chain.
+  return isSessionLineage(token) ? rotation.current() : token;
+}
+
+/**
+ * Whether ``token`` is the session's current token or one the session rotated
+ * away from: its remembered chain reaches the token the session holds now.
+ */
+function isSessionLineage(token: string): boolean {
+  const live = rotation.current();
+  return live !== null && rotation.forward(token) === live;
 }
 
 function buildHeaders(
@@ -639,6 +883,29 @@ function detailFromArray(entries: readonly unknown[]): string {
  */
 const REQUEST_ID_HEADER = 'X-Request-ID';
 
+/** The header a 429 names its wait in (``rate_limit.rate_limit_exceeded_response``). */
+const RETRY_AFTER_HEADER = 'Retry-After';
+
+/** The status whose ``Retry-After`` this client reads. */
+const TOO_MANY_REQUESTS_STATUS = 429;
+
+/** ``Retry-After`` in its delta-seconds form: a plain non-negative integer. */
+const DELTA_SECONDS = /^\d+$/;
+
+/**
+ * Read a 429's ``Retry-After`` as whole seconds, or ``null`` when the response
+ * is not a 429 or carries no delta-seconds value. The HTTP-date form is not
+ * read: this backend never sends it, and a device clock is no basis for one.
+ * Tolerates a header-less test double, as {@link requestIdHeader} does.
+ */
+function retryAfterSeconds(res: Response): number | null {
+  if (res.status !== TOO_MANY_REQUESTS_STATUS) return null;
+  const { headers } = res;
+  if (!headers) return null;
+  const value = headers.get(RETRY_AFTER_HEADER)?.trim() ?? '';
+  return DELTA_SECONDS.test(value) ? Number(value) : null;
+}
+
 /** What a failed response tells us, after the single read of its body. */
 interface ErrorEnvelope {
   detail: string;
@@ -751,22 +1018,26 @@ export function classifyUnauthorizedDetail(detail: string | null): UnauthorizedR
 
 /** Status at or above which the failure is the server's, not the caller's. */
 const SERVER_ERROR_STATUS = 500;
+const AUTH_REFRESH_ROUTE = '/auth/refresh';
 
 /**
  * Build the ``ApiError`` for a failed response, noting server-side faults.
  *
- * The console line is the client half of the correlation contract: the server
- * logged a full traceback under this id and sent us nothing but the id, so
- * writing it down here is what lets a support conversation ("it broke around
- * 3pm") become a log query. Only 5xx is logged — a 404 or a 422 is answered by
- * the UI, needs no cross-referencing, and would drown the signal.
+ * Record a fixed route template and status for 5xx failures. Correlation IDs
+ * are logged only in the UUID4 forms the backend generates; its wider accepted
+ * inbound header alphabet can carry prose and is excluded. Error details and
+ * raw paths remain available to the caller, never to diagnostics.
  */
 async function apiErrorFromResponse(res: Response, path: string): Promise<ApiError> {
   const { detail, requestId } = await readErrorEnvelope(res);
-  if (res.status >= SERVER_ERROR_STATUS && requestId !== null) {
-    console.warn(`API ${res.status} on ${path} — server request id ${requestId}`);
+  if (res.status >= SERVER_ERROR_STATUS) {
+    reportDiagnostic('api_server_error', {
+      route: diagnosticRoute(path),
+      status: res.status,
+      requestId: safeDiagnosticRequestId(requestId),
+    });
   }
-  return new ApiError(res.status, detail, requestId);
+  return new ApiError(res.status, detail, requestId, retryAfterSeconds(res));
 }
 
 async function handleErrorResponse(res: Response, path: string): Promise<never> {
@@ -776,8 +1047,8 @@ async function handleErrorResponse(res: Response, path: string): Promise<never> 
 /**
  * Validate a response body with a Zod schema and raise
  * {@link ApiValidationError} if it does not conform. We intentionally log the
- * raw data at ``console.warn`` level so operators can diff the wire against
- * the frontend expectation when a deploy goes sideways.
+ * only a fixed route template, status and issue count; response bodies and
+ * validation issue text can contain private prose and never enter diagnostics.
  */
 function validateWithSchema<T>(
   path: string,
@@ -787,14 +1058,10 @@ function validateWithSchema<T>(
 ): T {
   const parsed = schema.safeParse(data);
   if (parsed.success) return parsed.data;
-  console.warn('[api] response validation failed', {
-    path,
+  reportDiagnostic('api_response_invalid', {
+    route: diagnosticRoute(path),
     status,
-    issues: parsed.error.issues,
-    // Don't leak full bodies in prod logs; the issue list already points at
-    // the offending path + reason. ``DEV`` flag lets engineers see the full
-    // body locally to triage quickly.
-    data: __DEV__ ? data : undefined,
+    issueCount: parsed.error.issues.length,
   });
   throw new ApiValidationError(path, status, parsed.error.issues);
 }
@@ -812,20 +1079,13 @@ async function parseResponse<T>(
   return data as T;
 }
 
-/** Outcome of a refresh attempt; ``hadToken`` separates "no session" from "refresh failed". */
-type RefreshResult = { token: string | null; hadToken: boolean };
-
 /**
- * Shared in-flight refresh (audit-contracts-05). When several requests 401 at
- * once — the common cold-start / expired-token case — each used to call
- * ``attemptTokenRefresh`` independently, firing a storm of concurrent refreshes
- * against the same token. We now keep a single promise so N concurrent callers
- * await exactly one network refresh; it is cleared on settle so a later,
- * genuine refresh still fires.
+ * One network refresh of ``currentToken``. Resolves the validated response, or
+ * ``null`` on any failure — a non-ok status (including the limiter's 429), a
+ * timeout, or a malformed body — so the caller decides what a failure means.
+ * Publishing the new token is the rotation module's job, not this function's.
  */
-let inFlightRefresh: Promise<RefreshResult> | null = null;
-
-async function performTokenRefresh(currentToken: string): Promise<RefreshResult> {
+async function performTokenRefresh(currentToken: string): Promise<AuthResponse | null> {
   try {
     // Route through ``fetchWithTimeout`` so a hung refresh aborts instead of
     // pinning the 401-retry loop; the ApiTimeoutError it throws on the clock
@@ -835,9 +1095,9 @@ async function performTokenRefresh(currentToken: string): Promise<RefreshResult>
       { method: 'POST', headers: { Authorization: `Bearer ${currentToken}` } },
       FETCH_TIMEOUT_MS,
       undefined,
-      '/auth/refresh',
+      AUTH_REFRESH_ROUTE,
     );
-    if (!refreshRes.ok) return { token: null, hadToken: true };
+    if (!refreshRes.ok) return null;
     const raw: unknown = await refreshRes.json();
     // BUG-API-007 / BUG-API-017: the prior cast (``as AuthResponse``)
     // accepted any JSON shape -- a ``{}`` body would set ``data.token``
@@ -851,43 +1111,66 @@ async function performTokenRefresh(currentToken: string): Promise<RefreshResult>
     // surface ``not_authenticated`` rather than crashing.
     const parsed = loginAuthResponseSchema.safeParse(raw);
     if (!parsed.success) {
-      console.warn('[api] /auth/refresh response failed validation', {
-        issues: parsed.error.issues,
+      reportDiagnostic('auth_refresh_invalid', {
+        route: AUTH_REFRESH_ROUTE,
+        issueCount: parsed.error.issues.length,
       });
-      return { token: null, hadToken: true };
+      return null;
     }
-    const data = parsed.data;
-    // Forward the server's stored timezone so the AuthContext can keep
-    // ``userTimezone`` in sync after a cold-start refresh.  Without
-    // this, ``userTimezone`` would stay at its ``"UTC"`` default until
-    // the user manually re-authenticated.
-    onTokenRefreshedCallback?.(data.token, data.timezone, currentToken);
-    return { token: data.token, hadToken: true };
+    return parsed.data;
   } catch {
-    return { token: null, hadToken: true };
+    return null;
   }
 }
 
 /**
- * Try to refresh the current token. Returns the new token on success, or
- * null if the refresh itself fails (e.g. the token is fully expired).
+ * The session's single refresh path (audit-contracts-05, #3034). Every refresh
+ * — a 401 retry, the proactive refresh, the resumed-session timezone backfill
+ * — goes through it, keyed by the token being refreshed: concurrent callers
+ * share one network call, a token already rotated is answered from memory,
+ * and a token the session no longer holds is never sent to the server, which
+ * revokes it on refresh and allows one refresh a minute.
  *
- * Returns ``null`` immediately when the session has no token at all so
- * an anonymous request that hit a protected endpoint (BUG-API-018) does
- * NOT issue a doomed POST to /auth/refresh that would 401 again.  The
- * caller distinguishes "no token" from "refresh failed" via the second
- * tuple element.
+ * A rotation fires ``onTokenRefreshedCallback`` once, with the server's stored
+ * timezone (so the AuthContext keeps ``userTimezone`` in sync after a
+ * cold-start refresh) and the prior token (so it can identity-guard the write).
  */
-async function attemptTokenRefresh(): Promise<RefreshResult> {
-  const currentToken = tokenGetter?.();
-  if (!currentToken) return { token: null, hadToken: false };
+const rotation = createTokenRotation<AuthResponse>({
+  performRefresh: performTokenRefresh,
+  currentToken: () => captureSessionToken() ?? null,
+  onRotated: (response, from) => {
+    onTokenRefreshedCallback?.(response.token, response.timezone, from);
+  },
+});
 
-  // Coalesce concurrent 401s onto a single refresh; clear on settle.
-  if (inFlightRefresh) return inFlightRefresh;
-  inFlightRefresh = performTokenRefresh(currentToken).finally(() => {
-    inFlightRefresh = null;
-  });
-  return inFlightRefresh;
+/** Status and detail of a {@link refreshSessionToken} that rotated nothing. */
+const HTTP_UNAUTHORIZED = 401;
+const REFRESH_FAILED_DETAIL = 'refresh_failed';
+
+/**
+ * Forget every remembered rotation. Session teardown and every fresh sign-in
+ * call this so one session can never forward a request to another session's
+ * token (#3034).
+ */
+export function resetTokenRotations(): void {
+  rotation.reset();
+  // The same boundary ends every captured mutation of the old session (#3326).
+  beginAuthSession();
+}
+
+/**
+ * Refresh the session token ``from`` through the shared coalescer (#3034).
+ *
+ * Resolves the server's response when this call — or the in-flight refresh of
+ * the same token it joined — rotated the token. Rejects with a 401
+ * ``ApiError`` otherwise: the refresh failed, ``from`` was already rotated (the
+ * rotation was published when it happened), or ``from`` is not this session's
+ * token at all, in which case nothing reached the network.
+ */
+export async function refreshSessionToken(from: string): Promise<AuthResponse> {
+  const attempt = await rotation.refresh(from);
+  if (attempt.kind === 'refreshed') return attempt.response;
+  throw new ApiError(HTTP_UNAUTHORIZED, REFRESH_FAILED_DETAIL);
 }
 
 function doFetch(
@@ -928,6 +1211,18 @@ interface RefreshRetryContext<T> {
   initialDetail: string | null;
   /** Whether this request may be attempted more than once (see RequestOptions.retry). */
   canRetry: boolean;
+  /**
+   * The bearer token the latest attempt actually carried. A 401 is about
+   * THAT token, not whatever the session holds by the time it lands, so the
+   * refresh path keys on it (#3034).
+   */
+  sentToken: string | null;
+  /**
+   * Whether a 401 on the latest attempt, if it carried no token, may still
+   * report "no session": false once the attempt was sent during an account
+   * transition or the scope it was sent under has moved on (#3366).
+   */
+  anonymousScopeCurrent: () => boolean;
 }
 
 /**
@@ -952,20 +1247,12 @@ function reasonForUnauthorized(detail: string | null, hadToken: boolean): Unauth
 }
 
 /**
- * Attempt a token refresh and retry the original request once. Returns the
- * parsed response on success, or null if refresh/retry is not applicable.
+ * Re-send the request once with ``token``. A 401 on this retry signs the
+ * session out only while ``token`` is still the session's current one; a
+ * session that moved on meanwhile is not this request's to end (#3034).
  */
-async function retryWithRefresh<T>(ctx: RefreshRetryContext<T>): Promise<T | null> {
-  const refresh = await attemptTokenRefresh();
-  if (refresh.token === null) {
-    // Only fire the global "you are no longer authenticated" callback
-    // when there *was* a session to begin with; an anonymous caller
-    // hitting a protected endpoint is ``not_authenticated``, not
-    // session-expired (BUG-API-018).
-    onUnauthorizedCallback?.(reasonForUnauthorized(ctx.initialDetail, refresh.hadToken));
-    return null;
-  }
-  const retryHeaders = buildHeaders(refresh.token, ctx.body, ctx.extraHeaders);
+async function retryOnce<T>(ctx: RefreshRetryContext<T>, token: string): Promise<T> {
+  const retryHeaders = buildHeaders(token, ctx.body, ctx.extraHeaders);
   const retryInit = buildFetchInit(ctx.method, ctx.body, retryHeaders);
   const retryRes = await doFetch(ctx.url, retryInit, {
     path: ctx.path,
@@ -975,7 +1262,9 @@ async function retryWithRefresh<T>(ctx: RefreshRetryContext<T>): Promise<T | nul
   if (!retryRes.ok) {
     if (retryRes.status === 401) {
       const retryDetail = await extractErrorDetail(retryRes);
-      onUnauthorizedCallback?.(reasonForUnauthorized(retryDetail, true));
+      if (token === rotation.current()) {
+        onUnauthorizedCallback?.(reasonForUnauthorized(retryDetail, true));
+      }
       // Return the new ApiError below using the freshly-read detail so
       // the caller surfaces the post-retry server message rather than a
       // generic "Request failed".
@@ -984,6 +1273,41 @@ async function retryWithRefresh<T>(ctx: RefreshRetryContext<T>): Promise<T | nul
     return handleErrorResponse(retryRes, ctx.path);
   }
   return parseResponse<T>(retryRes, ctx.path, ctx.schema, ctx.responseType);
+}
+
+/**
+ * Recover from a 401 on the token the request carried, then retry it once.
+ * Returns the parsed response on success, or null when there is nothing to
+ * retry with — in which case the caller throws the original 401.
+ *
+ * Only a session whose CURRENT token cannot be refreshed is signed out. A 401
+ * on a token the client already rotated is retried with the successor and no
+ * second refresh; a failure for a token the session has moved past is not a
+ * sign-out at all (#3034).
+ */
+async function retryWithRefresh<T>(
+  ctx: RefreshRetryContext<T>,
+  mode: RecoveryMode,
+): Promise<T | null> {
+  const recovery = await rotation.recover(ctx.sentToken, mode);
+  switch (recovery.kind) {
+    case 'rotated':
+      return retryOnce(ctx, recovery.token);
+    case 'no-session':
+      // An anonymous caller hitting a protected endpoint is
+      // ``not_authenticated``, not session-expired (BUG-API-018) — but only
+      // when its anonymity was real: one a transition imposed must not tear
+      // down the account adopted meanwhile (#3366).
+      if (ctx.anonymousScopeCurrent()) {
+        onUnauthorizedCallback?.(reasonForUnauthorized(ctx.initialDetail, false));
+      }
+      return null;
+    case 'expired':
+      onUnauthorizedCallback?.(reasonForUnauthorized(ctx.initialDetail, true));
+      return null;
+    case 'superseded':
+      return null;
+  }
 }
 
 async function handleUnauthorizedRetry<T>(
@@ -1003,20 +1327,11 @@ async function handleUnauthorizedRetry<T>(
   // surface as ``session_expired`` / ``not_authenticated``.
   if (ctx.initialDetail === 'invalid_credentials') return null;
 
-  if (!token) {
-    const retried = await retryWithRefresh<T>(ctx);
-    if (retried !== null) return retried;
-  } else {
-    // Caller passed an explicit token override (e.g. probing with a
-    // known-bad token from a settings screen).  Treat it as a session
-    // expiration only when the explicit token came from the live
-    // ``tokenGetter`` -- otherwise the global session is unaffected.
-    const sessionToken = tokenGetter?.() ?? null;
-    if (sessionToken !== null && sessionToken === token) {
-      onUnauthorizedCallback?.(reasonForUnauthorized(ctx.initialDetail, true));
-    }
-  }
-  return null;
+  if (!token) return retryWithRefresh<T>(ctx, 'refresh');
+  // A captured credential from this session keeps automatic renewal. Foreign
+  // overrides never recover through the live session, and a changed session
+  // no longer contains the initiating token in its remembered rotation chain.
+  return isSessionLineage(token) ? retryWithRefresh<T>(ctx, 'refresh') : null;
 }
 
 /**
@@ -1029,7 +1344,9 @@ async function attemptRequest<T>(
   ctx: RefreshRetryContext<T>,
   token: string | undefined,
 ): Promise<{ kind: 'ok'; value: T } | { kind: 'transient'; error: ApiError }> {
+  ctx.anonymousScopeCurrent = captureAnonymousScope();
   const resolved = resolveToken(token);
+  ctx.sentToken = resolved;
   const headers = buildHeaders(resolved, ctx.body, ctx.extraHeaders);
   const init = buildFetchInit(ctx.method, ctx.body, headers);
   const res = await doFetch(ctx.url, init, {
@@ -1113,6 +1430,8 @@ async function request<T>(
     responseType,
     initialDetail: null,
     canRetry,
+    sentToken: null,
+    anonymousScopeCurrent: () => true,
   };
 
   // Fast-fail when the network layer already knows we're offline: retrying
@@ -1205,6 +1524,8 @@ export interface ApiHabitWithGoals extends ApiHabit {
   goals: ApiGoal[];
 }
 
+export type { ApiHabitStory } from './habitStorySchema';
+
 export interface ApiHabitStats {
   day_labels: string[];
   values: number[];
@@ -1217,6 +1538,8 @@ export interface ApiHabitStats {
 }
 
 export interface HabitCreatePayload {
+  /** Atomic initial ladder; omit on ordinary habit edits. */
+  goals?: HabitGoalSetup;
   name: string;
   icon: string;
   start_date: string;
@@ -1389,9 +1712,10 @@ export const habits = {
   delete(habitId: number, token?: string): Promise<void> {
     return request<void>(`/habits/${habitId}`, { method: 'DELETE', token });
   },
-  /** Bulk-delete every goal-completion row for a habit (server-side reset). */
-  clearCompletions(habitId: number, token?: string): Promise<void> {
-    return request<void>(`/habits/${habitId}/completions`, { method: 'DELETE', token });
+  getStory(habitId: number, token?: string): Promise<ApiHabitStory> {
+    return request<unknown>(`/habits/${habitId}/story`, { token }).then((value) =>
+      habitStorySchema.parse(value),
+    );
   },
   getStats(habitId: number, token?: string): Promise<ApiHabitStats> {
     return request<ApiHabitStats>(`/habits/${habitId}/stats`, { token });
@@ -1399,7 +1723,13 @@ export const habits = {
 };
 
 // Goal completion types and client
+export type GoalLogSource = 'manual' | 'timer' | 'journal' | 'practice_link' | 'backfill';
+
 export interface GoalCompletionPayload {
+  /** The write path that originated this amount; timestamps remain server-owned. */
+  source?: GoalLogSource;
+  /** True only for units measured by a timer. */
+  via_timer?: boolean;
   goal_id: number;
   did_complete?: boolean;
   /** Signed unit delta. Omit for the legacy full-target/idempotent behavior. */
@@ -1411,9 +1741,18 @@ export interface GoalCompletionPayload {
   completed_on?: string;
 }
 
+/** A run threshold a check-in crossed (``schemas/milestone.py``). */
+export interface CheckInMilestone {
+  threshold: number;
+  kind?: 'streak_started' | 'streak_milestone' | 'personal_best' | 'comeback';
+  /** Server-written copy; shown verbatim when present. */
+  label?: string | null;
+  achieved_at?: string | null;
+}
+
 export interface CheckInResult {
   streak: number;
-  milestones: Array<{ threshold: number }>;
+  milestones: CheckInMilestone[];
   reason_code: string;
   /** Authoritative sum across every tier row for the affected habit/day. */
   day_units: number;
@@ -1593,6 +1932,17 @@ export interface Marginalia {
   status: MarginaliaStatus;
   created_at: string;
   updated_at: string;
+  /**
+   * Which side answered the note and its letter, as the server recorded it
+   * (#3062). Optional and nullable: a note written before receipts existed, or
+   * served by an older server, has none -- render it as "Source not recorded"
+   * and never infer it from the vault connection.
+   */
+  source?: MarginaliaSourceT | null;
+  source_provider?: string | null;
+  source_model?: string | null;
+  essay_source?: MarginaliaSourceT | null;
+  receipt_version?: number | null;
 }
 
 /**
@@ -1645,6 +1995,11 @@ export interface EssayResponse extends Marginalia {
   remaining_messages: number;
   remaining_balance: number;
   monthly_reset_date: string;
+  /**
+   * The server's reviewed care surface, present only when a vault's care guard
+   * answered the letter ask instead of writing one (#3380); ``essay`` is then null.
+   */
+  care?: CareResponse | null;
 }
 
 /** How one essay request is sent. */
@@ -1655,9 +2010,18 @@ export interface EssayRequestOptions {
    * so only the explicit Ask action sets it.
    */
   priceAcknowledged?: boolean;
+  /**
+   * The payer route the price was disclosed for (#3385). The server refuses a
+   * first letter whose route has changed since (409
+   * ``essay_price_unacknowledged``), so the writer is shown the price again.
+   */
+  disclosedRoute?: ResonanceRoute;
   token?: string;
   apiKey?: string;
 }
+
+/** Which side the payer disclosure named: the writer's key, or a vault credit (#3262). */
+export type ResonanceRoute = BotmasonUsageT['resonance_route'];
 
 export interface ResonanceResponse {
   marginalia: Marginalia[];
@@ -1696,6 +2060,8 @@ export interface ResonanceResponse {
   related_praxis?: RelatedPraxis[];
   /** Recurring corpus patterns this reflection touched; absent on legacy responses. */
   related_eddies?: RelatedEddy[];
+  /** Which side answered each operation and who paid (#3062); absent on legacy responses. */
+  provenance?: PassProvenanceT | null;
 }
 
 export interface MarginaliaListResponse {
@@ -1732,10 +2098,12 @@ export interface JournalListParams {
   offset?: number;
 }
 
-/** Optional bring-your-own-key header for the LLM endpoints. */
+/** Optional bring-your-own-key header for the LLM endpoints that still relay it. */
 // Resolve the bring-your-own-key header: an explicit per-call key wins, else the
 // key registered by the BYOK provider (ApiKeyContext) at call time so rotations
-// apply immediately. Empty/absent → no header (backend falls back to its env).
+// apply immediately. Empty/absent → no header, and the server refuses the
+// request ``llm_key_required`` unless the writer's vault answers it. Page
+// reading never uses this: the device calls the vendor itself (#3067).
 const byokHeaders = (apiKey?: string | null): Record<string, string> | undefined => {
   // `undefined` means "use the session's current key" for legacy callers.
   // Explicit `null` pins a disclosed server-paid request even if key hydration
@@ -1746,8 +2114,8 @@ const byokHeaders = (apiKey?: string | null): Record<string, string> | undefined
 
 /** Statuses this endpoint answers with more than one distinct condition. */
 const TRANSCRIBE_PAYMENT_REQUIRED = 402;
+const TRANSCRIBE_FORBIDDEN = 403;
 const TRANSCRIBE_UNPROCESSABLE = 422;
-const TRANSCRIBE_SERVICE_UNAVAILABLE = 503;
 
 /** One status's `detail` sub-map, paired with what an unlisted detail means. */
 interface TranscribeDetailRule {
@@ -1758,32 +2126,35 @@ interface TranscribeDetailRule {
 /**
  * Per-status `detail` rules: the endpoint reuses one status for several distinct
  * conditions, so the status alone cannot classify them. A 402 is a spent monthly
- * wallet, a spent provider balance, or a missing key; a 422 is a bad image, a
- * text-only model, or an unusable read (no text found, or a refused read); a 503 is a spent server balance or a genuine outage. The 422
+ * wallet, a spent provider balance, or a missing key; a 403 `tier_refused` is a
+ * declared tier the server will not read (#3059); a 422 is a bad image, a
+ * text-only model, or an unusable read (no text found, or a refused read). The 422
  * fallback also absorbs the Pydantic array-detail case that `extractErrorDetail`
  * collapses to `'Request failed'`.
  */
 const TRANSCRIBE_DETAIL_RULES: Record<number, TranscribeDetailRule> = {
   [TRANSCRIBE_PAYMENT_REQUIRED]: {
     kinds: {
-      // Keyless BYOK is a client misconfiguration, NOT a spent wallet.
-      llm_key_required: 'unknown',
+      // No personal key and nothing on the server to pay with: NOT a spent
+      // wallet, and not a blip either -- the remedy is a key (#3096).
+      llm_key_required: 'key_required',
       llm_credit_exhausted: 'credit_exhausted',
     },
     fallback: 'wallet_exhausted',
   },
+  [TRANSCRIBE_FORBIDDEN]: {
+    // Only the tier refusal is named: any other 403 is not something this
+    // surface can say anything specific about.
+    kinds: { tier_refused: 'tier_refused' },
+    fallback: 'unknown',
+  },
   [TRANSCRIBE_UNPROCESSABLE]: {
     kinds: {
       image_too_large: 'image_too_large',
-      model_lacks_vision: 'model_lacks_vision',
       no_text_found: 'no_text_found',
       transcription_refused: 'transcription_refused',
     },
     fallback: 'invalid_image',
-  },
-  [TRANSCRIBE_SERVICE_UNAVAILABLE]: {
-    kinds: { llm_service_credit_exhausted: 'service_credit_exhausted' },
-    fallback: 'unknown',
   },
 };
 
@@ -1799,6 +2170,7 @@ const TRANSCRIBE_STATUS_KINDS: Record<number, TranscriptionErrorKind> = {
 
 /** Classify an `ApiError` from the transcription endpoint into a stable kind. */
 function classifyTranscribeApiError(err: ApiError): TranscriptionErrorKind {
+  if (aiAccessRevoked(err)) return 'ai_access_revoked';
   const rule = TRANSCRIBE_DETAIL_RULES[err.status];
   if (rule) {
     return rule.kinds[err.detail] ?? rule.fallback;
@@ -1827,6 +2199,59 @@ function toTranscriptionError(err: unknown): TranscriptionError {
   return new TranscriptionError('unknown', status, err);
 }
 
+/**
+ * A direct vendor failure in the page-read taxonomy. Every kind but one is the
+ * same word on both sides; a stored key naming no vendor never left the device,
+ * and the writer has nothing more specific to do about it than about any other
+ * unforeseen failure. No `cause`: see {@link DirectVendorError}'s PRIVACY note.
+ */
+function directToTranscriptionError(err: unknown): TranscriptionError {
+  if (!(err instanceof DirectVendorError)) return new TranscriptionError('unknown', null);
+  const kind: TranscriptionErrorKind = err.kind === 'unrecognised_key' ? 'unknown' : err.kind;
+  return new TranscriptionError(kind, err.status);
+}
+
+/**
+ * Read one page with the writer's own key, from this device straight to that
+ * key's vendor (ADR 0009 phase (a), #3067). Neither the key nor the page goes
+ * to Adepthood: the only request it sees is the content-free admission, which
+ * answers 503 `ai_suspended` while an operator has switched external AI off for
+ * a privacy incident (#3075), and 403 `tier_refused` for a page whose declared
+ * tier may not be read (#3059). The admission carries that tier and nothing
+ * else. Admission fails closed -- the page is not sent when Adepthood cannot
+ * be asked -- and a reply that is no text or a refusal is its typed kind, never
+ * the page's text, exactly as the server judged it.
+ */
+async function transcribePageDirect(
+  key: string,
+  page: TranscribePageInput,
+  token: string | undefined,
+): Promise<TranscribePageT> {
+  try {
+    await request<void>('/journal/transcribe-page/direct-admission', {
+      method: 'POST',
+      body: { classification: page.classification },
+      token,
+    });
+  } catch (err: unknown) {
+    throw toTranscriptionError(err);
+  }
+  let text: string;
+  try {
+    const { imageBase64, mediaType } = page;
+    text = await readImageDirect(
+      key,
+      { imageBase64, mediaType },
+      { timeoutMs: TRANSCRIBE_TIMEOUT_MS },
+    );
+  } catch (err: unknown) {
+    throw directToTranscriptionError(err);
+  }
+  const verdict = classifyTranscription(text);
+  if (verdict !== 'transcribed') throw new TranscriptionError(verdict, null);
+  return { text };
+}
+
 /** HTTP statuses the upload endpoint answers with, mapped to a stable kind. */
 const UPLOAD_STATUS_KINDS: Record<number, DocumentUploadErrorKind> = {
   413: 'too_large',
@@ -1847,7 +2272,8 @@ function toDocumentUploadError(err: unknown): DocumentUploadError {
     if (err.status === 413 && err.detail === 'managed_document_too_large') {
       return new DocumentUploadError('managed_too_large', err.status);
     }
-    return new DocumentUploadError(UPLOAD_STATUS_KINDS[err.status] ?? 'unknown', err.status, err);
+    const kind = UPLOAD_STATUS_KINDS[err.status] ?? 'unknown';
+    return new DocumentUploadError(kind, err.status, err, err.retryAfterSeconds);
   }
   // A raw fetch failure surfaces as a TypeError on non-idempotent POSTs (which
   // the core client does not retry) rather than the synthesized ApiError(0).
@@ -1858,6 +2284,18 @@ function toDocumentUploadError(err: unknown): DocumentUploadError {
   return new DocumentUploadError('unknown', status, err);
 }
 
+/**
+ * Where a folder-imported document sat (#3554): the import's name and the
+ * path from that folder's root to the file. Identity metadata only; the
+ * server hashes it into the document's upload identity and keeps neither.
+ */
+export interface ImportDocumentSource {
+  /** The import's stable name; by default, the chosen folder's own name. */
+  namespace: string;
+  /** `/`-separated path under that folder, ending in `filename`. */
+  relativePath: string;
+}
+
 /** One document handed over: its own name, its bytes, and its tier. */
 export interface ImportDocumentInput {
   /** The document's own name; its extension selects how it is read. */
@@ -1866,6 +2304,17 @@ export interface ImportDocumentInput {
   contentBase64: string;
   /** The privacy tier the uploader chose, honored end to end. */
   classification: JournalClassification;
+  /** Set for a document from a folder import, so same-named notes stay distinct. */
+  source?: ImportDocumentSource;
+}
+
+/** The request's optional folder pair, sent together or not at all. */
+function importSourceFields(
+  source: ImportDocumentSource | undefined,
+): { source_namespace: string; source_relative_path: string } | Record<string, never> {
+  return source === undefined
+    ? {}
+    : { source_namespace: source.namespace, source_relative_path: source.relativePath };
 }
 
 /**
@@ -1879,6 +2328,15 @@ export interface ImportDocumentInput {
  * the app computing a second answer to a question the server has already
  * answered, and answering it differently the day the two disagree.
  */
+/** How much of an account's writing is still unsorted (``GET /corpus/sweep``). */
+export type CorpusSweepEstimate = CorpusSweepEstimateT;
+/** What one bounded sweep pass did, and what it left (``POST /corpus/sweep``). */
+export type CorpusSweepResult = CorpusSweepT;
+
+const corpusSweepEstimateResponseSchema =
+  corpusSweepEstimateSchema as unknown as z.ZodType<CorpusSweepEstimate>;
+const corpusSweepResponseSchema = corpusSweepSchema as unknown as z.ZodType<CorpusSweepResult>;
+
 export const corpus = {
   /**
    * Hand one document to this account's corpus and report where it landed.
@@ -1894,13 +2352,28 @@ export const corpus = {
    * error message or a log line.
    */
   async importDocument(
-    { filename, contentBase64, classification }: ImportDocumentInput,
+    { filename, contentBase64, classification, source }: ImportDocumentInput,
     token?: string,
   ): Promise<DocumentImportT> {
+    const scope = captureAuthScope();
+    const epoch = vaultKeyEpoch;
     try {
+      const vendors = await documentKeyVendors(token);
+      if (epoch !== vaultKeyEpoch || !isAuthScopeCurrent(scope)) {
+        throw new DocumentUploadError('unknown', null);
+      }
+      // Only this session may use the answer. Build from that answer rather
+      // than re-entering discovery if teardown cleared the shared cache.
+      const headers = vendors === null ? undefined : onboardingKeyHeaders(vendors);
       return await request<DocumentImportT>('/corpus/import', {
         method: 'POST',
-        body: { filename, content_base64: contentBase64, classification },
+        body: {
+          filename,
+          content_base64: contentBase64,
+          classification,
+          ...importSourceFields(source),
+        },
+        headers,
         token,
         timeoutMs: UPLOAD_DOCUMENT_TIMEOUT_MS,
         schema: documentImportSchema as unknown as z.ZodType<DocumentImportT>,
@@ -1928,6 +2401,42 @@ export const corpus = {
     return request<VoiceReadinessT>('/corpus/voice-readiness', {
       token,
       schema: voiceReadinessSchema as unknown as z.ZodType<VoiceReadinessT>,
+    });
+  },
+
+  /**
+   * How much of this account's own writing is still unsorted.
+   *
+   * Asked whether or not the account has agreed to sorting -- the server
+   * answers the count either way, so a surface can decide what to offer. No
+   * trailing slash: the router mounts ``/corpus/sweep`` directly.
+   */
+  sweepEstimate(token?: string): Promise<CorpusSweepEstimate> {
+    return request<CorpusSweepEstimate>('/corpus/sweep', {
+      token,
+      schema: corpusSweepEstimateResponseSchema,
+    });
+  },
+
+  /**
+   * Sort the next bounded share of this account's backlog, and say what is left.
+   *
+   * No body: the shipped route takes none, and it is free, so there is no price
+   * to acknowledge. Deliberately not retried, like ``corpusConsent.set`` -- a
+   * pass spends a provider call per entry it reaches, and a lost response is one
+   * a person should be told about rather than one the client sends again. A
+   * ``429`` (the per-account limit) reaches the caller as an ``ApiError``.
+   *
+   * A pass can sort nothing and leave a remainder (no standing consent, or
+   * entries the classifier places nowhere), so callers offer another pass on a
+   * person's request and never loop waiting for zero.
+   */
+  sweep(token?: string): Promise<CorpusSweepResult> {
+    return request<CorpusSweepResult>('/corpus/sweep', {
+      method: 'POST',
+      token,
+      schema: corpusSweepResponseSchema,
+      retry: false,
     });
   },
 };
@@ -1965,51 +2474,90 @@ export const journal = {
     options: { token?: string; idempotencyKey?: string } = {},
   ): Promise<JournalMessage> {
     // Trailing slash — the collection POST route is `/journal/` (#790).
-    return request<JournalMessage>('/journal/', {
-      method: 'POST',
-      body: entry,
-      token: options.token,
-      headers: options.idempotencyKey
-        ? { [IDEMPOTENCY_KEY_HEADER]: options.idempotencyKey }
-        : undefined,
-    });
+    const idempotency = options.idempotencyKey
+      ? { [IDEMPOTENCY_KEY_HEADER]: options.idempotencyKey }
+      : undefined;
+    return withJournalKey(options.token, (onboarding) =>
+      request<JournalMessage>('/journal/', {
+        method: 'POST',
+        body: entry,
+        token: options.token,
+        headers: idempotency || onboarding ? { ...idempotency, ...onboarding } : undefined,
+      }),
+    );
   },
   /**
    * Edit an entry. Only the fields present on ``patch`` are sent (``JSON`` drops
    * ``undefined``), so callers can update the title without touching the body.
+   *
+   * An edit to the body or the tier re-onboards the entry, so it carries the
+   * writer's key under the same rule as ``create``; any other edit hands the
+   * vault nothing new and carries no key.
    */
   update(entryId: number, patch: JournalEntryUpdate, token?: string): Promise<JournalMessage> {
-    return request<JournalMessage>(`/journal/${entryId}`, {
-      method: 'PATCH',
-      body: patch,
-      token,
-    });
+    const send = (headers: KeyHeaders) =>
+      request<JournalMessage>(`/journal/${entryId}`, {
+        method: 'PATCH',
+        body: patch,
+        token,
+        headers,
+      });
+    const reingests = patch.message !== undefined || patch.classification !== undefined;
+    return reingests ? withJournalKey(token, send) : send(undefined);
   },
   delete(entryId: number, token?: string): Promise<void> {
     return request<void>(`/journal/${entryId}`, { method: 'DELETE', token });
   },
   /**
-   * Transcribe the text in one captured image (a page, a screenshot, a photo of
-   * a screen) from base64. Stateless: it persists nothing and just returns the
-   * OCR'd text; an image with no text, or a declined read, is a typed 422
-   * (`no_text_found` / `transcription_refused`) and is not charged. Charges one wallet unit,
-   * so it is deliberately NON-idempotent — there is no auto-retry and callers
-   * must not resend on transient failure without user intent. Supports BYOK via
-   * the optional api key. PRIVACY: the image payload is never logged, and a
-   * {@link TranscriptionError} message never carries it. A 402 disambiguates a
-   * spent wallet (`wallet_exhausted`) from a missing BYOK key (`unknown`).
+   * Delete a page here even though the vault holding its copy cannot confirm
+   * the copy gone (#3094) — the "I can't reach it" path after a delete answered
+   * a withdrawal 503. The server still tries every owed withdrawal first; the
+   * receipt says whether the copy was confirmed absent or may remain.
+   */
+  eraseLocally(entryId: number, token?: string): Promise<JournalErasureReceipt> {
+    return request<JournalErasureReceipt>(`/journal/${entryId}/erase-locally`, {
+      method: 'POST',
+      token,
+      schema: journalErasureReceiptSchema,
+    });
+  },
+  /**
+   * Transcribe one image of text -- a handwritten or typed page, a screenshot, a
+   * photo of a screen -- from base64. Stateless: it persists nothing and just
+   * returns the text; an image with no text, or a declined read, is a typed
+   * failure (`no_text_found` / `transcription_refused`), never the page's text.
+   *
+   * With the writer's own key -- passed explicitly, else the one the BYOK
+   * provider registered -- the page goes from this device straight to that key's
+   * vendor ({@link transcribePageDirect}); neither the key nor the page reaches
+   * Adepthood (ADR 0009 phase (a), #3067). Without one it is refused
+   * `key_required` on the device and sent nowhere -- except in a development
+   * build, whose local server's stub test seam can answer it. Deliberately
+   * NON-idempotent: no auto-retry, and callers must not resend on a transient
+   * failure without the writer asking. PRIVACY: the image payload is never
+   * logged, and a {@link TranscriptionError} message never carries it. Both
+   * paths declare the page's tier, and the server refuses any tier it may not
+   * read with the terminal `tier_refused` kind (#3059 AC15).
    */
   async transcribePage(
-    { imageBase64, mediaType }: { imageBase64: string; mediaType: MediaType },
+    page: TranscribePageInput,
     token?: string,
     apiKey?: string,
   ): Promise<TranscribePageT> {
+    const key = apiKey === undefined ? (llmApiKeyGetter?.() ?? null) : apiKey;
+    if (key) return transcribePageDirect(key, page, token);
+    // Outside a development build the server can only refuse a keyless page,
+    // so it is refused here and the page goes nowhere.
+    if (!KEYLESS_PAGE_READ_REACHES_SERVER) throw new TranscriptionError('key_required', null);
     try {
       return await request<TranscribePageT>('/journal/transcribe-page', {
         method: 'POST',
-        body: { image_base64: imageBase64, media_type: mediaType },
+        body: {
+          image_base64: page.imageBase64,
+          media_type: page.mediaType,
+          classification: page.classification,
+        },
         token,
-        headers: byokHeaders(apiKey),
         timeoutMs: TRANSCRIBE_TIMEOUT_MS,
         schema: transcribePageSchema as unknown as z.ZodType<TranscribePageT>,
       });
@@ -2175,12 +2723,38 @@ export const reflections = {
  * ``502 llm_provider_error`` as an ``ApiError``); ``list`` is a plain read.
  */
 export const resonance = {
-  /** Run a resonance pass over an entry: persists + returns notes and balances. */
-  generate(entryId: number, token?: string, apiKey?: string | null): Promise<ResonanceResponse> {
-    return request<ResonanceResponse>(`/journal/${entryId}/resonance`, {
+  /**
+   * Run a resonance pass over an entry: persists + returns notes and balances.
+   *
+   * ``disclosedRoute`` is the payer route the writer was shown (#3385); a pass
+   * whose route has changed since is refused ``409
+   * resonance_payment_unconfirmed`` before anything is charged or dialled.
+   */
+  generate(
+    entryId: number,
+    token?: string,
+    apiKey?: string | null,
+    disclosedRoute?: ResonanceRoute,
+  ): Promise<ResonanceResponse> {
+    const query = disclosedRoute === undefined ? '' : `?disclosed_route=${disclosedRoute}`;
+    return request<ResonanceResponse>(`/journal/${entryId}/resonance${query}`, {
       method: 'POST',
       token,
       headers: byokHeaders(apiKey),
+      schema: resonanceResponseSchema as unknown as z.ZodType<ResonanceResponse>,
+    });
+  },
+  /**
+   * Ask for a pass's free exits only (#3389): the private answer for an entry
+   * the server holds as intimate, care for a locally flagged one, or the payer
+   * refusal. Never a charge -- a payer that could now pay is answered
+   * ``409 resonance_payment_unconfirmed`` -- and never carries a key, which no
+   * free exit needs.
+   */
+  freeExits(entryId: number, token?: string): Promise<ResonanceResponse> {
+    return request<ResonanceResponse>(`/journal/${entryId}/resonance?free_only=true`, {
+      method: 'POST',
+      token,
       schema: resonanceResponseSchema as unknown as z.ZodType<ResonanceResponse>,
     });
   },
@@ -2196,12 +2770,15 @@ export const resonance = {
    * the balances either way.
    */
   essay(marginaliaId: number, options: EssayRequestOptions = {}): Promise<EssayResponse> {
-    const { priceAcknowledged = false, token, apiKey } = options;
+    const { priceAcknowledged = false, disclosedRoute, token, apiKey } = options;
     return request<EssayResponse>(`/journal/marginalia/${marginaliaId}/essay`, {
       method: 'POST',
       token,
       headers: byokHeaders(apiKey),
-      body: { price_acknowledged: priceAcknowledged },
+      body:
+        disclosedRoute === undefined
+          ? { price_acknowledged: priceAcknowledged }
+          : { price_acknowledged: priceAcknowledged, disclosed_route: disclosedRoute },
       schema: essayResponseSchema as unknown as z.ZodType<EssayResponse>,
     });
   },
@@ -2238,11 +2815,12 @@ export const voiceDrafts = {
 
 /** Read the deployment's allowance policy and this account's wallet state. */
 export const botmasonUsage = {
-  get(token?: string): Promise<BotmasonUsageT> {
-    return request<BotmasonUsageT>('/user/usage', {
+  async get(token?: string): Promise<BotmasonUsageT> {
+    const usage = await request<BotmasonUsageT>('/user/usage', {
       token,
       schema: botmasonUsageSchema as unknown as z.ZodType<BotmasonUsageT>,
     });
+    return usage;
   },
 };
 
@@ -2381,10 +2959,20 @@ export const mettaReturn = {
       schema: returnArcSchema as unknown as z.ZodType<ReturnArc>,
     });
   },
-  dismissOffer(token?: string): Promise<MettaReturnState> {
+  dismissOffer(
+    command: { expected_offer_episode: string },
+    token?: string,
+  ): Promise<MettaReturnState> {
     return request<MettaReturnState>('/metta-return/offer/dismiss', {
       method: 'POST',
+      body: { expected_offer_episode: command.expected_offer_episode },
       token,
+      headers: {
+        [IDEMPOTENCY_KEY_HEADER]: idempotencyKey(
+          'dismiss-return-offer',
+          command.expected_offer_episode,
+        ),
+      },
       schema: mettaReturnStateSchema as unknown as z.ZodType<MettaReturnState>,
     });
   },
@@ -2509,12 +3097,14 @@ export const prompts = {
     );
   },
   history(
-    params: { limit?: number; offset?: number } = {},
+    params: { limit?: number; offset?: number; include_unanswered?: boolean } = {},
     token?: string,
   ): Promise<PromptListResponse> {
     const query = new URLSearchParams();
     if (params.limit != null) query.set('limit', String(params.limit));
     if (params.offset != null) query.set('offset', String(params.offset));
+    if (params.include_unanswered != null)
+      query.set('include_unanswered', String(params.include_unanswered));
     const qs = query.toString();
     const options = {
       token,
@@ -2615,7 +3205,22 @@ export const stages = {
       schema: programCalendarSchema,
     });
   },
+  /**
+   * Every stage's canonical correspondences (category, aspect, persona and the
+   * rest), unpaginated. Global and visit-free: unlike ``listAll`` it records no
+   * program visit, so a screen that only needs the vocabulary -- the Journal
+   * chord -- reads this rather than ``GET /stages`` (#2666).
+   */
+  correspondence(token?: string): Promise<StageCorrespondenceT[]> {
+    return request<StageCorrespondenceT[]>('/stages/correspondence', {
+      token,
+      schema: z.array(stageCorrespondenceSchema),
+    });
+  },
 };
+
+/** Public alias of the zod-inferred stage-correspondence type. */
+export type { StageCorrespondenceT as StageCorrespondence } from './schemas';
 
 /** Public aliases of the zod-inferred stage-prompt types so consumers avoid duplicate shapes. */
 export type {
@@ -2639,6 +3244,13 @@ export const wheel = {
   /** Read the caller's wheel-of-wholeness balance (fullness per Aspect). */
   get(token?: string): Promise<WheelBalanceT> {
     return request<WheelBalanceT>('/stages/wheel', { token, schema: wheelBalanceSchema });
+  },
+};
+
+/** Raw private whole-person progress series; the Map reader validates its shape. */
+export const progress = {
+  overview(token?: string): Promise<unknown> {
+    return request<unknown>('/progress/overview', { token });
   },
 };
 
@@ -2673,6 +3285,13 @@ export interface ContentCompletion {
   completed_at: string;
 }
 
+/** A Start Here resource's read mark, keyed by slug (resources are not rows). */
+export interface ResourceCompletion {
+  id: number;
+  slug: string;
+  completed_at: string;
+}
+
 /** Raw Markdown body + metadata returned by the in-app content endpoints. */
 export interface ContentBody {
   title: string;
@@ -2686,6 +3305,8 @@ export interface SiteResource {
   title: string;
   description: string;
   url: string;
+  order: number;
+  is_read: boolean;
 }
 
 /** Metadata for a stage's course introduction (body fetched separately). */
@@ -2696,6 +3317,31 @@ export interface StageIntro {
   title: string;
   summary: string | null;
 }
+
+/** What "Read next" opens: an unread Start Here resource first, then a chapter. */
+export type NextUnread = NextUnreadT;
+
+const nextUnreadResponseSchema =
+  nextUnreadSchema.nullable() as unknown as z.ZodType<NextUnread | null>;
+
+const siteResourcesSchema = z.array(
+  z.object({
+    slug: z.string().min(1),
+    title: z.string(),
+    description: z.string(),
+    url: z.string(),
+    order: z.number().int().positive(),
+    is_read: z.boolean(),
+  }),
+);
+const startHereProgressSchema = z
+  .object({
+    total_items: z.number().int().nonnegative(),
+    read_items: z.number().int().nonnegative(),
+    progress_percent: z.number().min(0).max(100),
+    next_unlock_day: z.number().int().nullable(),
+  })
+  .refine((progress) => progress.read_items <= progress.total_items);
 
 export const course = {
   /** Whole stage-content list via the ``Page`` envelope. */
@@ -2713,6 +3359,18 @@ export const course = {
       token,
     });
   },
+  /**
+   * The lowest-``order`` Start Here resource the caller has not read while one
+   * remains (#3234), else the earliest unlocked chapter they have not read,
+   * ordered by stage then release, or ``null`` once everything open is read
+   * (#3147).
+   */
+  nextUnread(token?: string): Promise<NextUnread | null> {
+    return request<NextUnread | null>('/course/next-unread', {
+      token,
+      schema: nextUnreadResponseSchema,
+    });
+  },
   stageProgress(stageNumber: number, token?: string): Promise<CourseProgress> {
     return request<CourseProgress>(`/course/stages/${stageNumber}/progress`, { token });
   },
@@ -2720,7 +3378,23 @@ export const course = {
     return request<ContentBody>(`/course/content/${contentId}/body`, { token });
   },
   siteResources(token?: string): Promise<SiteResource[]> {
-    return request<SiteResource[]>('/course/site-resources', { token });
+    return request<SiteResource[]>('/course/site-resources', {
+      token,
+      schema: siteResourcesSchema,
+    });
+  },
+  startHereProgress(token?: string): Promise<CourseProgress> {
+    return request<CourseProgress>('/course/start-here/progress', {
+      token,
+      schema: startHereProgressSchema,
+    });
+  },
+  /** Mark a Start Here resource read; idempotent on the backend (#3148). */
+  markResourceRead(slug: string, token?: string): Promise<ResourceCompletion> {
+    return request<ResourceCompletion>(
+      `/course/site-resources/${encodeURIComponent(slug)}/mark-read`,
+      { method: 'POST', token },
+    );
   },
   siteResourceBody(slug: string, token?: string): Promise<ContentBody> {
     return request<ContentBody>(`/course/site-resources/${slug}/body`, { token });
@@ -2767,6 +3441,8 @@ export interface UserPractice {
   custom_name?: string | null;
   /** ritual-03: per-user mode_config override (validated server-side as ModeConfig). */
   mode_config_override?: ModeConfig | null;
+  /** #3151: the habit this practice's sessions count toward; null when unlinked. */
+  habit_id?: number | null;
   /** ritual-03: server-resolved (custom_name ?? practice.name); may be absent on legacy payloads. */
   effective_name?: string | null;
   /** ritual-03: server-resolved (mode_config_override ?? practice.mode_config). */
@@ -2957,6 +3633,43 @@ export interface PracticeStatsResponse {
   total_minutes: number;
 }
 
+/** A counted sitting, ordered oldest first by the practice story service. */
+export interface PracticeStorySit {
+  timestamp: string;
+  duration_minutes: number;
+  completed: boolean;
+  mode: string;
+}
+
+export interface PracticeStoryMilestone {
+  kind: string;
+  reached_on: string;
+  value: number;
+}
+
+/** Owner-scoped lifetime record; stage fields describe the current stage window. */
+export interface PracticeStoryResponse {
+  total_minutes: number;
+  total_sessions: number;
+  weekly: PracticeWeeklyBucket[];
+  weekly_target: number;
+  recent_sits: PracticeStorySit[];
+  time_of_day: { dawn: number; day: number; dusk: number; night: number };
+  modes: Record<string, number>;
+  stage_ask_minutes: number | null;
+  stage_average_minutes: number | null;
+  stage_session_count: number;
+  stage_partial_sessions: number;
+  partial_sessions: number;
+  insight_count: number;
+  last_insight: string | null;
+  last_insight_timestamp: string | null;
+  mode_totals: Record<string, number>;
+  first_session_on: string | null;
+  observations?: string[];
+  milestones?: PracticeStoryMilestone[];
+}
+
 /**
  * Payload for ``POST /practices/`` (custom-practices-07).
  *
@@ -3021,6 +3734,15 @@ export const practices = {
 };
 
 export const userPractices = {
+  /** Link or clear the caller-owned adoption, rather than the shared catalog row. */
+  linkHabit(userPracticeId: number, habitId: number | null, token?: string): Promise<UserPractice> {
+    return request<UserPractice>(`/user-practices/${userPracticeId}/habit`, {
+      method: 'PATCH',
+      body: { habit_id: habitId },
+      token,
+      schema: userPracticeSchema as unknown as z.ZodType<UserPractice>,
+    });
+  },
   create(payload: UserPracticeCreate, token?: string): Promise<UserPractice> {
     return request<UserPractice>('/user-practices/', {
       method: 'POST',
@@ -3254,6 +3976,12 @@ export const frequency = {
 };
 
 export const practiceSessions = {
+  story(userPracticeId: number, token?: string): Promise<PracticeStoryResponse> {
+    return request<PracticeStoryResponse>(
+      `/practice-sessions/story?user_practice_id=${userPracticeId}`,
+      { token },
+    );
+  },
   create(payload: PracticeSessionCreate, token?: string): Promise<PracticeSessionResponse> {
     return request<PracticeSessionResponse>('/practice-sessions/', {
       method: 'POST',
@@ -3579,6 +4307,8 @@ export interface TimezoneUpdatePayload {
 
 /** The receipt ``DELETE /users/me`` returns once an account is gone. */
 export type AccountDeletionReceipt = AccountDeletionReceiptT;
+export type CopyLocation = CopyLocationT;
+export type JournalErasureReceipt = JournalErasureReceiptT;
 
 /** The whole archive ``GET /users/me/export`` streams back. */
 export type DataExportArchive = DataExportArchiveT;
@@ -3865,6 +4595,12 @@ export interface VaultConnectionPayload {
 const vaultConnectionSchema =
   vaultConnectionResponseSchema as unknown as z.ZodType<VaultConnection>;
 
+const connectedAgentsSchema = z.array(connectedAgentSchema) as unknown as z.ZodType<
+  ConnectedAgentT[]
+>;
+
+const agentActivitySchema = agentActivityResponseSchema as unknown as z.ZodType<AgentActivityT>;
+
 /**
  * The vault resource all three verbs address, named once instead of spelled
  * three times.
@@ -3910,7 +4646,42 @@ export const vault = {
   disconnect(token?: string): Promise<void> {
     return request<void>(`/vault/${VAULT_RESOURCE}`, { method: 'DELETE', token });
   },
+  /**
+   * Every agent this account approved for its vault and has not stopped,
+   * newest approval first (#3534). An empty list for nobody yet, never a 404.
+   */
+  agents(token?: string): Promise<ConnectedAgent[]> {
+    return request<ConnectedAgent[]>('/vault/agents', { token, schema: connectedAgentsSchema });
+  },
+  /**
+   * Stop one agent: its next sign-in is refused, so it loses the vault within
+   * one access-token lifetime. Idempotent -- a 204 again for one already
+   * stopped -- and a 404 for an id that is not this account's.
+   */
+  revokeAgent(agentId: number, token?: string): Promise<void> {
+    return request<void>(`/vault/agents/${agentId}`, { method: 'DELETE', token });
+  },
+  /**
+   * What agents asked this account's vault for, newest first, at most
+   * ``limit`` calls (#3535). Always a 200: a vault that could not be read is
+   * ``status: 'unavailable'`` with no rows, never an error to recognise.
+   */
+  agentActivity(limit: number, token?: string): Promise<AgentActivity> {
+    return request<AgentActivity>(`/vault/agents/activity?limit=${limit}`, {
+      token,
+      schema: agentActivitySchema,
+    });
+  },
 };
+
+/** One agent that may read this account's vault, as Settings lists it. */
+export type ConnectedAgent = ConnectedAgentT;
+
+/** What agents asked this account's vault for, as Settings lists it. */
+export type AgentActivity = AgentActivityT;
+
+/** One call in that list. */
+export type AgentActivityRow = AgentActivity['rows'][number];
 
 /** Secret-free state returned by Adepthood's Creek activation proxy. */
 export type VaultActivation = VaultActivationT;

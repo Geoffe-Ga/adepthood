@@ -35,9 +35,10 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from typing import Any, cast
 
-from sqlalchemy import CursorResult, Table, delete, update
+from sqlalchemy import JSON, Column, CursorResult, Table, delete, or_, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.sql.elements import ColumnElement
 from sqlmodel import SQLModel, col, select
@@ -50,9 +51,12 @@ from domain.account_deletion import (
     policy_gaps,
 )
 from domain.ownership import OwnedBy, owner_predicate
+from domain.retention import DETACHED_WITHDRAWAL_NOTE_RETENTION_DAYS, REDACT_INSTEAD_OF_DELETE
 from models.account_deletion_audit import AccountDeletionAudit
 from models.feedback import FeedbackReport
+from models.user import User
 from services.feedback_triage import detach_from_doomed_reports
+from services.journal_withdrawal_note import detach_open_obligations
 
 logger = logging.getLogger(__name__)
 
@@ -76,6 +80,12 @@ VAULT_GUIDANCE_TEARDOWN_PENDING = (
 )
 VAULT_GUIDANCE_TEARDOWN_COMPLETE = (
     "Creek confirmed that the provisioned managed-vault allocation was deleted."
+)
+VAULT_GUIDANCE_DETACHED_NOTES = (
+    "Some journal pages still had a copy in a vault that had not confirmed it "
+    "deleted. For each, Adepthood keeps a note holding only an opaque vault "
+    "identifier and an entry number, not linked to you, until the vault confirms "
+    f"or for {DETACHED_WITHDRAWAL_NOTE_RETENTION_DAYS} days at most."
 )
 
 
@@ -135,6 +145,7 @@ class DeletionReceipt:
     vault_configured: bool
     vault_disposition: str
     vault_guidance: str
+    withdrawal_notes_kept: int = 0
 
 
 def _policy_parent(name: str) -> tuple[Table, OwnedBy]:
@@ -194,7 +205,102 @@ async def _clear_references(session: AsyncSession, table: Table, account: Accoun
         )
 
 
-def _require_total_policy() -> None:
+def _blank(column: Column[Any]) -> object:
+    """The empty value for a redacted column: ``{}`` for JSON, ``""`` for text."""
+    return {} if isinstance(column.type, JSON) else ""
+
+
+async def _anonymise_linked_sales(session: AsyncSession, account: Account) -> None:
+    """Blank the buyer's identifiers on every sale linked to ``account``; stamp the instant.
+
+    The owner's ratified receipt lifetime (#3063 AC15): the receipt stays, the
+    columns the retention registry names are blanked, and ``anonymised_at``
+    starts its retention clock. A sale is linked through the account's licence
+    binding or its token-pack credit -- never by email, so a sale nobody
+    claimed keeps the address that is its only claim path. Runs before the
+    sweep, which erases the binding and clears the credit link.
+    """
+    sale = SQLModel.metadata.tables["gumroadsale"]
+    binding = SQLModel.metadata.tables["licensebinding"]
+    bound_sale_ids = select(binding.c.gumroad_sale_id).where(binding.c.user_id == account.user_id)
+    linked = or_(
+        sale.c.token_pack_credited_user_id == account.user_id,
+        sale.c.gumroad_sale_id.in_(bound_sale_ids),
+    )
+    values: dict[str, object] = {
+        name: _blank(sale.c[name]) for name in REDACT_INSTEAD_OF_DELETE["gumroadsale"]
+    }
+    values["anonymised_at"] = datetime.now(UTC)
+    await session.execute(update(sale).where(linked).values(values))
+
+
+async def _anonymise_admin_adjustment_sources(
+    session: AsyncSession,
+    account: Account,
+) -> None:
+    """Clear a departing operator's address while retaining the target's audit trail.
+
+    ``source_ip`` describes the actor, not the target that owns the adjustment
+    row. Clear it before the generic sweep nulls ``actor_admin_id``; afterwards
+    there would be no privacy-safe way to identify which surviving rows carried
+    the departing account's network identifier.
+    """
+    adjustment = SQLModel.metadata.tables["adminbalanceadjustment"]
+    await session.execute(
+        update(adjustment)
+        .where(adjustment.c.actor_admin_id == account.user_id)
+        .values(source_ip=None)
+    )
+
+
+async def _lock_admin_adjustment_rows(
+    session: AsyncSession,
+    account: Account,
+) -> None:
+    """Lock adjustment participants, then every affected row, in global order.
+
+    The actor-side redaction and target-side erasure touch overlapping sets.
+    Participant user locks use the same order as balance adjustment itself;
+    only then does deletion lock the adjustment-row union by primary key. The
+    second participant read closes the discovery race: if an adjustment added
+    a new participant while deletion waited, rollback releases the partial
+    lock set and retries rather than acquiring the late user out of order.
+    """
+    adjustment = SQLModel.metadata.tables["adminbalanceadjustment"]
+    affected = or_(
+        adjustment.c.actor_admin_id == account.user_id,
+        adjustment.c.target_user_id == account.user_id,
+    )
+
+    async def _participant_ids() -> set[int]:
+        actor_result = await session.execute(select(adjustment.c.actor_admin_id).where(affected))
+        target_result = await session.execute(select(adjustment.c.target_user_id).where(affected))
+        user_ids = {account.user_id}
+        for actor_id in actor_result.scalars().all():
+            if actor_id is not None:
+                user_ids.add(int(actor_id))
+        for target_id in target_result.scalars().all():
+            user_ids.add(int(target_id))
+        return user_ids
+
+    while True:
+        participant_ids = await _participant_ids()
+        await session.execute(
+            select(User.id)
+            .where(col(User.id).in_(sorted(participant_ids)))
+            .order_by(col(User.id))
+            .with_for_update()
+        )
+        if await _participant_ids() <= participant_ids:
+            break
+        await session.rollback()
+
+    await session.execute(
+        select(adjustment.c.id).where(affected).order_by(adjustment.c.id).with_for_update()
+    )
+
+
+def require_total_policy() -> None:
     """Refuse to erase anything while the policy has a hole in it."""
     gaps = policy_gaps(SQLModel.metadata)
     if gaps:
@@ -224,8 +330,17 @@ def _build_receipt(
     account: Account,
     counts: dict[str, int],
     vault_disposition: AccountVaultDisposition,
+    *,
+    withdrawal_notes_kept: int = 0,
 ) -> DeletionReceipt:
-    """Turn raw row counts into the receipt returned to the caller and stored."""
+    """Turn raw row counts into the receipt returned to the caller and stored.
+
+    When an unconfirmed vault copy left a detached note, the guidance says so:
+    the writer is told what is kept, that it names nobody, and for how long.
+    """
+    guidance = _vault_guidance(vault_disposition)
+    if withdrawal_notes_kept:
+        guidance = f"{guidance} {VAULT_GUIDANCE_DETACHED_NOTES}"
     return DeletionReceipt(
         user_id=account.user_id,
         rows_erased=sum(counts.values()),
@@ -235,7 +350,8 @@ def _build_receipt(
         retained=_tables_with(Disposition.RETAIN),
         vault_configured=vault_disposition.configured,
         vault_disposition=vault_disposition.audit_state,
-        vault_guidance=_vault_guidance(vault_disposition),
+        vault_guidance=guidance,
+        withdrawal_notes_kept=withdrawal_notes_kept,
     )
 
 
@@ -266,15 +382,26 @@ async def delete_account(
     barrier, so a write that was already in flight finishes before this runs or
     finds the account gone and sends nothing.
     """
-    _require_total_policy()
+    require_total_policy()
+    # Serialize the full privacy sweep against operations that retain this
+    # account as actor or target. The helper locks all participant users before
+    # their adjustment rows so reciprocal deletions and mutations share one
+    # hierarchy, while still preventing a source-bearing row from arriving
+    # after redaction.
+    await _lock_admin_adjustment_rows(session, account)
     # Before the sweep, so other accounts' reports that were duplicates of this
     # account's record their unlink rather than silently losing it.
     await detach_from_doomed_reports(
         session,
         select(FeedbackReport.id).where(col(FeedbackReport.user_id) == account.user_id),
     )
+    await _anonymise_linked_sales(session, account)
+    await _anonymise_admin_adjustment_sources(session, account)
+    # Before the sweep erases the obligations: each open one becomes a detached,
+    # content-free note in the same commit (owner decision 2026-10-14, #3267).
+    notes_kept = await detach_open_obligations(session, user_id=account.user_id)
     counts = await _sweep(session, account)
-    receipt = _build_receipt(account, counts, vault_disposition)
+    receipt = _build_receipt(account, counts, vault_disposition, withdrawal_notes_kept=notes_kept)
     session.add(
         AccountDeletionAudit(
             user_id=receipt.user_id,

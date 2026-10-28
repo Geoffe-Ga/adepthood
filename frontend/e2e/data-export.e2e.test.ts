@@ -4,7 +4,7 @@ import { describe, afterAll, expect, it } from '@jest/globals';
 
 import { freshLicenseKey } from './licenseKey';
 
-import { auth, journal, setTokenGetter, users } from '@/api';
+import { auth, goalCompletions, habits, journal, setTokenGetter, users } from '@/api';
 
 /**
  * Taking your writing with you, across the wire.
@@ -70,6 +70,40 @@ describe('data-export journey against a live server', () => {
     expect(archive.records.account).toHaveLength(1);
     // The entry itself, as prose rather than as whatever the column holds.
     expect(JSON.stringify(archive.records.journal_entries)).toContain(body);
+  });
+
+  it('carries each logged amount and its source separately from the daily total', async () => {
+    const habit = await habits.create({
+      name: 'Measured event history',
+      icon: '🧘',
+      start_date: new Date().toISOString().slice(0, 10),
+      energy_cost: 1,
+      energy_return: 2,
+      goals: {
+        target_unit: 'minutes',
+        frequency_unit: 'per_day',
+        frequency: 1,
+        low: 32,
+        clear: 64,
+        stretch: 96,
+      },
+    });
+    const listed = await habits.listAll();
+    const goal = listed
+      .find((candidate) => candidate.id === habit.id)
+      ?.goals.find((candidate) => candidate.tier === 'clear');
+    expect(goal).toBeDefined();
+    if (!goal) throw new Error('A created habit must have its clear goal');
+    for (const amount of [32, 32, -8]) {
+      await goalCompletions.create({ goal_id: goal.id, completed_units: amount });
+    }
+    const archive = await users.exportMyData();
+    const events = archive.records.goal_log_events ?? [];
+    expect(events).toEqual(
+      [32, 32, -8].map((delta_units) =>
+        expect.objectContaining({ delta_units, source: 'manual', timestamp: expect.any(String) }),
+      ),
+    );
   });
 
   it('says what it deliberately left out, rather than implying it took everything', async () => {

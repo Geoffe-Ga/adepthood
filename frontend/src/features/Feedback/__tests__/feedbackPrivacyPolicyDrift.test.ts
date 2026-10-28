@@ -55,6 +55,22 @@ const POLICY_TERM_BY_KEY = {
 } as const;
 
 /**
+ * The preview's plain-words label for each of those keys. The policy names
+ * the fields in its own vocabulary; the preview says the same thing in the
+ * words a person reading it uses, so the two are pinned side by side here
+ * rather than one being a substring of the other.
+ */
+const PREVIEW_LABEL_BY_KEY: Readonly<Record<keyof typeof POLICY_TERM_BY_KEY, string>> = {
+  screen: 'Screen',
+  control: 'Button you used',
+  platform: 'Platform',
+  app_build: 'App build',
+  viewport_class: 'Screen size',
+  locale: 'Locale',
+  correlation_id: 'Tracking number',
+};
+
+/**
  * The bolded field names in the policy's "What the app attaches" list: every
  * `**...**` span between "Seven fields, and no eighth" and "That list is an
  * allowlist". Bare words like "screen" and "control" also appear elsewhere in
@@ -80,10 +96,9 @@ describe('preview copy agrees with the privacy policy', () => {
       Object.keys(FEEDBACK_CONTEXT_LABELS).sort(),
     );
     for (const [key, label] of Object.entries(FEEDBACK_CONTEXT_LABELS)) {
-      // The preview's label is the policy's own word for the field.
-      expect(POLICY_TERM_BY_KEY[key as keyof typeof POLICY_TERM_BY_KEY]).toContain(
-        label.toLowerCase(),
-      );
+      // The preview's label is the plain-words name for the field the policy
+      // bolds under the same key, so a label cannot drift to another field.
+      expect(label).toBe(PREVIEW_LABEL_BY_KEY[key as keyof typeof PREVIEW_LABEL_BY_KEY]);
     }
     expect(section).toContain('seven fields, and no eighth');
   });

@@ -40,6 +40,7 @@ from domain.creek_vault import (
     CreekVaultContractError,
     CreekVaultError,
     CreekVaultPayloadError,
+    CreekVaultRateLimitedError,
     CreekVaultUnavailableError,
     HandshakeResult,
     VaultErrorCode,
@@ -121,6 +122,16 @@ _WHEEL_URL = f"{_VAULT_URL}{_WHEEL_PATH}"
 _REFLECTIONS_PATH = "/v1/reflections"
 
 _REFLECTIONS_URL = f"{_VAULT_URL}{_REFLECTIONS_PATH}"
+
+# The p95 a reflection is held to by Creek-Vault ADR 0016 R2 ("vault POST
+# /v1/reflections p95 <= 25 s from the vault's receipt of the request"),
+# restated here as a number rather than imported, because this file's job is to
+# be the thing that fails when production stops honouring it. The enforced read
+# budget must leave room for it; a budget narrowed back toward the ten-second
+# phase timeout would cut off a reflection the ADR says is still inside its
+# allowance, which is the regression Geoffe-Ga/Creek-Vault#1903 step 2 exists
+# to prevent.
+_R2_REFLECTION_LATENCY_BUDGET_SECONDS = 25.0
 
 _API_KEY = "creek-vault-test-key"  # pragma: allowlist secret
 
@@ -1997,8 +2008,8 @@ async def test_ingest_connect_failure_raises_unavailable(
         ),
         pytest.param(
             _IngestReply(status=HTTPStatus.TOO_MANY_REQUESTS, payload={"detail": "slow down"}),
-            CreekVaultUnavailableError,
-            id="uncoded_429_is_throttling",
+            CreekVaultRateLimitedError,
+            id="uncoded_429_is_a_wait",
         ),
         pytest.param(
             _IngestReply(status=HTTPStatus.INTERNAL_SERVER_ERROR, payload={"detail": "boom"}),
@@ -2023,7 +2034,17 @@ async def test_ingest_classifies_an_uncoded_status_by_class(
     expected: type[CreekVaultError],
     http_clients: ClientFactory,
 ) -> None:
-    """Uncoded, a 4xx is our contract fault -- except the two that describe the vault."""
+    """Uncoded, a 4xx is our contract fault -- except the two that describe the vault.
+
+    The ``type(...) is expected`` identity is what makes the 429 row a claim
+    rather than a tautology: that status is narrowed to
+    :class:`CreekVaultRateLimitedError`, a *subclass* of the unavailable type
+    (Creek-Vault#1903 step 6), so an assertion by ``isinstance`` would have
+    passed before and after the narrowing, and one naming the parent would pass
+    for a classifier that had stopped narrowing at all. Every other row asserts,
+    by the same identity, that the narrowing did **not** reach it: a 408 and a
+    500 are still plain absences, because waiting is not what clears them.
+    """
     client = await _handshaken_client(_VaultRouteHandler([reply]), http_clients)
     with pytest.raises(expected) as exc_info:
         await client.ingest(_ingest_request())
@@ -2165,17 +2186,22 @@ async def test_intimate_entry_issues_zero_http_requests(
 async def test_unknown_classification_sends_nothing_over_http(
     http_clients: ClientFactory,
 ) -> None:
-    """An unrecognized classification fails closed before a single byte is sent."""
+    """An unrecognized classification fails closed before a single byte is sent.
+
+    Since #3059 the egress predicate is the vault write's first gate, so the
+    closed outcome is a skip rather than a ``ValueError`` from the ceiling map;
+    what this pins at the transport -- nothing reaches the wire -- is unchanged.
+    """
     handler = _VaultRouteHandler()
     client = HttpCreekVaultClient(_VAULT_URL, _API_KEY, http_client=http_clients(handler))
-    with pytest.raises(ValueError, match="bogus"):
-        await store_and_classify(
-            client,
-            entry_id=_ENTRY_ID,
-            body=_SENTINEL_BODY,
-            classification="bogus",
-            created_at=_CREATED_AT,
-        )
+    outcome = await store_and_classify(
+        client,
+        entry_id=_ENTRY_ID,
+        body=_SENTINEL_BODY,
+        classification="bogus",
+        created_at=_CREATED_AT,
+    )
+    assert outcome.status is VaultWriteStatus.SKIPPED_INTIMATE
     assert handler.requests == []
 
 
@@ -2583,6 +2609,49 @@ async def test_http_reflect_sends_exactly_the_ratified_request(
     assert "entry_ref" not in body
     for name in _TIER_FIELD_NAMES:
         assert name not in body
+
+
+@pytest.mark.asyncio
+async def test_http_reflect_runs_under_the_widened_phase_budgets(
+    http_clients: ClientFactory,
+) -> None:
+    """A reflection's read phase reaches the whole-request deadline, and only its read phase.
+
+    The regression this pins (Creek-Vault ADR 0016 R2, step 2 of
+    Geoffe-Ga/Creek-Vault#1903): the pooled client carries
+    :data:`_VAULT_HTTP_TIMEOUT`, whose ``read`` phase is ten seconds, and httpx
+    checks a phase budget long before the thirty-second whole-request deadline
+    is reached. So a reflection posted under the standing departures died at
+    ten seconds from request to first byte -- the vault's model wake included
+    -- however generous the
+    ``asyncio.timeout`` around it looked, and R2's latency harness could not
+    honestly report a p95 against a twenty-five second budget that production
+    never allowed a call to reach.
+
+    Four claims rather than one, because each catches a different way the
+    widening could be undone. The ``read`` equality catches the deadline being
+    dropped from the departures. The comparison against
+    :data:`_R2_REFLECTION_LATENCY_BUDGET_SECONDS` catches the deadline itself
+    being narrowed below the published promise, which an equality against the
+    deadline constant alone would follow silently. The three unchanged phases
+    catch a widening that blunts the budgets bounding a genuinely unreachable
+    host. And the capability GET catches the widening having been applied to the
+    pooled client, where it would move every call rather than this one.
+    """
+    handler = _ReflectRouteHandler(_reflection_example("success"))
+    client = await _handshaken_client(handler, http_clients)
+
+    await client.reflect(_ENTRY_BODY, VaultTierCeiling.PERSONAL)
+
+    budgets = handler.reflect_requests[0].extensions["timeout"]
+    assert budgets["read"] == _VAULT_TOTAL_DEADLINE_SECONDS
+    assert budgets["read"] >= _R2_REFLECTION_LATENCY_BUDGET_SECONDS
+    assert budgets["connect"] == _VAULT_TIMEOUT_SECONDS
+    assert budgets["write"] == _VAULT_TIMEOUT_SECONDS
+    assert budgets["pool"] == _VAULT_TIMEOUT_SECONDS
+
+    handshake = next(r for r in handler.requests if r.url.path == _CAPABILITIES_PATH)
+    assert handshake.extensions["timeout"]["read"] == _VAULT_TIMEOUT_SECONDS
 
 
 @pytest.mark.asyncio
@@ -3153,6 +3222,24 @@ async def _drive_ingest_unavailable(
         await client.ingest(_ingest_request())
 
 
+async def _drive_ingest_rate_limited(
+    http_clients: ClientFactory, _monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Drive a cap, which is a wait rather than a call that will never land.
+
+    On ``ingest`` rather than on a model-backed route, and deliberately so: the
+    classification narrows *any* ``429`` on any ``/v1`` call, so a cap shed by
+    an intermediary in front of a route that wakes no model is a real path to
+    this counter and the cheapest one to drive. The vault's own model-call cap
+    reaching a reflection or a letter is the same exception by the same
+    chokepoint -- ``test_creek_vault_rate_limited.py`` drives those two.
+    """
+    reply = _IngestReply(status=HTTPStatus.TOO_MANY_REQUESTS, payload={"detail": "capped"})
+    client = await _handshaken_client(_VaultRouteHandler([reply]), http_clients)
+    with pytest.raises(CreekVaultRateLimitedError):
+        await client.ingest(_ingest_request())
+
+
 async def _drive_ingest_auth_failed(
     http_clients: ClientFactory, _monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -3267,6 +3354,11 @@ _OUTCOME_DRIVERS: tuple[tuple[VaultTelemetryOutcome, CreekCapability, OutcomeDri
         _drive_ingest_contract_failure,
     ),
     (VaultTelemetryOutcome.TIMEOUT, CreekCapability.JOURNAL, _drive_ingest_timeout),
+    (
+        VaultTelemetryOutcome.RATE_LIMITED,
+        CreekCapability.JOURNAL,
+        _drive_ingest_rate_limited,
+    ),
     (VaultTelemetryOutcome.REFUSED, CreekCapability.REFLECT, _drive_reflect_refused),
     (VaultTelemetryOutcome.ESCALATED, CreekCapability.REFLECT, _drive_reflect_escalated),
     (

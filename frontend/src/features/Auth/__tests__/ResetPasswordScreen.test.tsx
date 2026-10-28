@@ -36,6 +36,15 @@ describe('ResetPasswordScreen', () => {
     expect(getByText('Reset Link Invalid')).toBeTruthy();
   });
 
+  it('explains a bad link in plain words and offers a fresh one', () => {
+    const { getByText } = render(<ResetPasswordScreen navigation={navigation} />);
+    expect(
+      getByText(
+        'That link looks broken or incomplete. Ask for a fresh one and we’ll send it over.',
+      ),
+    ).toBeTruthy();
+  });
+
   it('renders both password fields when a valid token is provided', () => {
     const { getByLabelText } = render(
       <ResetPasswordScreen navigation={navigation} route={{ params: { token: VALID_TOKEN } }} />,

@@ -8,6 +8,8 @@ import { getJsonArrayForUpdate, resetCorruptKey } from './jsonStore';
 import { serialize } from './serializedWrite';
 import { scopedKey } from './userScope';
 
+import { reportDiagnostic } from '@/observability/diagnostics';
+
 /**
  * Which practices someone recently began is their activity, not the device's,
  * so the list is namespaced per account (BUG-FE-STATE-001): a device that
@@ -55,17 +57,17 @@ export async function loadRecentPractices(): Promise<RecentPractice[]> {
   let raw: string | null;
   try {
     raw = await AsyncStorage.getItem(key);
-  } catch (err) {
+  } catch {
     // A transient read leaves the stored list intact for a later retry;
     // clearing here would delete good data on a momentary blip.
-    console.warn(`[storage] transient read error for ${key}, keeping stored data`, err);
+    reportDiagnostic('storage_read_failed', { storage: 'recent_practices' });
     return [];
   }
   if (raw === null) return [];
   try {
     return sanitize(JSON.parse(raw));
-  } catch (err) {
-    await resetCorruptKey(key, err);
+  } catch {
+    await resetCorruptKey(key);
     return [];
   }
 }
@@ -89,13 +91,10 @@ export async function recordRecentPractice(entry: RecentPractice): Promise<void>
     let stored: RecentPractice[] | null;
     try {
       stored = await getJsonArrayForUpdate<RecentPractice>(key);
-    } catch (err: unknown) {
+    } catch {
       // A transient read must abort the write; falling back to [] here would
       // overwrite an intact on-disk list with a single-item array.
-      console.warn(
-        '[storage] transient read during recent-practice record, aborting write to preserve list',
-        err,
-      );
+      reportDiagnostic('storage_write_failed', { storage: 'recent_practices' });
       return;
     }
     const existing = sanitize(stored ?? []);

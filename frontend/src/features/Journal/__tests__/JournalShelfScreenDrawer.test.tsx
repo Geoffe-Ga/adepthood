@@ -10,6 +10,7 @@ import { useSyncExternalStore, type ReactElement } from 'react';
 
 import type { JournalListResponse, JournalMessage, PromptDetail } from '@/api';
 import type { VoiceReadinessT } from '@/api/schemas';
+import { setActiveUser } from '@/storage/userScope';
 
 const mockList = jest.fn() as jest.MockedFunction<
   (_p?: { search?: string; limit?: number; offset?: number }) => Promise<JournalListResponse>
@@ -17,7 +18,9 @@ const mockList = jest.fn() as jest.MockedFunction<
 const mockPromptCurrent = jest.fn() as jest.MockedFunction<() => Promise<PromptDetail>>;
 const mockVoiceReadiness = jest.fn<() => Promise<VoiceReadinessT>>();
 const mockVaultConnection =
-  jest.fn<() => Promise<{ connected: boolean; vault_url: string | null }>>();
+  jest.fn<
+    () => Promise<{ connected: boolean; vault_url: string | null; mcp_address: string | null }>
+  >();
 const mockNavigate = jest.fn();
 
 jest.mock('@/api', () => ({
@@ -47,7 +50,7 @@ jest.mock('@/api', () => ({
 }));
 
 jest.mock('@/context/AuthContext', () => ({
-  useAuth: () => ({ userTimezone: 'UTC' }),
+  useAuth: () => ({ userTimezone: 'UTC', token: 'x.eyJzdWIiOiIxIiwiZXhwIjo0MDAwMDAwMDAwfQ.y' }),
 }));
 
 const headerLeftStore: {
@@ -68,6 +71,13 @@ jest.mock('@react-navigation/native', () => {
     useFocusEffect: (cb: () => undefined | (() => void)) => react.useEffect(cb, []),
   };
 });
+
+// The Notification Center's count reads five sources of its own; it has its
+// own suite, so the shelf's suites pin only the number it shows.
+let mockNotificationCount = 0;
+jest.mock('../useNotificationCount', () => ({
+  useNotificationCount: () => mockNotificationCount,
+}));
 
 jest.mock('../SearchBar', () => {
   const { TextInput } = require('react-native');
@@ -141,12 +151,17 @@ function prompt(overrides: Partial<PromptDetail> = {}): PromptDetail {
 }
 
 beforeEach(() => {
+  setActiveUser(1);
   jest.clearAllMocks();
   headerLeftStore.current = undefined;
   headerLeftStore.listeners.clear();
   mockList.mockResolvedValue(page([entry(1)]));
   mockPromptCurrent.mockResolvedValue(prompt());
-  mockVaultConnection.mockResolvedValue({ connected: true, vault_url: 'https://v.example' });
+  mockVaultConnection.mockResolvedValue({
+    connected: true,
+    vault_url: 'https://v.example',
+    mcp_address: null,
+  });
   mockVoiceReadiness.mockResolvedValue({
     ready: false,
     state: 'not_consented',
@@ -288,10 +303,24 @@ describe('Journal header drawer from JournalShelfScreen', () => {
     expect(queryByTestId('screen-drawer')).toBeNull();
   });
 
-  it('keeps Your corpus in the drawer and routes an undecided account to consent', async () => {
+  it('opens the Notification Center from the drawer and closes the drawer behind it', async () => {
     const { getByTestId, getByLabelText, queryByTestId } = render(<ShelfScreenWithHeader />);
     await waitFor(() => expect(getByTestId('journal-shelf-card-1')).toBeTruthy());
-    await waitFor(() => expect(mockVoiceReadiness).toHaveBeenCalled());
+
+    fireEvent.press(getByLabelText('Open Journal menu'));
+    await waitFor(() => expect(getByTestId('drawer-nav-Prompts')).toBeTruthy());
+
+    await act(async () => {
+      fireEvent.press(getByTestId('drawer-nav-Prompts'));
+    });
+
+    expect(mockNavigate).toHaveBeenCalledWith('Tabs', { screen: 'Prompts' });
+    expect(queryByTestId('screen-drawer')).toBeNull();
+  });
+
+  it("keeps Everything you've written in the drawer and routes an undecided account to consent", async () => {
+    const { getByTestId, getByLabelText, queryByTestId } = render(<ShelfScreenWithHeader />);
+    await waitFor(() => expect(getByTestId('journal-shelf-card-1')).toBeTruthy());
     const callsBeforeDrawerPress = mockVoiceReadiness.mock.calls.length;
 
     fireEvent.press(getByLabelText('Open Journal menu'));
@@ -303,7 +332,7 @@ describe('Journal header drawer from JournalShelfScreen', () => {
   });
 
   it('routes a consented account with no vault from the shelf to where its corpus would live', async () => {
-    mockVaultConnection.mockResolvedValue({ connected: false, vault_url: null });
+    mockVaultConnection.mockResolvedValue({ connected: false, vault_url: null, mcp_address: null });
     mockVoiceReadiness.mockResolvedValue({
       ready: false,
       state: 'gathering',
@@ -328,7 +357,6 @@ describe('Journal header drawer from JournalShelfScreen', () => {
     });
     const { getByTestId, getByLabelText } = render(<ShelfScreenWithHeader />);
     await waitFor(() => expect(getByTestId('journal-shelf-card-1')).toBeTruthy());
-    await waitFor(() => expect(mockVoiceReadiness).toHaveBeenCalled());
     mockVoiceReadiness.mockClear();
     mockVoiceReadiness.mockReturnValue(heldReadiness);
 
@@ -357,7 +385,6 @@ describe('Journal header drawer from JournalShelfScreen', () => {
       <ShelfScreenWithHeader />,
     );
     await waitFor(() => expect(getByTestId('journal-shelf-card-1')).toBeTruthy());
-    await waitFor(() => expect(mockVoiceReadiness).toHaveBeenCalled());
     mockVoiceReadiness.mockRejectedValueOnce(new Error('offline'));
 
     fireEvent.press(getByLabelText('Open Journal menu'));
@@ -365,7 +392,7 @@ describe('Journal header drawer from JournalShelfScreen', () => {
 
     await waitFor(() =>
       expect(getByRole('alert').props.children).toBe(
-        "Couldn't open your corpus. Check your connection and try again.",
+        "Couldn't open your writing just now. Check your connection and try again.",
       ),
     );
     expect(queryByTestId('screen-drawer')).toBeTruthy();
@@ -382,7 +409,6 @@ describe('Journal header drawer from JournalShelfScreen', () => {
     });
     const result = render(<ShelfScreenWithHeader />);
     await waitFor(() => expect(result.getByTestId('journal-shelf-card-1')).toBeTruthy());
-    await waitFor(() => expect(mockVoiceReadiness).toHaveBeenCalled());
     mockVoiceReadiness.mockClear();
     mockVoiceReadiness.mockReturnValue(heldReadiness);
 

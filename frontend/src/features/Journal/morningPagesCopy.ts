@@ -55,14 +55,13 @@ export const MORNING_PAGES_NEVER_LINK = 'Don’t show this again';
 export const MORNING_PAGES_NEVER_A11Y = `${MORNING_PAGES_NEVER_LINK}: stop offering morning pages on the shelf`;
 
 /**
- * Settings → Journal: bring the tip back after "Don't show this again". The
- * decline it clears is kept on this device only, so the copy says so.
+ * Settings → Journal: the switch for the tip. "Don't show this again" on the
+ * card turns it off; the writer turns it either way here. The decline it holds
+ * is kept on this device only, so the copy says so.
  */
-export const MORNING_PAGES_OFFER_AGAIN_LABEL = 'Offer morning pages again';
-export const MORNING_PAGES_OFFER_AGAIN_DESCRIPTION =
-  'Puts the morning-pages invitation back on your Journal shelf, on this device.';
-export const MORNING_PAGES_OFFER_AGAIN_DONE =
-  'Morning pages are on your Journal shelf again on this device.';
+export const MORNING_PAGES_SWITCH_LABEL = 'Offer morning pages';
+export const MORNING_PAGES_SWITCH_DESCRIPTION =
+  "Keeps the morning-pages invitation on your Journal shelf. Don't show this again turns this off. Kept on this device.";
 
 /** Every string the card itself shows or speaks. */
 export const MORNING_PAGES_CARD_COPY_ENTRIES: readonly string[] = [
@@ -77,11 +76,10 @@ export const MORNING_PAGES_CARD_COPY_ENTRIES: readonly string[] = [
   MORNING_PAGES_NEVER_A11Y,
 ];
 
-/** Every string the Settings → Journal row shows or speaks. */
+/** Every string the Settings → Journal switch row shows or speaks. */
 export const MORNING_PAGES_SETTINGS_COPY_ENTRIES: readonly string[] = [
-  MORNING_PAGES_OFFER_AGAIN_LABEL,
-  MORNING_PAGES_OFFER_AGAIN_DESCRIPTION,
-  MORNING_PAGES_OFFER_AGAIN_DONE,
+  MORNING_PAGES_SWITCH_LABEL,
+  MORNING_PAGES_SWITCH_DESCRIPTION,
 ];
 
 /** Every user-facing morning-pages string, gathered for the balance-not-altitude sweep. */

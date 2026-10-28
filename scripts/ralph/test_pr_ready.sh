@@ -44,8 +44,8 @@ probed() { # probed <desc> <yes|no> <sentinel path> — did the compare probe ru
 }
 no_merge_token() { # no_merge_token <desc> <token> — any token the loop won't merge on
   # For malformed answers the property is what matters, not which refusal token:
-  # `ready` and `ready-unreviewed` both merge, so only those two are wrong.
-  if [[ "$2" != "ready" && "$2" != "ready-unreviewed" ]]; then ok "$1"; else bad "$1 (got '$2')"; fi
+  # `ready`, `ready-unreviewed` and `ready-comments` all merge, so only those are wrong.
+  if [[ "$2" != "ready" && "$2" != "ready-unreviewed" && "$2" != "ready-comments" ]]; then ok "$1"; else bad "$1 (got '$2')"; fi
 }
 
 WORK="$(mktemp -d)"
@@ -75,7 +75,8 @@ mkdir -p "$BIN"
 #                   the `--json mergeStateStatus,commits` answer; defaults to the
 #                   bot-user spelling so a case can vary one condition at a time,
 #                   and any other value means one of OURS pushed last
-#   VERDICT       — the "<createdAt>|<isLGTM>" scalar the verdict jq resolves to
+#   VERDICT       — the "<createdAt>|<isLGTM>|<isCOMMENTS>" scalar the verdict jq
+#                   resolves to; a two-field value reads as "not COMMENTS"
 #   COMMENTS_JSON — raw `--json comments` payload; when set, the stub runs the
 #                   REAL jq with pr-ready.sh's own `--jq` expression against it,
 #                   so the production verdict regex is genuinely exercised
@@ -442,6 +443,37 @@ check "green + CLEAN + fresh non-LGTM → changes-requested" "changes-requested"
 check "malformed verdict flag → awaiting-review, never changes-requested" "awaiting-review" \
   "$(CHECKS_EC=0 MERGE_STATE=CLEAN HEAD_DATE=$H VERDICT="$FRESH|garbage" run 100)"
 
+# --- ready-comments: a fresh COMMENTS verdict is a sign-off, never a fix loop
+# `COMMENTS` means the reviewer approved what is in the PR and raised only
+# non-blocking findings. Those become P0–P3 follow-up issues (address-feedback
+# Step 1A) and the lane merges on the same evidence as `ready` — so it must clear
+# every non-review condition `ready` does, under its own token so the
+# orchestrator files the follow-ups before merging.
+check "green + CLEAN + current + fresh COMMENTS → ready-comments" "ready-comments" \
+  "$(CHECKS_EC=0 MERGE_STATE=CLEAN HEAD_DATE=$H VERDICT="$FRESH|false|true" BEHIND_BY=0 run 100)"
+
+check "fresh COMMENTS but BEHIND → behind" "behind" \
+  "$(CHECKS_EC=0 MERGE_STATE=BEHIND HEAD_DATE=$H VERDICT="$FRESH|false|true" run 100)"
+
+check "fresh COMMENTS + CLEAN but compare says stale → behind" "behind" \
+  "$(CHECKS_EC=0 MERGE_STATE=CLEAN HEAD_DATE=$H VERDICT="$FRESH|false|true" BEHIND_BY=3 run 100)"
+
+check "fresh COMMENTS + conflicting → conflicted" "conflicted" \
+  "$(CHECKS_EC=0 MERGE_STATE=DIRTY HEAD_DATE=$H VERDICT="$FRESH|false|true" run 100)"
+
+check "STALE COMMENTS → awaiting-review" "awaiting-review" \
+  "$(CHECKS_EC=0 MERGE_STATE=CLEAN HEAD_DATE=$H VERDICT="$STALE|false|true" BEHIND_BY=0 run 100)"
+
+check "fresh COMMENTS on an opt-out PR → optout" "optout" \
+  "$(CHECKS_EC=0 MERGE_STATE=CLEAN HEAD_DATE=$H VERDICT="$FRESH|false|true" \
+     PR_LABELS="do-not-auto-merge" BEHIND_BY=0 run 100)"
+
+no_merge_token "malformed COMMENTS flag never merges" \
+  "$(CHECKS_EC=0 MERGE_STATE=CLEAN HEAD_DATE=$H VERDICT="$FRESH|false|garbage" BEHIND_BY=0 run 100)"
+
+no_merge_token "a surplus verdict field never merges" \
+  "$(CHECKS_EC=0 MERGE_STATE=CLEAN HEAD_DATE=$H VERDICT="$FRESH|false|true|x" BEHIND_BY=0 run 100)"
+
 # --- REAL jq: exercise the production verdict regex against real bodies ----
 # The verdict `claude-code-review.yml` posts is `## Verdict: <X>` at the END of a
 # long `## Summary …` body. These cases feed raw comment JSON through pr-ready.sh's
@@ -462,6 +494,19 @@ if command -v jq >/dev/null 2>&1; then
   check "real CHANGES_REQUESTED w/ 'LGTM' in prose → changes-requested" "changes-requested" \
     "$(CHECKS_EC=0 MERGE_STATE=CLEAN HEAD_DATE=$H \
        COMMENTS_JSON="$(cj '{"createdAt":"'"$FRESH"'","body":"Not ready for LGTM yet.\n\n**Verdict:** CHANGES_REQUESTED\n"}')" \
+       run 100)"
+
+  # Canonical `## Verdict: COMMENTS`, fresh + CLEAN + current → ready-comments.
+  check "real ## Verdict: COMMENTS (fresh) → ready-comments" "ready-comments" \
+    "$(CHECKS_EC=0 MERGE_STATE=CLEAN HEAD_DATE=$H BEHIND_BY=0 \
+       COMMENTS_JSON="$(cj '{"createdAt":"'"$FRESH"'","body":"## Summary\nfine\n\n## Verdict: COMMENTS\n"}')" \
+       run 100)"
+
+  # COMMENTS read from the verdict LINE only: a CHANGES_REQUESTED body whose prose
+  # says "COMMENTS" is still changes-requested.
+  check "real CHANGES_REQUESTED w/ 'COMMENTS' in prose → changes-requested" "changes-requested" \
+    "$(CHECKS_EC=0 MERGE_STATE=CLEAN HEAD_DATE=$H \
+       COMMENTS_JSON="$(cj '{"createdAt":"'"$FRESH"'","body":"More than COMMENTS here.\n\n## Verdict: CHANGES_REQUESTED\n"}')" \
        run 100)"
 
   # No verdict-bearing comment at all → awaiting-review.

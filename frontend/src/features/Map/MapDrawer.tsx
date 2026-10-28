@@ -2,7 +2,7 @@
  * The Map header-drawer body: a compact legend of all ten stages rendered as
  * ``ScreenDrawer`` children (the panel supplies the scroll surface, so this maps
  * plain rows). Each row shows the stage's color swatch, its category, and — when
- * present — its Aspect; the current stage is marked, and a locked stage carries a
+ * present — its Aspect, both as the server serves them; the current stage is marked, and a locked stage carries a
  * padlock plus its calendar unlock estimate. Tapping any row — locked or not —
  * glides the magnifier lens to that stage, opens its detail modal, and closes the
  * drawer.
@@ -14,21 +14,16 @@ import { SPACING, accent, ink, radius, surface, touchTarget, type } from '../../
 import { useDaysUntilStage } from '../../store/useProgramProgression';
 
 import { useJourneySummary } from './hooks/useJourneySummary';
-import { unlockTimeline } from './journeyNarrative';
-import { MAP_ROWS, STAGE_DISPLAY, type StageDisplay } from './mapLayout';
+import { MAP_LEAD, unlockTimeline } from './journeyNarrative';
+import { STAGE_DISPLAY, type StageDisplay } from './mapLayout';
 import { isStageUnlocked } from './services/stageService';
 import { STAGE_COUNT, type StageData } from './stageData';
 import { drawerStageLabel } from './stageLegend';
+import { stageArrowLabel, stageCategory, stageFallbackName } from './stageVocabulary';
 
 /** Glyph shown on a locked stage row. */
 const LOCKED_GLYPH = '🔒';
 
-/** Stage number → its category (the containing MAP_ROWS row's rightLabel). */
-const CATEGORY_BY_STAGE: Readonly<Record<number, string>> = Object.fromEntries(
-  MAP_ROWS.flatMap((row) =>
-    row.stageNumbers.map((stageNumber): [number, string] => [stageNumber, row.rightLabel]),
-  ),
-);
 /** Diameter of the current-stage marker dot in dp. */
 const MARKER_SIZE = 10;
 /** Side of the square color swatch in dp. */
@@ -55,7 +50,7 @@ const JourneySummary = ({ currentStage, cycleNumber }: JourneySummaryProps): Rea
   );
 };
 
-/** "Unlocks in N days" estimate for a locked row, read from the calendar drip. */
+/** "Opens in N days" estimate for a locked row, read from the calendar drip. */
 const UnlockRow = ({ stageNumber }: { stageNumber: number }): React.JSX.Element => {
   const { width } = useWindowDimensions();
   const daysUntil = useDaysUntilStage(stageNumber);
@@ -69,6 +64,8 @@ const UnlockRow = ({ stageNumber }: { stageNumber: number }): React.JSX.Element 
 interface LegendRowProps {
   stageNumber: number;
   display: StageDisplay;
+  /** The stage as the server served it; absent until it loads. */
+  stage: StageData | undefined;
   locked: boolean;
   selected: boolean;
   onSelectStage: (_stageNumber: number) => void;
@@ -79,13 +76,16 @@ interface LegendRowProps {
 const LegendRow = ({
   stageNumber,
   display,
+  stage,
   locked,
   selected,
   onSelectStage,
 }: LegendRowProps): React.JSX.Element => {
   const { width } = useWindowDimensions();
-  const category = CATEGORY_BY_STAGE[stageNumber] ?? '';
-  const aspect = display.arrowLabel;
+  // The row's words come from the served stage (#2666); a stage not yet
+  // served is named by its colour so the row is never blank.
+  const category = stage ? stageCategory(stage) : stageFallbackName(stageNumber);
+  const aspect = stage ? stageArrowLabel(stage) : '';
   return (
     <TouchableOpacity
       testID={`map-drawer-stage-${stageNumber}`}
@@ -100,14 +100,8 @@ const LegendRow = ({
         style={[styles.swatch, { backgroundColor: display.textColor }]}
       />
       <View style={styles.rowBody}>
-        <Text style={[type(width).label, styles.category]} numberOfLines={1}>
-          {category}
-        </Text>
-        {aspect ? (
-          <Text style={[type(width).caption, styles.aspect]} numberOfLines={1}>
-            {aspect}
-          </Text>
-        ) : null}
+        <Text style={[type(width).label, styles.category]}>{category}</Text>
+        {aspect ? <Text style={[type(width).caption, styles.aspect]}>{aspect}</Text> : null}
         {locked ? <UnlockRow stageNumber={stageNumber} /> : null}
       </View>
       {selected ? (
@@ -136,10 +130,14 @@ export default function MapDrawer({
   cycleNumber,
   onSelectStage,
 }: MapDrawerProps): React.JSX.Element {
+  const { width } = useWindowDimensions();
   const stageNumbers = Array.from({ length: STAGE_COUNT }, (_, i) => i + 1);
   return (
     <View testID="map-drawer">
       <JourneySummary currentStage={currentStage} cycleNumber={cycleNumber} />
+      <Text testID="map-drawer-lead" style={[type(width).body, styles.lead]}>
+        {MAP_LEAD}
+      </Text>
       {stageNumbers.map((stageNumber) => {
         const display = STAGE_DISPLAY[stageNumber];
         if (!display) return null;
@@ -149,6 +147,7 @@ export default function MapDrawer({
             key={stageNumber}
             stageNumber={stageNumber}
             display={display}
+            stage={stage}
             locked={stage ? !isStageUnlocked(stage, currentStage) : true}
             selected={stageNumber === currentStage}
             onSelectStage={onSelectStage}
@@ -170,6 +169,10 @@ const styles = StyleSheet.create({
   },
   cycle: {
     color: ink.muted,
+  },
+  lead: {
+    color: ink.soft,
+    marginBottom: SPACING.md,
   },
   row: {
     flexDirection: 'row',

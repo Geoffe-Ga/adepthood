@@ -88,12 +88,11 @@ jest.mock('react-native-safe-area-context', () => {
 
 jest.mock('../components/GoalModal', () => () => null);
 jest.mock('../components/HabitSettingsModal', () => () => null);
-jest.mock('../components/MissedDaysModal', () => () => null);
 jest.mock('../components/OnboardingModal', () => () => null);
 jest.mock('../components/ReorderHabitsModal', () => () => null);
-jest.mock('../components/StatsModal', () => ({
+jest.mock('../story/HabitStorySheet', () => ({
   __esModule: true,
-  default: jest.fn(() => null),
+  HabitStorySheet: jest.fn(() => null),
 }));
 
 const widths = [320, 390, 600, 900, 1200];
@@ -221,37 +220,27 @@ describe('HabitsScreen responsive layout', () => {
     expect(quickLog).toBeDefined();
   });
 
-  it('opens stats modal when stats mode is enabled', async () => {
+  it('opens the story sheet from a tile Story glyph, with no mode to enter', async () => {
     jest
       .spyOn(require('react-native'), 'useWindowDimensions')
       .mockReturnValue({ width: 900, height: 600, scale: 1, fontScale: 1 });
 
-    const StatsModal = require('../components/StatsModal').default as jest.Mock;
+    const { HabitStorySheet } = require('../story/HabitStorySheet') as {
+      HabitStorySheet: jest.Mock;
+    };
 
     const testRenderer = await mountScreen();
-    openHabitsDrawer();
-
-    const { TouchableOpacity, Text } = require('react-native');
-    const options = testRenderer.root.findAll(
-      (n: any) =>
-        n.type === TouchableOpacity &&
-        n.findAllByType(Text).some((t: any) => t.props.children === 'Stats'),
-    );
+    const glyphs = testRenderer.root.findAllByProps({ testID: 'habit-story-glyph' });
     renderer.act(() => {
-      options[0].props.onPress();
+      glyphs[0].props.onPress();
     });
 
-    const tiles = testRenderer.root.findAllByProps({ testID: 'habit-tile' });
-    renderer.act(() => {
-      tiles[0].props.onPress();
-    });
-
-    expect(StatsModal).toHaveBeenCalled();
-    const call = StatsModal.mock.calls.pop() as any;
+    const call = HabitStorySheet.mock.calls.pop() as any;
     expect(call?.[0].visible).toBe(true);
+    expect(call?.[0].habit).not.toBeNull();
   });
 
-  it('shows and exits stats mode banner', async () => {
+  it('no longer offers a Stats mode in the drawer', async () => {
     jest
       .spyOn(require('react-native'), 'useWindowDimensions')
       .mockReturnValue({ width: 900, height: 600, scale: 1, fontScale: 1 });
@@ -259,27 +248,10 @@ describe('HabitsScreen responsive layout', () => {
     const testRenderer = await mountScreen();
     openHabitsDrawer();
 
-    const { TouchableOpacity, Text } = require('react-native');
-    const statsOption = testRenderer.root.findAll(
-      (n: any) =>
-        n.type === TouchableOpacity &&
-        n.findAllByType(Text).some((t: any) => t.props.children === 'Stats'),
-    )[0];
-
-    renderer.act(() => {
-      statsOption.props.onPress();
-    });
-
+    const { Text } = require('react-native');
     const texts = testRenderer.root.findAllByType(Text).map((t: any) => t.props.children);
-    expect(texts).toContain('Stats Mode');
-
-    const exit = testRenderer.root.findByProps({ testID: 'exit-mode' });
-    renderer.act(() => {
-      exit.props.onPress();
-    });
-
-    const postTexts = testRenderer.root.findAllByType(Text).map((t: any) => t.props.children);
-    expect(postTexts).not.toContain('Stats Mode');
+    expect(texts).not.toContain('Stats');
+    expect(texts).not.toContain('Stats Mode');
   });
 
   it('shows quick log mode banner', async () => {
@@ -320,7 +292,7 @@ describe('HabitsScreen responsive layout', () => {
     });
 
     const texts = testRenderer.root.findAllByType(Text).map((t: any) => t.props.children);
-    expect(texts).not.toContain('Perform Energy Scaffolding');
+    expect(texts).not.toContain('Start Energy Scaffolding');
     expect(texts).toContain('Energy Scaffolding button moved to menu.');
 
     renderer.act(() => {

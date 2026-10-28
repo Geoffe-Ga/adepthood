@@ -96,6 +96,7 @@ interface DrawerHarness {
   onOpenCorpus?: () => void;
   onOpenVoiceDrafts?: () => void;
   onOpenPromotedQuotes?: () => void;
+  onOpenNotifications?: () => void;
   corpusOpenState?: 'idle' | 'pending' | 'error';
 }
 
@@ -130,6 +131,7 @@ function renderDrawer(props: Partial<DrawerHarness> = {}) {
       onOpenCorpus={onOpenCorpus}
       onOpenVoiceDrafts={onOpenVoiceDrafts}
       onOpenPromotedQuotes={onOpenPromotedQuotes}
+      onOpenNotifications={props.onOpenNotifications}
       corpusOpenState={props.corpusOpenState ?? 'idle'}
       onLoadMore={onLoadMore}
       onRetry={onRetry}
@@ -331,7 +333,7 @@ describe('JournalDrawer (presentational)', () => {
     expect(getByTestId('journal-photograph-entry')).toBeTruthy();
   });
 
-  it('gives Photograph and Your corpus muted leading icons', () => {
+  it("gives Photograph and Everything you've written muted leading icons", () => {
     const { getByTestId } = renderDrawer({ items: [], onPhotograph: jest.fn() });
     const photographIcon = getByTestId('journal-photograph-entry').findByType(Camera);
     const corpusIcon = getByTestId('journal-drawer-corpus').findByType(Library);
@@ -340,11 +342,11 @@ describe('JournalDrawer (presentational)', () => {
     expect(corpusIcon.props.color).toBe(ink.muted);
   });
 
-  it('always renders Your corpus and fires its action', () => {
+  it("always renders Everything you've written and fires its action", () => {
     const onOpenCorpus = jest.fn();
     const { getByRole, getByTestId } = renderDrawer({ items: [], onOpenCorpus });
 
-    expect(getByRole('button', { name: 'Your corpus' })).toBeTruthy();
+    expect(getByRole('button', { name: "Everything you've written" })).toBeTruthy();
     fireEvent.press(getByTestId('journal-drawer-corpus'));
     expect(onOpenCorpus).toHaveBeenCalledTimes(1);
   });
@@ -387,6 +389,11 @@ describe('JournalDrawer (presentational)', () => {
     expect(getByTestId('journal-drawer-promoted-quotes').findByType(Quote).props.color).toBe(
       ink.muted,
     );
+  });
+
+  it('leaves primary Prompts navigation to the shared shelf', () => {
+    const { queryByTestId } = renderDrawer({ items: [] });
+    expect(queryByTestId('journal-drawer-notifications')).toBeNull();
   });
 
   it('fires onPhotograph when the Photograph row is pressed', () => {

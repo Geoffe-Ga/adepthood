@@ -26,7 +26,7 @@ When you exercise regularly, you're doing several things at once:
 
 4. **Grounding achievement in the body.** Orange's shadow is all mental—abstract goals, endless optimization, disconnection from the flesh. Exercise forces you to *be* in your body. To feel your limits. To celebrate your strength. It's embodied achievement, which is the only kind that lasts.
 
-The specific form of exercise doesn't matter. What matters is that it's *challenging* and *consistent*. Whether you lift weights, run, swim, do martial arts, climb, dance, or practice yoga—find something that pushes you, and do it at least 3-4 times per week.
+The specific form of exercise doesn't matter. What matters is that it's *challenging* and *consistent*. Whether you lift weights, run, swim, do martial arts, climb, dance, or practice yoga—find something that pushes you, and do it at least 4 times a week.
 
 APTITUDE recommends **at least 4x per week**. Not because we're trying to turn you into an athlete, but because Orange is the stage where you learn to build sustainable systems for energy management. And exercise is the foundational system. It's the keystone habit that makes everything else easier.
 

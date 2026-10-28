@@ -22,6 +22,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from curriculum.stage_correspondence import stage_correspondence
 from domain.frequencies import (
     FREQUENCY_COLORS,
     FREQUENCY_NAMES,
@@ -32,6 +33,7 @@ from domain.frequencies import (
 from models.journal_entry import JournalClassification
 from services import frequency_classification as fc
 from services.botmason import LLMCreditExhaustedError, LLMProviderError
+from services.reflection_boundary import AppProviderRefusedError, ReflectionBoundary
 
 _EXPECTED_FREQUENCY_COUNT = 10
 
@@ -118,21 +120,31 @@ def test_the_prompt_is_generated_from_the_vocabulary() -> None:
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "classification",
+    [JournalClassification.INTIMATE, "intimate", "INTIMATE", "bogus", ""],
+)
 async def test_intimate_content_never_reaches_a_provider(
     monkeypatch: pytest.MonkeyPatch,
+    classification: str,
 ) -> None:
     """The refusal precedes the call, not merely the network.
 
     The fake raises on any invocation, so this fails if the guard is ever moved
     below request construction -- the failure mode where the content has
     already been assembled into a payload and only the send is skipped.
+
+    The plain-``str`` and unknown spellings pin the fail-closed allowlist
+    (#3059): an identity check against the enum member let a ``str``
+    ``"intimate"`` through, and a deny-list let an unknown tier through.
     """
     _forbid_provider(monkeypatch)
 
     with pytest.raises(fc.IntimateContentRefusedError):
         await fc.classify_frequencies(
             "Something I would only write to myself.",
-            classification=JournalClassification.INTIMATE,
+            classification=classification,
+            boundary=ReflectionBoundary.APP_PROVIDER,
         )
 
 
@@ -147,7 +159,9 @@ async def test_public_and_personal_do_reach_a_provider(
     """
     for tier in (JournalClassification.PUBLIC, JournalClassification.PERSONAL):
         calls = _patch_provider(monkeypatch, '{"weights": {"F1": 0.5}, "overall_confidence": 0.5}')
-        result = await fc.classify_frequencies("I finally said no.", classification=tier)
+        result = await fc.classify_frequencies(
+            "I finally said no.", classification=tier, boundary=ReflectionBoundary.APP_PROVIDER
+        )
         assert len(calls) == 1
         assert result.is_classified()
 
@@ -166,6 +180,7 @@ async def test_a_well_formed_reply_is_parsed(monkeypatch: pytest.MonkeyPatch) ->
     result = await fc.classify_frequencies(
         "I finally said no, and meant it.",
         classification=JournalClassification.PERSONAL,
+        boundary=ReflectionBoundary.APP_PROVIDER,
     )
 
     assert result.weights == {Frequency.F1: 0.7, Frequency.F3: 0.5}
@@ -185,7 +200,9 @@ async def test_json_wrapped_in_prose_is_still_parsed(monkeypatch: pytest.MonkeyP
     )
 
     result = await fc.classify_frequencies(
-        "We are one.", classification=JournalClassification.PUBLIC
+        "We are one.",
+        classification=JournalClassification.PUBLIC,
+        boundary=ReflectionBoundary.APP_PROVIDER,
     )
 
     assert result.weights == {Frequency.F9: 0.4}
@@ -197,7 +214,9 @@ async def test_an_empty_classification_is_not_an_error(monkeypatch: pytest.Monke
     _patch_provider(monkeypatch, '{"weights": {}, "overall_confidence": 0.0}')
 
     result = await fc.classify_frequencies(
-        "Bought milk.", classification=JournalClassification.PUBLIC
+        "Bought milk.",
+        classification=JournalClassification.PUBLIC,
+        boundary=ReflectionBoundary.APP_PROVIDER,
     )
 
     assert result.weights == {}
@@ -222,7 +241,11 @@ async def test_an_eleventh_frequency_rejects_the_whole_reply(
         '{"weights": {"F1": 0.6, "F11": 0.9}, "overall_confidence": 0.7}',
     )
 
-    result = await fc.classify_frequencies("...", classification=JournalClassification.PERSONAL)
+    result = await fc.classify_frequencies(
+        "...",
+        classification=JournalClassification.PERSONAL,
+        boundary=ReflectionBoundary.APP_PROVIDER,
+    )
 
     assert result is fc.UNCLASSIFIED
 
@@ -250,7 +273,11 @@ async def test_a_malformed_reply_degrades(monkeypatch: pytest.MonkeyPatch, reply
     """
     _patch_provider(monkeypatch, reply)
 
-    result = await fc.classify_frequencies("...", classification=JournalClassification.PERSONAL)
+    result = await fc.classify_frequencies(
+        "...",
+        classification=JournalClassification.PERSONAL,
+        boundary=ReflectionBoundary.APP_PROVIDER,
+    )
 
     assert result is fc.UNCLASSIFIED
 
@@ -267,7 +294,11 @@ async def test_a_provider_failure_degrades(monkeypatch: pytest.MonkeyPatch) -> N
 
     monkeypatch.setattr(fc, "generate_response", failing)
 
-    result = await fc.classify_frequencies("...", classification=JournalClassification.PERSONAL)
+    result = await fc.classify_frequencies(
+        "...",
+        classification=JournalClassification.PERSONAL,
+        boundary=ReflectionBoundary.APP_PROVIDER,
+    )
 
     assert result is fc.UNCLASSIFIED
 
@@ -291,7 +322,11 @@ async def test_a_spent_balance_is_raised_rather_than_degraded(
     monkeypatch.setattr(fc, "generate_response", refusing)
 
     with caplog.at_level(logging.WARNING), pytest.raises(LLMCreditExhaustedError):
-        await fc.classify_frequencies("...", classification=JournalClassification.PERSONAL)
+        await fc.classify_frequencies(
+            "...",
+            classification=JournalClassification.PERSONAL,
+            boundary=ReflectionBoundary.APP_PROVIDER,
+        )
 
     refusals = [r for r in caplog.records if r.message == fc.CREDIT_EXHAUSTED_EVENT]
     assert [(r.levelno, getattr(r, "provider", None)) for r in refusals] == [
@@ -315,7 +350,11 @@ async def test_an_oversized_fragment_is_truncated_to_the_ceiling(
     calls = _patch_provider(monkeypatch, '{"weights": {}, "overall_confidence": 0.0}')
     oversized = "x" * (fc.MAX_FRAGMENT_CHARS * 3)
 
-    await fc.classify_frequencies(oversized, classification=JournalClassification.PERSONAL)
+    await fc.classify_frequencies(
+        oversized,
+        classification=JournalClassification.PERSONAL,
+        boundary=ReflectionBoundary.APP_PROVIDER,
+    )
 
     sent = calls[0]["user_message"]
     assert isinstance(sent, str)
@@ -333,7 +372,11 @@ async def test_a_normal_fragment_is_sent_whole(monkeypatch: pytest.MonkeyPatch) 
     calls = _patch_provider(monkeypatch, '{"weights": {}, "overall_confidence": 0.0}')
     entry = "A long-ish journal entry. " * 40
 
-    await fc.classify_frequencies(entry, classification=JournalClassification.PERSONAL)
+    await fc.classify_frequencies(
+        entry,
+        classification=JournalClassification.PERSONAL,
+        boundary=ReflectionBoundary.APP_PROVIDER,
+    )
 
     assert calls[0]["user_message"] == entry
 
@@ -350,6 +393,7 @@ async def test_the_callers_key_is_threaded_through(monkeypatch: pytest.MonkeyPat
         "...",
         classification=JournalClassification.PERSONAL,
         api_key=_FAKE_BYOK_KEY,
+        boundary=ReflectionBoundary.APP_PROVIDER,
     )
 
     assert calls[0]["api_key"] == _FAKE_BYOK_KEY
@@ -360,7 +404,11 @@ async def test_no_key_falls_back_to_the_server_key(monkeypatch: pytest.MonkeyPat
     """``None`` is passed through so botmason applies its own resolution."""
     calls = _patch_provider(monkeypatch, '{"weights": {}, "overall_confidence": 0.0}')
 
-    await fc.classify_frequencies("...", classification=JournalClassification.PERSONAL)
+    await fc.classify_frequencies(
+        "...",
+        classification=JournalClassification.PERSONAL,
+        boundary=ReflectionBoundary.APP_PROVIDER,
+    )
 
     assert calls[0]["api_key"] is None
 
@@ -378,8 +426,16 @@ async def test_classification_is_stateless(monkeypatch: pytest.MonkeyPatch) -> N
     """
     calls = _patch_provider(monkeypatch, _WELL_FORMED_REPLY)
 
-    await fc.classify_frequencies("the first fragment", classification=_ORDINARY_TIER)
-    await fc.classify_frequencies("the second fragment", classification=_ORDINARY_TIER)
+    await fc.classify_frequencies(
+        "the first fragment",
+        classification=_ORDINARY_TIER,
+        boundary=ReflectionBoundary.APP_PROVIDER,
+    )
+    await fc.classify_frequencies(
+        "the second fragment",
+        classification=_ORDINARY_TIER,
+        boundary=ReflectionBoundary.APP_PROVIDER,
+    )
 
     assert [call["conversation_history"] for call in calls] == [[], []]
 
@@ -413,6 +469,7 @@ async def test_a_bounded_call_gives_up_rather_than_outlasting_its_budget(
         "a fragment nobody will get an answer about",
         classification=_ORDINARY_TIER,
         timeout_seconds=_A_MOMENT,
+        boundary=ReflectionBoundary.APP_PROVIDER,
     )
     elapsed = time.monotonic() - started
 
@@ -441,6 +498,7 @@ async def test_running_out_of_time_degrades_like_every_other_failure(
         "a fragment nobody will get an answer about",
         classification=_ORDINARY_TIER,
         timeout_seconds=_A_MOMENT,
+        boundary=ReflectionBoundary.APP_PROVIDER,
     )
 
     assert result == fc.UNCLASSIFIED
@@ -457,7 +515,9 @@ async def test_no_bound_is_the_default_and_leaves_the_provider_layer_alone(
     """
     _patch_provider(monkeypatch, _WELL_FORMED_REPLY)
 
-    result = await fc.classify_frequencies("a fragment", classification=_ORDINARY_TIER)
+    result = await fc.classify_frequencies(
+        "a fragment", classification=_ORDINARY_TIER, boundary=ReflectionBoundary.APP_PROVIDER
+    )
 
     assert result.is_classified()
 
@@ -465,9 +525,12 @@ async def test_no_bound_is_the_default_and_leaves_the_provider_layer_alone(
 # --- the vocabulary is one thing, not three ----------------------------------
 # Aspects of Wholeness == Frequencies == Stages, keyed by colour. NORTH-STAR.md
 # states the identity and graph/ontology-spine.md writes it as an equation per
-# row. These tests hold the vendored table to the curriculum dataset so the two
+# row. These tests hold the vendored table to the curriculum so the two
 # spellings of one ontology cannot drift apart -- which is the whole reason the
-# vendored copy is allowed to exist.
+# vendored copy is allowed to exist. The colour join reads the generated
+# stage_correspondence.json, the canonical source the database is seeded from
+# (#2667); the labelings test still reads the curriculum dataset because it
+# needs the stage ``title``, which the artifact does not carry.
 
 
 def _curriculum_stages() -> list[dict[str, object]]:
@@ -485,13 +548,15 @@ def _curriculum_stages() -> list[dict[str, object]]:
 def test_the_vendored_colours_match_the_curriculum() -> None:
     """Colour is the primary key, so it is the join that must hold exactly.
 
-    If this fails, one of the two spellings of a single ontology has moved and
-    every colour-keyed surface -- content directories, STAGE_COLORS, the habit
-    ring -- is now pointing somewhere the other does not agree with.
+    Held against the generated stage-correspondence artifact, not the
+    ``archetypal_wavelength.json`` mirror, so the table follows the source the
+    ``coursestage`` rows are seeded from. If this fails, one of the two
+    spellings of a single ontology has moved and every colour-keyed surface --
+    content directories, STAGE_COLORS, the habit ring -- is now pointing
+    somewhere the other does not agree with.
     """
     curriculum = {
-        int(str(stage["stage_number"])): stage["spiral_dynamics_color"]
-        for stage in _curriculum_stages()
+        stage.stage_number: stage.spiral_dynamics_color for stage in stage_correspondence().stages
     }
 
     assert curriculum == {int(code.value[1:]): FREQUENCY_COLORS[code] for code in Frequency}
@@ -525,7 +590,7 @@ def test_the_two_labelings_of_a_position_may_differ_but_the_colour_may_not() -> 
     F5      Achievism                   Intellectual Understanding / Achievist
     F6      Pluralism                   Embodied Understanding / Pluralist
     F7      Integration                 Systems Wisdom / Integrative
-    F8      True Self / Transcendence   True Self Connection / Nondual
+    F8      True Self / Transcendence   True Self Wisdom / True Self Connection
     ======  ==========================  ============================
 
     Those are the same four positions under two vocabularies, not eight
@@ -573,3 +638,47 @@ def test_a_colour_that_names_no_position_resolves_to_nothing() -> None:
     set with ``extra="forbid"`` — not a lookup miss to paper over.
     """
     assert frequency_for_color("Chartreuse") is None
+
+
+# --- the vault boundary (#3156) -------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_a_vault_bound_caller_is_refused_before_any_dial(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """This classifier is the app provider: a vault-bound caller reaching it is a defect, loudly.
+
+    Raised, not degraded to ``UNCLASSIFIED``: a caller that forgot its own
+    boundary check must fail instead of quietly shipping writing to the one
+    provider its writer connected a vault to stay answered without. A BYOK key
+    changes nothing.
+    """
+    calls = _patch_provider(monkeypatch, _WELL_FORMED_REPLY)
+
+    with pytest.raises(AppProviderRefusedError):
+        await fc.classify_frequencies(
+            "I finally said no.",
+            classification=_ORDINARY_TIER,
+            boundary=ReflectionBoundary.VAULT_BOUND,
+            api_key=_FAKE_BYOK_KEY,
+        )
+
+    assert calls == []
+
+
+@pytest.mark.asyncio
+async def test_the_tier_refusal_still_precedes_the_boundary(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An intimate fragment is refused as intimate whatever the boundary, ahead of it."""
+    calls = _patch_provider(monkeypatch, _WELL_FORMED_REPLY)
+
+    with pytest.raises(fc.IntimateContentRefusedError):
+        await fc.classify_frequencies(
+            "...",
+            classification=JournalClassification.INTIMATE,
+            boundary=ReflectionBoundary.VAULT_BOUND,
+        )
+
+    assert calls == []

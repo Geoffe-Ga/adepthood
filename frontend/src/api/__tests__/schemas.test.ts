@@ -437,7 +437,7 @@ describe('per-item paginated schemas', () => {
   const stageManifestation = {
     phase: 'Rising',
     integrated: { name: 'Commitment', description: 'A grounded promise to begin showing up.' },
-    shadow: { name: 'Over-commitment', description: 'Taking on too much too fast.' },
+    shadow: { name: 'Overcommitment', description: 'Taking on too much too fast.' },
   };
 
   it('stageSchema accepts a payload with manifestations present', () => {

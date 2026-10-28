@@ -19,6 +19,7 @@ import {
   type SetStateAction,
 } from 'react';
 
+import { aiAccessRevoked } from './aiAccessRevoked';
 import { mergeByIdSorted, useHydrateOnOpen } from './entryList';
 import { fundingOutcome } from './fundingOutcome';
 import { generationRefusal } from './generationRefusal';
@@ -34,8 +35,10 @@ import type {
   RelatedEddy,
   RelatedPraxis,
   ResonanceResponse,
+  ResonanceRoute,
 } from '@/api';
 import { formatApiError } from '@/api/errorMessages';
+import { readPassProvenance } from '@/api/schemas';
 import { habitManager } from '@/features/Habits/services/habitManager';
 import { useContractionSignalStore } from '@/store/useContractionSignalStore';
 import { useHabitStore } from '@/store/useHabitStore';
@@ -157,6 +160,8 @@ export interface UseResonanceResult {
    * is not a failure and must not be dressed as one.
    */
   noNotesMessage: string | null;
+  /** Current pass only; undefined on load/reset, null for an unrecorded pass. */
+  passProvenance: ResonanceResponse['provenance'];
   /** Compiled praxis pages related by the latest completed resonance pass. */
   relatedPraxis: RelatedPraxis[];
   /** Recurring corpus patterns related by the latest completed resonance pass. */
@@ -171,7 +176,17 @@ export interface UseResonanceResult {
   completedPasses: number;
   loading: boolean;
   error: string | null;
-  requestResonance: (_apiKey?: string | null) => Promise<ResonanceRequestOutcome>;
+  /** Run the pass; ``_disclosedRoute`` is the payer route the writer was shown (#3385). */
+  requestResonance: (
+    _apiKey?: string | null,
+    _disclosedRoute?: ResonanceRoute,
+  ) => Promise<ResonanceRequestOutcome>;
+  /**
+   * Ask the server for the pass's free exits only (#3389): its privacy answer,
+   * care, or the payer refusal. Shares the pass's one-at-a-time latch, and
+   * never runs completion detection, since nothing was generated.
+   */
+  requestFreeExits: () => Promise<ResonanceRequestOutcome>;
   /** Merge an updated note (e.g. one that just gained a cached essay) by id. */
   updateNote: (_note: Marginalia) => void;
   /** Re-read the persisted marginalia (after an edit re-anchors/stales them). */
@@ -357,18 +372,40 @@ async function runAccept(id: number, deps: AcceptDeps): Promise<void> {
 
 interface GeneratePass {
   loading: boolean;
-  requestResonance: (_apiKey?: string | null) => Promise<ResonanceRequestOutcome>;
+  requestResonance: (
+    _apiKey?: string | null,
+    _disclosedRoute?: ResonanceRoute,
+  ) => Promise<ResonanceRequestOutcome>;
+  requestFreeExits: () => Promise<ResonanceRequestOutcome>;
 }
 
-/** The gate only needs to distinguish a pass that now needs another payer. */
+/**
+ * The gate only needs to distinguish a pass that now needs another payer, and
+ * a free-exits request the server would not answer free because a payer could
+ * now pay (#3389) -- which needs a price disclosed before anything is asked.
+ */
 export type ResonanceRequestOutcome =
-  'completed' | 'funding_required' | 'key_required' | 'failed' | 'ignored';
+  'completed' | 'funding_required' | 'key_required' | 'payment_unconfirmed' | 'failed' | 'ignored';
+
+/**
+ * The 409 a free-exits request gets when a payer could now pay (#3389), and a
+ * pass gets when the route it disclosed is no longer the account's (#3385).
+ */
+const PAYMENT_UNCONFIRMED_DETAIL = 'resonance_payment_unconfirmed';
+
+function paymentUnconfirmed(error: unknown): boolean {
+  if (typeof error !== 'object' || error === null) return false;
+  const response = error as { status?: unknown; detail?: unknown };
+  return response.status === 409 && response.detail === PAYMENT_UNCONFIRMED_DETAIL;
+}
 
 interface LatestPassState {
   care: CareResponse | null;
   contraction: ContractionReflection | null;
   privateMessage: string | null;
   noNotesMessage: string | null;
+  /** Current pass only; undefined on load/reset, null for an unrecorded pass. */
+  passProvenance: ResonanceResponse['provenance'];
   relatedPraxis: RelatedPraxis[];
   relatedEddies: RelatedEddy[];
   /** Resolved, non-intimate passes so far; survives ``clear`` because it counts history. */
@@ -377,12 +414,21 @@ interface LatestPassState {
   receive: (_result: ResonanceResponse) => void;
 }
 
+/** Care can accompany inference; only an explicit supplied receipt records its identity and payer. */
+function receivedPassProvenance(result: ResonanceResponse): ResonanceResponse['provenance'] {
+  if (result.private === true || (result.care != null && result.provenance == null))
+    return undefined;
+  const parsed = readPassProvenance(result.provenance);
+  return parsed.success ? parsed.data : null;
+}
+
 /** Own every surface that describes only the latest completed resonance pass. */
 function useLatestPassState(): LatestPassState {
   const [care, setCare] = useState<CareResponse | null>(null);
   const [contraction, setContraction] = useState<ContractionReflection | null>(null);
   const [privateMessage, setPrivateMessage] = useState<string | null>(null);
   const [noNotesMessage, setNoNotesMessage] = useState<string | null>(null);
+  const [passProvenance, setPassProvenance] = useState<ResonanceResponse['provenance']>(undefined);
   const [relatedPraxis, setRelatedPraxis] = useState<RelatedPraxis[]>([]);
   const [relatedEddies, setRelatedEddies] = useState<RelatedEddy[]>([]);
   const [completedPasses, setCompletedPasses] = useState(0);
@@ -392,6 +438,7 @@ function useLatestPassState(): LatestPassState {
     setContraction(null);
     setPrivateMessage(null);
     setNoNotesMessage(null);
+    setPassProvenance(undefined);
     setRelatedPraxis([]);
     setRelatedEddies([]);
   }, []);
@@ -402,6 +449,7 @@ function useLatestPassState(): LatestPassState {
     useContractionSignalStore.getState().observe(result.contraction ?? null);
     setPrivateMessage(result.private_message ?? null);
     setNoNotesMessage(result.no_notes_message ?? null);
+    setPassProvenance(receivedPassProvenance(result));
     setRelatedPraxis(result.related_praxis ?? []);
     setRelatedEddies(result.related_eddies ?? []);
     // The server never counts an intimate pass, and neither does this: a
@@ -415,6 +463,7 @@ function useLatestPassState(): LatestPassState {
     contraction,
     privateMessage,
     noNotesMessage,
+    passProvenance,
     relatedPraxis,
     relatedEddies,
     completedPasses,
@@ -443,7 +492,8 @@ interface PassFailureDeps extends PassFailureContext {
   /**
    * Whether the line may invite another pass "whenever you like". False for a
    * generation-guardrail refusal (#623), whose own copy says when asking again
-   * can work: once the one in flight finishes, or after midnight UTC.
+   * can work: once the one in flight finishes, or after midnight UTC. False too
+   * for a revoked entitlement (#1938), where asking again cannot succeed.
    */
   retryInvited: boolean;
 }
@@ -490,13 +540,16 @@ async function settlePassFailure(
   entryId: number | null,
   deps: PassFailureContext,
 ): Promise<ResonanceRequestOutcome> {
+  // Nothing was refused that the writer must hear about: the gate discloses
+  // the price that now applies before anything else is asked.
+  if (paymentUnconfirmed(error)) return 'payment_unconfirmed';
   const funding = fundingOutcome(error);
   const failure = reportPassFailure(entryId, formatApiError(error), {
     ...deps,
     // Funding has its own immediate, actionable surface. Detection still runs
     // and merges offers, but must not announce a contradictory retry error.
     surfaceError: funding === null,
-    retryInvited: generationRefusal(error) === null,
+    retryInvited: generationRefusal(error) === null && !aiAccessRevoked(error),
   });
   if (funding !== null) {
     // Payment recovery is local and actionable. Do not hold it behind the
@@ -509,10 +562,18 @@ async function settlePassFailure(
   return 'failed';
 }
 
-function generateForPayer(entryId: number, apiKey?: string | null) {
+function generateForPayer(entryId: number, apiKey?: string | null, route?: ResonanceRoute) {
+  if (route !== undefined) return resonance.generate(entryId, undefined, apiKey, route);
   return apiKey === undefined
     ? resonance.generate(entryId)
     : resonance.generate(entryId, undefined, apiKey);
+}
+
+/** How one pass reaches the server, and whether a failure still checks for completions. */
+interface PassRequest {
+  call: (_entryId: number) => Promise<ResonanceResponse>;
+  /** False for a free-exits request: it generated nothing, so nothing is detected either. */
+  detectOnFailure: boolean;
 }
 
 /**
@@ -533,16 +594,19 @@ function passEntryId(flushed: PassFlushResult, report: (_message: string) => voi
   return flushed;
 }
 
-/** The charged "generate" pass: flush, generate, merge notes + suggestions + care. */
-function useGeneratePass(deps: GeneratePassDeps): GeneratePass {
+/** One pass at a time: flush, ask the server, merge notes + suggestions + care. */
+function usePassRunner(deps: GeneratePassDeps): {
+  loading: boolean;
+  runPass: (_pass: PassRequest) => Promise<ResonanceRequestOutcome>;
+} {
   const { flush, setMarginalia, mergeFromGenerate, latestPass, reportPassError, clearError } = deps;
   const { clear: clearLatestPass, receive: receiveLatestPass } = latestPass;
   const [loading, setLoading] = useState(false);
   const inFlightRef = useRef(false);
   const generationRef = useRef(0);
 
-  const requestResonance = useCallback(
-    async (apiKey?: string | null): Promise<ResonanceRequestOutcome> => {
+  const runPass = useCallback(
+    async (pass: PassRequest): Promise<ResonanceRequestOutcome> => {
       if (inFlightRef.current) return 'ignored'; // one pass at a time — no double-charge
       inFlightRef.current = true;
       const generation = ++generationRef.current;
@@ -557,13 +621,13 @@ function useGeneratePass(deps: GeneratePassDeps): GeneratePass {
       try {
         entryId = passEntryId(await flush(), reportPassError);
         if (entryId == null) return 'failed';
-        const result = await generateForPayer(entryId, apiKey);
+        const result = await pass.call(entryId);
         setMarginalia((prev) => mergeByIdSorted(prev, result.marginalia));
         mergeFromGenerate(result.suggestions);
         receiveLatestPass(result);
         return 'completed';
       } catch (err) {
-        return settlePassFailure(err, entryId, {
+        return settlePassFailure(err, pass.detectOnFailure ? entryId : null, {
           mergeFromGenerate,
           reportPassError,
           isCurrent: () => generationRef.current === generation,
@@ -583,8 +647,27 @@ function useGeneratePass(deps: GeneratePassDeps): GeneratePass {
       clearError,
     ],
   );
+  return { loading, runPass };
+}
 
-  return { loading, requestResonance };
+/** The charged "generate" pass, and the free-exits request sharing its latch (#3389). */
+function useGeneratePass(deps: GeneratePassDeps): GeneratePass {
+  const { loading, runPass } = usePassRunner(deps);
+  const requestResonance = useCallback(
+    (apiKey?: string | null, route?: ResonanceRoute): Promise<ResonanceRequestOutcome> =>
+      runPass({
+        call: (entryId) => generateForPayer(entryId, apiKey, route),
+        detectOnFailure: true,
+      }),
+    [runPass],
+  );
+  const requestFreeExits = useCallback(
+    (): Promise<ResonanceRequestOutcome> =>
+      runPass({ call: (entryId) => resonance.freeExits(entryId), detectOnFailure: false }),
+    [runPass],
+  );
+
+  return { loading, requestResonance, requestFreeExits };
 }
 
 export function useResonance({
@@ -598,7 +681,7 @@ export function useResonance({
 
   useHydrateOnOpen(routeEntryId, resonance.list, setMarginalia);
   const sug = useSuggestions(routeEntryId, marginError, userTimezone);
-  const { loading, requestResonance } = useGeneratePass({
+  const pass = useGeneratePass({
     flush,
     setMarginalia,
     mergeFromGenerate: sug.mergeFromGenerate,
@@ -629,12 +712,12 @@ export function useResonance({
     contraction: latestPass.contraction,
     privateMessage: latestPass.privateMessage,
     noNotesMessage: latestPass.noNotesMessage,
+    passProvenance: latestPass.passProvenance,
     relatedPraxis: latestPass.relatedPraxis,
     relatedEddies: latestPass.relatedEddies,
     completedPasses: latestPass.completedPasses,
-    loading,
+    ...pass,
     error: marginError.message,
-    requestResonance,
     updateNote,
     refresh,
     acceptSuggestion: sug.acceptSuggestion,

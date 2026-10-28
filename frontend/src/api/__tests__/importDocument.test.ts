@@ -87,6 +87,38 @@ describe('corpus.importDocument request shape', () => {
     expect(JSON.parse(mockFetch.mock.calls[0][1].body).classification).toBe('intimate');
   });
 
+  test('names where a folder document sat, as one pair, when it came from a folder', async () => {
+    mockFetch.mockReturnValueOnce(jsonResponse(VAULT_BODY));
+
+    await corpus.importDocument(
+      {
+        filename: 'Index.md',
+        contentBase64: SENTINEL_BASE64,
+        classification: 'personal',
+        source: { namespace: 'My Vault', relativePath: 'Work/Index.md' },
+      },
+      'tok',
+    );
+
+    expect(JSON.parse(mockFetch.mock.calls[0][1].body)).toEqual({
+      filename: 'Index.md',
+      content_base64: SENTINEL_BASE64,
+      classification: 'personal',
+      source_namespace: 'My Vault',
+      source_relative_path: 'Work/Index.md',
+    });
+  });
+
+  test('sends no folder fields for a document chosen on its own', async () => {
+    mockFetch.mockReturnValueOnce(jsonResponse(CORPUS_BODY));
+
+    await importSeed();
+
+    const body = JSON.parse(mockFetch.mock.calls[0][1].body);
+    expect(body).not.toHaveProperty('source_namespace');
+    expect(body).not.toHaveProperty('source_relative_path');
+  });
+
   test('asks one route for one destination, never a second', async () => {
     // The routing rule is the server's. The client makes no vault lookup of its
     // own and never retries a "corpus" answer against the vault surface.
@@ -214,6 +246,58 @@ describe('corpus.importDocument failures', () => {
     const error = (await importAndCatch()) as InstanceType<typeof DocumentUploadError>;
     expect(error.kind).toBe('managed_too_large');
     expect(error.message).not.toContain(SENTINEL_BASE64);
+  });
+
+  test("carries a 429's Retry-After, so the run can wait out exactly that long", async () => {
+    mockFetch.mockReturnValue(
+      Promise.resolve({
+        ok: false,
+        status: 429,
+        headers: new Headers({ 'Retry-After': '17' }),
+        json: () => Promise.resolve({ detail: 'rate_limit_exceeded' }),
+      }),
+    );
+
+    const error = (await importAndCatch()) as InstanceType<typeof DocumentUploadError>;
+
+    expect(error.kind).toBe('rate_limited');
+    expect(error.retryAfterSeconds).toBe(17);
+    // One attempt: the client itself never retries the POST behind the run's back.
+    expect(mockFetch).toHaveBeenCalledTimes(1);
+  });
+
+  test.each([
+    ['absent', undefined],
+    ['not a whole number of seconds', 'Wed, 21 Oct 2026 07:28:00 GMT'],
+    ['negative', '-4'],
+  ])('reads no wait from a Retry-After that is %s', async (_label, value) => {
+    mockFetch.mockReturnValue(
+      Promise.resolve({
+        ok: false,
+        status: 429,
+        headers: new Headers(value === undefined ? {} : { 'Retry-After': value }),
+        json: () => Promise.resolve({ detail: 'rate_limit_exceeded' }),
+      }),
+    );
+
+    const error = (await importAndCatch()) as InstanceType<typeof DocumentUploadError>;
+
+    expect(error.retryAfterSeconds).toBeNull();
+  });
+
+  test('names no wait for a refusal that is not a rate limit', async () => {
+    mockFetch.mockReturnValue(
+      Promise.resolve({
+        ok: false,
+        status: 422,
+        headers: new Headers({ 'Retry-After': '5' }),
+        json: () => Promise.resolve({ detail: 'invalid_document' }),
+      }),
+    );
+
+    const error = (await importAndCatch()) as InstanceType<typeof DocumentUploadError>;
+
+    expect(error.retryAfterSeconds).toBeNull();
   });
 
   test('never names the document in the error it raises', async () => {

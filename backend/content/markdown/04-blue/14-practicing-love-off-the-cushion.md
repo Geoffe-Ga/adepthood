@@ -50,4 +50,4 @@ Then—when it's moved—*release it*. Forgive. Let go. Not because they deserve
 
 Blue off the cushion is about staying *relational* even when it's hard. Not by abandoning yourself, but by showing up honestly. By caring for others *and* yourself. By recognizing that love is not a feeling you wait for—it's a practice you choose, again and again, imperfectly but sincerely.
 
-That's the practice. That's the path. That's how Love becomes lived.
+That's the practice, and it's how Love stops being an idea and becomes something you do.

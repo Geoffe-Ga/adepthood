@@ -5,6 +5,7 @@
  * and the persisted snapshot must roll back, and the milestone toast
  * must NOT fire.
  */
+
 import { describe, expect, it, jest, beforeEach } from '@jest/globals';
 import { act, renderHook } from '@testing-library/react-native';
 import React from 'react';
@@ -34,6 +35,7 @@ jest.mock('../../../../api', () => {
       create: jest.fn(() => Promise.resolve({})),
       update: jest.fn(() => Promise.resolve({})),
       delete: jest.fn(() => Promise.resolve({})),
+      updateGoalUnits: jest.fn(() => Promise.resolve([])),
     },
     goalCompletions: {
       create: jest.fn(() =>
@@ -52,6 +54,10 @@ jest.mock('../../../../api', () => {
 });
 
 jest.mock('../../../../storage/habitStorage', () => ({
+  capturePendingCheckInScope: jest.requireActual<typeof HabitStorageModule>(
+    '../../../../storage/habitStorage',
+  ).capturePendingCheckInScope,
+  removePendingCheckIns: jest.fn(() => Promise.resolve(undefined)),
   saveHabits: jest.fn(() => Promise.resolve(undefined)),
   loadHabits: jest.fn(() => Promise.resolve(null)),
   loadPendingCheckIns: jest.fn(() => Promise.resolve([])),
@@ -88,6 +94,7 @@ import {
   habits as habitsApi,
 } from '../../../../api';
 import { colors } from '../../../../design/tokens';
+import type * as HabitStorageModule from '../../../../storage/habitStorage';
 import { saveHabits, savePendingCheckIn } from '../../../../storage/habitStorage';
 import { useHabitStore } from '../../../../store/useHabitStore';
 import type { Habit } from '../../Habits.types';
@@ -240,7 +247,7 @@ describe('useHabitActions.logUnit', () => {
 
     expect(showToast).toHaveBeenCalledTimes(1);
     expect(showToast.mock.calls[0]?.[0]).toMatchObject({
-      message: expect.stringMatching(/Low Goal achieved/i) as unknown,
+      message: expect.stringMatching(/Low Goal met/i) as unknown,
     });
   });
 
@@ -475,7 +482,7 @@ describe('useHabitActions.logUnit on a demo-seed tile while online', () => {
     expect(showToast).toHaveBeenCalledTimes(1);
     const toast = showToast.mock.calls[0]?.[0] as { message: string; color?: string };
     expect(toast.color).toBe(colors.secondary);
-    expect(toast.message).not.toMatch(/out of sync/i);
+    expect(toast.message).not.toMatch(/refreshed your habits/i);
     // Nothing is queued, and no futile refresh fires.
     expect(savePendingCheckIn).not.toHaveBeenCalled();
     expect(habitsApi.listAll).not.toHaveBeenCalled();
@@ -496,7 +503,7 @@ describe('useHabitActions.logUnit on a demo-seed tile while online', () => {
     expect(showToast).toHaveBeenCalledTimes(1);
     const toast = showToast.mock.calls[0]?.[0] as { message: string; color?: string };
     expect(toast.message).toMatch(/sample habits/i);
-    expect(toast.message).not.toMatch(/Goal achieved/i);
+    expect(toast.message).not.toMatch(/Goal (met|achieved)/i);
     expect(toast.message).not.toMatch(/sync when you reconnect/i);
     expect(toast.color).toBe(colors.secondary);
   });
@@ -521,7 +528,7 @@ describe('useHabitActions.logUnit on a demo-seed tile while online', () => {
     );
     expect(showToast).toHaveBeenCalledTimes(1);
     expect(showToast.mock.calls[0]?.[0]).toMatchObject({
-      message: expect.stringMatching(/Low Goal achieved/i) as unknown,
+      message: expect.stringMatching(/Low Goal met/i) as unknown,
     });
   });
 });
@@ -600,6 +607,56 @@ describe('useHabitActions.logUnit on a client-minted scaffold tile', () => {
   });
 });
 
+describe('useHabitActions.updateGoalUnits (#3154)', () => {
+  it('surfaces a refused unit change as a toast carrying the server reason, and rolls back', async () => {
+    useHabitStore.setState({ habits: [makeHabit()] });
+    (habitsApi.updateGoalUnits as jest.Mock).mockImplementationOnce(() =>
+      Promise.reject(new MockApiError(422, 'linked_habit_unit_not_allowed')),
+    );
+    mockAlert.mockClear();
+    const { result, showToast } = renderActions();
+
+    await act(async () => {
+      result.current.actions.updateGoalUnits(1, { target_unit: 'reps' });
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(useHabitStore.getState().habits[0]!.goals.every((g) => g.target_unit === 'units')).toBe(
+      true,
+    );
+    expect(showToast).toHaveBeenCalledWith(
+      expect.objectContaining({
+        message:
+          'A timer logs this habit, so it counts in minutes or sessions only. Choose one of those.',
+        color: colors.danger,
+      }),
+    );
+    expect(mockAlert).not.toHaveBeenCalled();
+  });
+
+  it('names the cadence rule when the refused field is the cadence', async () => {
+    useHabitStore.setState({ habits: [makeHabit()] });
+    (habitsApi.updateGoalUnits as jest.Mock).mockImplementationOnce(() =>
+      Promise.reject(new MockApiError(422, 'linked_habit_frequency_unit_not_allowed')),
+    );
+    const { result, showToast } = renderActions();
+
+    await act(async () => {
+      result.current.actions.updateGoalUnits(1, { frequency_unit: 'per_month' });
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(showToast).toHaveBeenCalledWith(
+      expect.objectContaining({
+        message:
+          'A timer logs this habit, so its goal counts per day or per week only. Choose one of those.',
+      }),
+    );
+  });
+});
+
 describe('useHabitActions.addHabit', () => {
   it('forwards to the manager and POSTs the new habit to /habits/', async () => {
     useHabitStore.setState({ habits: [] });
@@ -612,23 +669,6 @@ describe('useHabitActions.addHabit', () => {
     expect(habitsApi.create).toHaveBeenCalledWith(
       expect.objectContaining({ name: 'Brand New', icon: '🆕' }),
     );
-  });
-});
-
-describe('useHabitActions tz binding for date-shifted mutations', () => {
-  it('forwards the hook tz prop as the third argument to backfillMissedDays', () => {
-    // Spy before render: useMemo captures whatever habitManager.backfillMissedDays
-    // currently is, so the spy must already be in place at capture time.
-    const backfillSpy = jest.spyOn(habitManager, 'backfillMissedDays').mockImplementation(() => {});
-    const { result } = renderActions();
-    const days = [new Date('2025-01-02')];
-
-    act(() => {
-      result.current.actions.backfillMissedDays(1, days);
-    });
-
-    expect(backfillSpy).toHaveBeenCalledWith(1, days, 'UTC');
-    backfillSpy.mockRestore();
   });
 });
 

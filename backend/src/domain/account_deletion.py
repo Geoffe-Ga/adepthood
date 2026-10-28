@@ -99,6 +99,20 @@ POLICY: Mapping[str, TablePolicy] = {
         "The receipt of the deletion itself: surrogate id, timestamp and row "
         "counts. Erasing it would erase the evidence that erasure happened.",
     ),
+    "adminbalanceadjustment": _erase(
+        "target_user_id",
+        "The account's wallet correction history goes with its wallet. Rows "
+        "about another account survive if this admin leaves, with the actor "
+        "and source address cleared so the target's financial trail remains "
+        "intact without retaining the departed operator's identity.",
+        clear_columns=("actor_admin_id",),
+    ),
+    "agent_grant": _erase(
+        "user_id",
+        "Which vault agents the account approved and what each may do. An "
+        "approval that outlived its account would be a standing permission "
+        "nobody can see or withdraw.",
+    ),
     "authidentity": _erase(
         "user_id",
         "The links to Google / Apple sign-in. Removed, so the same social "
@@ -121,6 +135,15 @@ POLICY: Mapping[str, TablePolicy] = {
         "user_id",
         "Whether and when the account set the corpus invitation aside, and how "
         "many reflections it had asked for. Nothing of the writing.",
+    ),
+    "corpusclassificationattempt": _erase(
+        "user_id",
+        "The count of classifications the app paid for on this account's behalf. "
+        "It holds none of the writing, but it names the account directly and "
+        "says how much it wrote — a shape of somebody's journalling survives a "
+        "deletion that was asked to remove the journalling itself. The cost it "
+        "evidences is already aggregated elsewhere, so nothing an operator "
+        "needs goes with it.",
     ),
     "corpusfragment": _erase(
         "user_id",
@@ -203,18 +226,20 @@ POLICY: Mapping[str, TablePolicy] = {
             "invariant true and never reaches the SET NULL."
         ),
     ),
+    "goallogevent": _erase("user_id", "Every timestamped unit change the account logged."),
     "gumroadsale": TablePolicy(
         disposition=Disposition.ANONYMISE,
         rationale=(
-            "A purchase receipt. The link to the account is cleared, but the "
-            "row itself stays and so does the buyer's address on it — this is "
-            "the one identifier that deliberately survives a deletion. It has "
-            "to: the address is how a paid-for licence or token pack is "
-            "matched to whoever bought it (services.token_packs), so erasing "
-            "it would silently confiscate something the person paid for if "
-            "they ever came back. Retention of a payment record is also the "
-            "ordinary GDPR Art. 17(3) carve-out. Nothing in the row points at "
-            "an account any more."
+            "A purchase receipt. The link to the account is cleared and the "
+            "row itself stays: retention of a payment record is the ordinary "
+            "GDPR Art. 17(3) carve-out. On every sale linked to the account "
+            "(its licence binding or its token-pack credit), the buyer's "
+            "email and Gumroad's raw payload are blanked and anonymised_at "
+            "stamped, as the owner ratified (#3063 AC15); the licence key, "
+            "not the address, is what reclaims a licence afterwards. A sale "
+            "never linked to an account keeps its email, because that "
+            "address is its only claim path. Nothing in the row points at an "
+            "account any more."
         ),
         clear_columns=("token_pack_credited_user_id",),
     ),
@@ -224,6 +249,25 @@ POLICY: Mapping[str, TablePolicy] = {
         "user_id",
         "The writing. Encrypted at rest and erased outright — this is the "
         "single most important row in the sweep.",
+    ),
+    "journalwithdrawalnote": _retain(
+        "A detached, content-free note that a deleted account's journal page "
+        "still has an unconfirmed copy in a vault: the vault's opaque "
+        "fingerprint, the entry id and the instant it was detached, and no "
+        "column that names or reaches any account. Kept until that vault "
+        "confirms the copy gone, for at most 97 days (owner decision "
+        "2026-10-14, #3267).",
+    ),
+    "journalwithdrawalobligation": _erase(
+        "user_id",
+        "Content-free record that a journal page's vault copy is still owed a "
+        "withdrawal, or was confirmed absent: ids, a closed state, an opaque "
+        "destination fingerprint, timestamps. Erased with the account. An open "
+        "one (``pending_delete`` / ``unconfirmed``) is first copied into a "
+        "detached ``journalwithdrawalnote`` with no account link, so the record "
+        "that a copy may remain outlives the account until the vault confirms, "
+        "for at most 97 days (owner decision 2026-10-14, #3267). A confirmed one "
+        "leaves nothing.",
     ),
     "licensebinding": _erase(
         "user_id",
@@ -254,6 +298,21 @@ POLICY: Mapping[str, TablePolicy] = {
     "mettareturnarc": _erase("user_id", "The account's return arcs."),
     "mettareturnhabitrelease": _erase("user_id", "Habits the account released during an arc."),
     "mettareturnofferdismissal": _erase("user_id", "Return offers the account waved away."),
+    "oauth_authorization_code": _erase(
+        "user_id",
+        "Unspent one-time codes an agent was sent back with. Each names the "
+        "account's vault as its audience, so none may survive to be exchanged.",
+    ),
+    "oauth_client": _retain(
+        "The registry of vault agents. Registration is anonymous -- an agent "
+        "registers before anybody signs in -- so no row names an account.",
+    ),
+    "oauth_refresh_token": _erase(
+        "user_id",
+        "Digests of the refresh tokens the account's agents hold. Each one could "
+        "be traded for an access token to the account's vault, so none may "
+        "outlive the account (#3533).",
+    ),
     "passwordresettoken": _erase(
         "user_id",
         "Outstanding recovery tokens. Erased with the account so none can be "
@@ -303,6 +362,12 @@ POLICY: Mapping[str, TablePolicy] = {
         "wanted offered, meaningless once there is nobody to offer them to.",
     ),
     "promptresponse": _erase("user_id", "Answers to the weekly prompts."),
+    "resourcecompletion": _erase("user_id", "Which Start Here resources the account marked read."),
+    "restoremarker": _retain(
+        "Content-free record that a restored database had its deletions "
+        "reapplied: an operator restore id, a state and counts. It names no "
+        "account, and it is what stops a completed restore being reapplied twice.",
+    ),
     "revokedtoken": _retain(
         "Opaque JWT ids with an expiry and nothing else — no account column "
         "exists to sweep on, and the rows age out on their own.",
@@ -350,6 +415,15 @@ POLICY: Mapping[str, TablePolicy] = {
         "An opaque Creek job id and teardown state retained after the account "
         "is gone so operations can prove no billable allocation survived. It "
         "has no user id, content, endpoint, or credential.",
+    ),
+    "voicedraftretraction": _erase(
+        "user_id",
+        "Content-free bookkeeping of which of the account's essays were offered "
+        "to its vault and whether their withdrawal is confirmed: ids, a closed "
+        "state and failure code, an opaque destination fingerprint, timestamps. "
+        "Erased with the account for now; whether remote cleanup should outlive "
+        "erasure (which would mean retaining a destination credential) is an "
+        "owner decision tracked by B08 / #3060.",
     ),
     "walletaudit": _erase(
         "user_id",

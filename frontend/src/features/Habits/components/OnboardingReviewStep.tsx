@@ -35,8 +35,7 @@ const DESTINATIONS: ReadonlyArray<{
   {
     value: BRING_ALONG,
     label: 'Bring along',
-    description:
-      'Already mastered — tracked on your carryover pages, taken for granted from here on.',
+    description: 'Already part of your days — kept on your carryover pages, no re-rating needed.',
     testIDPrefix: 'review-bring-along-',
   },
   {

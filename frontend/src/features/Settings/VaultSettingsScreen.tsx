@@ -1,5 +1,5 @@
 /**
- * ``VaultSettingsScreen`` — "Where your corpus lives", reached from the Your
+ * ``VaultSettingsScreen`` — "Where your writing lives", reached from the Your
  * corpus group in Settings, and the only place a person can attach a space of
  * their own to their account.
  *
@@ -34,6 +34,12 @@
  * **What the read found is a three-state answer.** A read that failed is not a
  * report that nothing is attached, so the screen says so and a connect made
  * from that state asks before it sends. See ``vaultConnectionState``.
+ *
+ * **Agents come last (#3534).** Below the connection, "Agents that may read
+ * your vault" lists every agent the person approved and lets them stop one;
+ * see ``ConnectedAgentsSection``. It reads its own list and is handed the
+ * connection this screen already read, so the address to give an agent comes
+ * from the same one answer.
  */
 import { ChevronDown, ChevronRight } from 'lucide-react-native';
 import React, { useCallback, useEffect, useState } from 'react';
@@ -50,6 +56,7 @@ import {
 
 import ConfirmDialog from '../Habits/components/ConfirmDialog';
 
+import ConnectedAgentsSection from './ConnectedAgentsSection';
 import { SettingsFeedbackBanner } from './shared/SettingsFeedbackBanner';
 import {
   SETTINGS_BUTTON_PADDING,
@@ -262,20 +269,15 @@ const VaultPromiseDeck = (): React.JSX.Element => {
   const t = typeRamp(width);
   return (
     <>
-      <ScreenHeader
-        eyebrow={VAULT_EYEBROW}
-        title={VAULT_TITLE}
-        titleHidden
-        lead={VAULT_PROMISE}
-        testID="vault-header"
-      />
-      <Text style={[t.body, styles.body]} testID="vault-what-it-is">
-        {VAULT_WHAT_IT_IS}
-      </Text>
-      {/* What saying yes to sorting gives, with the floor directly beneath it, so
-          the gain is never read without the sentence that bounds it (#3003). */}
+      <ScreenHeader eyebrow={VAULT_EYEBROW} title={VAULT_TITLE} titleHidden testID="vault-header" />
       <Text style={[t.body, styles.body]} testID="vault-higher-self-gain">
         {HIGHER_SELF_GAIN}
+      </Text>
+      <Text style={[t.body, styles.body]} testID="vault-promise">
+        {VAULT_PROMISE}
+      </Text>
+      <Text style={[t.body, styles.body]} testID="vault-what-it-is">
+        {VAULT_WHAT_IT_IS}
       </Text>
       {/* No explicit label: the floor states its own optionality, and repeating
           the header's promise here would announce it twice in reading order. */}
@@ -798,9 +800,9 @@ const ManagedActivationOffer = ({
       {continuing ? 'Continue managed vault setup' : 'Let Adepthood create one'}
     </Text>
     <Text style={settingsFormStyles.body}>
-      Start an optional, provider-managed Creek vault. Fly and privileged Adepthood or Creek
-      operators can access its stored bytes; Intimate writing stays local. Setup happens after
-      signup, and your journal remains available throughout.
+      Ask Adepthood to set up an optional vault for you, kept on Fly's servers. Fly and the people
+      who run Adepthood and Creek can read what is stored there; anything you mark Intimate never
+      goes there. Your journal stays open the whole time it is being set up.
     </Text>
     <Button
       label={continuing ? 'Continue setup' : 'Create a managed vault'}
@@ -821,7 +823,7 @@ const ManagedActivationUnavailable = ({ unknown }: { unknown: boolean }): React.
   >
     <Text style={styles.formHeading}>
       {unknown
-        ? 'Managed vault availability could not be checked'
+        ? 'Adepthood could not check whether a managed vault is on offer'
         : 'Managed vaults are opening gradually'}
     </Text>
     <Text style={settingsFormStyles.body}>
@@ -958,11 +960,14 @@ const VaultSettingsScreen = ({
           <ActivityIndicator size="large" />
         </View>
       ) : (
-        <VaultConnectionSection
-          controller={controller}
-          navigation={navigation}
-          managedActivation={managedActivation}
-        />
+        <>
+          <VaultConnectionSection
+            controller={controller}
+            navigation={navigation}
+            managedActivation={managedActivation}
+          />
+          <ConnectedAgentsSection vault={controller.state} />
+        </>
       )}
       <VaultConfirmDialog controller={controller} />
     </ScreenScaffold>

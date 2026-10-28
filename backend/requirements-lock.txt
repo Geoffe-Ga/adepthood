@@ -75,6 +75,8 @@ idna==3.19
     #   httpx2
 iniconfig==2.3.0
     # via pytest
+jinja2==3.1.6
+    # via -r backend/requirements.txt
 jiter==0.16.0
     # via
     #   anthropic
@@ -90,7 +92,9 @@ limits==5.8.0
 mako==1.4.1
     # via alembic
 markupsafe==3.0.3
-    # via mako
+    # via
+    #   jinja2
+    #   mako
 openai==3.8.0
     # via -r backend/requirements.txt
 packaging==26.3

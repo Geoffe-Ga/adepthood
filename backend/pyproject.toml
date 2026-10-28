@@ -92,6 +92,16 @@ fixable = ["ALL"]
 # it. Named file by file, never the whole helpers/ tree.
 "tests/helpers/precommit_lane.py" = ["S603"]
 "backend/tests/helpers/precommit_lane.py" = ["S603"]
+# The privacy guard-mutation meta-test (#3163) reruns this repo's own pytest,
+# argv built from sys.executable and manifest node ids, so a mutated guard
+# cannot leak into the parent run. Same reason, same file-by-file scope.
+"tests/security/test_privacy_guard_mutations.py" = ["S603"]
+"backend/tests/security/test_privacy_guard_mutations.py" = ["S603"]
+# The migration-output canary (#3352) runs this repo's own `alembic upgrade`
+# exactly as the container's CMD does, argv built from sys.executable and a
+# tmp_path ini: the real env.py's fileConfig and excepthook only exist there.
+"tests/security/test_cli_telemetry_sentinels.py" = ["S603"]
+"backend/tests/security/test_cli_telemetry_sentinels.py" = ["S603"]
 "conftest.py" = ["S101"]
 "backend/conftest.py" = ["S101"]
 # Issue #272: ``lifespan`` deliberately lazy-imports ``models`` (one-time
@@ -152,7 +162,7 @@ xfail_strict = true
 markers = [
   "real_license_gate: exercise the real Gumroad signup license gate instead of the default test stub-open fixture",
   "integration: run against a live Postgres 16 whose schema is built by `alembic upgrade head` rather than the SQLite approximation; skipped when TEST_POSTGRES_URL is unset, and hard-failed instead of skipped when INTEGRATION_LANE_REQUIRE_POSTGRES is truthy",
-  "live: reconcile configuration against a real provider API (paid credential, network). Never runs by default -- arm it with LIVE_MODEL_CHECK=1 plus ANTHROPIC_API_KEY, as `.github/workflows/live-model-check.yml` does on a weekly schedule. Provider unreachable skips (no verdict); a missing/rejected credential hard-fails, so the lane can never go silently blind",
+  "live: opt-in checks against a real provider API (paid credential, network). Never runs by default. The scheduled catalogue reconciliation uses LIVE_MODEL_CHECK=1 plus ANTHROPIC_API_KEY; the unscheduled resonance-yield measurement uses LIVE_RESONANCE_CHECK=1 plus BOTMASON_PROVIDER and LLM_API_KEY. Provider unreachable skips (no verdict); missing/rejected credentials hard-fail, so neither lane can go silently blind",
 ]
 
 [tool.coverage.run]

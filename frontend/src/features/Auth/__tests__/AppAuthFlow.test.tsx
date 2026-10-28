@@ -146,6 +146,14 @@ jest.mock('@/features/Journal/JournalPhotographScreen', () => {
   return { __esModule: true, default: Stub };
 });
 
+// The Notification Center (#3142) is another pushed Journal route whose
+// sections read their own data; stub it so this suite stays on auth gating.
+jest.mock('@/features/Journal/NotificationCenterScreen', () => {
+  const { Text } = require('react-native');
+  const Stub = () => <Text>NotificationCenterScreen</Text>;
+  return { __esModule: true, default: Stub };
+});
+
 import App, { linking } from '@/App';
 import { linking as navigationLinking } from '@/navigation/linking';
 import { useWelcomeStore } from '@/store/useWelcomeStore';

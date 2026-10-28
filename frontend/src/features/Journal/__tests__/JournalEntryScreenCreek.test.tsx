@@ -17,6 +17,8 @@ jest.mock('@/storage/resonanceExplainerStorage', () => require('./resonanceExpla
 jest.mock('@/context/AuthContext', () => require('./authContextTestKit'));
 
 jest.mock('@/api', () => ({
+  ...require('./journalUiFlagsTestKit'),
+  ...require('./readingRouteTestKit'),
   journal: {
     get: (...args: unknown[]) => (mockGet as unknown as (...values: unknown[]) => unknown)(...args),
     create: jest.fn(),
@@ -94,7 +96,7 @@ async function runPass(response: ResonanceResponse) {
   const view = renderScreen();
   await waitFor(() => expect(view.queryByTestId('journal-edit-button')).not.toBeNull());
   fireEvent.press(view.getByTestId('get-resonance-button'));
-  await waitFor(() => expect(mockGenerate).toHaveBeenCalledWith(7, undefined, null));
+  await waitFor(() => expect(mockGenerate).toHaveBeenCalledWith(7, undefined, null, 'vault_bound'));
   return view;
 }
 

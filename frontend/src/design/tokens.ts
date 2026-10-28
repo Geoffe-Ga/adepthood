@@ -717,6 +717,30 @@ export const accent = {
   onPrimary: '#ffffff', // light foreground on the accent fill (white on terracotta ~5:1, AA)
 } as const;
 
+/** Ordinal magnitude uses one hue; stage colours remain labelled identities. */
+export const chart = {
+  tier: ['#c98b68', '#a5572f', '#6e3417'],
+  dim: '#c9bfae',
+  heat: [surface.sunken, '#dfb99e', '#c98b68', '#a5572f', '#6e3417'],
+} as const;
+
+/** Shared SVG geometry, in logical pixels; widths come from the containing view. */
+export const chartLayout = {
+  height: 160,
+  axisSpace: 24,
+  gap: 2,
+  lineWidth: 2,
+  hairlineWidth: 1,
+  columnMaxWidth: 24,
+  columnRadius: 4,
+  dotRadius: 4,
+  plotInset: 8,
+  ribbonHeight: 20,
+  secondaryRibbonHeight: 6,
+  swatchSize: 10,
+  labelSize: 13,
+} as const;
+
 /**
  * The writing surface's caret.
  *
@@ -916,4 +940,20 @@ export const showcaseShadow = {
   shadowOpacity: 0.18,
   shadowRadius: 22,
   elevation: 8,
+} as const;
+
+/**
+ * Chrome that floats over the page, such as the writing timer's pill: the
+ * canvas paper, opaque on every platform, with a hairline edge and a card's
+ * lift. It was once a translucent blurred wash on the web, which let the page
+ * text under it read through behind its controls (#3403); floating chrome sits
+ * over writing, so nothing beneath it may be legible.
+ */
+export const floatingChrome = {
+  pill: {
+    backgroundColor: surface.canvas,
+    borderColor: surface.hairline,
+    borderWidth: 1,
+    ...surfaceShadow.card,
+  },
 } as const;

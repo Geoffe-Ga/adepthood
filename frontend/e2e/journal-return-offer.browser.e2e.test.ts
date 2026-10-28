@@ -1,3 +1,6 @@
+import { mkdirSync } from 'node:fs';
+import { join } from 'node:path';
+
 import { expect, test, type APIRequestContext, type Page } from '@playwright/test';
 
 import {
@@ -5,6 +8,9 @@ import {
   backendUrl,
   bearer,
   isoDaysAgo,
+  frontendUrl,
+  logIn,
+  setProgramAnchorDaysAgo,
   readReturnState,
   reachReturnEligibility,
   signUp,
@@ -118,14 +124,24 @@ async function offerTheReturnInTheEntry(page: Page, prefix: string): Promise<str
   const token = await tokenFor(page.request, email);
   await reachReturnEligibility(page.request, token, email);
   await seedQuietHabit(page.request, token);
-  const entryId = await seedFinishedEntry(page.request, token);
+  await openFreshResonance(page, token);
+  await expect(page.getByTestId('contraction-reflection-title')).toHaveText(RETURN_OFFER_TITLE);
+  return token;
+}
 
+/** A fresh real page/pass remounts the Return consumer without altering stores. */
+async function openFreshResonance(page: Page, token: string): Promise<void> {
+  const entryId = await seedFinishedEntry(page.request, token);
+  await page.goto(`${frontendUrl()}/journal`);
   await page.reload();
   await page.getByTestId(`journal-shelf-open-${String(entryId)}`).click();
   await askForResonance(page);
+}
 
-  await expect(page.getByTestId('contraction-reflection-title')).toHaveText(RETURN_OFFER_TITLE);
-  return token;
+async function logOutOfReturnAccount(page: Page): Promise<void> {
+  await page.goto(`${frontendUrl()}/settings`);
+  await page.getByTestId('settings-row-logout').click();
+  await expect(page.getByRole('link', { name: 'Go to log-in screen' })).toBeVisible();
 }
 
 /** Every arc start the browser actually issued, recorded as it goes. */
@@ -137,6 +153,17 @@ function recordArcStarts(page: Page): string[] {
     }
   });
   return starts;
+}
+
+/** Observe the browser's credential; tokenFor's separate verification login is not it. */
+function recordReturnCredentials(page: Page): string[] {
+  const credentials: string[] = [];
+  page.on('request', (request) => {
+    if (request.method() === 'GET' && new URL(request.url()).pathname === '/metta-return') {
+      credentials.push(request.headers().authorization ?? '');
+    }
+  });
+  return credentials;
 }
 
 test('the entry begins the Return it offers, on the weeks the server named', async ({ page }) => {
@@ -186,6 +213,7 @@ test('the entry begins the Return it offers, on the weeks the server named', asy
 
 test('"Not now" in the entry persists the decline the Journal shelf reads', async ({ page }) => {
   const starts = recordArcStarts(page);
+  const credentials = recordReturnCredentials(page);
   const token = await offerTheReturnInTheEntry(page, 'return-offer-decline');
 
   const before = await readReturnState(page.request, token);
@@ -197,7 +225,13 @@ test('"Not now" in the entry persists the decline the Journal shelf reads', asyn
       new URL(response.url()).pathname === '/metta-return/offer/dismiss',
   );
   await page.getByTestId('contraction-dismiss').click();
-  expect((await dismissed).status()).toBe(OK);
+  const confirmation = await dismissed;
+  expect(confirmation.status()).toBe(OK);
+  expect(confirmation.request().postDataJSON()).toEqual({
+    expected_offer_episode: before.offer_episode,
+  });
+  expect(Boolean(credentials.at(-1)?.startsWith('Bearer '))).toBe(true);
+  expect(confirmation.request().headers().authorization === credentials.at(-1)).toBe(true);
 
   await expect(page.getByTestId('contraction-return-accept')).toHaveCount(0);
   await expect(page.getByTestId('contraction-return-notice')).toHaveCount(0);
@@ -208,4 +242,247 @@ test('"Not now" in the entry persists the decline the Journal shelf reads', asyn
   expect(after.offer_dismissed).toBe(true);
   expect(after.arc).toBeNull();
   expect(starts).toHaveLength(0);
+});
+
+/** Target only this card's rendered text; this is not OS-wide font scaling. */
+async function captureReturnPixels(page: Page, width: number): Promise<void> {
+  const card = page.getByTestId('contraction-reflection');
+  const enlarged = await card.evaluate((root) => {
+    const texts = Array.from(root.querySelectorAll<HTMLElement>('[dir="auto"]')).filter((node) =>
+      node.textContent?.trim(),
+    );
+    return texts.map((node) => {
+      const before = getComputedStyle(node);
+      const font = Number.parseFloat(before.fontSize);
+      const line = Number.parseFloat(before.lineHeight);
+      node.style.fontSize = `${font * 2}px`;
+      node.style.lineHeight = Number.isFinite(line) ? `${line * 2}px` : '1.5';
+      return Math.abs(Number.parseFloat(getComputedStyle(node).fontSize) - font * 2) < 0.1;
+    });
+  });
+  expect(enlarged.length).toBeGreaterThan(0);
+  expect(enlarged.every(Boolean)).toBe(true);
+  const glyphs = await card.evaluate((root) => {
+    const cardBounds = root.getBoundingClientRect();
+    const ranges = Array.from(root.querySelectorAll<HTMLElement>('[dir="auto"]'))
+      .filter((node) => node.textContent?.trim())
+      .flatMap((node) => {
+        const range = document.createRange();
+        range.selectNodeContents(node);
+        return Array.from(range.getClientRects());
+      });
+    return {
+      checked: ranges.length,
+      overflow: ranges.filter(
+        (box) =>
+          box.left < cardBounds.left - 1 ||
+          box.right > cardBounds.right + 1 ||
+          box.left < -1 ||
+          box.right > innerWidth + 1,
+      ).length,
+    };
+  });
+  expect(glyphs.checked).toBeGreaterThan(0);
+  expect(glyphs.overflow).toBe(0);
+  await card.evaluate((node) => node.scrollIntoView({ block: 'start' }));
+  await expect(page.getByTestId('contraction-reflection-title')).toBeInViewport({ ratio: 1 });
+  const artifacts = join(process.cwd(), 'e2e/artifacts/return-episode-3299');
+  mkdirSync(artifacts, { recursive: true });
+  await page.screenshot({
+    path: join(artifacts, `return-${width}-200-text-heading.png`),
+    animations: 'disabled',
+  });
+  const dismiss = page.getByTestId('contraction-dismiss');
+  await dismiss.scrollIntoViewIfNeeded();
+  await expect(dismiss).toBeInViewport({ ratio: 1 });
+  const target = await dismiss.boundingBox();
+  if (target === null) throw new Error('The real decline target is absent');
+  expect(target.width).toBeGreaterThanOrEqual(44);
+  expect(target.height).toBeGreaterThanOrEqual(44);
+  const bounds = await card.boundingBox();
+  if (bounds === null) throw new Error('The real Return card is absent');
+  expect(target.x).toBeGreaterThanOrEqual(bounds.x - 1);
+  expect(target.x + target.width).toBeLessThanOrEqual(bounds.x + bounds.width + 1);
+  await page.screenshot({
+    path: join(artifacts, `return-${width}-200-text-decline.png`),
+    animations: 'disabled',
+  });
+}
+
+for (const width of [390, 1280]) {
+  test(`an uncertain Return decline retries only its observed episode on shelf return and reload at ${width}`, async ({
+    page,
+  }) => {
+    await page.setViewportSize({ width, height: 844 });
+    const credentials = recordReturnCredentials(page);
+    const token = await offerTheReturnInTheEntry(page, 'return-pending-episode');
+    await captureReturnPixels(page, width);
+    const before = await readReturnState(page.request, token);
+    expect(before.offer_episode).toEqual(expect.any(String));
+    expect(before.offer_dismissed).toBe(false);
+    const episode = before.offer_episode;
+    const refused: unknown[] = [];
+    const endpoint = '**/metta-return/offer/dismiss';
+    await page.route(endpoint, async (route) => {
+      if (route.request().method() !== 'POST') return route.continue();
+      refused.push(route.request().postDataJSON());
+      await route.fulfill({
+        status: 503,
+        contentType: 'application/json',
+        body: JSON.stringify({ detail: 'browser_controlled_unavailable' }),
+      });
+    });
+    await page.getByTestId('contraction-dismiss').focus();
+    await expect(page.getByTestId('contraction-dismiss')).toBeFocused();
+    await page.keyboard.press('Enter');
+    // The normal idempotent transport has one first attempt and two retries.
+    // Refuse all three; removing the interceptor earlier would manufacture a
+    // success before the durable pending-choice path had been exercised.
+    await expect.poll(() => refused.length).toBe(3);
+    expect(refused).toEqual(Array.from({ length: 3 }, () => ({ expected_offer_episode: episode })));
+    expect((await readReturnState(page.request, token)).offer_dismissed).toBe(false);
+    const cached = await page.evaluate((observedEpisode) => {
+      const owner = localStorage.getItem('@adepthood/device_owner');
+      if (owner === null || observedEpisode === null)
+        throw new Error('Missing observed owner or episode');
+      return localStorage.getItem(
+        `@adepthood/return_offer_dismissed#u${owner}#e${encodeURIComponent(observedEpisode)}`,
+      );
+    }, episode);
+    expect(cached).toBe('true');
+    // Returning to the shelf can remount its Return hook and retry before
+    // click resolves. Observe that real request before removing the refusal.
+    const retried = page.waitForResponse(
+      (response) =>
+        response.request().method() === 'POST' &&
+        new URL(response.url()).pathname === '/metta-return/offer/dismiss',
+    );
+    await page.unroute(endpoint);
+    await page.getByTestId('journal-close-entry').click();
+    // Let the actual retry settle before reload can cancel its fetch. The
+    // following cold mount must then honor this server-confirmed choice.
+    const confirmation = await retried;
+    expect(confirmation.status()).toBe(OK);
+    expect(confirmation.request().postDataJSON()).toEqual({ expected_offer_episode: episode });
+    expect(Boolean(credentials.at(-1)?.startsWith('Bearer '))).toBe(true);
+    expect(confirmation.request().headers().authorization === credentials.at(-1)).toBe(true);
+    await page.reload();
+    await expect(page.getByTestId('return-offer-card')).toHaveCount(0);
+    const after = await readReturnState(page.request, token);
+    expect(after.offer_episode).toBe(episode);
+    expect(after.offer_dismissed).toBe(true);
+    expect(after.arc).toBeNull();
+  });
+}
+
+/** A genuinely late request reaches the normal endpoint after the calendar advances. */
+test('a held decline cannot set aside the later eligible Return episode', async ({ page }) => {
+  const email = await signUp(page, 'return-stale-episode');
+  const token = await tokenFor(page.request, email);
+  await reachReturnEligibility(page.request, token, email);
+  await seedQuietHabit(page.request, token);
+  await openFreshResonance(page, token);
+  await expect(page.getByTestId('contraction-return-accept')).toBeVisible();
+  const before = await readReturnState(page.request, token);
+  const heldBodies: unknown[] = [];
+  let release = (): void => {};
+  const released = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  await page.route('**/metta-return/offer/dismiss', async (route) => {
+    if (route.request().method() !== 'POST') return route.continue();
+    heldBodies.push(route.request().postDataJSON());
+    await released;
+    await route.continue();
+  });
+  await page.getByTestId('contraction-dismiss').click();
+  await expect.poll(() => heldBodies.length).toBe(1);
+  expect(heldBodies).toEqual([{ expected_offer_episode: before.offer_episode }]);
+  setProgramAnchorDaysAgo(email, 105);
+  const stage = await page.request.get(`${backendUrl()}/stages`, { headers: bearer(token) });
+  expect(stage.status()).toBe(OK);
+  const advanced = await readReturnState(page.request, token);
+  expect(advanced.offer_episode).toEqual(expect.any(String));
+  expect(advanced.offer_episode).not.toBe(before.offer_episode);
+  expect(advanced.offer_dismissed).toBe(false);
+  const rejected = page.waitForResponse(
+    (response) =>
+      response.request().method() === 'POST' &&
+      new URL(response.url()).pathname === '/metta-return/offer/dismiss',
+  );
+  release();
+  expect((await rejected).status()).toBe(409);
+  await page.unroute('**/metta-return/offer/dismiss');
+  // Declining the entry synchronously unmounts its Return hook. Its late
+  // request must stay fenced; the next real mount observes the fresh offer.
+  const refreshed = page.waitForResponse(
+    (response) =>
+      response.request().method() === 'GET' && new URL(response.url()).pathname === '/metta-return',
+  );
+  await openFreshResonance(page, token);
+  expect(await (await refreshed).json()).toMatchObject({
+    offer_episode: advanced.offer_episode,
+    offer_dismissed: false,
+  });
+  await expect(page.getByTestId('contraction-return-accept')).toBeVisible();
+  expect(await readReturnState(page.request, token)).toMatchObject({
+    offer_episode: advanced.offer_episode,
+    offer_dismissed: false,
+    arc: null,
+  });
+});
+
+test('confirmed Return choices survive sign-in without assigning them to another account', async ({
+  page,
+}) => {
+  // Four real authentication transitions took 57 seconds before the final B check.
+  test.setTimeout(90_000);
+  const a = await signUp(page, 'return-episode-owner-a');
+  const tokenA = await tokenFor(page.request, a);
+  await reachReturnEligibility(page.request, tokenA, a);
+  await seedQuietHabit(page.request, tokenA);
+  await openFreshResonance(page, tokenA);
+  await expect(page.getByTestId('contraction-return-accept')).toBeVisible();
+  const beforeA = await readReturnState(page.request, tokenA);
+  const dismissed = page.waitForResponse(
+    (response) =>
+      response.request().method() === 'POST' &&
+      new URL(response.url()).pathname === '/metta-return/offer/dismiss',
+  );
+  await page.getByTestId('contraction-dismiss').click();
+  expect((await dismissed).status()).toBe(OK);
+  expect(await readReturnState(page.request, tokenA)).toMatchObject({
+    offer_episode: beforeA.offer_episode,
+    offer_dismissed: true,
+    arc: null,
+  });
+  await logOutOfReturnAccount(page);
+  const b = await signUp(page, 'return-episode-owner-b');
+  const tokenB = await tokenFor(page.request, b);
+  await reachReturnEligibility(page.request, tokenB, b);
+  await seedQuietHabit(page.request, tokenB);
+  await openFreshResonance(page, tokenB);
+  await expect(page.getByTestId('contraction-return-accept')).toBeVisible();
+  const beforeB = await readReturnState(page.request, tokenB);
+  expect(beforeB.offer_episode).not.toBe(beforeA.offer_episode);
+  expect(beforeB.offer_dismissed).toBe(false);
+  await logOutOfReturnAccount(page);
+  await logIn(page, a);
+  await openFreshResonance(page, tokenA);
+  await expect(page.getByTestId('contraction-reflection-title')).toBeVisible();
+  await expect(page.getByTestId('contraction-return-accept')).toHaveCount(0);
+  expect(await readReturnState(page.request, tokenA)).toMatchObject({
+    offer_episode: beforeA.offer_episode,
+    offer_dismissed: true,
+    arc: null,
+  });
+  await logOutOfReturnAccount(page);
+  await logIn(page, b);
+  await openFreshResonance(page, tokenB);
+  await expect(page.getByTestId('contraction-return-accept')).toBeVisible();
+  expect(await readReturnState(page.request, tokenB)).toMatchObject({
+    offer_episode: beforeB.offer_episode,
+    offer_dismissed: false,
+    arc: null,
+  });
 });

@@ -41,6 +41,7 @@ const NAVIGATE_BY_NAME: Readonly<
   Record<keyof RootTabParamList, (nav: RootStackNavigation) => void>
 > = {
   Journal: (nav) => nav.navigate('Tabs', { screen: 'Journal' }),
+  Prompts: (nav) => nav.navigate('Tabs', { screen: 'Prompts' }),
   Habits: (nav) => nav.navigate('Tabs', { screen: 'Habits' }),
   Practice: (nav) => nav.navigate('Tabs', { screen: 'Practice' }),
   Course: (nav) => nav.navigate('Tabs', { screen: 'Course' }),

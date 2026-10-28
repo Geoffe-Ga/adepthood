@@ -1,0 +1,246 @@
+---
+slug: about
+title: "APTITUDE Intro"
+content_type: essay
+description: "Welcome to the APTITUDE Course: what Adepthood is and what the course offers."
+media: []
+---
+
+Welcome to the APTITUDE Course
+
+Adepthood is what comes after adulthood, but only for those who choose
+to wake up. It’s what you’re living when you’ve stopped taking your
+conditioning at face value and started expressing Free
+Will. It’s knowing you can choose differently—the cycles, habits, patterns, and self-sabotage still come around, because they always do, but they no longer get to run you without a vote.
+
+You found your way here—you might already have done
+some research, some self-work, some intermittent practice.
+
+You’re already walking the path? The APTITUDE Course is
+your map.
+
+This 36-week, 10-stage rite of passage is designed for
+Liminal Creeps who feel stuck
+between insight and embodiment. Pulled in two directions and, with the
+hindrance of the inevitable toxic baggage we all accrue, unable to
+actualize either. Realization three times, life unchanged? Not more
+insight. Scaffolding.
+
+This is for you if you’re one
+of the drowning mystics who’ve briefly experienced the
+sacred but who struggles with changing your oil before your head gasket
+blows. It’s for you if you see the ways humans can get stuck acting as
+biological machines—conditioned by systems, habits, traumas, an
+oppressive society—but are ready to stop being a cog yourself.
+
+APTITUDE is about integration.
+Not bypassing. Not escaping. It’s about fully experiencing the messy,
+ecstatic, tragic, and miraculous ride of being a Whole human. All
+without panicking at the lows or getting flung out of balance by the
+highs.
+
+This is a guided journey from
+Liminal Creep to Whole Adept, built on a foundation of what’s missing in
+Western “spiritual-but-not-religious” communities: a grounding in
+practical ethics, wisdom, and detoxification from our addicted,
+self-destructive, self-isolating modern world.
+
+------------------------------------------------------------------------
+
+### Why APTITUDE? Why Now?
+
+Ever read the news? We’re experiencing some intense contractions. Crisis
+stacked on crisis, system after system crumbling—or being torn—apart. In
+this liminal space, those who have cultivated
+awareness, resilience, and Free
+Will will shape what comes next.
+
+And I think something
+is coming
+next. After the excruciating contractions of labor comes the miracle of
+birth. I can’t promise that.
+
+APTITUDE gives you a structure that
+bends: enough scaffolding to stay upright in, and maybe do some good
+inside, those many, many crises—sometimes
+called the polycrisis. Each Stage of APTITUDE introduces key habits and
+practices, scaffolding energy so that growth is
+sustainable, not
+overwhelming: one new habit every three weeks, a practice that starts
+at one minute and climbs to forty-five. A one-minute habit kept for
+twenty-one days is how you find out you’re someone who keeps habits.
+
+If you’ve ever:
+
+- Felt like a mystic without a monastery
+- Woken up solo but spiraled back to sleep
+- Struggled with “shoulds”—eg. I should be
+  meditating, I should stop scrolling so much, I
+  should take cold showers, drink more water,
+  get more exercise, take my job more seriously…
+- Known you have something to offer the world, but felt
+  trapped in cycles of stagnation—
+
+Then this course is for you.
+
+Two objections, answered. “This is for people who have their act
+together”: it was built for the person who doesn’t, by one who didn’t,
+and the first Stage asks for a minute a day so nobody has to earn their way
+in. “I already understand the models”: good. You don’t need more map.
+You need the one-minute thing done on a Tuesday.
+
+------------------------------------------------------------------------
+
+### The Journey: From Liminal Creep to Whole Adept
+
+The transformation from Creep to
+Adept isn’t about perfection—it’s about
+wholeness. It’s about shifting from disempowered
+rebellion to conscious creation. From alienation
+to deep belonging. From insight to
+action.
+
+Through ten carefully curated stages, APTITUDE will
+bring ten human capacities online—one at a time,
+in the order they unlock:
+
+1.  Yes-And-Ness, Agency: Build
+    a life intentionally when in a higher energy mode.
+2.  Yes-And-Ness,
+    Receptivity: Receive abundance when in a
+    lower energy mode.
+3.  Self-Love: Break free from
+    shame and insecurity to exhibit authentic confidence.
+4.  Community Love: Move from
+    digital isolation to embodied belonging.
+5.  Intellectual
+    Understanding: Harness rationality and the
+    drive to achieve.
+6.  Embodied
+    Understanding: Know yourself as good by
+    centering repressed edges
+7.  Systems Wisdom: Amalgamate
+    insights of previous stages into one unique system
+8.  True Self Wisdom: Tap
+    into deep intuition and the small clear voice beneath the
+    conditioned personality.
+9.  Unity: Yoke yourself to the
+    greater currents of Source.
+10. Emptiness: Explore how
+    vibration “doesn’t satisfy, doesn’t last, and ain’t you.”
+
+Each stage includes:
+
+- A Key Practice (from
+  mindfulness to breathwork to movement)
+- An Ongoing Habit (small,
+  powerful shifts that accumulate over time)
+- A Self-Inquiry
+  Process (journaling questions to guide your
+  progress—kept, in the app, so the page can read you back your own
+  clearest sentence on the day you can’t hear yourself)
+
+This isn’t a crash course. It’s an extensive
+initiation into lasting transformation.
+
+And here is the thing to understand before you start.
+The Stages organize the course. The
+capacities organize a life. We take them
+one at a time because that’s how they unlock—but life
+never asks for one at a time. A hard conversation wants
+Beige, Purple, Red, Blue, and Yellow all at once, in the
+same four minutes. That’s a chord, not a note.
+
+So Wholeness here doesn’t mean arriving at the
+tenth Stage and staying there. There’s no such address.
+It means having enough of the scale available, in good
+enough repair, that you can play what the moment
+actually calls for—which is the only thing this course is
+finally training you to do.
+
+------------------------------------------------------------------------
+
+### What Makes APTITUDE Different?
+
+- NO GURU: I am nothing special. Your journey is
+  yours. APTITUDE hands you the sheet music, but you build the
+  instrument—you choose what materials, what uniquely resonant habits
+  and practices, go into it.
+- INTEGRATIVE, NOT ESCAPIST: Many spiritual
+  paths prioritize transcendence over embodiment. They preach
+  “integrating and transcending,” but go on only
+  to criticize the shadows of early developmental stages. Here, we
+  embrace the full human
+  experience.
+- HOUSEHOLDER, NOT MONASTIC: We’re not
+  promising you enlightenment. We’re helping you get your
+  life arranged well enough that awakening
+  becomes possible—needs met, attention protected, practices
+  with a place in the day, values turned into routines. What a
+  monastery does with architecture, you’ll have to do with
+  habits. That’s harder, and it’s the point.
+  It is also emphatically not
+  productivity culture: the goal isn’t more output or a
+  better-adjusted worker for a diseased machine.
+- CYCLICAL, NOT CLIMACTIC: Evidence from
+  countless luminaries indicates there is no spiritual retirement. There
+  is no enlightenment you can effortlessly rest in forever. There is no
+  Good Vibes Only style safe space. There will always
+  be the ups and downs, but APTITUDE teaches you to be present
+  with them without unneeded suffering. Every phase of the Wavelength
+  has a medicine, the trough included, so a missed week is a phase,
+  not a broken streak.
+
+Prepare to grow comfortable surfing that cyclical
+pattern—The Archetypal
+Wavelength—the essential qualities present in
+all cycles of rise and fall, expansion and contraction. Most people,
+especially people like me, get battered by this wave, clinging to highs
+and drowning in lows.
+
+As a Whole Adept, you’ll ride it with equanimity,
+awareness, and intention.
+
+------------------------------------------------------------------------
+
+### What You Get When You Join
+
+- A complete roadmap to Adepthood, entered at your own depth. A journal
+  page a day is a whole way through; each deeper ring is worth coming
+  back for.
+- A supportive community of
+  fellow seekers in the Creekmason Digital Sangha—not a feed. You meet
+  them to feel less alone in the room you’re actually in.
+- Guided practices and habit-building
+  strategies
+- A framework you can return to for life
+
+APTITUDE is a gift-based
+course. You decide what feels fair based on your
+resources, what you have witnessed similar courses asking, and what
+represents a little initiatory skin in the game to enhance commitment.
+No one will be turned away for lack of funds, but let’s keep the energy
+exchange reciprocal.
+
+------------------------------------------------------------------------
+
+### Are You Ready?
+
+If you feel the call, trust it.
+
+If you want to read more first, that’s ok too. Here’s
+our Philosophy and an extended introduction.
+
+Take note, though. What are you feeling in your body?
+What is sparked by this invitation to step out of stagnation and
+self-sabotage—and to stop getting wrecked every time a temporary
+enlightenment gives way to the collapse that always follows it?
+
+The world is waiting for Whole Adepts. For those who have reclaimed
+their Free Will, who have integrated their insights
+into action, who are ready to co-create what
+comes next.
+
+Are you in?
+
+Let’s co-create this thing!

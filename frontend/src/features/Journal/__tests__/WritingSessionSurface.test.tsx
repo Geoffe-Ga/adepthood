@@ -2,16 +2,25 @@
 import { jest, describe, it, expect, beforeEach, afterEach } from '@jest/globals';
 import { act, fireEvent, render } from '@testing-library/react-native';
 import React from 'react';
+import { StyleSheet } from 'react-native';
 
-import { DEFAULT_WRITING_MINUTES } from '../writingSession';
+import {
+  RESONANCE_BUTTON_CLEARANCE,
+  WRITING_BAND_LOWERED_CLEARANCE,
+  WRITING_TIMER_CLEARANCE,
+} from '../JournalEntry.styles';
+import { DEFAULT_WRITING_MINUTES, type WritingSessionResult } from '../writingSession';
 import WritingSessionSurface from '../WritingSessionSurface';
 
+import { SPACING, touchTarget } from '@/design/tokens';
 import type { IntervalHandle } from '@/features/Practice/engine/types';
 import { MS_PER_MINUTE } from '@/features/Practice/engine/types';
 
 const TICK_MS = 100;
 const T0 = 1_700_000_000_000;
 const SHORT_PRESET_MINUTES = 10;
+/** An unmeasured dock is hidden from assistive tech, so queries must opt in to see it. */
+const UNMEASURED = { includeHiddenElements: true } as const;
 
 function renderSurface() {
   return render(
@@ -44,6 +53,118 @@ afterEach(() => {
 });
 
 describe('WritingSessionSurface', () => {
+  it('docks an untouched phone timer below the paper, then restores the running overlay', () => {
+    const rn = require('react-native');
+    const dimensions = jest
+      .spyOn(rn, 'useWindowDimensions')
+      .mockReturnValue({ width: 390, height: 844, scale: 1, fontScale: 1 });
+    const onClearanceChange = jest.fn();
+    const onIdleDockHeightChange = jest.fn();
+    let unmount: (() => void) | undefined;
+    try {
+      const view = render(
+        <WritingSessionSurface
+          onClearanceChange={onClearanceChange}
+          onIdleDockHeightChange={onIdleDockHeightChange}
+        />,
+      );
+      unmount = view.unmount;
+      const { getByTestId } = view;
+      expect(
+        StyleSheet.flatten(getByTestId('writing-session-band', UNMEASURED).props.style),
+      ).toMatchObject({
+        position: 'absolute',
+        top: 'auto',
+        bottom: 0,
+        maxHeight: 844 - touchTarget.minimum - SPACING.lg,
+        overflow: 'hidden',
+      });
+      expect(
+        StyleSheet.flatten(getByTestId('writing-session-band-content', UNMEASURED).props.style),
+      ).toMatchObject({
+        flexShrink: 1,
+        maxHeight: 844 - touchTarget.minimum - SPACING.lg,
+      });
+      expect(onClearanceChange).toHaveBeenLastCalledWith(0);
+
+      fireEvent(getByTestId('writing-session-band-content', UNMEASURED), 'layout', {
+        nativeEvent: { layout: { height: 100 } },
+      });
+      expect(onIdleDockHeightChange).toHaveBeenLastCalledWith(100 + SPACING.md);
+      fireEvent.press(getByTestId('writing-timer-start', UNMEASURED));
+
+      expect(
+        StyleSheet.flatten(getByTestId('writing-session-band', UNMEASURED).props.style).position,
+      ).toBe('absolute');
+      expect(onClearanceChange).toHaveBeenLastCalledWith(WRITING_TIMER_CLEARANCE);
+      expect(onIdleDockHeightChange).toHaveBeenLastCalledWith(0);
+      expect(getByTestId('writing-timer-stop')).toBeTruthy();
+    } finally {
+      unmount?.();
+      dimensions.mockRestore();
+    }
+  });
+
+  it('keeps an untouched phone dock unpainted until the page has reserved its height (#3481)', () => {
+    const rn = require('react-native');
+    const dimensions = jest
+      .spyOn(rn, 'useWindowDimensions')
+      .mockReturnValue({ width: 390, height: 844, scale: 1, fontScale: 1 });
+    const onIdleDockHeightChange = jest.fn();
+    try {
+      const { getByTestId } = render(
+        <WritingSessionSurface onIdleDockHeightChange={onIdleDockHeightChange} />,
+      );
+      const band = () => getByTestId('writing-session-band', UNMEASURED);
+      // Unmeasured, the page has made no room for it: painted, it would sit on the writing.
+      expect(StyleSheet.flatten(band().props.style).opacity).toBe(0);
+      expect(band().props.pointerEvents).toBe('none');
+      expect(band().props['aria-hidden']).toBe(true);
+      expect(onIdleDockHeightChange).not.toHaveBeenCalled();
+
+      fireEvent(getByTestId('writing-session-band-content', UNMEASURED), 'layout', {
+        nativeEvent: { layout: { height: 100 } },
+      });
+      expect(onIdleDockHeightChange).toHaveBeenLastCalledWith(100 + SPACING.md);
+      expect(StyleSheet.flatten(band().props.style).opacity).toBe(1);
+      expect(band().props.pointerEvents).toBe('box-none');
+      expect(band().props['aria-hidden']).toBe(false);
+    } finally {
+      dimensions.mockRestore();
+    }
+  });
+
+  it('paints a floating (laptop) band at once, since the page reserves its clearance up front', () => {
+    const { getByTestId } = renderSurface();
+    const band = getByTestId('writing-session-band');
+    expect(StyleSheet.flatten(band.props.style).opacity).toBe(1);
+    expect(band.props['aria-hidden']).toBe(false);
+  });
+
+  it('scrolls an untouched phone dock whose enlarged content exceeds the available height', () => {
+    const rn = require('react-native');
+    const dimensions = jest
+      .spyOn(rn, 'useWindowDimensions')
+      .mockReturnValue({ width: 195, height: 150, scale: 2, fontScale: 2 });
+    try {
+      const { getByTestId } = renderSurface();
+      const band = getByTestId('writing-session-band', UNMEASURED);
+      const content = getByTestId('writing-session-band-content', UNMEASURED);
+      fireEvent(content, 'contentSizeChange', 195, 360);
+      fireEvent(band, 'layout', { nativeEvent: { layout: { height: 150 } } });
+      expect(content.props.scrollEnabled).toBe(true);
+      expect(StyleSheet.flatten(band.props.style).maxHeight).toBe(
+        150 - touchTarget.minimum - SPACING.lg,
+      );
+      expect(StyleSheet.flatten(content.props.style).flexShrink).toBe(1);
+      expect(StyleSheet.flatten(content.props.style).maxHeight).toBe(
+        150 - touchTarget.minimum - SPACING.lg,
+      );
+    } finally {
+      dimensions.mockRestore();
+    }
+  });
+
   it('carries the timer and no note until a session has actually finished', () => {
     const { queryByTestId } = renderSurface();
 
@@ -87,6 +208,196 @@ describe('WritingSessionSurface', () => {
     expect(getByTestId('writing-timer-readout').props.children).toBe('20:00');
     expect(queryByTestId('writing-timer-start')).toBeNull();
     expect(queryByTestId('writing-timer-compact')).not.toBeNull();
+  });
+
+  it('keeps the note inside one floating band when the idle timer expands', () => {
+    const { getByTestId } = renderSurface();
+    fireEvent.press(getByTestId('writing-timer-start'));
+    tickTo(T0 + DEFAULT_WRITING_MINUTES * MS_PER_MINUTE);
+    fireEvent.press(getByTestId('writing-timer-compact'));
+    expect(StyleSheet.flatten(getByTestId('writing-session-band').props.style).position).toBe(
+      'absolute',
+    );
+    expect(StyleSheet.flatten(getByTestId('writing-session-band').props.style).bottom).toBe(
+      RESONANCE_BUTTON_CLEARANCE,
+    );
+    expect(
+      StyleSheet.flatten(getByTestId('writing-session-banner').props.style).marginBottom,
+    ).toBeLessThan(RESONANCE_BUTTON_CLEARANCE);
+  });
+
+  it('reserves the measured note and timer band without shrinking the sheet', () => {
+    const onClearanceChange = jest.fn();
+    const { getByTestId } = render(<WritingSessionSurface onClearanceChange={onClearanceChange} />);
+    fireEvent(getByTestId('writing-session-band-content'), 'layout', {
+      nativeEvent: { layout: { height: 400 } },
+    });
+    expect(onClearanceChange).toHaveBeenLastCalledWith(
+      400 + RESONANCE_BUTTON_CLEARANCE + SPACING.md,
+    );
+    fireEvent(getByTestId('writing-session-band-content'), 'layout', {
+      nativeEvent: { layout: { height: 40 } },
+    });
+    expect(onClearanceChange).toHaveBeenLastCalledWith(WRITING_TIMER_CLEARANCE);
+  });
+
+  it('uses natural content height to scroll an intermediate surface and reserves its visible height', () => {
+    const onClearanceChange = jest.fn();
+    const { getByTestId } = render(<WritingSessionSurface onClearanceChange={onClearanceChange} />);
+    fireEvent(getByTestId('writing-session-band-content'), 'layout', {
+      nativeEvent: { layout: { height: 54 } },
+    });
+    expect(onClearanceChange).toHaveBeenLastCalledWith(WRITING_TIMER_CLEARANCE);
+    fireEvent(getByTestId('writing-session-band-content'), 'contentSizeChange', 1280, 260);
+    fireEvent(getByTestId('writing-session-band'), 'layout', {
+      nativeEvent: { layout: { height: 172 } },
+    });
+    expect(getByTestId('writing-session-band-content').props.scrollEnabled).toBe(true);
+    // Content that overflows even a lowered band still lowers it, and the page
+    // reserves the band where it now sits.
+    expect(onClearanceChange).toHaveBeenLastCalledWith(
+      54 + WRITING_BAND_LOWERED_CLEARANCE + SPACING.md,
+    );
+    fireEvent(getByTestId('writing-session-band-content'), 'layout', {
+      nativeEvent: { layout: { height: 87 } },
+    });
+    expect(onClearanceChange).toHaveBeenLastCalledWith(
+      87 + WRITING_BAND_LOWERED_CLEARANCE + SPACING.md,
+    );
+  });
+
+  /**
+   * At 200% zoom on a phone the idle timer's presets wrap to a second row, and
+   * the lifted band is too short to show it (#3403). The band gives up its
+   * resonance-sized lift, which nothing floats in any more, before it hides a
+   * preset behind an inner scroll.
+   */
+  it('lowers the band to its page-edge gap when its content cannot fit above the lift', () => {
+    const onClearanceChange = jest.fn();
+    const { getByTestId } = render(<WritingSessionSurface onClearanceChange={onClearanceChange} />);
+    const band = () => getByTestId('writing-session-band');
+    const content = () => getByTestId('writing-session-band-content');
+    const bottom = () => StyleSheet.flatten(band().props.style).bottom;
+    const liftGiven = RESONANCE_BUTTON_CLEARANCE - WRITING_BAND_LOWERED_CLEARANCE;
+    const presetsHeight = 154;
+    const liftedHeight = 103;
+
+    fireEvent(content(), 'contentSizeChange', 195, presetsHeight);
+    fireEvent(band(), 'layout', { nativeEvent: { layout: { height: liftedHeight } } });
+    expect(bottom()).toBe(WRITING_BAND_LOWERED_CLEARANCE);
+
+    // Re-measured where it now sits, the band holds its content without
+    // scrolling, and stays lowered rather than flipping back up.
+    fireEvent(band(), 'layout', {
+      nativeEvent: { layout: { height: liftedHeight + liftGiven } },
+    });
+    expect(bottom()).toBe(WRITING_BAND_LOWERED_CLEARANCE);
+    expect(content().props.scrollEnabled).toBe(false);
+    // The page reserves the band's measured height above the lowered gap, not the lift.
+    fireEvent(content(), 'layout', { nativeEvent: { layout: { height: 2 * presetsHeight } } });
+    expect(onClearanceChange).toHaveBeenLastCalledWith(
+      2 * presetsHeight + WRITING_BAND_LOWERED_CLEARANCE + SPACING.md,
+    );
+
+    // A taller page has room above the lift again, so the band goes back up.
+    fireEvent(band(), 'layout', { nativeEvent: { layout: { height: 400 } } });
+    expect(bottom()).toBe(RESONANCE_BUTTON_CLEARANCE);
+    expect(content().props.scrollEnabled).toBe(false);
+  });
+
+  it('keeps the lift while the content fits above it', () => {
+    const { getByTestId } = renderSurface();
+    fireEvent(getByTestId('writing-session-band-content'), 'contentSizeChange', 390, 100);
+    fireEvent(getByTestId('writing-session-band'), 'layout', {
+      nativeEvent: { layout: { height: 100 } },
+    });
+    expect(StyleSheet.flatten(getByTestId('writing-session-band').props.style).bottom).toBe(
+      RESONANCE_BUTTON_CLEARANCE,
+    );
+  });
+
+  it('hands offer scrolling to the outer surface only while measured content overflows', () => {
+    const { getByTestId } = renderSurface();
+    fireEvent.press(getByTestId('writing-timer-start'));
+    tickTo(T0 + DEFAULT_WRITING_MINUTES * MS_PER_MINUTE);
+    fireEvent(getByTestId('writing-session-band-content'), 'contentSizeChange', 1280, 260);
+    for (const [height, outerScrolls] of [
+      [400, false],
+      [172, true],
+      [400, false],
+    ] as const) {
+      fireEvent(getByTestId('writing-session-band'), 'layout', {
+        nativeEvent: { layout: { height } },
+      });
+      expect(getByTestId('writing-session-band-content').props.scrollEnabled).toBe(outerScrolls);
+      expect(getByTestId('writing-session-offer-scroll').props.scrollEnabled).toBe(!outerScrolls);
+      expect(StyleSheet.flatten(getByTestId('writing-session-banner').props.style).flexShrink).toBe(
+        outerScrolls ? 0 : 1,
+      );
+      expect(
+        StyleSheet.flatten(getByTestId('writing-session-offer-scroll').props.style).flexShrink,
+      ).toBe(outerScrolls ? 0 : 1);
+    }
+  });
+
+  it('keeps a running timer alive when resizing into and out of a short band', () => {
+    const { getByTestId, queryByTestId } = renderSurface();
+    fireEvent.press(getByTestId('writing-timer-start'));
+    tickTo(T0 + 5 * MS_PER_MINUTE);
+    expect(getByTestId('writing-timer-readout').props.children).toBe('14:59');
+    for (const height of [87, 212]) {
+      fireEvent(getByTestId('writing-session-band'), 'layout', {
+        nativeEvent: { layout: { height } },
+      });
+      expect(getByTestId('writing-timer-readout').props.children).toBe('14:59');
+      expect(queryByTestId('writing-timer-stop')).not.toBeNull();
+    }
+    tickTo(T0 + DEFAULT_WRITING_MINUTES * MS_PER_MINUTE);
+    expect(getByTestId('writing-session-banner')).toBeTruthy();
+    fireEvent(getByTestId('writing-session-band'), 'layout', {
+      nativeEvent: { layout: { height: 87 } },
+    });
+    fireEvent.press(getByTestId('writing-session-banner-dismiss'));
+    expect(queryByTestId('writing-session-banner')).toBeNull();
+  });
+
+  it('shows a confirmed early-stop log without offering to keep a full session', () => {
+    const onSession = jest.fn<(_result: WritingSessionResult) => void>();
+    const renderOffer = jest.fn(() => null);
+    const screen = render(
+      <WritingSessionSurface onSession={onSession} renderOffer={renderOffer} />,
+    );
+    fireEvent.press(screen.getByTestId('writing-timer-start'));
+    jest.setSystemTime(T0 + 5 * MS_PER_MINUTE);
+    fireEvent.press(screen.getByTestId('writing-timer-stop'));
+    expect(screen.queryByTestId('writing-session-banner')).toBeNull();
+    const result = onSession.mock.calls[0]![0];
+    screen.rerender(
+      <WritingSessionSurface
+        onSession={onSession}
+        renderOffer={renderOffer}
+        loggedSession={{ result, message: 'Logged 5 minutes to Journaling' }}
+      />,
+    );
+    expect(screen.getByText('You wrote for 5 minutes.')).toBeTruthy();
+    expect(screen.getByText('Logged 5 minutes to Journaling')).toBeTruthy();
+    expect(renderOffer).not.toHaveBeenCalled();
+  });
+
+  it('does not reopen a dismissed full-session note when its log confirms later', () => {
+    const onSession = jest.fn<(_result: WritingSessionResult) => void>();
+    const screen = render(<WritingSessionSurface onSession={onSession} />);
+    fireEvent.press(screen.getByTestId('writing-timer-start'));
+    tickTo(T0 + DEFAULT_WRITING_MINUTES * MS_PER_MINUTE);
+    const result = onSession.mock.calls[0]![0];
+    fireEvent.press(screen.getByTestId('writing-session-banner-dismiss'));
+    screen.rerender(
+      <WritingSessionSurface
+        onSession={onSession}
+        loggedSession={{ result, message: 'Logged 20 minutes to Journaling' }}
+      />,
+    );
+    expect(screen.queryByTestId('writing-session-banner')).toBeNull();
   });
 
   it('replaces an earlier note rather than stacking a second one', () => {

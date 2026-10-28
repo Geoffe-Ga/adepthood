@@ -1,5 +1,6 @@
 import type { Dispatch, MutableRefObject } from 'react';
 import { useCallback, useEffect, useMemo, useReducer, useRef } from 'react';
+import { AppState } from 'react-native';
 
 import { getTotalMs, initialState, ritualReducer } from './reducer';
 import type {
@@ -17,6 +18,14 @@ import type {
 
 // 100ms tick: smooth countdown ring without burning CPU.
 const TICK_INTERVAL_MS = 100;
+
+/**
+ * How far behind "now" a newly-passed cue may lie and still sound. Ordinary
+ * foreground ticks pass cues at most one tick late, well inside this window;
+ * a return from background (JS timers stalled) passes many cues at once, and
+ * only those due in the last second are still worth striking.
+ */
+const STALE_CUE_GRACE_MS = 1000;
 
 interface ResolvedDeps {
   now: () => number;
@@ -68,24 +77,55 @@ function buildControls(
 }
 
 /**
- * Play + buzz every cue in the half-open range `[from, to)`. Interval bells
- * carry a tone and pass it through; boundary/tick cues stay single-arg so
- * their adapter call signature is unchanged.
+ * Choose which newly-passed cues in `[from, to)` should actually sound.
+ *
+ * Every cue still fresh (due within {@link STALE_CUE_GRACE_MS} of the current
+ * elapsed) sounds, so the start bell, an end bell and a final tick that share
+ * a moment all play. When the whole range is stale — the app was backgrounded
+ * past several bells — only the latest cue sounds: one bell to say "you are
+ * here", never a burst of every bell missed.
  */
-function emitCues(
+function selectCuesToEmit(
   cues: readonly Cue[],
   from: number,
   to: number,
-  audio: AudioAdapter,
-  haptics: HapticsAdapter,
-): void {
-  for (let i = from; i < to; i++) {
-    const cue = cues[i];
-    if (!cue) continue;
+  elapsedMs: number,
+): readonly Cue[] {
+  const passed = cues.slice(from, to);
+  const fresh = passed.filter((cue) => cue.atMs > elapsedMs - STALE_CUE_GRACE_MS);
+  if (fresh.length > 0) return fresh;
+  const latest = passed.at(-1);
+  return latest ? [latest] : [];
+}
+
+/**
+ * Play + buzz each cue. Interval bells carry a tone and pass it through;
+ * boundary/tick cues stay single-arg so their adapter call signature is
+ * unchanged.
+ */
+function emitCues(cues: readonly Cue[], audio: AudioAdapter, haptics: HapticsAdapter): void {
+  for (const cue of cues) {
     if (cue.tone) audio.play(cue.kind, cue.tone);
     else audio.play(cue.kind);
     haptics.cue(cue.kind);
   }
+}
+
+/**
+ * Reconcile the moment the app returns to the foreground. JS timers stall
+ * while backgrounded, so without this the display (and completion) would
+ * wait for the next interval tick to notice the time that passed.
+ */
+function useForegroundReconcile(
+  dispatch: Dispatch<EngineAction>,
+  depsRef: MutableRefObject<ResolvedDeps>,
+): void {
+  useEffect(() => {
+    const subscription = AppState.addEventListener('change', (next) => {
+      if (next === 'active') dispatch({ type: 'TICK', now: depsRef.current.now() });
+    });
+    return () => subscription.remove();
+  }, [dispatch, depsRef]);
 }
 
 /**
@@ -150,10 +190,12 @@ export function useRitualEngine(
     const prev = prevCueIndexRef.current;
     if (state.cueIndex > prev) {
       const { audio, haptics } = depsRef.current;
-      emitCues(state.cues, prev, state.cueIndex, audio, haptics);
+      emitCues(selectCuesToEmit(state.cues, prev, state.cueIndex, state.elapsedMs), audio, haptics);
     }
     prevCueIndexRef.current = state.cueIndex;
-  }, [state.cueIndex, state.cues]);
+  }, [state.cueIndex, state.cues, state.elapsedMs]);
+
+  useForegroundReconcile(dispatch, depsRef);
 
   useEffect(() => {
     if (state.status !== 'running') return;

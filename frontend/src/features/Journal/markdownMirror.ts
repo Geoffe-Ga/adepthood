@@ -21,8 +21,9 @@ import {
 } from './journalMarkdown';
 
 /**
- * Why a character is in the mirror: a bullet's indent, a block marker (``- ``
- * or ``> ``), an emphasis delimiter, or the writer's content.
+ * Why a character is in the mirror: a structured line's indent, a block
+ * marker (``- ``, ``> ``, ``## ``, ``1. ``, ``- [x] `` or a whole rule), an
+ * emphasis delimiter, or the writer's content.
  */
 export type MirrorRunRole = 'indent' | 'marker' | 'delimiter' | 'content';
 

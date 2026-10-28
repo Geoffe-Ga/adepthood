@@ -1,6 +1,7 @@
 import { expect, test, type Locator, type Page } from '@playwright/test';
 
 import { dayKeyIn, nextDayKey, sessionFor, signUp } from './journalHabitsBrowserSupport';
+import { openPrompts } from './journalHabitsBrowserSupport';
 
 /**
  * The morning-pages tip declines with an X in its top-right corner (#2860),
@@ -261,7 +262,11 @@ for (const viewport of VIEWPORTS) {
     await page.setViewportSize({ width: viewport.width, height: viewport.height });
     const email = await signUp(page, `morning-pages-x-${viewport.name}`);
     const { timezone } = await sessionFor(page.request, email);
+    const owner = await page.evaluate(() => localStorage.getItem('@adepthood/device_owner'));
+    expect(owner).toMatch(/^[1-9]\d*$/);
+    const setAsideKey = `${TIP_SET_ASIDE_KEY}#u${owner}`;
 
+    await openPrompts(page);
     await assertCardGeometry(page, `${viewport.width}x${viewport.height}`);
     await assertHeldInk(page);
 
@@ -275,7 +280,7 @@ for (const viewport of VIEWPORTS) {
     // still gone once the shelf is rebuilt the same day.
     const pressedAt = await page.evaluate(() => new Date().toISOString());
     const today = dayKeyIn(pressedAt, timezone);
-    expect(await page.evaluate((key) => localStorage.getItem(key), TIP_SET_ASIDE_KEY)).toBe(today);
+    expect(await page.evaluate((key) => localStorage.getItem(key), setAsideKey)).toBe(today);
     expect(
       await page.evaluate((key) => localStorage.getItem(key), LEGACY_TIP_DISMISSED_KEY),
     ).toBeNull();

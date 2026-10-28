@@ -78,6 +78,10 @@ def test_supersessions_are_reflected_in_the_loaded_values() -> None:
 
     assert stages[_STAGE_INDEX_BLUE].aspect == "Community Love"
     assert stages[_STAGE_INDEX_TEAL].relationship_to_free_will == "True Self Embodier"
+    assert stages[_STAGE_INDEX_TEAL].growing_up_stage == "True Self Connection"
+    assert stages[_STAGE_INDEX_BLUE].free_will_description == (
+        "At Blue, you do what you're told. You follow the rules. You meet the expectations."
+    )
 
 
 def test_every_record_field_equals_the_artifact() -> None:

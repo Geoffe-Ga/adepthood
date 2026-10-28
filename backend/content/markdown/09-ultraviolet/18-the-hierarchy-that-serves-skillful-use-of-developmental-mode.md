@@ -16,18 +16,18 @@ Ultraviolet is where you've integrated Spiral Dynamics so fully that you can use
 
 You see someone operating from Red—reactive, aggressive, boundary-violating. The old you might judge them. The Orange you might try to fix them. The Green you might collapse into their chaos.
 
-The Ultraviolet you *recognizes* the stage. You meet them where they are. You set clear boundaries (because that's what Red respects). You don't try to convince them to be Green. You work with the developmental logic that's available to them.
+The Ultraviolet you hears the note. You meet them in that key. You set clear boundaries (because that's what Red answers to). You don't try to talk them into Green. You play the chord the moment can actually hold.
 
 This is not manipulation. It's *skillful means* (upāya in Buddhism). You're adapting your communication, your leadership, your presence to what the situation requires.
 
-**Examples of Skillful Hierarchy:**
+**Examples of Playing the Right Chord:**
 
-- **With a child (Beige/Purple):** You use ritual, story, and physical presence. You don't try to reason with them when they're dysregulated. You hold them. You create safety. You meet the nervous system before you engage the prefrontal cortex.
+- **When someone's in a Beige/Purple moment—a dysregulated kid, say:** You use ritual, story, and physical presence. You don't try to reason with them when they're dysregulated. You hold them. You create safety. You meet the nervous system before you engage the prefrontal cortex.
 
-- **With a teenager (Red/Blue):** You honor their need for autonomy while maintaining clear boundaries. You don't shame their rebellion. You channel it. "I see you need to test limits. Here's the container. Push against it all you want—it will hold."
+- **When Red and Blue are loudest—a teenager testing limits:** You honor their need for autonomy while maintaining clear boundaries. You don't shame their rebellion. You channel it. "I see you need to test limits. Here's the container. Push against it all you want—it will hold."
 
-- **With a colleague (Orange):** You speak in outcomes and data. You show them how the proposal serves their goals. You don't lead with feelings (that's Green). You lead with results.
+- **When Orange is leading—a colleague who wants results:** You speak in outcomes and data. You show them how the proposal serves their goals. You don't lead with feelings (that's Green). You lead with results.
 
-- **With a friend (Green/Yellow):** You hold space for processing. You reflect, you witness, you offer frameworks when they ask. But you don't rush to solutions. You trust their capacity to integrate.
+- **When a friend needs Green and Yellow—processing first, then a frame:** You hold space for processing. You reflect, you witness, you offer frameworks when they ask. But you don't rush to solutions. You trust their capacity to integrate.
 
-This isn't  about "managing" people. It's about recognizing that different developmental stages require different forms of support. And you have access to all of them.
+This isn't  about "managing" people. It's about recognizing that different moments call for different notes, and different notes need different kinds of support. And you have access to all of them.

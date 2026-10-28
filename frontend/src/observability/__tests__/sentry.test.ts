@@ -2,6 +2,7 @@
 /* global describe, it, expect, beforeEach, afterEach, jest */
 
 import { initErrorMonitoring, reportException } from '../sentry';
+import { MESSAGE_WITHHELD } from '../sentryEnvelope';
 
 const DSN_ENV = 'EXPO_PUBLIC_SENTRY_DSN';
 const ENVIRONMENT_ENV = 'EXPO_PUBLIC_SENTRY_ENVIRONMENT';
@@ -103,24 +104,29 @@ describe('with a DSN configured', () => {
     expect(sent).toHaveLength(1);
     expect(onlyReport().url).toBe('https://o0.ingest.sentry.io/api/42/envelope/');
     expect(onlyReport().headers['X-Sentry-Auth']).toContain('sentry_key=examplepublickey');
-    expect(onlyReport().body).toContain('render failed');
+    // Diagnosable by type, never by message (#3064).
+    expect(onlyReport().body).toContain('"type":"Error"');
+    expect(onlyReport().body).not.toContain('render failed');
   });
 
-  it('cannot carry an entry body away, however long the message is', async () => {
-    // The one field this design cannot close structurally is the exception
-    // message, because it is authored at the throw site. reportException is
-    // only ever called from the error boundaries, so in practice that message
-    // is React's or a library's — but the cap is what bounds the damage if a
-    // message somewhere does interpolate what the user was writing.
+  it('cannot carry an entry body away, however short or long the message is', async () => {
+    // The exception message is authored at the throw site, so it can
+    // interpolate what the user was writing. It is withheld outright rather
+    // than capped: a cap still shipped its first 512 characters (#3064).
     const entry = `${JOURNAL_SENTINEL} `.repeat(40);
 
     reportException(new Error(`save failed for entry: ${entry}`), {
       react: { componentStack: '\n    in JournalScreen' },
     });
+    reportException(new Error(JOURNAL_SENTINEL));
     await settle();
 
-    expect(onlyReport().body).not.toContain(entry);
-    expect(onlyReport().body).toContain('[truncated]');
+    expect(sent).toHaveLength(2);
+    sent.forEach(({ body }) => {
+      expect(body).not.toContain(JOURNAL_SENTINEL);
+      expect(body).not.toContain('[truncated]');
+      expect(body).toContain(MESSAGE_WITHHELD);
+    });
   });
 
   it('carries no user identity — no email, no name, no id', async () => {
@@ -212,5 +218,62 @@ describe('with an unusable DSN', () => {
 
     expect(fetchMock).not.toHaveBeenCalled();
     expect(consoleError).toHaveBeenCalled();
+  });
+});
+
+describe('crash console and final delivery privacy (#3210)', () => {
+  const canaries = [
+    'SYNTHETIC_SHORT_PRIVATE',
+    `SYNTHETIC_LONG_PRIVATE_${'x'.repeat(600)}`,
+    'SYNTHETIC_UNICODE_PRIVATE_u\u0308_日本語',
+    'SYNTHETIC_MULTILINE_PRIVATE\nprivate second line',
+    'SYNTHETIC_RTL_PRIVATE שלום مرحبا',
+    'SYNTHETIC_EMOJI_PRIVATE 🕯️🧡',
+  ];
+
+  it.each([false, true])(
+    'uses only a fixed console record with monitoring enabled=%p',
+    async (enabled) => {
+      if (enabled) process.env[DSN_ENV] = DSN;
+      initErrorMonitoring();
+      for (const canary of canaries) {
+        const error = new Error(canary);
+        error.stack = canary;
+        Object.assign(error, { cause: new Error(canary), nested: { private: canary } });
+        reportException(error, {
+          react: { componentStack: canary },
+          errorBoundary: { boundary: canary, name: canary },
+        });
+      }
+      await settle();
+      // Check every argument directly: JSON.stringify(Error) hides message/stack.
+      expect(consoleError).toHaveBeenCalledTimes(canaries.length);
+      for (const args of consoleError.mock.calls) expect(args).toEqual(['crash_caught']);
+      expect(sent).toHaveLength(enabled ? canaries.length : 0);
+      for (const { body } of sent) {
+        for (const canary of canaries) {
+          expect(body).not.toContain(canary.split('\n')[0]);
+          expect(body).not.toContain(JSON.stringify(canary).slice(1, -1));
+        }
+        const payload = JSON.parse(body.split('\n')[2] ?? '{}');
+        expect(payload.contexts).toEqual({});
+      }
+    },
+  );
+
+  it('contains hostile fields without calling their getters or serialization', async () => {
+    process.env[DSN_ENV] = DSN;
+    initErrorMonitoring();
+    const getter = jest.fn(() => {
+      throw new Error('PRIVATE_HOSTILE_GETTER');
+    });
+    const error = new Error('private');
+    Object.defineProperty(error, 'name', { get: getter });
+    const contexts = Object.defineProperty({}, 'errorBoundary', { get: getter });
+    expect(() => reportException(error, contexts)).not.toThrow();
+    await settle();
+    expect(getter).not.toHaveBeenCalled();
+    expect(onlyReport().body).not.toContain('PRIVATE_HOSTILE_GETTER');
+    expect(consoleError.mock.calls).toEqual([['crash_caught']]);
   });
 });

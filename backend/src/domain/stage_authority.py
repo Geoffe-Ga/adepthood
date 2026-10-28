@@ -26,6 +26,17 @@ inside a window the calendar has already opened -- :func:`record_stage_entry`,
 called by the read paths that mean someone is present -- and not otherwise. No
 client asks for it and no client may assert it.
 
+**The person owns the anchor; nobody asserts the record.** Until issue #3097 the
+server stamped ``program_started_at`` on first need and no client could touch
+it. The owner decided on 2026-10-07 that the person picks their start date, so
+``PUT /stages/program-calendar`` now takes a calendar date -- within the range
+:mod:`domain.program_start` defines -- and :func:`reanchor_program` writes it.
+That is the one piece of calendar state a client may assert, and it is the
+*input* to the calendar, not either of its answers: the stage offered is still
+derived from it, and the stage entered is still derived from the offer. A
+request carries a date and nothing else, so there is still no payload that names
+a stage.
+
 **Nothing gates on the gap, and that is the load-bearing constraint.**
 ``NORTH-STAR.md`` line 18 -- nothing is gated behind anything else. A record that
 lags the calendar must never withhold what the calendar has already opened, so
@@ -44,6 +55,15 @@ that reset, only displaced: it is retained on
 review written during that lap keeps the calendar it was written about. Nothing
 above changes -- every access decision here still asks where the user is NOW,
 which by construction is the current cycle.
+
+A picked start date is the same kind of deliberate re-anchor, so
+:func:`reanchor_program` moves the record to the new anchor's window in the same
+write, in either direction: a person who corrects a mistaken early pick is
+brought back to their real schedule rather than pinned ahead of it for good.
+That is not time revoking access -- the person chose the date -- and it leaves
+the lifetime ``highest_stage_reached`` and every habit invitation already
+consumed exactly where they were. It is offered within the first cycle only,
+because a later cycle's anchor is also its predecessor's recorded end.
 """
 
 from __future__ import annotations
@@ -62,6 +82,7 @@ if TYPE_CHECKING:
 __all__ = [
     "StageStanding",
     "open_through",
+    "reanchor_program",
     "record_stage_entry",
     "stage_standing",
 ]
@@ -189,3 +210,27 @@ async def record_stage_entry(
     await session.commit()
     await session.refresh(progress)
     return progress
+
+
+def reanchor_program(
+    progress: StageProgress,
+    anchor: datetime,
+    now: datetime | None = None,
+    *,
+    tz: str | None = None,
+) -> None:
+    """Move ``progress`` to the person's chosen ``anchor``, with the record alongside.
+
+    Mutates in place and does not commit: the caller holds the ``FOR UPDATE``
+    lock and owns the transaction. The record is set to the window the new
+    anchor opens as of ``now`` -- forward when the date moved earlier, back when
+    it moved later -- so the two answers agree the moment the write lands.
+
+    A re-pick that lands in the stage the record already holds rewrites only the
+    anchor: ``stage_started_at`` is the moment that threshold was crossed, and
+    nudging the date within a window crosses none.
+    """
+    progress.program_started_at = anchor
+    offered = calendar_stage(anchor, now, tz=tz)
+    if offered != progress.current_stage:
+        _enter(progress, offered, now if now is not None else datetime.now(UTC))

@@ -40,6 +40,7 @@ from observability import remove_app_log_handlers_for_tests
 from seed_content import desired_content_records
 from seed_practices import PRESET_PRACTICES
 from services import app_links, email, journal_encryption
+from services.botmason import STUB_SEAM_ENV_VAR
 from services.content_repository import reset_content_repository_for_tests
 from tests.helpers.smtp_env import SMTP_ENV_VALUES
 
@@ -520,17 +521,38 @@ def test_botmason_provider_logged_at_boot(
     assert any("botmason_provider" in m and "openai" in m for m in messages)
 
 
-def test_stub_in_production_errors_loudly(
+def test_stub_in_production_is_not_an_error(
     monkeypatch: pytest.MonkeyPatch,
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    """Stub in production must be an explicit, visible choice — never silent."""
+    """Since ADR 0009 phase (a) no configured provider answers a keyless request.
+
+    So ``stub`` in production is no longer a forgotten setting: every
+    deployment refuses a keyless app-provider request alike, and saying
+    otherwise would tell an operator to set a key nothing reads.
+    """
     monkeypatch.setenv("BOTMASON_PROVIDER", "stub")
     monkeypatch.setenv("ENV", "production")
-    caplog.set_level(logging.ERROR, logger="main")
+    monkeypatch.delenv("LLM_API_KEY", raising=False)
+    caplog.set_level(logging.INFO, logger="main")
     _log_botmason_provider()
-    errors = [r for r in caplog.records if r.levelno == logging.ERROR]
-    assert any("botmason_stub_in_production" in r.getMessage() for r in errors)
+    assert [r for r in caplog.records if r.levelno >= logging.WARNING] == []
+    assert not any("botmason_stub_in_production" in r.getMessage() for r in caplog.records)
+
+
+def test_a_server_llm_api_key_is_reported_unused_by_name_only(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A deployment still carrying ``LLM_API_KEY`` is told nothing reads it (#3067)."""
+    secret = "sk-ant-sentinel-server-key-never-logged"  # pragma: allowlist secret
+    monkeypatch.setenv("BOTMASON_PROVIDER", "anthropic")
+    monkeypatch.setenv("LLM_API_KEY", secret)
+    caplog.set_level(logging.INFO, logger="main")
+    _log_botmason_provider()
+    warnings = [r.getMessage() for r in caplog.records if r.levelno == logging.WARNING]
+    assert any("llm_api_key_unused" in m for m in warnings), warnings
+    assert all(secret not in r.getMessage() for r in caplog.records)
 
 
 def test_stub_in_development_does_not_warn(
@@ -539,6 +561,7 @@ def test_stub_in_development_does_not_warn(
 ) -> None:
     monkeypatch.setenv("BOTMASON_PROVIDER", "stub")
     monkeypatch.setenv("ENV", "development")
+    monkeypatch.delenv("LLM_API_KEY", raising=False)
     caplog.set_level(logging.INFO, logger="main")
     _log_botmason_provider()
     warnings = [r for r in caplog.records if r.levelno >= logging.WARNING]
@@ -579,6 +602,8 @@ async def test_lifespan_completes_in_production_without_gumroad_config(
     """
     monkeypatch.setenv("ENV", "production")
     monkeypatch.setenv("SKIP_STARTUP_SEED", "1")
+    # A real production process: the suite's stub test seam is never armed there.
+    monkeypatch.delenv(STUB_SEAM_ENV_VAR, raising=False)
     for name in _GUMROAD_ENV_VARS:
         monkeypatch.delenv(name, raising=False)
     caplog.set_level(logging.WARNING, logger="main")
@@ -597,6 +622,8 @@ async def test_lifespan_still_fails_fast_on_partial_gumroad_config(
     """Half-configured Gumroad credentials in production must still abort the boot."""
     monkeypatch.setenv("ENV", "production")
     monkeypatch.setenv("SKIP_STARTUP_SEED", "1")
+    # A real production process: the suite's stub test seam is never armed there.
+    monkeypatch.delenv(STUB_SEAM_ENV_VAR, raising=False)
     monkeypatch.setenv(_GUMROAD_API_TOKEN_ENV, _GUMROAD_TOKEN_SENTINEL)
     monkeypatch.delenv(_GUMROAD_WEBHOOK_SECRET_ENV, raising=False)
 

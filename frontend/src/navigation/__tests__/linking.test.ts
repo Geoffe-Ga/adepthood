@@ -106,3 +106,27 @@ describe('tabParamsFromPath', () => {
     );
   });
 });
+
+describe('Notification Center deep link (#3142)', () => {
+  it('parses journal/notifications to the JournalNotifications screen, not the Journal tab', () => {
+    const state = getStateFromPath('journal/notifications', linking.config);
+    expect(state?.routes[0]?.name).toBe('JournalNotifications');
+  });
+
+  it('round-trips the screen through getPathFromState', () => {
+    const path = getPathFromState({ routes: [{ name: 'JournalNotifications' }] }, linking.config);
+    expect(path).toBe('/journal/notifications');
+  });
+});
+
+it('opens Prompts as a primary destination from its own path', () => {
+  const state = getStateFromPath('prompts', linking.config);
+  expect(state?.routes[0]?.name).toBe('Tabs');
+  expect(state?.routes[0]?.state?.routes[0]?.name).toBe('Prompts');
+  expect(
+    getPathFromState(
+      { routes: [{ name: 'Tabs', state: { routes: [{ name: 'Prompts' }] } }] },
+      linking.config,
+    ),
+  ).toBe('/prompts');
+});

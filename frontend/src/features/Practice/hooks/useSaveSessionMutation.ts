@@ -14,6 +14,8 @@ import type { PracticeSessionCreate, PracticeSessionResponse } from '@/api';
 import { practiceSessions } from '@/api';
 import type { FormatErrorOptions } from '@/api/errorMessages';
 import { formatApiError } from '@/api/errorMessages';
+import { captureAuthScope } from '@/api/sessionToken';
+import { notifyPracticeRecordSaved } from '@/features/Practice/practiceRecordEvents';
 import type { OptimisticMutation } from '@/hooks/useOptimisticMutation';
 import { useOptimisticMutation } from '@/hooks/useOptimisticMutation';
 
@@ -28,6 +30,12 @@ export interface UseSaveSessionMutationParams {
   setSaveError: (_msg: string | null) => void;
   /** Caller copy for failures: its fallback and any per-status override. */
   errorOptions: FormatErrorOptions;
+  /** Optional independent work after persistence; its failure cannot undo this sitting. */
+  onConfirmed?: (
+    _session: PracticeSessionResponse,
+    _payload: PracticeSessionCreate,
+    _source?: 'timer' | 'manual',
+  ) => Promise<void>;
 }
 
 /**
@@ -42,6 +50,7 @@ export function useSaveSessionMutation({
   commit,
   setSaveError,
   errorOptions,
+  onConfirmed,
 }: UseSaveSessionMutationParams): OptimisticMutation<
   PracticeSessionCreate,
   PracticeSessionResponse
@@ -52,8 +61,15 @@ export function useSaveSessionMutation({
       apply();
     },
     commit: async (payload) => {
+      const scope = captureAuthScope();
       const session = await practiceSessions.create(payload);
+      notifyPracticeRecordSaved(scope);
       commit();
+      // Finish the sitting without waiting for its optional habit write. The
+      // linked-habit controller owns that write's result and factual notice.
+      void Promise.resolve()
+        .then(() => onConfirmed?.(session, payload))
+        .catch(() => {});
       return session;
     },
     rollback: (_input, err) => {

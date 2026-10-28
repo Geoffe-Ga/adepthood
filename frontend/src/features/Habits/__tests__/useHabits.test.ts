@@ -1,6 +1,7 @@
 import { describe, expect, it, jest } from '@jest/globals';
 import { renderHook, act, waitFor } from '@testing-library/react-native';
 
+import type * as HabitStorageModule from '../../../storage/habitStorage';
 import type { Goal, Habit } from '../Habits.types';
 import { useHabits } from '../hooks/useHabits';
 
@@ -12,7 +13,6 @@ jest.mock('../../../api', () => ({
     update: jest.fn(() => Promise.resolve({})),
     delete: jest.fn(() => Promise.resolve({})),
     getStats: jest.fn(() => Promise.resolve({})),
-    clearCompletions: jest.fn(() => Promise.resolve()),
   },
   goalCompletions: {
     create: jest.fn(() => Promise.resolve({})),
@@ -28,6 +28,10 @@ jest.mock('../../../api', () => ({
 }));
 
 jest.mock('../../../storage/habitStorage', () => ({
+  capturePendingCheckInScope: jest.requireActual<typeof HabitStorageModule>(
+    '../../../storage/habitStorage',
+  ).capturePendingCheckInScope,
+  removePendingCheckIns: jest.fn(() => Promise.resolve(undefined)),
   saveHabits: jest.fn(() => Promise.resolve(undefined)),
   loadHabits: jest.fn(() => Promise.resolve(null)),
   savePendingCheckIn: jest.fn(() => Promise.resolve(undefined)),
@@ -133,8 +137,6 @@ describe('useHabits', () => {
     expect(typeof result.current.actions.updateHabit).toBe('function');
     expect(typeof result.current.actions.deleteHabit).toBe('function');
     expect(typeof result.current.actions.saveHabitOrder).toBe('function');
-    expect(typeof result.current.actions.backfillMissedDays).toBe('function');
-    expect(typeof result.current.actions.setNewStartDate).toBe('function');
     expect(typeof result.current.actions.onboardingSave).toBe('function');
     expect(typeof result.current.actions.iconPress).toBe('function');
     expect(typeof result.current.actions.emojiSelect).toBe('function');
@@ -159,8 +161,8 @@ describe('useHabits', () => {
   it('setMode switches between modes', () => {
     const { result } = renderHook(() => useHabits());
 
-    act(() => result.current.setMode('stats'));
-    expect(result.current.mode).toBe('stats');
+    act(() => result.current.setMode('edit'));
+    expect(result.current.mode).toBe('edit');
 
     act(() => result.current.setMode('quickLog'));
     expect(result.current.mode).toBe('quickLog');
@@ -240,23 +242,5 @@ describe('useHabits', () => {
     });
     expect(result.current.habits[0]!.name).toBe('Second');
     expect(result.current.habits[1]!.name).toBe('First');
-  });
-
-  it('setNewStartDate resets habit completions and streak', () => {
-    const habit = makeHabit({
-      streak: 10,
-      completions: [{ id: 'c-1', timestamp: new Date(), completed_units: 1 }],
-    });
-    const { result } = renderHook(() => useHabits());
-
-    act(() => result.current.setHabitsForTesting([habit]));
-
-    const newDate = new Date('2025-06-01');
-    act(() => result.current.actions.setNewStartDate(1, newDate));
-
-    const updated = result.current.habits.find((h) => h.id === 1);
-    expect(updated?.streak).toBe(0);
-    expect(updated?.completions).toEqual([]);
-    expect(updated?.start_date).toEqual(newDate);
   });
 });

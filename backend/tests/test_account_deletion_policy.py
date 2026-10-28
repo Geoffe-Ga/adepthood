@@ -19,6 +19,7 @@ nothing.
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from decimal import Decimal
 from http import HTTPStatus
 
@@ -48,12 +49,15 @@ from tests.helpers.account_seed import (
 
 _PASSWORD = "securepassword123"  # pragma: allowlist secret
 
-# The single place an erased account's email address is allowed to remain: the
-# purchase receipt. It stays because the address is how a paid-for licence or
-# token pack is matched to its buyer, so erasing it would confiscate something
-# the person paid for. Asserted as an exact set — a second surviving mention is
-# a leak, and losing this one is a regression of a different kind.
+# The single place an erased account's email address is allowed to remain: a
+# purchase receipt that was never linked to the account. The owner's ratified
+# rule (#3063 AC15) blanks the address on every *linked* sale at deletion, but
+# an unclaimed sale keeps it, because the address is that sale's only claim
+# path. Asserted as an exact set — a second surviving mention is a leak, and
+# losing this one would blank a receipt nobody claimed.
 _EXPECTED_SURVIVING_EMAIL_COLUMNS = {"gumroadsale.email"}
+# A sale bought under the doomed address and never claimed by any account.
+_UNCLAIMED_SALE_ID = "unclaimed-under-the-doomed-address"
 
 # The wallet movement the cross-account test writes. The amounts carry no
 # meaning beyond being distinguishable from each other -- what the test reads
@@ -265,6 +269,7 @@ async def test_deletion_leaves_no_reference_to_the_erased_account(
 ) -> None:
     """No column pointing at ``user`` still holds the erased account's id."""
     headers, doomed, _ = seeded_pair
+    assert (await _references_to(db_session, doomed.user_id))["goallogevent.user_id"] > 0
 
     resp = await async_client.request(
         "DELETE",
@@ -277,6 +282,7 @@ async def test_deletion_leaves_no_reference_to_the_erased_account(
     references = await _references_to(db_session, doomed.user_id)
     remaining = {name: count for name, count in references.items() if count}
     assert remaining == {}
+    assert references["goallogevent.user_id"] == 0
 
 
 @pytest.mark.asyncio
@@ -292,10 +298,26 @@ async def test_deletion_leaves_no_trace_of_the_erased_address(
     only by foreign keys would miss it and the test above would still pass.
 
     The equality (rather than a subset check) is deliberate in both directions.
-    A new hiding place for the address fails here; so does the purchase receipt
-    quietly losing it, which would strand a paid-for licence.
+    A new hiding place for the address fails here; so does the unclaimed
+    receipt quietly losing it, which would strand a sale nobody has claimed
+    yet. The seeded sale is linked to the doomed account (its token-pack
+    credit), so its address must be gone: the count of rows still naming the
+    address is exactly one, the unclaimed receipt.
     """
     headers, doomed, _ = seeded_pair
+    await db_session.execute(
+        sa.insert(SQLModel.metadata.tables["gumroadsale"]).values(
+            gumroad_sale_id=_UNCLAIMED_SALE_ID,
+            product_id="unclaimed",
+            email=doomed.email,
+            resource_name="sale",
+            is_recurring_charge=False,
+            refunded=False,
+            raw_payload={},
+            created_at=datetime.now(UTC),
+        ),
+    )
+    await db_session.commit()
     before = await _rows_mentioning(db_session, doomed.email)
     assert sum(before.values()) > 0
 
@@ -313,6 +335,7 @@ async def test_deletion_leaves_no_trace_of_the_erased_address(
         if count
     }
     assert set(after) == _EXPECTED_SURVIVING_EMAIL_COLUMNS
+    assert after == {"gumroadsale.email": 1}
 
 
 @pytest.mark.asyncio
@@ -430,6 +453,7 @@ async def test_an_erased_actor_is_cleared_off_another_accounts_wallet_history(
     """
     headers, doomed, bystander = seeded_pair
     audit = SQLModel.metadata.tables["walletaudit"]
+    adjustment = SQLModel.metadata.tables["adminbalanceadjustment"]
     await db_session.execute(
         sa.insert(audit).values(
             user_id=bystander.user_id,
@@ -439,6 +463,18 @@ async def test_an_erased_actor_is_cleared_off_another_accounts_wallet_history(
             delta=_GRANTED_CREDITS,
             balance_before=_EMPTY_WALLET,
             balance_after=_GRANTED_CREDITS,
+        ),
+    )
+    await db_session.execute(
+        sa.insert(adjustment).values(
+            target_user_id=bystander.user_id,
+            actor_admin_id=doomed.user_id,
+            delta=int(_GRANTED_CREDITS),
+            balance_after=int(_GRANTED_CREDITS),
+            reason="Corrected after a support review.",
+            source_ip="203.0.113.42",
+            idempotency_key="actor-deletion-regression",
+            request_fingerprint="f" * 64,
         ),
     )
     await db_session.commit()
@@ -465,3 +501,26 @@ async def test_an_erased_actor_is_cleared_off_another_accounts_wallet_history(
         audit.c.actor_user_id.is_(None),
     )
     assert await _count_where(db_session, audit, survivor) == 1
+    adjustment_row = (
+        await db_session.execute(
+            sa.select(
+                adjustment.c.target_user_id,
+                adjustment.c.actor_admin_id,
+                adjustment.c.delta,
+                adjustment.c.balance_after,
+                adjustment.c.reason,
+                adjustment.c.source_ip,
+            ).where(
+                adjustment.c.target_user_id == bystander.user_id,
+                adjustment.c.reason == "Corrected after a support review.",
+            )
+        )
+    ).one()
+    assert adjustment_row == (
+        bystander.user_id,
+        None,
+        int(_GRANTED_CREDITS),
+        int(_GRANTED_CREDITS),
+        "Corrected after a support review.",
+        None,
+    )

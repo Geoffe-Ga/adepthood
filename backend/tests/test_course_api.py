@@ -6,11 +6,13 @@ import asyncio
 import logging
 from datetime import UTC, datetime, time, timedelta
 from http import HTTPStatus
+from typing import TypeVar
 from zoneinfo import ZoneInfo
 
 import pytest
 from httpx import AsyncClient
-from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+from sqlalchemy import event
+from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 from sqlmodel import select
 
 from domain.course import compute_days_elapsed
@@ -522,6 +524,29 @@ async def test_get_content_not_found(
 
 
 @pytest.mark.asyncio
+async def test_mark_read_remembers_highest_read_stage_per_user(
+    async_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """Reading position advances independently of calendar and never regresses."""
+    headers, user_id = await _signup(async_client)
+    _, earlier = await _seed_stage_with_content(db_session, stage_number=1)
+    _, later = await _seed_stage_with_content(db_session, stage_number=2)
+    await _set_user_stage(db_session, user_id, stage_number=2)
+    initial_flags = await async_client.get("/ui-flags", headers=headers)
+    assert initial_flags.json()["course_last_stage"] is None
+
+    for item, expected in [(earlier[0], 1), (later[0], 2), (earlier[0], 2), (later[0], 2)]:
+        response = await async_client.post(f"/course/content/{item.id}/mark-read", headers=headers)
+        assert response.status_code == HTTPStatus.OK
+        flags = await async_client.get("/ui-flags", headers=headers)
+        assert flags.json()["course_last_stage"] == expected
+
+    other_headers, _ = await _signup(async_client, username="other-reader")
+    other_flags = await async_client.get("/ui-flags", headers=other_headers)
+    assert other_flags.json()["course_last_stage"] is None
+
+
+@pytest.mark.asyncio
 async def test_mark_content_read(
     async_client: AsyncClient,
     db_session: AsyncSession,
@@ -574,6 +599,72 @@ async def test_mark_read_content_not_found(
     headers, _ = await _signup(async_client)
     resp = await async_client.post("/course/content/999/mark-read", headers=headers)
     assert resp.status_code == HTTPStatus.NOT_FOUND
+
+
+# Issue #3195: the stage resolved by the unlock gate is reused, so a
+# mark-read loads its CourseStage exactly once.
+_MARK_READ_STAGE_SELECTS = 1
+_Row = TypeVar("_Row")
+
+
+@pytest.mark.asyncio
+async def test_mark_read_reuses_the_resolved_stage(
+    async_client: AsyncClient,
+    db_session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Mark-read must not re-fetch the stage the unlock gate already loaded.
+
+    Two observations: no ``session.get(CourseStage, ...)`` lookup happens
+    (the redundant second fetch the issue names), and the SQL statements
+    touching ``coursestage`` stay pinned at one, on both the first read and
+    the idempotent repeat, while the reading position still advances.
+    """
+    headers, user_id = await _signup(async_client)
+    _, items = await _seed_stage_with_content(db_session, stage_number=1)
+    await _set_user_stage(
+        db_session, user_id, stage_number=1, started_at=datetime.now(UTC) - timedelta(days=10)
+    )
+
+    fetched_models: list[type] = []
+    original_get = db_session.get
+
+    async def _recording_get(entity: type[_Row], ident: int) -> _Row | None:
+        fetched_models.append(entity)
+        return await original_get(entity, ident)
+
+    monkeypatch.setattr(db_session, "get", _recording_get)
+
+    stage_statements: list[str] = []
+
+    def _record(
+        _conn: object,
+        _cursor: object,
+        statement: str,
+        _params: object,
+        _context: object,
+        _executemany: bool,
+    ) -> None:
+        if "FROM coursestage" in statement:
+            stage_statements.append(statement)
+
+    bind = db_session.bind
+    assert isinstance(bind, AsyncEngine)
+    for _attempt in range(2):
+        stage_statements.clear()
+        event.listen(bind.sync_engine, "before_cursor_execute", _record)
+        try:
+            resp = await async_client.post(
+                f"/course/content/{items[0].id}/mark-read", headers=headers
+            )
+        finally:
+            event.remove(bind.sync_engine, "before_cursor_execute", _record)
+        assert resp.status_code == HTTPStatus.OK
+        assert len(stage_statements) == _MARK_READ_STAGE_SELECTS, stage_statements
+
+    assert CourseStage not in fetched_models
+    flags = await async_client.get("/ui-flags", headers=headers)
+    assert flags.json()["course_last_stage"] == 1
 
 
 # ── GET /course/stages/{stage_number}/progress ──────────────────────────

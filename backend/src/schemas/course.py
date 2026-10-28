@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime
+from typing import Literal
 
 from pydantic import BaseModel
 
@@ -19,6 +20,29 @@ class ContentItemResponse(BaseModel):
     url: str | None
     is_locked: bool
     is_read: bool
+
+
+#: What a "Read next" target points at: a Start Here resource or a stage chapter.
+NextUnreadKind = Literal["resource", "chapter"]
+
+
+class NextUnreadResponse(BaseModel):
+    """The reader's next unread page: Start Here first, then chapters (#3147, #3234).
+
+    While any Start Here resource the current pin ships is unread, the
+    target is the lowest-``order`` one (``kind="resource"``, keyed by
+    ``slug``, with ``content_id`` and ``stage_number`` null).  After that
+    it is the earliest unlocked, unread chapter across every open stage
+    (``kind="chapter"``, with ``slug`` null).  The Course screen's "Read
+    next" button opens it; the endpoint answers ``null`` instead when
+    every page the drip has opened is already read.
+    """
+
+    kind: NextUnreadKind
+    slug: str | None
+    content_id: int | None
+    stage_number: int | None
+    title: str
 
 
 class CourseProgressResponse(BaseModel):
@@ -61,12 +85,31 @@ class ContentBodyResponse(BaseModel):
 
 
 class SiteResourceResponse(BaseModel):
-    """One entry in the always-available "Site Resources" list."""
+    """One entry in the always-available Start Here ("Site Resources") list.
+
+    ``order`` is the manifest's 1-based reading position (the list is served
+    sorted by it) and ``is_read`` is the caller's own read mark (#3148).
+    """
 
     slug: str
     title: str
     description: str
     url: str
+    order: int
+    is_read: bool
+
+
+class ResourceCompletionResponse(OwnedResourcePublic):
+    """Response after marking a Start Here site resource as read (#3148).
+
+    Keyed by ``slug`` because resources are manifest entries, not rows.
+    ``user_id`` is excluded for the same reason as on
+    :class:`ContentCompletionResponse`.
+    """
+
+    id: int
+    slug: str
+    completed_at: datetime
 
 
 class StageIntroResponse(BaseModel):

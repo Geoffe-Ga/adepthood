@@ -111,7 +111,11 @@ const CardFace = ({ card }: { card: CardMeditationCard }): React.JSX.Element => 
         {card.name}
       </Text>
       {card.symbolism !== null && card.symbolism.length > 0 && (
-        <ScrollView style={styles.symbolismScroll} nestedScrollEnabled>
+        <ScrollView
+          style={styles.symbolismScroll}
+          nestedScrollEnabled
+          testID="card-meditation-symbolism-scroll"
+        >
           <Text style={styles.cardSymbolism} testID="card-meditation-card-symbolism">
             {card.symbolism}
           </Text>
@@ -147,17 +151,20 @@ const styles = StyleSheet.create({
   cardImage: {
     width: CARD_WIDTH - SPACING.lg * 2,
     height: CARD_IMAGE_HEIGHT,
+    flexShrink: 1,
     borderRadius: BORDER_RADIUS.md,
     marginBottom: SPACING.md,
   },
   cardName: {
+    // Preserve readable text when enlarged fonts use more of the fixed frame.
+    flexShrink: 0,
     fontSize: 24,
     fontWeight: '600',
     color: colors.text.light,
     textAlign: 'center',
     marginBottom: SPACING.sm,
   },
-  symbolismScroll: { maxHeight: SYMBOLISM_MAX_HEIGHT, flexShrink: 1 },
+  symbolismScroll: { maxHeight: SYMBOLISM_MAX_HEIGHT, flexShrink: 0 },
   cardSymbolism: {
     fontSize: 13,
     color: colors.text.light,

@@ -52,8 +52,9 @@ def test_example_covers_the_contract_surface(example: dict[str, Any]) -> None:
     assert len(example["chapters"]) == 2
     assert len({c["stage"] for c in example["chapters"]}) == 1
     assert len(example["site_resources"]) == 1
-    # schema_version 1.2.0: additive stage_intros[] (1.1.0) + site_resource.media.
-    assert example["schema_version"] == "1.2.0"
+    # schema_version 1.3.0: additive stage_intros[] (1.1.0), site_resource.media
+    # (1.2.0) and site_resource.order (1.3.0).
+    assert example["schema_version"] == "1.3.0"
     assert len(example["stage_intros"]) == 1
     major, minor, patch = example["schema_version"].split(".")
     assert all(part.isdigit() for part in (major, minor, patch))
@@ -82,6 +83,37 @@ def test_site_resource_media_is_optional(
     no_media = json.loads(json.dumps(example))
     no_media["site_resources"][0].pop("media")
     Draft202012Validator(schema).validate(no_media)
+
+
+def test_site_resource_order_is_required(
+    schema: dict[str, Any],
+    example: dict[str, Any],
+) -> None:
+    """schema_version 1.3.0: every site resource carries a 1-based ``order``.
+
+    aptitude-course#76 made ``order`` required upstream and the backend now
+    serves Start Here in that order (#3148), so a resource without one is a
+    contract violation rather than something to guess a position for.
+    """
+    assert example["site_resources"][0]["order"] == 1
+    Draft202012Validator(schema).validate(example)
+    no_order = json.loads(json.dumps(example))
+    no_order["site_resources"][0].pop("order")
+    with pytest.raises(ValidationError, match="'order' is a required property"):
+        Draft202012Validator(schema).validate(no_order)
+
+
+@pytest.mark.parametrize("bad_order", [0, -1, "1", 1.5])
+def test_site_resource_order_rejects_a_non_positive_integer(
+    schema: dict[str, Any],
+    example: dict[str, Any],
+    bad_order: object,
+) -> None:
+    """``order`` is a 1-based integer position, never zero, text or a fraction."""
+    manifest = json.loads(json.dumps(example))
+    manifest["site_resources"][0]["order"] = bad_order
+    with pytest.raises(ValidationError):
+        Draft202012Validator(schema).validate(manifest)
 
 
 @pytest.mark.parametrize(

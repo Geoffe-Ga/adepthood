@@ -34,6 +34,7 @@ const mockList = jest.fn() as jest.MockedFunction<(_id: number) => Promise<{ ite
 jest.mock('@/context/AuthContext', () => require('./authContextTestKit'));
 
 jest.mock('@/api', () => ({
+  ...require('./journalUiFlagsTestKit'),
   journal: {
     get: (...a: unknown[]) => (mockGet as unknown as (...x: unknown[]) => unknown)(...a),
     create: (...a: unknown[]) => (mockCreate as unknown as (...x: unknown[]) => unknown)(...a),
@@ -70,6 +71,9 @@ jest.mock('@/context/ApiKeyContext', () => require('./apiKeyContextTestKit'));
 const mockReadWebContentHeight = jest.fn<(_node: unknown) => number | undefined>();
 jest.mock('../webFieldMeasure', () => ({
   readWebContentHeight: (node: unknown) => mockReadWebContentHeight(node),
+  // The width and font re-measures (#3325) measure nothing here, as on native.
+  readWebNaturalHeight: () => undefined,
+  onWebFontsSettled: () => () => undefined,
 }));
 
 const JournalEntryScreen = require('../JournalEntryScreen').default;
@@ -313,6 +317,37 @@ describe('JournalEntryScreen — photograph a page', () => {
 
     expect(navigation.navigate).toHaveBeenCalledWith('JournalPhotograph', {
       appendTo: expect.any(String),
+      appendTier: 'personal',
+    });
+  });
+
+  // #3059 AC15: the capture declares the tier of the entry the page joins, so it
+  // must be told that tier -- the entry's own, as it stands when the camera opens.
+  it.each(['intimate', 'public'] as const)(
+    "carries a loaded %s entry's tier into the capture",
+    async (tier) => {
+      mockGet.mockResolvedValue(entry({ id: 7, status: 'draft', classification: tier }));
+      const { getByTestId, navigation } = renderScreen({ entryId: 7 });
+      await waitFor(() => expect(getByTestId('journal-title-input').props.value).toBe('Rivers'));
+
+      fireEvent.press(getByTestId('journal-photograph-page'));
+
+      expect(navigation.navigate).toHaveBeenCalledWith('JournalPhotograph', {
+        appendTo: expect.any(String),
+        appendTier: tier,
+      });
+    },
+  );
+
+  it('carries a tier the writer chose on this page after it opened', () => {
+    const { getByTestId, navigation } = renderScreen({ prefillTitle: REFLECTION_TITLE });
+
+    fireEvent.press(getByTestId('privacy-tier-public'));
+    fireEvent.press(getByTestId('journal-photograph-page'));
+
+    expect(navigation.navigate).toHaveBeenCalledWith('JournalPhotograph', {
+      appendTo: expect.any(String),
+      appendTier: 'public',
     });
   });
 

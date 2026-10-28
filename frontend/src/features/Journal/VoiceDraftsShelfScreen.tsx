@@ -11,7 +11,8 @@
  * one. The server volunteers ``total`` so paging can end; it is spent on that
  * and nothing else.
  *
- * Each row carries the words the letter grew from. Opening a row opens the
+ * Each row carries the words the letter grew from, and which side wrote the
+ * letter as the server recorded it (#3062). Opening a row opens the
  * letter itself with no further request — the listing already carries every
  * essay — and from the letter the writer can walk back to the page it was
  * written in the margin of.
@@ -29,6 +30,7 @@ import { ActivityIndicator, ScrollView, Text, TouchableOpacity, View } from 'rea
 import { excerpt } from './excerpt';
 import JournalModalShell from './JournalModalShell';
 import { formatDate } from './recency';
+import { sourceLabel } from './sourceLabel';
 import styles from './VoiceDraftsShelf.styles';
 
 import { voiceDrafts, type VoiceDraft, type VoiceDraftListResponse } from '@/api';
@@ -205,6 +207,9 @@ function DraftCard({
         {excerpt(item.essay, EXCERPT_LENGTH)}
       </Text>
       {written ? <Text style={styles.cardDate}>{written}</Text> : null}
+      <Text testID={`voice-draft-source-${item.marginalia_id}`} style={styles.cardDate}>
+        {sourceLabel(item.essay_source)}
+      </Text>
     </TouchableOpacity>
   );
 }

@@ -4,7 +4,7 @@ import asyncio
 import ipaddress
 import logging
 import os
-from collections.abc import AsyncIterator, Callable
+from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager, suppress
 from typing import Annotated, Final
 from urllib.parse import urlparse
@@ -28,7 +28,11 @@ from client_ip import (
 from database import async_session_factory, get_session
 from database import engine as database_engine
 from database_schema import require_database_schema_current
-from dependencies.creek_vault import resolve_creek_vault_client
+from dependencies.creek_vault import (
+    detached_vaults,
+    resolve_creek_vault_client,
+    resolved_vault_destination,
+)
 from error_responses import refusal_responses
 from errors import install_exception_handlers
 from middleware import (
@@ -41,6 +45,11 @@ from middleware import (
     UnhandledExceptionMiddleware,
 )
 from observability import configure_logging
+from privacy.recipients import (
+    PROVIDER_BASE_URL_ENV_VARS,
+    REGISTERED_PROVIDER_BASE_URLS,
+    base_url_override_violations,
+)
 from rate_limit import declared_limit_retry_after, limiter, rate_limit_exceeded_response
 from request_host import ALLOWED_HOSTS_ENV_VAR, allowed_hosts, unusable_host_entries
 from routers.admin import router as admin_router
@@ -62,11 +71,14 @@ from routers.habits import router as habits_router
 from routers.invitations import router as invitations_router
 from routers.journal import router as journal_router
 from routers.metta_return import router as metta_return_router
+from routers.oauth import router as oauth_router
+from routers.oauth_tokens import router as oauth_tokens_router
 from routers.practice_recipes import router as practice_recipes_router
 from routers.practice_sessions import router as practice_sessions_router
 from routers.practice_share import router as practice_share_router
 from routers.practice_tags import router as practice_tags_router
 from routers.practices import router as practices_router
+from routers.progress import router as progress_router
 from routers.promotions import router as promotions_router
 from routers.prompts import router as prompts_router
 from routers.reflections import router as reflections_router
@@ -76,6 +88,7 @@ from routers.ui_flags import router as ui_flags_router
 from routers.user_practices import router as user_practices_router
 from routers.users import router as users_router
 from routers.vault_activation import router as vault_activation_router
+from routers.vault_agents import router as vault_agents_router
 from routers.vault_config import router as vault_config_router
 from routers.vault_provisioning_internal import router as vault_provisioning_internal_router
 from seed_content import seed_content
@@ -85,7 +98,7 @@ from seed_stages import seed_stages
 from sentry import init_error_monitoring, shutdown_error_monitoring
 from services import app_links, email, journal_encryption
 from services.account_egress_barrier import load_egress_barrier_rollout, rollout_for
-from services.botmason import get_provider
+from services.botmason import STUB_SEAM_ENV_VAR, get_provider, stub_seam_armed
 from services.content_repository import (
     ContentRepositoryError,
     content_version_info,
@@ -108,11 +121,14 @@ from services.creek_vault_pipeline import (
     close_vault_pipeline_tasks,
     resume_vault_pipeline_runs,
 )
+from services.creek_vault_voice_drafts import resume_voice_draft_retractions
+from services.journal_withdrawal_note import resume_detached_withdrawal_notes
 from services.managed_vault_rollout import (
     ManagedVaultRolloutState,
     load_managed_vault_rollout,
 )
-from services.provider_probe import PROVIDER_PROBE_ENV_VAR, armed_probe_token
+from services.privacy_suspension import log_suspension_state
+from services.restore_suppression import assert_restore_reapplied
 
 logger = logging.getLogger(__name__)
 
@@ -134,18 +150,38 @@ DEV_ORIGINS = [
 ]
 
 
+async def _recover_step(step: Awaitable[object], warning: str) -> None:
+    """Run one recovery step; a fault reading its durable state is logged, never raised."""
+    try:
+        await step
+    except (OSError, RuntimeError, SQLAlchemyError):
+        logger.warning(warning)
+
+
 async def _recover_provisioning_until_shutdown() -> None:
     """Reconcile optional Creek work without ever delaying application startup."""
     client = get_creek_provisioning_client()
     while True:
-        try:
-            await resume_vault_activations(async_session_factory, client)
-        except (OSError, RuntimeError, SQLAlchemyError):
-            logger.warning("creek activation recovery could not read its durable state")
-        try:
-            await reconcile_vault_teardowns(async_session_factory, client)
-        except (OSError, RuntimeError, SQLAlchemyError):
-            logger.warning("creek teardown recovery could not read its durable state")
+        await _recover_step(
+            resume_vault_activations(async_session_factory, client),
+            "creek activation recovery could not read its durable state",
+        )
+        await _recover_step(
+            reconcile_vault_teardowns(async_session_factory, client),
+            "creek teardown recovery could not read its durable state",
+        )
+        await _recover_step(
+            resume_voice_draft_retractions(
+                async_session_factory,
+                resolve_creek_vault_client,
+                resolved_vault_destination,
+            ),
+            "voice draft withdrawal recovery could not read its durable state",
+        )
+        await _recover_step(
+            resume_detached_withdrawal_notes(async_session_factory, detached_vaults()),
+            "detached withdrawal note recovery could not read its durable state",
+        )
         await asyncio.sleep(_PROVISIONING_RECOVERY_INTERVAL_SECONDS)
 
 
@@ -183,7 +219,10 @@ ALLOWED_HEADERS = [
 # ``expose_headers`` the trace-id echoed by ``CorrelationIdMiddleware``
 # is silently dropped by every cross-origin browser client and the PR's
 # end-to-end correlation contract is broken (BUG-APP-001 follow-up).
-EXPOSED_HEADERS = ["X-Request-ID"]
+# ``Retry-After`` is on every 429 (``rate_limit.rate_limit_exceeded_response``)
+# and is not CORS-safelisted either, so without it a web client paced by a
+# refusal -- a folder import (#3556) -- cannot read how long it was asked to wait.
+EXPOSED_HEADERS = ["X-Request-ID", "Retry-After"]
 
 
 _LOOPBACK_HOSTNAMES = frozenset({"localhost", "127.0.0.1", "::1"})
@@ -380,13 +419,16 @@ def validate_journal_encryption_config() -> None:
     healthy, and the column an operator believed was encrypted is readable by
     anyone who reaches the database. Nothing in the running system says so.
 
-    So production requires the key and non-production does not. The environment
-    gate is ``ENV``, the same explicit variable the rest of this module's
-    startup checks read, rather than anything inferred from an incidental
-    setting. Staging is deliberately left with development: it is a deploy for
-    material nobody has promised to protect, and taking one down over an unset
-    variable would only teach operators to set it to a throwaway key that then
-    rides to production.
+    So production requires the key and non-production does not. The gate is
+    ``journal_encryption.production_in_force`` -- the same decision the codec
+    itself uses to refuse a plaintext write -- which reads ``ENV`` *and* the
+    environment name Railway injects. ``ENV`` is typed by a person and can be
+    missing or wrong; the platform's own name for the environment cannot be
+    forgotten, so either one saying production is enough, and a platform deploy
+    that names no environment at all is treated as production. Staging is
+    deliberately left with development: it is a deploy for material nobody has
+    promised to protect, and taking one down over an unset variable would only
+    teach operators to set it to a throwaway key that then rides to production.
 
     The order of the two checks matters and is tested. ``is_enabled`` is
     consulted first, so a configured-but-invalid key raises out of the
@@ -400,7 +442,7 @@ def validate_journal_encryption_config() -> None:
     """
     if journal_encryption.is_enabled():
         return
-    if os.getenv("ENV", "development") != "production":
+    if not journal_encryption.production_in_force():
         return
     msg = (
         f"{journal_encryption.KEYS_ENV_VAR} must be set in production. Without it "
@@ -604,42 +646,88 @@ def validate_app_base_url_config() -> None:
     raise RuntimeError(_unusable_web_origin_message(origin))
 
 
-def validate_provider_probe_config() -> None:
-    """Refuse a production boot while the provider probe is armed.
+#: The only ``ENV`` values an armed stub seam may boot under, and only when set
+#: explicitly: a laptop and the end-to-end lane. Everything else is, or may be,
+#: in front of people.
+_STUB_SEAM_ENVIRONMENTS = frozenset({"development", "e2e"})
 
-    :mod:`services.provider_probe` sends one prompt carrying
-    :data:`~services.provider_probe.PROVIDER_PROBE_ENV_VAR`'s token past the stub to a
-    real provider, so the wiring a stub-configured deployment never exercises --
-    key resolution, the SDK, the transport, the retry budget, the classification
-    of whatever comes back -- can be driven end to end. That is what lets the
-    real-wire lane reach a billing refusal on a server with no provider account.
 
-    In front of real users the same seam is a dial selected by the contents of a
-    journal entry, and "do not set this in production" is a runbook line rather
-    than a control. So this is the shape of :func:`validate_email_config` and
-    not of the warn-only trio below it: a state that is fine on a laptop and
-    indefensible on a server refuses the boot rather than logging about it.
+def validate_stub_seam_config() -> None:
+    """Refuse a deployed boot while the canned-stub test seam is armed (#3096).
 
-    Gated on the *armed* token rather than on the variable's presence, so it
-    agrees with :func:`~services.provider_probe.armed_probe_token`: a value too
-    short to arm anything is not a live seam, and taking a deploy down over one
-    would be a false alarm. Nothing renders the value -- unlike the email
-    backend name, which is a mode selector, this is a secret whose whole
-    security property is that nobody else knows it.
+    The stub answers a request with a few text-replaced sentences presented as a
+    reflection, letter or page. It exists for the backend suite and the
+    end-to-end lane, and :data:`~services.botmason.STUB_SEAM_ENV_VAR` is the only
+    way to reach it; a deployed process with that armed would hand canned text
+    to real people, which is exactly what #3096 forbids.
+
+    Fails closed: an armed seam boots only with ``ENV`` set *explicitly* to
+    ``development`` or ``e2e`` -- an unset ``ENV`` cannot tell a laptop from an
+    unlabelled host -- and only off-platform: any of
+    :data:`~services.journal_encryption.PLATFORM_ENVIRONMENT_NAME_ENV_VARS` or
+    :data:`~services.journal_encryption.PLATFORM_MARKER_ENV_VARS` present, whatever
+    its value, means a deploy (production, staging or a preview), so it refuses.
     """
-    if os.getenv("ENV", "development") != "production":
+    if not stub_seam_armed():
         return
-    if armed_probe_token() is None:
+    environment = os.getenv("ENV", "").strip().lower()
+    on_a_platform = any(
+        os.getenv(name, "").strip()
+        for name in (
+            *journal_encryption.PLATFORM_ENVIRONMENT_NAME_ENV_VARS,
+            *journal_encryption.PLATFORM_MARKER_ENV_VARS,
+        )
+    )
+    if environment in _STUB_SEAM_ENVIRONMENTS and not on_a_platform:
         return
     msg = (
-        f"{PROVIDER_PROBE_ENV_VAR} is set to a value that arms the BotMason provider "
-        "probe, which sends any prompt carrying that token to a real LLM "
-        "provider instead of to the configured stub. That is a request path "
-        "chosen by the text of a user's journal entry, and it exists for the "
-        "end-to-end lane rather than for a deployment. Unset "
-        f"{PROVIDER_PROBE_ENV_VAR} to boot, and configure BOTMASON_PROVIDER and "
-        "LLM_API_KEY if this deployment is meant to reach a provider at all "
-        "(see backend/.env.example)."
+        f"{STUB_SEAM_ENV_VAR} is armed, which lets the canned BotMason stub answer "
+        "real requests with text-replaced sentences instead of refusing them. It is "
+        "a test seam for the backend suite and the end-to-end lane. Unset "
+        f"{STUB_SEAM_ENV_VAR} to boot; writers' own keys are the only way a cloud "
+        "model answers them (ADR 0009 phase (a))."
+    )
+    raise RuntimeError(msg)
+
+
+def validate_llm_base_url_config() -> None:
+    """Refuse a production boot whose provider base URL leaves the recipient register.
+
+    Both provider SDKs read their own variable -- ``OPENAI_BASE_URL`` and
+    ``ANTHROPIC_BASE_URL`` -- whenever a client is built without an explicit
+    ``base_url``, and nothing else in this app mentions either one. So one
+    deployment setting could redirect every journal body, prior letter and
+    transcription photograph to whatever host it named, with no code change and
+    nothing in the running system saying so. The register
+    (:mod:`privacy.recipients`) names the one host each provider may be; this
+    is the boot half of holding the deployment to it, and the dial in
+    :mod:`services.botmason` pins the same URL so a value set after boot is
+    never read either.
+
+    The production predicate is ``journal_encryption.production_in_force``, the
+    one the encryption refusal uses, so a platform deploy with ``ENV`` unset is
+    held to it. Outside production the variables are the end-to-end lane's way
+    of pointing the real SDK clients at a loopback fake, and are left alone.
+
+    The refusal names the variable and the registered host and never renders
+    the value: a URL can carry a credential in its userinfo.
+    """
+    if not journal_encryption.production_in_force():
+        return
+    violations = base_url_override_violations(os.environ)
+    if not violations:
+        return
+    registered = ", ".join(
+        f"{PROVIDER_BASE_URL_ENV_VARS[p]} -> {url}"
+        for p, url in REGISTERED_PROVIDER_BASE_URLS.items()
+    )
+    msg = (
+        f"{', '.join(violations)} points a language-model SDK at a host the recipient "
+        "register does not list. The SDK reads that variable implicitly, so every "
+        "journal body, prior letter and photograph sent for a reflection would leave "
+        f"for that host instead. The registered endpoints are: {registered}. Unset "
+        "the variable to boot; a gateway is a new recipient and is added to "
+        "backend/src/privacy/recipients.py only after owner review (#3065)."
     )
     raise RuntimeError(msg)
 
@@ -910,19 +998,22 @@ def _log_egress_barrier_rollout() -> None:
 
 
 def _log_botmason_provider() -> None:
-    """Report the active LLM provider at boot (issue #402).
+    """Report the configured LLM provider at boot (issue #402), and an unused server key.
 
-    Stub-in-production must be an explicit, visible choice — a deploy that
-    forgot ``BOTMASON_PROVIDER``/``LLM_API_KEY`` would otherwise silently
-    serve canned chat responses to real users.
+    Under ADR 0009 phase (a) (#3067) no request carrying a person's content is
+    answered on the app's own account: without the writer's own key every
+    app-provider request is refused 402 ``llm_key_required``, whatever
+    ``BOTMASON_PROVIDER`` names. Nothing reads ``LLM_API_KEY`` any more, so a
+    deployment still carrying one is told so once, by name only.
     """
     provider = get_provider()
     logger.info("botmason_provider provider=%s", provider)
-    if provider == "stub" and os.getenv("ENV", "development") == "production":
-        logger.error(
-            "botmason_stub_in_production: BOTMASON_PROVIDER is 'stub' — real "
-            "users will get canned responses. Set BOTMASON_PROVIDER and "
-            "LLM_API_KEY (see backend/.env.example) if this is unintentional."
+    if os.getenv("LLM_API_KEY", "").strip():
+        logger.warning(
+            "llm_api_key_unused: LLM_API_KEY is set, but no request is paid for "
+            "with the server's own key (ADR 0009 phase (a)); a cloud model is "
+            "reached only with a writer's own key. It can be removed from this "
+            "deployment."
         )
 
 
@@ -976,6 +1067,15 @@ async def lifespan(_application: FastAPI) -> AsyncIterator[None]:
     # Make the journal-encryption state observable per worker (each uvicorn
     # worker caches its own key registry) without reading source (audit-destub-05b).
     logger.info("journal_encryption_enabled=%s", journal_encryption.is_enabled())
+    # Which operator privacy suspensions this worker booted under, by name (#3075).
+    log_suspension_state()
+    if journal_encryption.is_enabled():
+        # Non-secret: the operator sweep refuses to write under any other key0
+        # (``--primary-fingerprint``), so this is the value it is checked against.
+        logger.info(
+            "journal_encryption_primary_fingerprint=%s",
+            journal_encryption.primary_key_fingerprint(),
+        )
 
     # ...and in production, refuse the boot outright: an unset key there is a
     # deploy that stores every user's journal in plaintext, which the log line
@@ -1005,11 +1105,10 @@ async def lifespan(_application: FastAPI) -> AsyncIterator[None]:
     # email problem before it has a link problem.
     validate_app_base_url_config()
 
-    # Last refusal of the boot, and the narrowest: the provider probe is a live
-    # seam to a real LLM chosen by the text of a request, built for the
-    # end-to-end lane. It is fine on a laptop and indefensible in front of real
-    # users, so an armed production deploy never goes live.
-    validate_provider_probe_config()
+    # The SDKs' own redirect: a provider base URL off the
+    # recipient register would send every reflection's journal content to an
+    # unlisted host, so a production deploy carrying one never goes live.
+    validate_llm_base_url_config()
 
     # A production boot with no proxy allowlist still serves traffic, but every
     # client behind the ingress shares one throttle bucket and one audit IP --
@@ -1035,11 +1134,19 @@ async def lifespan(_application: FastAPI) -> AsyncIterator[None]:
     # journal. Say the exact operator state once and fail new activation closed.
     validate_managed_vault_rollout_config()
 
+    # The canned stub is a test seam: a seam that answers real people with
+    # text-replaced sentences never goes live (#3096).
+    # Last of the refusals, so each earlier one still names its own problem.
+    validate_stub_seam_config()
+
     # A model import proves what this process expects, not what its database
     # actually contains. Refuse before seeding and before the lifespan yields so
     # a stale checkout fails at boot with the Alembic remedy instead of serving
     # healthy routes until the first journal write reaches a missing column.
     await require_database_schema_current(database_engine)
+    # Default off. When an operator turns it on after a restore, refuse to serve
+    # until that restore's deletions were reapplied (#3063, DEPLOYMENT.md).
+    await assert_restore_reapplied(async_session_factory)
 
     # ritual-practice ops: on every boot, seed the catalog (stages, presets,
     # course content) so a fresh database is immediately usable.
@@ -1206,6 +1313,7 @@ app.include_router(practice_recipes_router)
 app.include_router(practice_tags_router)
 app.include_router(user_practices_router)
 app.include_router(practice_sessions_router)
+app.include_router(progress_router)
 app.include_router(habits_router)
 app.include_router(journal_router)
 app.include_router(transcription_router)
@@ -1225,10 +1333,13 @@ app.include_router(ui_flags_router)
 app.include_router(invitations_router)
 app.include_router(metta_return_router)
 app.include_router(vault_config_router)
+app.include_router(vault_agents_router)
 app.include_router(vault_activation_router)
 app.include_router(vault_provisioning_internal_router)
 app.include_router(corpus_router)
 app.include_router(feedback_router)
+app.include_router(oauth_router)
+app.include_router(oauth_tokens_router)
 
 
 # BUG-APP-004: separate liveness from readiness so the orchestrator can

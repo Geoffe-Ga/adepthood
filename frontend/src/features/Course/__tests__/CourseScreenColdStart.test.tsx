@@ -36,16 +36,28 @@ const mockProgramCalendar = jest.fn(() =>
   }),
 );
 
+jest.mock('@/context/AuthContext', () => require('./authContextTestKit'));
+
 jest.mock('../../../api', () => ({
+  captureSessionToken: () => 'e30.eyJzdWIiOiIxIiwiZXhwIjo0MTAyNDQ0ODAwfQ.signature',
+  uiFlags: { get: () => Promise.resolve({ course_last_stage: null }) },
   stages: {
     listAll: (...a: unknown[]) => mockStagesList(...a),
     programCalendar: () => mockProgramCalendar(),
   },
   course: {
+    nextUnread: () => Promise.resolve(null),
     stageContentAll: (...a: unknown[]) => mockStageContent(...a),
     stageProgress: (...a: unknown[]) => mockStageProgress(...a),
     markRead: jest.fn(),
     contentBody: jest.fn(),
+    startHereProgress: () =>
+      Promise.resolve({
+        total_items: 0,
+        read_items: 0,
+        progress_percent: 0,
+        next_unlock_day: null,
+      }),
     siteResources: () => Promise.resolve([]),
     siteResourceBody: jest.fn(),
     stageIntro: () => Promise.reject(new Error('content_not_found')),
@@ -194,4 +206,9 @@ describe('CourseScreen — the cold-start spinner has a bounded wait', () => {
 
     expect(jest.getTimerCount()).toBe(0);
   });
+});
+
+beforeEach(() => {
+  require('@/storage/userScope').setActiveUser(1);
+  require('../startHereStore').useStartHereStore.getState().reset();
 });

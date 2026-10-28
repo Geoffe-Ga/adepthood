@@ -418,7 +418,7 @@ const humanizeMode = (mode: string): string => {
 const renderWizardFallback = (mode: string): React.JSX.Element => (
   <NoticeView
     testID="create-practice-configure-fallback"
-    message={`${humanizeMode(mode)} will ship with a configurator soon. The defaults below will be saved as-is.`}
+    message={`You'll be able to adjust ${humanizeMode(mode)} soon. For now it saves with the settings shown below.`}
   />
 );
 
@@ -776,13 +776,13 @@ function metadataErrors(state: WizardState): string[] {
     errors.push('Name is required.');
   }
   if (state.name.length > PRACTICE_NAME_MAX) {
-    errors.push(`Name must be ≤ ${PRACTICE_NAME_MAX} characters.`);
+    errors.push(`Keep the name to ${PRACTICE_NAME_MAX} characters or fewer.`);
   }
   if (state.description.length > PRACTICE_DESCRIPTION_MAX) {
-    errors.push(`Description must be ≤ ${PRACTICE_DESCRIPTION_MAX} characters.`);
+    errors.push(`Keep the description to ${PRACTICE_DESCRIPTION_MAX} characters or fewer.`);
   }
   if (state.instructions.length > PRACTICE_INSTRUCTIONS_MAX) {
-    errors.push(`Instructions must be ≤ ${PRACTICE_INSTRUCTIONS_MAX} characters.`);
+    errors.push(`Keep the instructions to ${PRACTICE_INSTRUCTIONS_MAX} characters or fewer.`);
   }
   if (!Number.isFinite(state.duration) || state.duration <= 0) {
     errors.push('Duration must be greater than 0.');

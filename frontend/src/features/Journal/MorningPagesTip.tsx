@@ -41,6 +41,7 @@ import {
   MORNING_PAGES_TITLE,
   morningPageTitle,
 } from './morningPagesCopy';
+import { useReportNotificationPresence } from './notificationPresence';
 import ReflectionDismiss, { closeCornerReserve } from './ReflectionDismiss';
 
 import { useAuth } from '@/context/AuthContext';
@@ -57,11 +58,13 @@ import {
 } from '@/design/tokens';
 import {
   MORNING_PAGES_TIP_OPEN,
+  clearMorningPagesTipSetAside,
   loadMorningPagesTipState,
   saveMorningPagesTipNeverOffer,
   saveMorningPagesTipSetAside,
   type MorningPagesTipState,
 } from '@/storage/morningPagesTipStorage';
+import { useAccountScope } from '@/storage/useActiveUser';
 import { todayInUserTZ } from '@/utils/dateUtils';
 
 /** The band's identifying warm left rule (matches the shelf's other bands), in dp. */
@@ -96,39 +99,88 @@ export interface MorningPagesTipProps {
  * away if the writer declined while it was in flight: ``writeSeq`` counts the
  * local writes, so a stale read cannot hand back a card just set down.
  */
-function useMorningPagesTip(
-  onBegin: (_prefillTitle: string) => void,
+interface TipAnswer {
+  owner: number | null;
+  epoch: number;
+  value: MorningPagesTipState;
+}
+
+function useRestoreTip(
+  setAnswer: React.Dispatch<React.SetStateAction<TipAnswer | null>>,
+  writeSeq: React.RefObject<number>,
+) {
+  const { owner, epoch, isCurrent } = useAccountScope();
+  return useCallback(async () => {
+    if (!isCurrent()) return false;
+    writeSeq.current += 1;
+    const saved = await clearMorningPagesTipSetAside();
+    if (saved && isCurrent()) {
+      setAnswer((prev) => ({
+        owner,
+        epoch,
+        value: {
+          ...(prev?.epoch === epoch ? prev.value : MORNING_PAGES_TIP_OPEN),
+          setAsideOn: null,
+        },
+      }));
+    }
+    return saved && isCurrent();
+  }, [owner, epoch, isCurrent, setAnswer, writeSeq]);
+}
+
+export function useMorningPagesTipState(
   onDismissed: (() => void) | undefined,
   refreshKey: number | undefined,
 ) {
-  const { userTimezone } = useAuth();
-  const [state, setState] = useState<MorningPagesTipState | null>(null);
+  const { owner, epoch, isCurrent } = useAccountScope();
+  const [answer, setAnswer] = useState<TipAnswer | null>(null);
+  const state = answer?.epoch === epoch ? answer.value : null;
   const writeSeq = useRef(0);
 
   useEffect(() => {
     let active = true;
     const seqAtStart = writeSeq.current;
     void loadMorningPagesTipState().then((stored) => {
-      if (active && writeSeq.current === seqAtStart) setState(stored);
+      if (active && isCurrent() && writeSeq.current === seqAtStart)
+        setAnswer({ owner, epoch, value: stored });
     });
     return () => {
       active = false;
     };
-  }, [refreshKey]);
+  }, [refreshKey, owner, epoch, isCurrent]);
 
+  const decline = useCallback(
+    (change: Partial<MorningPagesTipState>, persist: () => Promise<unknown>) => {
+      if (!isCurrent()) return;
+      writeSeq.current += 1;
+      const saved = persist();
+      setAnswer((prev) => ({
+        owner,
+        epoch,
+        value: { ...(prev?.epoch === epoch ? prev.value : MORNING_PAGES_TIP_OPEN), ...change },
+      }));
+      void saved.then(() => {
+        if (isCurrent()) onDismissed?.();
+      });
+    },
+    [onDismissed, owner, epoch, isCurrent],
+  );
+
+  const restore = useRestoreTip(setAnswer, writeSeq);
+
+  return { state, decline, restore };
+}
+
+function useMorningPagesTip(
+  onBegin: (_prefillTitle: string) => void,
+  onDismissed: (() => void) | undefined,
+  refreshKey: number | undefined,
+) {
+  const { userTimezone } = useAuth();
+  const { state, decline } = useMorningPagesTipState(onDismissed, refreshKey);
   const onBeginPress = useCallback(() => {
     onBegin(morningPageTitle(todayInUserTZ(userTimezone)));
   }, [onBegin, userTimezone]);
-
-  const decline = useCallback(
-    (change: Partial<MorningPagesTipState>, persist: () => Promise<void>) => {
-      writeSeq.current += 1;
-      void persist();
-      setState((prev) => ({ ...(prev ?? MORNING_PAGES_TIP_OPEN), ...change }));
-      onDismissed?.();
-    },
-    [onDismissed],
-  );
 
   const onDismiss = useCallback(() => {
     const today = todayInUserTZ(userTimezone);
@@ -154,6 +206,7 @@ function MorningPagesTip({
     onDismissed,
     refreshKey,
   );
+  useReportNotificationPresence('writing', shown, shown ? 1 : 0);
   // Quiet while loading (no flash), set aside for today, or declined for good.
   if (!shown) return null;
 

@@ -2,7 +2,7 @@
 // Type Definitions
 //------------------
 
-export type HabitScreenMode = 'normal' | 'stats' | 'quickLog' | 'edit';
+export type HabitScreenMode = 'normal' | 'quickLog' | 'edit';
 
 export interface Habit {
   // --- Fields from API (matches backend HabitWithGoals schema) ---
@@ -166,13 +166,6 @@ export interface GoalModalProps {
   onUpdateHabit: (_updatedHabit: Habit) => void;
 }
 
-export interface StatsModalProps {
-  visible: boolean;
-  habit: Habit | null;
-  stats: HabitStatsData | null;
-  onClose: () => void;
-}
-
 export interface HabitTileProps {
   habit: Habit;
   locked?: boolean;
@@ -183,6 +176,8 @@ export interface HabitTileProps {
   onOpenGoals?: (_habit: Habit) => void;
   onLongPress?: (_habit: Habit) => void;
   onIconPress?: (_index: number) => void;
+  /** Opens the habit's Story sheet from the tile's info glyph (#3526). */
+  onOpenStory?: (_habit: Habit) => void;
   onUnlockHabit?: (_habitId: number) => void;
   /** Long-press-a-star fill logging; ``date`` backfills a past day (omit for today). */
   onLogUnit?: (_habitId: number, _amount: number, _date?: Date) => void;
@@ -208,15 +203,6 @@ export interface HabitSettingsModalProps {
   onDelete: (_habitId: number) => void;
   onOpenReorderModal: (_habits: Habit[]) => void;
   allHabits: Habit[];
-}
-
-export interface MissedDaysModalProps {
-  visible: boolean;
-  habit: Habit | null;
-  missedDays: Date[];
-  onClose: () => void;
-  onBackfill: (_habitId: number, _days: Date[]) => void;
-  onNewStartDate: (_habitId: number, _newStartDate: Date) => void;
 }
 
 export interface OnboardingModalProps {
@@ -251,7 +237,19 @@ export interface ReorderHabitsModalProps {
   onSaveOrder: (_habits: Habit[]) => Promise<void>;
 }
 
+/** Atomic goal ladder supplied when a timer link creates a habit. */
+export interface HabitGoalSetup {
+  target_unit: string;
+  frequency: number;
+  frequency_unit: string;
+  low: number;
+  clear: number;
+  stretch: number;
+}
+
 export interface AddHabitInput {
+  goals?: HabitGoalSetup;
+  revealed?: boolean;
   name: string;
   icon: string;
   energy_cost?: number;
@@ -273,8 +271,6 @@ export interface HabitsActions {
   addHabit: (_input: AddHabitInput, _isCarryover?: boolean) => Promise<void>;
   /** Resolves once the reorder is durably persisted, or rolled back (#2755). */
   saveHabitOrder: (_orderedHabits: Habit[]) => Promise<void>;
-  backfillMissedDays: (_habitId: number, _days: Date[]) => void;
-  setNewStartDate: (_habitId: number, _newDate: Date) => void;
   /** Mirrors ``OnboardingModalProps.onSaveHabits``: the screen passes this straight through. */
   onboardingSave: (_input: readonly OnboardingHabit[] | HabitMergePlan) => Promise<void>;
   iconPress: (_index: number) => void;

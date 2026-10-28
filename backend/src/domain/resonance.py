@@ -334,14 +334,21 @@ def build_prompt(
     prior_instruction, prior_letters_material = _prior_letters_parts(prior_drafts)
     instructions = (
         f"{MEDICATION_GUARDRAIL}\n\n"
-        "You are a thoughtful reader leaving margin notes on someone's journal "
-        "page. Read the entry and surface up to "
-        f"{max_notes} of the most resonant observations.\n\n"
+        "You are leaving margin notes on someone's journal page, as their own "
+        "Higher Self: observations handed back, never advice or instruction. "
+        "Read the entry and surface up to "
+        f"{max_notes} of the most resonant observations. Keep each note plain "
+        "and direct, like a smart friend, anchored in what the body and the day "
+        "of the entry actually hold. If a stage or wavelength phase fits, name it "
+        "as a capacity they're playing or a season they're in — never as who "
+        "they are, and never as higher or lower than another. Name the hard "
+        "part when it's there; don't cheer it away.\n\n"
         "For each note:\n"
         '- "kind" is one of: theme, connection, symbol.\n'
         '- "quote" is a VERBATIM substring copied exactly from the entry '
         f"(<= {ANCHOR_TEXT_MAX} characters), never paraphrased.\n"
-        '- "note" is 1-2 warm, second-person sentences spoken to the writer. '
+        '- "note" is 1-2 warm, second-person sentences spoken to the writer, '
+        "theirs to take or leave. "
         'Never refer to yourself or say "as an AI".\n'
         "- Use 'connection' only when linking to an earlier entry.\n\n"
         "Return STRICT JSON only, no prose, of the form:\n"
@@ -663,14 +670,21 @@ def _build_essay_prompt(
     instructions = (
         f"{MEDICATION_GUARDRAIL}\n\n"
         "You are writing a short, warm letter to the person whose journal this is, "
-        "expanding on a margin note you left. Stay grounded in the passage you "
-        "anchored to; speak in second person; never refer to yourself as an AI.\n\n"
+        "in their own Higher Self's voice, expanding on the margin note below: "
+        "their words and wisdom handed back, never advice or a plan. Stay "
+        "grounded in the passage the note anchors to and in the body and the day it "
+        "describes; speak in second person, plainly, like a smart friend. If a "
+        "stage or phase of the wavelength fits, name it as a capacity or a "
+        "season, never as who they are and never as above or below another. Be "
+        "honest about what is hard; promise no arrival and no permanence. Leave "
+        "them free to take or leave what you notice. Never refer to yourself as "
+        "an AI.\n\n"
         f"{ESSAY_TASK_INSTRUCTION}"
         f"{prior_instruction}"
     )
     material = (
         f"Margin note kind: {kind}\n"
-        f"Your margin note: {note}\n"
+        f"The margin note: {note}\n"
         f"The passage it anchors to:\n<passage>\n{anchor_text}\n</passage>\n\n"
         f"The full entry for context:\n<entry>\n{body}\n</entry>"
         f"{prior_letters_material}"
@@ -707,6 +721,18 @@ def _sanitize_essay(text: str) -> str:
         return sanitize_user_text(truncated[: ESSAY_MAX // 2], max_len=ESSAY_MAX)
 
 
+def accept_vault_letter(letter: str) -> str | None:
+    """Return a vault-written letter as the essay column may hold it, or ``None``.
+
+    The vault's half of :func:`generate_essay`'s gate (#3203): the same
+    sanitization and ``ESSAY_MAX`` cap, so a letter from either source is
+    stored under one invariant. A letter that sanitizes away to nothing is not
+    a letter. There is no prompt-echo check: adepthood sent the vault no
+    prompt, so there is nothing of ours it could echo.
+    """
+    return _sanitize_essay(letter) or None
+
+
 async def generate_essay(
     *,
     llm: ResonanceLLM,
@@ -733,8 +759,9 @@ async def generate_essay(
 
     ``prior_drafts`` are the app's own earlier letters, passed for content only;
     see :data:`NO_STYLE_TRANSFER_INSTRUCTION`. Unlike the resonance half, this
-    path is cloud-only (``routers.journal._cache_essay`` builds its LLM with no
-    vault selection), so what is threaded here reaches every account.
+    path is app-provider-only (``routers.journal._cache_essay`` takes its LLM
+    from the boundary chokepoint, and a vault-bound writer is refused before it
+    -- #3156), so what is threaded here reaches every app-provider-bound account.
     """
     prompt = _build_essay_prompt(body, note.anchor_text, note.kind, note.note, prior_drafts)
     completion = await llm.complete(prompt)

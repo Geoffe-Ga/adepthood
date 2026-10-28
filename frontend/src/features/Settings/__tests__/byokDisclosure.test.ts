@@ -30,6 +30,14 @@ describe('the BYOK disclosure follows the key across both service boundaries', (
     expect(copy).toMatch(/provider/i);
   });
 
+  test("the hub row is the owner's 2026-10-14 wording, and the detail copy carries it (#3260)", () => {
+    expect(BYOK_HUB_DISCLOSURE).toBe(
+      "Kept on your device. Page reading sends it from this device straight to the AI provider you chose, which sees your device's IP address. " +
+        'Other features send it over HTTPS through Adepthood to that provider, only when a feature uses it.',
+    );
+    expect(BYOK_DETAIL_DISCLOSURE.startsWith(BYOK_HUB_DISCLOSURE)).toBe(true);
+  });
+
   test('no user-facing source repeats the absolute never-upload claim', () => {
     const copy = [
       BYOK_HUB_DISCLOSURE,
@@ -64,9 +72,11 @@ describe('the BYOK disclosure is constrained by the implementation', () => {
     const llm = readBackendSource('src', 'services', 'botmason.py');
 
     expect(journal).toContain('Header(alias="X-LLM-API-Key"');
-    expect(transcription).toContain('Header(alias="X-LLM-API-Key"');
-    expect(llm).toContain('user_key = _validated_header_key(header_value)');
-    expect(llm).toContain('return user_key');
+    // Page reading no longer crosses Adepthood with the key (ADR 0009 phase (a),
+    // #3067): the device calls the vendor itself, and the disclosure says so
+    // (#3260).
+    expect(transcription).not.toContain('X-LLM-API-Key"');
+    expect(llm).toContain('return _validated_header_key(header_value)');
     expect(llm.match(/key = _resolve_api_key\(api_key\)/g)?.length).toBe(2);
     expect(llm).toContain('never persisted, logged, or echoed back');
   });

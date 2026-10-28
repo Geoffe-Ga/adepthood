@@ -1,0 +1,12 @@
+{
+  "content_minor": "0.22",
+  "discovery_minor": "0.24",
+  "sha256": {
+    "AgentMcpDiscovery.schema.json": "572b02462d364b2609b291fae0a87bfa1f9175911a787db4fe44ca9a8bd66539",
+    "CapabilitiesResponse.schema.json": "91e81207adcc70035ca56e7e35390eac2978e1bf8c60399f24439413289b9167",
+    "agent-mcp-ready.json": "dbc3581c87190e01e9a31614dd9643ff0e88f678278bf919df197cba4147009b",
+    "agent-mcp-unavailable.json": "a0cd831508b9cef26af41821d6a60d9a27fcb03808795e3bfef5b87febd78223"
+  },
+  "source_directory": "docs/contracts/adepthood-v1",
+  "source_repository": "Geoffe-Ga/Creek-Vault"
+}

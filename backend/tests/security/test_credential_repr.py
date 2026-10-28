@@ -22,8 +22,9 @@ suppression is spelled.
 
 from __future__ import annotations
 
-from routers.journal import _ReflectionClients
+from routers.journal import _DetectionCaller, _ReflectionClients
 from services.creek_vault_client import LocalFallbackCreekVaultClient
+from services.reflection_boundary import ReflectionBoundary
 
 # Obviously inert, and distinctive enough that a substring match cannot pass by
 # coincidence with anything else the repr renders.
@@ -40,9 +41,20 @@ def test_reflection_clients_repr_hides_the_caller_supplied_llm_key() -> None:
     clients = _ReflectionClients(
         api_key=_BYOK_KEY_SENTINEL,
         vault_client=LocalFallbackCreekVaultClient(),
+        boundary=ReflectionBoundary.APP_PROVIDER,
     )
 
     rendered = repr(clients)
 
     assert _BYOK_KEY_SENTINEL not in rendered
     assert LocalFallbackCreekVaultClient.__name__ in rendered
+
+
+def test_detection_caller_repr_never_shows_the_byok_key() -> None:
+    """The standalone-detection bundle carries the same raw header, and hides it the same way."""
+    caller = _DetectionCaller(api_key=_BYOK_KEY_SENTINEL, boundary=ReflectionBoundary.VAULT_BOUND)
+
+    rendered = repr(caller)
+
+    assert _BYOK_KEY_SENTINEL not in rendered
+    assert ReflectionBoundary.VAULT_BOUND.value in rendered

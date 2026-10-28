@@ -33,6 +33,7 @@ from main import app
 from middleware import CanonicalHostMiddleware
 from observability import TRACE_ID_HEADER
 from request_host import _hostname, usable_host
+from tests.helpers.log_lines import records_for
 
 if TYPE_CHECKING:
     from starlette.types import Message, Scope
@@ -323,7 +324,7 @@ async def test_a_settled_request_keeps_every_guarantee_the_stack_makes(
     assert headers[TRACE_ID_HEADER.lower()] == "canonical-host-probe-1"
     assert headers["x-content-type-options"] == "nosniff"
     assert "content-security-policy" in headers
-    completed = [r for r in caplog.records if r.message == _COMPLETED_RECORD]
+    completed = records_for(caplog.records, _COMPLETED_RECORD)
     assert len(completed) == 1
 
 
@@ -342,10 +343,10 @@ async def test_the_access_record_preserves_the_authority_that_was_replaced(
 
     with caplog.at_level(logging.INFO, logger=_ACCESS_LOGGER):
         await _get(_COLLECTION_PATH, _POISONED_HOST)
-        settled = [r for r in caplog.records if r.message == _COMPLETED_RECORD]
+        settled = records_for(caplog.records, _COMPLETED_RECORD)
         caplog.clear()
         await _get(_COLLECTION_PATH, _CANONICAL_HOST)
-        ordinary = [r for r in caplog.records if r.message == _COMPLETED_RECORD]
+        ordinary = records_for(caplog.records, _COMPLETED_RECORD)
 
     assert getattr(settled[-1], _ORIGINAL_HOST_FIELD, None) == _POISONED_HOST
     assert getattr(ordinary[-1], _ORIGINAL_HOST_FIELD, None) is None

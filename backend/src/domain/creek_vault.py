@@ -41,13 +41,54 @@ import re
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Protocol
+from http import HTTPStatus
+from typing import Final, NoReturn, Protocol
 from uuid import UUID
 
 # Semantic contract version adepthood presents at handshake and compares against
 # what a vault advertises. A major-version mismatch degrades to unavailable
 # rather than risking a call under an incompatible surface.
-CONTRACT_VERSION = "0.16.0"
+#
+# It matches Creek `main` (0.22), and it moves only in lockstep with the vault
+# it talks to -- read this before moving it again:
+#
+# 1. `supported_contract_minors` is a property of the **deployed** vault, not of
+#    Creek's `main`, and Creek refuses any minor that list does not name
+#    exactly. Declaring a minor the deployed image does not serve fails *every*
+#    handshake with `incompatible_version` (Creek-Vault#1888 was that outage, at
+#    0.18). This pin moved to 0.22 together with the managed vault's re-image to
+#    Creek `main` at c72f4362 -- the image that serves `/mcp` for epic
+#    Creek-Vault#1961, whose window runs from 0.2 up to 0.22; the next move
+#    belongs to the next re-image, not to whichever PR notices a gap.
+# 2. What 0.19-0.22 add, and what adepthood does with each:
+#    - `rate_limited` (0.19, `PROVENANCE_SINCE_MINOR`) on reflections, and on
+#      letters from 0.21 (`LETTER_RATE_LIMITED_SINCE_MINOR`). Consumed: we are
+#      at or above both gates, so a cap on either model-backed route now reaches
+#      us as `429 rate_limited` -- a coded wait, `CreekVaultRateLimitedError`
+#      carrying `VaultErrorCode.RATE_LIMITED` -- rather than being downgraded to
+#      `503 temporarily_unavailable` (Creek-Vault#1903 step 6).
+#    - `inference_source` (0.19) on reflection, letter and classification
+#      answers. Consumed on reflections and letters (#3483): it is the vault's
+#      receipt for the route that answered, and `request_key:<vendor>` is the
+#      only evidence that a relayed writer key paid (:func:`spent_request_key`).
+#      `inference_pool` (0.19) on the handshake is parsed and ignored;
+#      `tests/test_creek_contract_0_21.py` pins both.
+#    - `keyless_inference` (0.20) on the handshake. Consumed (#3501, owner
+#      decision 2026-10-21): a vault-bound pass carrying no key its vault will
+#      spend, against a vault reporting `false`, is refused `402
+#      vault_key_required` before any charge (`services.vault_byok`).
+#    - `agent-activity` (0.22, Creek-Vault#1968): `GET /v1/agent-activity`, the
+#      content-free projection of the vault's MCP audit chain. Consumed by the
+#      Settings "Recent activity" list (#3535) through
+#      `CreekVaultClient.agent_activity`; `tests/test_creek_contract_0_22.py`
+#      pins the move.
+# 3. Optional later minors are declared per call, never by moving this pin:
+#    `reading-recommendations` declares 0.25 (`_READING_CALL`), and the job
+#    status poll declares 0.26 -- whose failed job names `failure_code`
+#    `request_key_rejected` (Creek-Vault#1877, #3595) -- only to a vault whose
+#    handshake lists 0.26 (`JOB_FAILURE_CODE_SINCE_MINOR`); an older vault keeps
+#    hearing 0.22. `tests/test_creek_contract_0_26.py` pins that negotiation.
+CONTRACT_VERSION = "0.22.0"
 
 
 class CreekCapability(enum.StrEnum):
@@ -76,6 +117,13 @@ class CreekCapability(enum.StrEnum):
     raises. ``VOICE_DRAFTS`` is different: contract 0.15 publishes the
     AI-attributed draft resource specifically for this consumer, so adepthood
     both names and calls it without routing model prose through ``UPLOAD``.
+    ``LETTERS`` (contract 0.17) is the vault writing a margin note's letter
+    itself and storing it as one of those Voice Drafts, so a vault-bound
+    writer's first letter is answered by their vault and never by the app's
+    provider (#3203). ``AGENT_ACTIVITY`` (contract 0.22) is the content-free
+    list of what agents asked the vault for, which Settings renders under the
+    agents a person approved (#3535): who, which tool, when and whether it was
+    admitted -- never an argument and never a result.
     """
 
     HANDSHAKE = "creek.handshake"
@@ -89,6 +137,9 @@ class CreekCapability(enum.StrEnum):
     DRIVE_CONNECTOR = "creek.drive_connector"
     PIPELINE = "creek.pipeline"
     VOICE_DRAFTS = "creek.voice_drafts"
+    LETTERS = "creek.letters"
+    AGENT_ACTIVITY = "creek.agent_activity"
+    READING_RECOMMENDATIONS = "creek.reading_recommendations"
 
 
 class VaultTierCeiling(enum.StrEnum):
@@ -220,7 +271,7 @@ def resolve_vault_owner(raw: str | None) -> int | None:
 class VaultErrorCode(enum.StrEnum):
     """The machine-readable failure vocabulary a vault may answer an error with.
 
-    Seven of the nine codes Creek publishes, and deliberately still closed: these
+    Eight of the eleven codes Creek publishes, and deliberately still closed: these
     are the *only* strings the adapter may ever parse out of a vault response.
     Anything else -- a newer code, a typo, or a hostile string smuggling control
     characters toward a log -- is dropped on the floor rather than stored or
@@ -229,11 +280,18 @@ class VaultErrorCode(enum.StrEnum):
     was when the vocabulary was smaller; widening the set widens what we can
     classify, never what a vault may put in front of an operator.
 
-    The two published codes deliberately absent are ``unauthenticated`` and
-    ``internal_error``. Neither adds anything a member would be read for: a
-    refused credential already classifies from its status class alone, and so
-    does a server fault, so parsing either code would only give two spellings of
-    a decision already made.
+    Two of the three published codes absent are deliberately so:
+    ``unauthenticated`` and ``internal_error``. Neither adds anything a member
+    would be read for: a refused credential already classifies from its status
+    class alone, and so does a server fault, so parsing either code would only
+    give two spellings of a decision already made. The third,
+    ``unsupported_source`` (0.8, ``POST /v1/uploads`` only), classifies from its
+    4xx status as a contract error and has never had a member.
+
+    ``RATE_LIMITED`` is the 0.19 addition, and the only member that is not
+    about the request or the vault itself: it is the relayed model-call cap, a
+    wait rather than an outage. It is last so the pinned order of the others
+    does not move.
 
     Values are the wire strings, so they are contract and must not be reworded
     casually, and the member order is pinned by a test.
@@ -246,6 +304,11 @@ class VaultErrorCode(enum.StrEnum):
     PRIVACY_REFUSED = "privacy_refused"
     NOT_FOUND = "not_found"
     UNAVAILABLE = "unavailable"
+    RATE_LIMITED = "rate_limited"
+
+
+#: The static message a suspended vault send carries: content-free by design.
+VAULT_SEND_SUSPENDED_MESSAGE = "creek vault content sends are suspended by the operator"
 
 
 class CreekVaultError(RuntimeError):
@@ -277,6 +340,107 @@ class CreekVaultUnavailableError(CreekVaultError):
         """Store the static message and, when the vault named one we know, its code."""
         super().__init__(message)
         self.code = code
+
+
+class CreekVaultRateLimitedError(CreekVaultUnavailableError):
+    """The destination this call would have reached refused to admit it: a wait, not an outage.
+
+    **Relayed, never minted.** The vault keeps no hourly or in-flight counter
+    of its own, so the refusal is the shared inference pool's ``429`` or one
+    from whichever vendor the call reached -- the writer's own request key, or
+    an operator's cloud key on a self-hosted vault. Whether that budget is
+    scoped per vault or per account is a pool-side fact Creek's contract does
+    not publish, so this type does not claim it either.
+
+    What *is* provable, and is the load-bearing part: the cap is **one budget
+    across both model-backed routes**, not one per route.
+    ``POST /v1/reflections`` and ``POST /v1/letters/{external_id}`` resolve the
+    one ``generation`` stage through the same provider chokepoint, and the
+    request
+    Creek sends the pool carries no route, verb or capability -- so a per-route
+    budget cannot exist even in principle, and a writer held at the cap is held
+    at it on both in the same second. Creek reports it identically on both from
+    contract 0.21 (``429 rate_limited`` with ``Retry-After: 60``,
+    Creek-Vault#1903 step 6), and this is adepthood's side of that: one type,
+    raised from one place, so the two routes cannot tell a writer two different
+    stories about one limit.
+
+    **Raised for any ``429`` on any ``/v1`` call**, not only on those two
+    routes. Creek's model-call cap is its principal cause rather than its only
+    one: a ``429`` shed by an intermediary that never reached the vault's error
+    vocabulary arrives here too, and is still a wait. What it is *not* is
+    Creek's two concurrency limits, which shed as ``temporarily_unavailable``
+    with a ``503`` on every route whatever the minor -- they are about how many
+    requests that process is carrying, not about an allowance.
+
+    **What the pin buys.** Creek downgrades a capped *reflection* to ``503
+    temporarily_unavailable`` for a caller declaring a minor below ``0.19``,
+    and a capped *letter* the same way below ``0.21``. :data:`CONTRACT_VERSION`
+    is at ``0.21``, above both gates, so a vault cap on either route reaches us
+    as ``429 rate_limited`` and is raised as this type with
+    :attr:`~VaultErrorCode.RATE_LIMITED` as its ``code``. A ``503`` from a
+    vault is therefore an outage again, not a cap nothing on the wire could
+    distinguish from one.
+
+    It subclasses :class:`CreekVaultUnavailableError` rather than sitting
+    beside it, which is the whole of the design. A cap *is* a reason the call
+    did not land, so every caller that already degrades on an absent vault
+    keeps degrading untouched -- the narrowing costs no call site anything --
+    and only a caller that wants to show a wait rather than an outage has to
+    know the difference. :class:`~services.creek_vault_telemetry.VaultCallTimedOutError`
+    is the same shape for the same reason, and the same observer redeems both:
+    :attr:`~services.creek_vault_telemetry.VaultTelemetryOutcome.RATE_LIMITED`
+    is what keeps a shedding vault from reading like an absent one on a
+    dashboard. Without that row the narrowing would buy nothing today, since
+    the letters service records one ``vault_error`` reason for any vault error
+    and the read path collapses every availability fault into one degrade
+    reason.
+
+    It is never a :class:`CreekVaultContractError`: a cap says nothing about
+    the request adepthood sent, and classifying it as a contract defect would
+    send an operator hunting a payload bug that is not there.
+    """
+
+
+#: The one HTTP status Creek publishes ``rate_limited`` at, and the status an
+#: intermediary sheds load with before the vault's vocabulary is ever reached.
+RATE_LIMITED_STATUS = HTTPStatus.TOO_MANY_REQUESTS
+
+
+def signals_rate_limit(status_code: int, code: VaultErrorCode | None) -> bool:
+    """Return whether a failed vault answer is the model-call cap: a wait, not an outage.
+
+    The vault's own ``rate_limited`` code decides it whatever status carried the
+    code -- the code-first rule every classifier in the adapter follows. Absent
+    that code, a ``429`` still decides it, because a shed from an intermediary
+    carries no code at all and ``429`` has no competing code to be misattributed
+    from. :class:`CreekVaultRateLimitedError` is what a ``True`` here raises.
+    """
+    return code is VaultErrorCode.RATE_LIMITED or status_code == RATE_LIMITED_STATUS
+
+
+class VaultSendSuspendedError(CreekVaultUnavailableError):
+    """The operator has suspended content-bearing vault requests (#3075).
+
+    Raised by the vault adapter's single request site, before anything is put
+    on the wire, for every request that carries content while
+    ``PRIVACY_SUSPEND_VAULT_SEND`` is on. Content-free withdrawals and deletions
+    are not refused.
+
+    It subclasses :class:`CreekVaultUnavailableError` for the callers that
+    degrade: the journal write is saved without a vault copy, and a reflection
+    or upload degrades as if the vault were absent. The vault pipeline is the
+    exception. Its ladders list this subclass *ahead* of its transient parent,
+    so a stage ends, without further retries, on the first attempt the switch
+    refuses -- fresh, retried or resumed. The refusal proves only that its own
+    attempt never left the process: the run is recorded FAILED when no attempt
+    could have reached the vault, and AMBIGUOUS when an earlier, unanswered
+    attempt may have.
+    """
+
+    def __init__(self) -> None:
+        """Carry the one static, content-free message."""
+        super().__init__(VAULT_SEND_SUSPENDED_MESSAGE)
 
 
 class CreekVaultContractError(CreekVaultError):
@@ -437,6 +601,102 @@ def wire_ceiling_for(ceiling: VaultTierCeiling) -> WireTierCeiling:
         raise CreekCeilingUnrepresentableError(_UNREPRESENTABLE_CEILING_MESSAGE) from None
 
 
+class VaultKeyProvider(enum.StrEnum):
+    """A vendor whose writer-supplied key a managed vault will spend (Creek contract 0.18).
+
+    Creek-Vault's ADR-0015 (Creek-Vault#1873) lets a managed vault answer OPEN and
+    PERSONAL work with the writer's own Anthropic or OpenAI key, sent per
+    request. A vault lists the vendors it accepts in its handshake's
+    ``request_key_providers``; anything else on the wire is dropped at the parse
+    boundary rather than trusted.
+    """
+
+    ANTHROPIC = "anthropic"
+    OPENAI = "openai"
+
+
+#: Creek's published ``inference_source`` vocabulary (contract 0.19,
+#: Creek-Vault ADR-0016): the shared pool, an attested pool vendor, a writer's
+#: request key, or the vault's own local model. Matched whole, so a trailing newline is no value.
+INFERENCE_SOURCE_PATTERN: Final = re.compile(
+    r"(?:local|pool:creek|pool:attested:[a-z0-9](?:[a-z0-9-]*[a-z0-9])?"
+    r"|request_key:[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)"
+)
+
+#: The prefix of the one receipt that says a writer's relayed key paid.
+REQUEST_KEY_SOURCE_PREFIX: Final = "request_key:"
+
+
+def spent_request_key(inference_source: str | None) -> VaultKeyProvider | None:
+    """Return the vendor whose writer key the vault reports spending, else ``None`` (#3483).
+
+    ``request_key:<vendor>`` is the vault's own receipt that the request-scoped
+    key it was handed paid for this answer. Every other route -- the shared
+    pool, an attested pool, a local model, no receipt at all, or a vendor this
+    app never relays -- spent no writer key, so it answers ``None``. A key's
+    prefix and a handshake's advertisement are *not* this evidence: both are
+    known before the dial, and neither says the key was used.
+    """
+    if inference_source is None or not inference_source.startswith(REQUEST_KEY_SOURCE_PREFIX):
+        return None
+    vendor = inference_source.removeprefix(REQUEST_KEY_SOURCE_PREFIX)
+    known = {provider.value: provider for provider in VaultKeyProvider}
+    return known.get(vendor)
+
+
+#: What every rendering of a :class:`VaultProviderKey` shows in place of the key.
+REDACTED_KEY = "<redacted>"
+
+
+@dataclass(frozen=True, slots=True, eq=False)
+class VaultProviderKey:
+    """A writer's own provider key, held for one request on its way to their vault (#3437).
+
+    ADR 0009's 2026-10-16 amendment: a vault-bound writer's BYOK key travels
+    device -> adepthood -> vault per request, so the vault's own grounding and
+    voice pipeline can write with it. This type is how it travels. ``repr`` and
+    ``str`` name the vendor and redact the key, it refuses to pickle so no
+    queue, cache or log record can carry it to disk, and only
+    :meth:`reveal` -- called by the one header builder in
+    :mod:`services.creek_vault_client` -- reads the value.
+
+    Attributes:
+        provider: The vendor the key belongs to.
+    """
+
+    provider: VaultKeyProvider
+    _secret: str = field(repr=False)
+
+    def reveal(self) -> str:
+        """Return the key, for the vault request header and nothing else."""
+        return self._secret
+
+    def __repr__(self) -> str:
+        """Name the vendor and redact the key."""
+        return f"VaultProviderKey(provider={self.provider.value!r}, key={REDACTED_KEY})"
+
+    def __str__(self) -> str:
+        """Render exactly as :meth:`__repr__` does."""
+        return self.__repr__()
+
+    def __reduce__(self) -> NoReturn:
+        """Refuse to pickle, so the key cannot be serialised anywhere.
+
+        Raises:
+            TypeError: Always.
+        """
+        msg = "a writer's provider key is never serialised"
+        raise TypeError(msg)
+
+
+@dataclass(frozen=True)
+class AgentMcpDiscovery:
+    """The public agent resource and its issuer, from this allocation's discovery."""
+
+    resource: str
+    authorization_server: str
+
+
 @dataclass(frozen=True)
 class HandshakeResult:
     """Immutable outcome of a ``creek.handshake`` negotiation.
@@ -454,6 +714,35 @@ class HandshakeResult:
     ontology_version: str | None
     capabilities: frozenset[CreekCapability]
     attestation: Mapping[str, object] | None
+    #: The vendors whose writer-supplied key the vault will use for OPEN and
+    #: PERSONAL work (Creek contract 0.18). Empty for a self-connected vault, an
+    #: older vault, and every degraded handshake.
+    request_key_providers: frozenset[VaultKeyProvider] = frozenset()
+    #: Whether the vault may attempt a model call carrying no writer key
+    #: (Creek contract 0.20, #3501). ``False`` is a managed vault with no shared
+    #: pool, which refuses every keyless reflection; ``None`` is a vault that
+    #: did not say, and changes nothing.
+    keyless_inference: bool | None = None
+    #: Optional authenticated discovery extension (0.24). Content stays pinned
+    #: independently; absent or malformed metadata leaves the address unconfirmed.
+    agent_mcp: AgentMcpDiscovery | None = None
+    #: Every ``major.minor`` the vault says it will answer
+    #: (``supported_contract_minors``). Kept so a call that can use a newer
+    #: optional field declares that minor only to a vault that serves it. Empty
+    #: on every degraded handshake.
+    supported_contract_minors: frozenset[str] = frozenset()
+
+    def serves_minor(self, minor: str) -> bool:
+        """Whether this usable vault listed ``minor`` among the ones it answers."""
+        return self.available and minor in self.supported_contract_minors
+
+    def accepts_key(self, provider: VaultKeyProvider) -> bool:
+        """Whether this usable vault will spend a writer's ``provider`` key."""
+        return self.available and provider in self.request_key_providers
+
+    def refuses_keyless_inference(self) -> bool:
+        """Whether this usable vault said a keyless model call cannot run here."""
+        return self.available and self.keyless_inference is False
 
     @classmethod
     def unavailable(cls) -> HandshakeResult:
@@ -660,6 +949,51 @@ class VaultVoiceDraftDeleteResult:
 
 
 @dataclass(frozen=True)
+class VaultLetterRequest:
+    """Ask the vault to write one margin note's letter and keep it as a Voice Draft.
+
+    The vault-side twin of the app provider's essay call (contract 0.17,
+    ``POST /v1/letters/{external_id}``). ``external_id`` is the same stable id
+    :class:`VaultVoiceDraftRequest` addresses, so the letter the vault stores
+    is withdrawn by the same ``DELETE /v1/voice-drafts/{external_id}`` that
+    retracts a mirrored one. ``content`` is the source entry, ``note`` /
+    ``anchor_text`` / ``kind`` the margin note it expands, and ``tier`` the
+    entry's tier, which is both the stored draft's tier and the ceiling the
+    call is admitted at -- an intimate entry has no wire spelling and so cannot
+    ask at all.
+
+    Every prose field is omitted from ``repr()`` so an exception or a debug
+    statement cannot print the writer's entry or note merely by rendering this
+    request.
+    """
+
+    external_id: str
+    content: str = field(repr=False)
+    note: str = field(repr=False)
+    anchor_text: str = field(repr=False)
+    kind: str
+    tier: VaultTierCeiling
+
+
+@dataclass(frozen=True)
+class VaultLetter:
+    """The letter a vault wrote, verified to be the Voice Draft that was asked for.
+
+    Only ever constructed from a response whose identity, tier and fixed
+    ``ai-as-user`` / zero-weight attribution all verified, so holding one is
+    holding a durable vault write. ``letter`` is model prose and is kept out of
+    ``repr()`` for the reason :class:`VaultLetterRequest` gives.
+    """
+
+    letter: str = field(repr=False)
+    vault_ref: str
+    action: VaultIngestAction
+    #: The route the vault says wrote it (contract 0.19), or ``None`` when it
+    #: named none -- including an ``unchanged`` letter re-read without a model call.
+    inference_source: str | None = None
+
+
+@dataclass(frozen=True)
 class VaultClassification:
     """Frequency/Wavelength-phase tags Creek assigns to a piece of content."""
 
@@ -807,6 +1141,9 @@ class VaultReflection:
     routed_tier: VaultTierCeiling
     related_praxis: tuple[VaultRelatedPraxis, ...] = ()
     related_eddies: tuple[VaultRelatedEddy, ...] = ()
+    #: The route the vault says answered (contract 0.19), or ``None`` when it
+    #: named none or named one outside the published vocabulary.
+    inference_source: str | None = None
 
 
 @dataclass(frozen=True)
@@ -907,6 +1244,31 @@ class VaultPipelineJobState(enum.StrEnum):
     FAILED = "failed"
 
 
+#: The first Creek minor whose ``GET /v1/jobs/{job_id}`` carries ``failure_code``
+#: (Creek-Vault#1877, ``JOB_FAILURE_CODE_SINCE_MINOR`` upstream). Declared on the
+#: job-status poll only, and only to a vault whose handshake lists it: the pin
+#: above stays where the deployed vaults are, and Creek refuses an unlisted minor.
+JOB_FAILURE_CODE_SINCE_MINOR: Final = "0.26"
+
+
+class VaultJobFailureCode(enum.StrEnum):
+    """Why a ``failed`` pipeline job failed, when the writer can remedy it (contract 0.26).
+
+    Creek's closed ``JobFailureCode`` vocabulary, member for member. A code is
+    published only for a failure the *caller* can act on; any other failure,
+    and every answer from a vault below 0.26, carries no code. Values are
+    persisted on :class:`~models.vault_pipeline_run.VaultPipelineRun`, so they
+    must not be reworded without a migration.
+
+    Attributes:
+        REQUEST_KEY_REJECTED: The writer's own provider key, relayed for the
+            pass, was refused by its vendor with ``401``/``403``. Retrying with
+            the same key fails the same way: the writer has to replace it.
+    """
+
+    REQUEST_KEY_REJECTED = "request_key_rejected"
+
+
 @dataclass(frozen=True)
 class VaultPipelineJob:
     """An opaque, consumer-bound handle for one durable Creek pipeline pass.
@@ -914,11 +1276,16 @@ class VaultPipelineJob:
     ``stage`` is Adepthood-owned correlation metadata, not a value read from the
     job-status document. Keeping it beside the opaque UUID ensures a successful
     result is parsed as exactly the operation that was admitted.
+
+    ``failure_code`` is set only on a ``FAILED`` job whose vault published a
+    reason adepthood knows (:class:`VaultJobFailureCode`); ``None`` means the
+    vault gave none, gave one this build cannot name, or is older than 0.26.
     """
 
     job_id: UUID
     stage: VaultPipelineStage
     state: VaultPipelineJobState
+    failure_code: VaultJobFailureCode | None = None
 
 
 @dataclass(frozen=True)
@@ -954,6 +1321,8 @@ class VaultClassificationPass:
         complete: Whether every visited fragment was processed without error.
             ``False`` is not a failure -- the pass is resumable, so it means the
             honest next step is to call again.
+        method: The classifier that actually ran. A managed rules fallback can
+            finish its own work while semantic LLM classification is still due.
     """
 
     total: int
@@ -965,6 +1334,7 @@ class VaultClassificationPass:
     praxis_marked: int
     tags_extracted: int
     complete: bool
+    method: VaultClassificationMethod = VaultClassificationMethod.LLM
 
 
 @dataclass(frozen=True)
@@ -1015,6 +1385,58 @@ class VaultWheelBalance:
     """
 
     aspects: tuple[VaultWheelAspect, ...]
+
+
+#: The most rows one ``GET /v1/agent-activity`` answers with. Creek clamps a
+#: larger ``limit`` to it (``AGENT_ACTIVITY_MAX_LIMIT``, contract 0.22) and its
+#: response schema publishes the same bound as ``maxItems``.
+AGENT_ACTIVITY_MAX_LIMIT = 200
+
+
+class VaultAgentActivityOutcome(enum.StrEnum):
+    """Whether one call against the vault got past its pre-dispatch gates.
+
+    Creek's closed two-member enum, mirrored. ``ADMITTED`` means "dispatched to
+    the tool" and nothing more: the audit chain logs the attempt before a tool
+    resolves its target and never the result, so it cannot say whether content
+    came back, and neither can anything built on it. ``REFUSED`` is a refusal
+    before any tool ran -- a tool outside the agent's profile, or a ceiling
+    above ``personal``.
+    """
+
+    ADMITTED = "admitted"
+    REFUSED = "refused"
+
+
+@dataclass(frozen=True)
+class VaultAgentActivityRow:
+    """One call against the vault, reduced to who, what, when and whether.
+
+    ``consumer`` is the vault's audit stamp, verbatim: the static bearer's
+    consumer name, or a JWT agent's ``client_id`` (Creek-Vault#1976); a row
+    stamped before #1976 carries the agent's ``sub``, which names the *person*.
+    ``tool`` is the tool name the entry was written under. Neither is copy:
+    both are identifiers a caller maps onto its own words before anyone reads
+    them. ``at`` is timezone-aware UTC.
+    """
+
+    consumer: str
+    tool: str
+    at: datetime
+    outcome: VaultAgentActivityOutcome
+
+
+@dataclass(frozen=True)
+class VaultAgentActivity:
+    """The vault's most recent calls, newest first, as :meth:`agent_activity` reads them.
+
+    Only the rows cross the seam. Creek's ``skipped`` count (log lines it could
+    not project) and its echoed ``tier_ceiling`` are validated at the parse
+    boundary and dropped: neither is anything a person reading their activity
+    could act on.
+    """
+
+    rows: tuple[VaultAgentActivityRow, ...]
 
 
 class CreekVaultClient(Protocol):
@@ -1143,6 +1565,27 @@ class CreekVaultClient(Protocol):
         """
 
 
+class CreekVaultAgentActivityClient(CreekVaultClient, Protocol):
+    """The client surface the Settings activity list needs: ``agent-activity`` (0.22).
+
+    Separate from :class:`CreekVaultClient` for the reason
+    :class:`CreekVaultVoiceDraftClient` is: consumers and doubles that only
+    ingest or read a vault should not acquire a method they never call.
+    """
+
+    async def agent_activity(self, limit: int, /) -> VaultAgentActivity:
+        """Read the vault's most recent calls, newest first, at most ``limit`` of them.
+
+        Content-free by construction: Creek publishes four fields per call and
+        the adapter refuses an answer carrying a fifth. Fails as
+        :meth:`CreekVaultClient.wheel` does -- an unreadable or off-schema
+        answer as :class:`CreekVaultPayloadError`, a refusal as
+        :class:`CreekVaultContractError`, an absent vault as
+        :class:`CreekVaultUnavailableError`, and an unadvertised capability as
+        :class:`CreekCapabilityUnsupportedError` before any request is built.
+        """
+
+
 class CreekVaultVoiceDraftClient(CreekVaultClient, Protocol):
     """The narrow client surface required by optional Voice Draft mirroring.
 
@@ -1160,12 +1603,36 @@ class CreekVaultVoiceDraftClient(CreekVaultClient, Protocol):
         """Retract one draft without sending any of its content."""
 
 
-class CreekVaultPipelineClient(CreekVaultVoiceDraftClient, Protocol):
-    """The narrower extension required only by durable pipeline orchestration.
+class CreekVaultLetterClient(CreekVaultVoiceDraftClient, Protocol):
+    """The client surface a vault-written letter needs: Voice Drafts plus ``letters``.
+
+    A letter is stored *as* a Voice Draft, so a client that can write one must
+    be able to retract it through the same resource; that is why this extends
+    :class:`CreekVaultVoiceDraftClient` rather than standing beside it.
+    """
+
+    async def write_letter(self, request: VaultLetterRequest, /) -> VaultLetter:
+        """Have the vault write and store one margin note's letter.
+
+        Fails as :meth:`CreekVaultClient.reflect` does: an unreadable answer as
+        :class:`CreekVaultPayloadError`, a refusal as
+        :class:`CreekVaultContractError`, an absent vault as
+        :class:`CreekVaultUnavailableError`, and an unadvertised capability as
+        :class:`CreekCapabilityUnsupportedError` before any request is built. A
+        care escalation raises :class:`CreekVaultCareEscalationError`, outside
+        that hierarchy, so it can never be degraded onto another source.
+        """
+
+
+class CreekVaultPipelineClient(CreekVaultLetterClient, CreekVaultAgentActivityClient, Protocol):
+    """The whole per-request surface: every narrower client, plus pipeline polling.
 
     Status polling is absent from :class:`CreekVaultClient` deliberately. Most
     consumers use ingest, upload, reflection, or wheel reads and should not have
     to implement a pipeline-only operation in their adapters or test doubles.
+    This is the type the per-request dependency resolves, so it also carries
+    :class:`CreekVaultAgentActivityClient`: the Settings activity route (#3535)
+    reads through the same resolved client every other route does.
     """
 
     async def pipeline_job(

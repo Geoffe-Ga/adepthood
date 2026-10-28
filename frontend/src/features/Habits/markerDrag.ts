@@ -40,6 +40,8 @@ export interface MarkerDragAnchor {
   startPercent: number;
   /** The other draggable marker's percent, which bounds this drag. */
   neighbourPercent: number;
+  /** Fixed upper bound for this drag; defaults to the physical end of the bar. */
+  ceilingPercent?: number;
 }
 
 /** A single marker's drag, from finger-down to the percent it settles on. */
@@ -73,16 +75,17 @@ export interface MarkerDragController {
  */
 const boundsFor = (tier: DraggableTier, anchor: MarkerDragAnchor): { min: number; max: number } => {
   const neighbour = clampPercentage(anchor.neighbourPercent);
-  return tier === 'low'
-    ? {
-        min: 0,
-        max: neighbour > MARKER_MIN_GAP_PCT ? neighbour - MARKER_MIN_GAP_PCT : neighbour,
-      }
-    : {
-        min:
-          neighbour < MAX_PERCENT - MARKER_MIN_GAP_PCT ? neighbour + MARKER_MIN_GAP_PCT : neighbour,
-        max: MAX_PERCENT,
-      };
+  if (tier === 'low') {
+    return {
+      min: 0,
+      max: neighbour > MARKER_MIN_GAP_PCT ? neighbour - MARKER_MIN_GAP_PCT : neighbour,
+    };
+  }
+
+  const max = clampPercentage(anchor.ceilingPercent ?? MAX_PERCENT);
+  const preferredMin =
+    neighbour < max - MARKER_MIN_GAP_PCT ? neighbour + MARKER_MIN_GAP_PCT : neighbour;
+  return { min: Math.min(preferredMin, max), max };
 };
 
 /**
@@ -148,6 +151,8 @@ export interface MarkerDragPort {
   percent: Record<DraggableTier, number>;
   /** Where both draggable markers belong per the habit's saved goals. */
   canonical: Record<DraggableTier, number>;
+  /** Where the fixed Stretch marker caps a Clear drag on the rendered scale. */
+  stretchPercent: number;
   /** Move a marker to a bar percent. */
   setPercent: (_tier: DraggableTier, _percent: number) => void;
   /** Show or hide a tier's tooltip. */
@@ -186,6 +191,7 @@ export const createMarkerPanResponder = (
         barWidthPx: live.barWidth.current,
         startPercent: live.percent[tier],
         neighbourPercent: live.percent[tier === 'low' ? 'clear' : 'low'],
+        ceilingPercent: tier === 'clear' ? live.stretchPercent : MAX_PERCENT,
       });
       live.setTooltip(tier);
       gesture.grant();

@@ -1,10 +1,10 @@
 // HabitsScreen.tsx
 
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import type { BottomTabScreenProps } from '@react-navigation/bottom-tabs';
+import React, { useCallback, useMemo } from 'react';
 import { ActivityIndicator, FlatList, Text, TouchableOpacity, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
-import { habits as habitsApi } from '../../api';
 import { useAuth } from '../../context/AuthContext';
 import { useTheme } from '../../design/ThemeContext';
 import { spacing } from '../../design/tokens';
@@ -12,45 +12,42 @@ import useResponsive from '../../design/useResponsive';
 
 import AddHabitModal from './components/AddHabitModal';
 import DroppedCheckInNotice from './components/DroppedCheckInNotice';
+import EnergyHandoffNotice from './components/EnergyHandoffNotice';
 import GoalModal from './components/GoalModal';
 import HabitEmojiPicker from './components/HabitEmojiPicker';
 import HabitsDrawer from './components/HabitsDrawer';
 import { HabitsEmptyState } from './components/HabitsEmptyState';
 import HabitSettingsModal from './components/HabitSettingsModal';
-import MissedDaysModal from './components/MissedDaysModal';
 import OnboardingModal from './components/OnboardingModal';
 import ReorderHabitsModal from './components/ReorderHabitsModal';
-import StatsModal from './components/StatsModal';
 import { MAX_HABITS } from './constants';
 import { habitGridType } from './habitGridType';
 import styles from './Habits.styles';
-import type { AddHabitInput, Habit, HabitStatsData } from './Habits.types';
+import type { AddHabitInput, Habit } from './Habits.types';
 import HabitTile, { useTileLayout } from './HabitTile';
 import {
-  generateStatsForHabit,
-  toLocalHabitStats,
   buildPagedHabits,
-  calculateMissedDays,
   countCarryover,
   formatStageRange,
   habitColorAtSlot,
   isHabitUnlocked,
   stageRangeForPage,
 } from './HabitUtils';
+import { useEnergyOnboardingIntent } from './hooks/useEnergyOnboardingIntent';
 import { useHabits } from './hooks/useHabits';
 import { useModalCoordinator } from './hooks/useModalCoordinator';
 import { usePagination } from './hooks/usePagination';
 import { usePaginationBarVisibility } from './hooks/usePaginationBarVisibility';
-import { isServerBackedHabit } from './services/serverIds';
+import { HabitStorySheet } from './story/HabitStorySheet';
 
 import { DrawerNavSection, ScreenDrawer, useScreenDrawer } from '@/components/drawer';
 import { ContentContainer } from '@/components/layout/ContentContainer';
+import type { RootTabParamList } from '@/navigation/BottomTabs';
 
 /** Habits per page — the ceiling that fills the screen 1-up on mobile and 2x5 on landscape/desktop. */
 const HABITS_PER_PAGE = MAX_HABITS;
 
 const MODE_LABELS: Record<string, string> = {
-  stats: 'Stats Mode',
   edit: 'Edit Mode',
   quickLog: 'Quick Log Mode',
 };
@@ -78,8 +75,7 @@ const openModalForMode = (
   logUnit: ReturnType<typeof useHabits>['actions']['logUnit'],
   itemId: number,
 ) => {
-  if (mode === 'stats') open('stats');
-  else if (mode === 'edit') open('settings');
+  if (mode === 'edit') open('settings');
   else if (mode === 'quickLog') logUnit(itemId, 1);
   else open('goal');
 };
@@ -87,59 +83,34 @@ const openModalForMode = (
 interface HabitModalsProps {
   modals: ReturnType<typeof useModalCoordinator>;
   selectedHabit: Habit | null;
-  habitStats: HabitStatsData | null;
   habits: Habit[];
   actions: ReturnType<typeof useHabits>['actions'];
   onAddHabit: (_input: AddHabitInput) => Promise<void>;
   userTimezone: string;
 }
 
-/**
- * Missed-days for the modal, gated on modal-open. ``calculateMissedDays`` scans
- * every completion, so it must not run on the (frequent) closed-modal renders —
- * the modal is hidden unless ``open`` is set. Extracted so the gate is unit-testable.
- */
-export const missedDaysFor = (
-  open: boolean,
-  habit: Habit | null,
-  tz?: string,
-): ReturnType<typeof calculateMissedDays> => (open && habit ? calculateMissedDays(habit, tz) : []);
-
 const HabitDataModals = ({
   modals,
   selectedHabit,
-  habitStats,
   actions,
-}: Omit<HabitModalsProps, 'habits' | 'onAddHabit' | 'userTimezone'>) => {
-  const { userTimezone } = useAuth();
-  return (
-    <>
-      <GoalModal
-        visible={modals.goal}
-        habit={selectedHabit}
-        onClose={() => modals.close('goal')}
-        onUpdateGoal={actions.updateGoal}
-        onUpdateGoalUnits={actions.updateGoalUnits}
-        onLogUnit={actions.logUnit}
-        onUpdateHabit={actions.updateHabit}
-      />
-      <StatsModal
-        visible={modals.stats}
-        habit={selectedHabit}
-        stats={habitStats}
-        onClose={() => modals.close('stats')}
-      />
-      <MissedDaysModal
-        visible={modals.missedDays}
-        habit={selectedHabit}
-        missedDays={missedDaysFor(modals.missedDays, selectedHabit, userTimezone)}
-        onClose={() => modals.close('missedDays')}
-        onBackfill={actions.backfillMissedDays}
-        onNewStartDate={actions.setNewStartDate}
-      />
-    </>
-  );
-};
+}: Omit<HabitModalsProps, 'habits' | 'onAddHabit' | 'userTimezone'>) => (
+  <>
+    <GoalModal
+      visible={modals.goal}
+      habit={selectedHabit}
+      onClose={() => modals.close('goal')}
+      onUpdateGoal={actions.updateGoal}
+      onUpdateGoalUnits={actions.updateGoalUnits}
+      onLogUnit={actions.logUnit}
+      onUpdateHabit={actions.updateHabit}
+    />
+    <HabitStorySheet
+      visible={modals.story}
+      habit={selectedHabit}
+      onClose={() => modals.close('story')}
+    />
+  </>
+);
 
 const HabitWriteModals = ({
   modals,
@@ -148,7 +119,7 @@ const HabitWriteModals = ({
   actions,
   onAddHabit,
   userTimezone,
-}: Omit<HabitModalsProps, 'habitStats'>) => (
+}: HabitModalsProps) => (
   <>
     <HabitSettingsModal
       visible={modals.settings}
@@ -196,7 +167,6 @@ const HabitModals = (props: HabitModalsProps) => (
     <HabitDataModals
       modals={props.modals}
       selectedHabit={props.selectedHabit}
-      habitStats={props.habitStats}
       actions={props.actions}
     />
     <HabitWriteModals
@@ -211,13 +181,11 @@ const HabitModals = (props: HabitModalsProps) => (
 );
 
 export const ErrorBanner = ({ error, onRetry }: { error: string; onRetry: () => void }) => (
-  <View style={styles.energyScaffoldingContainer}>
-    <Text style={{ color: '#c00', marginBottom: 8 }}>{error}</Text>
-    <TouchableOpacity
-      testID="retry-button"
-      onPress={onRetry}
-      style={styles.energyScaffoldingButton}
-    >
+  <View style={styles.errorBanner} testID="habits-error-banner">
+    <Text style={styles.errorBannerText} accessibilityRole="alert">
+      {error}
+    </Text>
+    <TouchableOpacity testID="retry-button" onPress={onRetry} style={styles.errorBannerButton}>
       <Text style={styles.energyScaffoldingButtonText}>Retry</Text>
     </TouchableOpacity>
   </View>
@@ -235,9 +203,9 @@ export const EnergyCTA = ({ onOpen, onArchive }: { onOpen: () => void; onArchive
       style={styles.energyScaffoldingButton}
       onPress={onOpen}
       accessibilityRole="button"
-      accessibilityLabel="Perform Energy Scaffolding"
+      accessibilityLabel="Start Energy Scaffolding"
     >
-      <Text style={styles.energyScaffoldingButtonText}>Perform Energy Scaffolding</Text>
+      <Text style={styles.energyScaffoldingButtonText}>Start Energy Scaffolding</Text>
     </TouchableOpacity>
     <TouchableOpacity
       testID="archive-energy-cta"
@@ -403,6 +371,7 @@ const EnergyFooter = ({
 
 interface TileHandlers {
   handleOpenGoals: (_item: Habit) => void;
+  handleOpenStory: (_item: Habit) => void;
   handleLongPress: (_item: Habit) => void;
   handleIconPress: (_index: number) => void;
 }
@@ -440,7 +409,14 @@ const useTileHandlers = (
     },
     [iconPress, open],
   );
-  return { handleOpenGoals, handleLongPress, handleIconPress };
+  const handleOpenStory = useCallback(
+    (item: Habit) => {
+      setSelectedHabit(item);
+      open('story');
+    },
+    [open, setSelectedHabit],
+  );
+  return { handleOpenGoals, handleOpenStory, handleLongPress, handleIconPress };
 };
 
 const useHabitTileRenderer = (
@@ -453,12 +429,8 @@ const useHabitTileRenderer = (
   colorIndices: number[],
 ) => {
   const { accent: activeAccent } = useTheme();
-  const { handleOpenGoals, handleLongPress, handleIconPress } = useTileHandlers(
-    mode,
-    modals.open,
-    actions,
-    setSelectedHabit,
-  );
+  const handlers = useTileHandlers(mode, modals.open, actions, setSelectedHabit);
+  const { handleOpenGoals, handleOpenStory, handleLongPress, handleIconPress } = handlers;
   const { unlockHabit, logUnit } = actions;
   return useCallback(
     ({ item, index }: { item: Habit; index: number }) => {
@@ -475,6 +447,7 @@ const useHabitTileRenderer = (
           achievedTextColor={slot < 0 ? activeAccent.onPrimary : undefined}
           globalIndex={flatIndices[index] ?? index}
           onOpenGoals={handleOpenGoals}
+          onOpenStory={handleOpenStory}
           onLongPress={handleLongPress}
           onIconPress={handleIconPress}
           onUnlockHabit={unlockHabit}
@@ -489,6 +462,7 @@ const useHabitTileRenderer = (
       activeAccent,
       tz,
       handleOpenGoals,
+      handleOpenStory,
       handleLongPress,
       handleIconPress,
       unlockHabit,
@@ -497,49 +471,9 @@ const useHabitTileRenderer = (
   );
 };
 
-const useHabitStats = (visible: boolean, habit: Habit | null): HabitStatsData | null => {
-  const { token, userTimezone } = useAuth();
-  const [stats, setStats] = useState<HabitStatsData | null>(null);
-
-  const fetchStats = useCallback(
-    (h: Habit) => {
-      if (!isServerBackedHabit(h)) {
-        // No server row answers to this id, so fall straight to the local
-        // generator. A bare return would leave the modal on its "Loading
-        // stats..." banner forever, since it reads in-flight as ``stats == null``.
-        setStats(generateStatsForHabit(h, userTimezone));
-        return;
-      }
-      // ``userTimezone`` flows from the auth-context value populated by
-      // /auth/login | signup | refresh -- closes BUG-FE-HABIT-002 / -207.
-      // The API path is preferred (server already buckets in user TZ);
-      // the local fallback path now also receives the user's zone so
-      // weekday charts and current-streak agree across both branches.
-      habitsApi
-        .getStats(h.id, token ?? undefined)
-        .then((apiStats) => setStats(toLocalHabitStats(apiStats)))
-        .catch(() => setStats(generateStatsForHabit(h, userTimezone)));
-    },
-    [token, userTimezone],
-  );
-
-  useEffect(() => {
-    if (visible && habit) {
-      fetchStats(habit);
-    } else {
-      setStats(null);
-    }
-  }, [visible, habit, fetchStats]);
-
-  return stats;
-};
-
-const useSelectMode = (
-  setMode: (_m: 'quickLog' | 'stats' | 'edit') => void,
-  closeAll: () => void,
-) =>
+const useSelectMode = (setMode: (_m: 'quickLog' | 'edit') => void, closeAll: () => void) =>
   useCallback(
-    (m: 'quickLog' | 'stats' | 'edit') => {
+    (m: 'quickLog' | 'edit') => {
       setMode(m);
       closeAll();
     },
@@ -684,7 +618,6 @@ const lapInviteRange = (page: number): { start?: number; end?: number } => {
 const useHabitsScreenState = () => {
   const habitsReturn = useHabits();
   const modals = useModalCoordinator();
-  const habitStats = useHabitStats(modals.stats, habitsReturn.selectedHabit);
   const responsive = useResponsive();
   const { userTimezone } = useAuth();
   const carryoverCount = countCarryover(habitsReturn.habits);
@@ -723,7 +656,6 @@ const useHabitsScreenState = () => {
   return {
     ...habitsReturn,
     modals,
-    habitStats,
     responsive,
     pagination,
     pagedHabits: paged.habits,
@@ -833,9 +765,47 @@ const HabitsScreenDrawer = ({
   );
 };
 
-const HabitsScreen = () => {
+function useCourseEnergyIntent(
+  { route, navigation }: Partial<BottomTabScreenProps<RootTabParamList, 'Habits'>>,
+  modals: ReturnType<typeof useHabitsScreenState>['modals'],
+) {
+  const clearIntent = useCallback(
+    () =>
+      navigation?.setParams({
+        onboardingIntent: undefined,
+        onboardingOwner: undefined,
+        onboardingGeneration: undefined,
+        onboardingSession: undefined,
+      }),
+    [navigation],
+  );
+  const openEnergy = useCallback(() => modals.open('onboarding'), [modals]);
+  return useEnergyOnboardingIntent(route?.params, navigation ? clearIntent : undefined, openEnergy);
+}
+
+/** The held Course handoff's wait, beside the error banner that may already offer its retry. */
+const CourseEnergyHandoffNotice = ({
+  handoff,
+  state,
+}: {
+  handoff: ReturnType<typeof useCourseEnergyIntent>;
+  state: ReturnType<typeof useHabitsScreenState>;
+}) => (
+  <EnergyHandoffNotice
+    status={handoff.status}
+    showRetry={state.error === null}
+    onRetry={() => void state.actions.loadHabits()}
+    onCancel={handoff.cancel}
+  />
+);
+
+const HabitsScreen = ({
+  route,
+  navigation,
+}: Partial<BottomTabScreenProps<RootTabParamList, 'Habits'>> = {}) => {
   const state = useHabitsScreenState();
   const { habits, modals, actions, ui, responsive, pagination } = state;
+  const energyHandoff = useCourseEnergyIntent({ route, navigation }, modals);
   const { columns, gridGutter, scale, width, isLG, isXL } = responsive;
   const drawer = useScreenDrawer('Habits');
   const { barVisible, toggleBarVisible } = usePaginationBarVisibility();
@@ -845,6 +815,7 @@ const HabitsScreen = () => {
   return (
     <SafeAreaView style={[styles.container, { padding: spacing(isLG || isXL ? 2 : 1, scale) }]}>
       <ContentContainer fill>
+        <CourseEnergyHandoffNotice handoff={energyHandoff} state={state} />
         <HabitsContentSection
           state={state}
           columns={columns}
@@ -862,7 +833,6 @@ const HabitsScreen = () => {
         <HabitModals
           modals={modals}
           selectedHabit={state.selectedHabit}
-          habitStats={state.habitStats}
           habits={habits}
           actions={actions}
           onAddHabit={state.handleAddHabit}

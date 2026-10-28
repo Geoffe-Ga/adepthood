@@ -16,13 +16,18 @@
  *   returned, never the one it sent, and a refused PATCH changes nothing.
  * - **An answer belongs to the account that asked.** Every ``reset`` (logout)
  *   bumps a generation; a read started before it is dropped when it lands, so
- *   one account's link can never surface under the next.
+ *   one account's link can never surface under the next. The same holds for
+ *   a write: a ``setLink`` whose PATCH lands after a ``reset`` is dropped, so
+ *   it can neither repopulate a signed-out store nor overwrite the incoming
+ *   account's link or readiness (#3378).
  */
 import { create } from 'zustand';
 
 import { uiFlags } from '../api';
 
 import { registerStoreReset } from './registry';
+
+import { reportDiagnostic } from '@/observability/diagnostics';
 
 export interface WritingHabitLinkState {
   /** The linked habit's id, or ``null`` when none is linked (or not yet known). */
@@ -55,8 +60,19 @@ const INITIAL_STATE = { habitId: null as number | null, hydrated: false };
 /** The hydrate already on the wire, so concurrent mounts share one request. */
 let inFlight: Promise<void> | null = null;
 
-/** Bumped by every ``reset``; a read that began under an older one is stale. */
+/** Link changes and resets invalidate work started under an earlier link. */
 let generation = 0;
+
+export const getWritingHabitLinkGeneration = (): number => generation;
+
+/**
+ * Bumped only by ``reset`` (logout, or a wipe on an account switch), so a
+ * ``setLink`` can tell "the account changed under me" apart from "another link
+ * change of the same account landed first". Folding the two into
+ * ``generation`` would make two quick picks by one account drop the later
+ * answer, which is the server's latest truth.
+ */
+let accountEpoch = 0;
 
 export const useWritingHabitLinkStore = create<WritingHabitLinkState>((set, get) => ({
   ...INITIAL_STATE,
@@ -74,8 +90,8 @@ export const useWritingHabitLinkStore = create<WritingHabitLinkState>((set, get)
         if (startedIn !== generation) return;
         set({ habitId: flags.writing_session_habit_id, hydrated: true });
       })
-      .catch((err: unknown) => {
-        console.warn('[useWritingHabitLinkStore] failed to read the writing habit link', err);
+      .catch(() => {
+        reportDiagnostic('linked_habit_failed');
       })
       .finally(() => {
         if (inFlight === request) inFlight = null;
@@ -85,12 +101,15 @@ export const useWritingHabitLinkStore = create<WritingHabitLinkState>((set, get)
   },
 
   setLink: async (habitId, token) => {
+    const startedIn = accountEpoch;
     try {
       const flags = await uiFlags.update({ writing_session_habit_id: habitId }, token);
+      // The account that asked has gone; its answer is not this store's.
+      if (startedIn !== accountEpoch) return false;
       set({ habitId: flags.writing_session_habit_id, hydrated: true });
       return true;
-    } catch (err) {
-      console.warn('[useWritingHabitLinkStore] failed to save the writing habit link', err);
+    } catch {
+      reportDiagnostic('linked_habit_failed');
       return false;
     }
   },
@@ -101,10 +120,15 @@ export const useWritingHabitLinkStore = create<WritingHabitLinkState>((set, get)
 
   reset: () => {
     generation += 1;
+    accountEpoch += 1;
     inFlight = null;
     set({ ...INITIAL_STATE });
   },
 }));
+
+useWritingHabitLinkStore.subscribe((state, previous) => {
+  if (state.habitId !== previous.habitId) generation += 1;
+});
 
 registerStoreReset(() => {
   useWritingHabitLinkStore.getState().reset();

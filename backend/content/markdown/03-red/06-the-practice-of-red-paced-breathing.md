@@ -16,7 +16,7 @@ If Beige gave us grounding, and Purple gave us resonance, Red gives us spine. Th
 
 
 
-We call this one Paced Breathing. It’s a solar plexus-centered breath practice—your third chakra, the home of personal power. It’s the first truly formal meditative posture in the course, where we move past grounding or symbolic listening and begin training our system to hold stillness and energy at the same time. Think of it as your core workout for self-worth.
+We call this one Paced Breathing. It’s a solar plexus-centered breath practice—your third chakra, the home of personal power. It’s the first truly formal meditative posture in the course, where we keep the grounding and symbolic listening you already have and add something new: training your body to hold stillness and energy at the same time. Think of it as your core workout for self-worth.
 
 
 
@@ -41,7 +41,7 @@ Like you belong here.
 
 
 
-This kind of breath nourishes your vagus nerve, downregulates anxiety, and strengthens the sense of having space to exist as you are.
+This kind of breath feeds your vagus nerve, turns the anxiety dial down, and strengthens the sense that there’s room for you to exist as you are.
 
 
 
@@ -85,7 +85,7 @@ Exhale for 4
 
 Hold empty for 4
 
-A stabilizing breath used in both yogic and high-performance contexts.
+A steadying breath that yogis and Navy SEALs both swear by.
 
 
 

@@ -89,13 +89,13 @@ export const MODE_CATEGORIES: readonly ModeCategory[] = [
   {
     key: 'timers',
     title: 'Timers',
-    blurb: 'Bounded or open-ended sits.',
+    blurb: "Timed sits, or sit until you're done.",
     modes: [
       {
         mode: 'meditation_timer',
         label: 'Meditation timer',
         icon: Hourglass,
-        description: 'A bounded sit with optional bells.',
+        description: 'A timed sit, with bells if you want them.',
       },
       {
         mode: 'count_up',
@@ -120,7 +120,7 @@ export const MODE_CATEGORIES: readonly ModeCategory[] = [
         mode: 'interval_bell',
         label: 'Interval bell',
         icon: Bell,
-        description: 'Evenly spaced bells or custom offsets.',
+        description: 'Bells evenly spaced, or at times you choose.',
       },
       {
         mode: 'random_interval_bell',
@@ -145,7 +145,7 @@ export const MODE_CATEGORIES: readonly ModeCategory[] = [
         mode: 'tallied_grounding',
         label: 'Tallied grounding',
         icon: Hash,
-        description: 'Rounds of find-N-of-each: shapes, colors, sounds.',
+        description: 'Round by round, find a few of each: shapes, colors, sounds.',
       },
       {
         mode: 'mindful_anchor',
@@ -158,7 +158,7 @@ export const MODE_CATEGORIES: readonly ModeCategory[] = [
   {
     key: 'reflection',
     title: 'Reflection',
-    blurb: 'Symbol-driven contemplation.',
+    blurb: 'Sit with a card and let it speak.',
     modes: [
       {
         mode: 'tarot',
@@ -177,7 +177,7 @@ export const MODE_CATEGORIES: readonly ModeCategory[] = [
   {
     key: 'movement',
     title: 'Movement',
-    blurb: 'Count discrete reps or rounds.',
+    blurb: 'Count reps or rounds, one tap each.',
     modes: [
       {
         mode: 'rep_counter',

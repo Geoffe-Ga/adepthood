@@ -51,7 +51,7 @@ class StagePromptDetail(BaseModel):
     """One of a stage's prompts: what to write, and how often to write it.
 
     ``cadence`` is opaque display prose the course author writes ("Daily",
-    "At least 4x per week", "Whenever they arise") and is passed through
+    "At least 2x per week", "Whenever they arise") and is passed through
     verbatim — it is deliberately not a schedule, an enum, or a recurrence
     rule, because the curriculum states it as prose and varies it per prompt.
     ``None`` where the chapter states no cadence at all.
@@ -107,7 +107,7 @@ class PromptSubmit(BaseModel):
 
 
 class PromptListResponse(BaseModel):
-    """Paginated list of prompt responses; ``total`` is ``None`` when not requested."""
+    """Prompt history, optionally including unanswered weeks; total is nullable."""
 
     items: list[PromptDetail]
     total: int | None

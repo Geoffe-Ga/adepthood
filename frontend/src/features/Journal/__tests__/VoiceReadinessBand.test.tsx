@@ -10,7 +10,7 @@
  * copy of the cause rule cannot quietly grow on the client.
  */
 import { jest, describe, it, expect, beforeEach } from '@jest/globals';
-import { act, fireEvent, render, waitFor } from '@testing-library/react-native';
+import { act, fireEvent, render, renderHook, waitFor } from '@testing-library/react-native';
 import { X } from 'lucide-react-native';
 import React from 'react';
 import { StyleSheet } from 'react-native';
@@ -25,7 +25,7 @@ const mockLoadDismissed = jest.fn() as jest.MockedFunction<() => Promise<boolean
 const mockSaveDismissed = jest.fn() as jest.MockedFunction<(_v: boolean) => Promise<void>>;
 const mockNavigate = jest.fn();
 const mockVaultConnection = jest.fn() as jest.MockedFunction<
-  () => Promise<{ connected: boolean; vault_url: string | null }>
+  () => Promise<{ connected: boolean; vault_url: string | null; mcp_address: string | null }>
 >;
 
 jest.mock('@/api', () => ({
@@ -54,6 +54,7 @@ jest.mock('@react-navigation/native', () => ({
 }));
 
 const VoiceReadinessBand = require('../VoiceReadinessBand').default;
+const { useVoiceReadinessState } = require('../VoiceReadinessBand');
 
 const BAND = 'journal-voice-readiness-band';
 const CARD = 'journal-voice-readiness-card';
@@ -115,7 +116,11 @@ beforeEach(() => {
   mockNavigate.mockReset();
   mockVaultConnection.mockReset();
   mockReadiness.mockResolvedValue(readiness());
-  mockVaultConnection.mockResolvedValue({ connected: true, vault_url: 'https://v.example' });
+  mockVaultConnection.mockResolvedValue({
+    connected: true,
+    vault_url: 'https://v.example',
+    mcp_address: null,
+  });
   mockLoadDismissed.mockResolvedValue(false);
   mockSaveDismissed.mockResolvedValue(undefined);
 });
@@ -243,12 +248,12 @@ describe('VoiceReadinessBand — where it goes', () => {
     mockReadiness.mockResolvedValue(
       readiness({ state: 'gathering', message: GATHERING_COPY, grounding_source: 'corpus' }),
     );
-    mockVaultConnection.mockResolvedValue({ connected: false, vault_url: null });
+    mockVaultConnection.mockResolvedValue({ connected: false, vault_url: null, mcp_address: null });
     const { findByTestId, getByText } = render(<VoiceReadinessBand />);
     const band = await findByTestId(BAND);
 
-    expect(getByText('Give your corpus a place to live')).toBeTruthy();
-    expect(band.props.accessibilityLabel).toBe('Give your corpus a place to live');
+    expect(getByText('Give your writing a place to live')).toBeTruthy();
+    expect(band.props.accessibilityLabel).toBe('Give your writing a place to live');
     fireEvent.press(band);
     expect(mockNavigate).toHaveBeenCalledWith('VaultSettings');
   });
@@ -268,7 +273,7 @@ describe('VoiceReadinessBand — where it goes', () => {
   });
 
   it('asks an undecided account the decision first, vault or not', async () => {
-    mockVaultConnection.mockResolvedValue({ connected: false, vault_url: null });
+    mockVaultConnection.mockResolvedValue({ connected: false, vault_url: null, mcp_address: null });
     const { findByTestId, getByText } = render(<VoiceReadinessBand />);
     const band = await findByTestId(BAND);
 
@@ -279,7 +284,7 @@ describe('VoiceReadinessBand — where it goes', () => {
 
   it('stays quiet when readiness fails, whatever the vault says', async () => {
     mockReadiness.mockRejectedValue(new Error('offline'));
-    mockVaultConnection.mockResolvedValue({ connected: false, vault_url: null });
+    mockVaultConnection.mockResolvedValue({ connected: false, vault_url: null, mcp_address: null });
     const { queryByTestId } = render(<VoiceReadinessBand />);
     await act(async () => {
       await Promise.resolve();
@@ -292,7 +297,7 @@ describe('VoiceReadinessBand — where it goes', () => {
     mockReadiness.mockResolvedValue(
       readiness({ state: 'gathering', message: GATHERING_COPY, grounding_source: 'corpus' }),
     );
-    mockVaultConnection.mockResolvedValue({ connected: false, vault_url: null });
+    mockVaultConnection.mockResolvedValue({ connected: false, vault_url: null, mcp_address: null });
     const { findByTestId, queryByTestId } = render(<VoiceReadinessBand />);
     fireEvent.press(await findByTestId(DISMISS));
 
@@ -385,5 +390,39 @@ describe('VoiceReadinessBand — how often it asks', () => {
     // on the scale of days.
     expect(mockReadiness).toHaveBeenCalledTimes(1);
     expect(mockReadiness).toHaveBeenCalledWith();
+  });
+});
+
+describe('useVoiceReadinessState — the Notification Center count (#3142)', () => {
+  it('re-reads only the set-aside flag on refresh, never the readiness route', async () => {
+    const { result, rerender } = renderHook(
+      ({ refreshKey }: { refreshKey: number }) => useVoiceReadinessState(refreshKey),
+      { initialProps: { refreshKey: 0 } },
+    );
+    await waitFor(() => expect(result.current.band).not.toBeNull());
+    expect(mockReadiness).toHaveBeenCalledTimes(1);
+
+    // Set aside inside the Notification Center, then the home regains focus.
+    mockLoadDismissed.mockResolvedValue(true);
+    rerender({ refreshKey: 1 });
+    await waitFor(() => expect(result.current.band).toBeNull());
+    expect(mockReadiness).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps the band when the flag still says it is offered, or cannot be read', async () => {
+    const { result, rerender } = renderHook(
+      ({ refreshKey }: { refreshKey: number }) => useVoiceReadinessState(refreshKey),
+      { initialProps: { refreshKey: 0 } },
+    );
+    await waitFor(() => expect(result.current.band).not.toBeNull());
+
+    rerender({ refreshKey: 1 });
+    await settle();
+    expect(result.current.band).not.toBeNull();
+
+    mockLoadDismissed.mockRejectedValue(new Error('storage unavailable'));
+    rerender({ refreshKey: 2 });
+    await settle();
+    expect(result.current.band).not.toBeNull();
   });
 });

@@ -17,7 +17,7 @@ Not vibing with Paced Breathing? That’s okay.
 
 
 APTITUDE is a structured program—but not a rigid one.
-This isn’t a guru-led prescription, and I’m not here to tell you there’s only one way to develop Free Will. You’re the master of your own journey, and if you sense that another practice might support your exploration of Self-Love and Power better than what’s provided here, you have full permission to follow that intuition.
+This isn’t a guru-led prescription, and I’m not here to tell you there’s only one way to develop Free Will. This is your practice, not mine. If you sense that another one would serve your Self-Love and Power better than what’s here, follow that.
 
 
 
@@ -74,7 +74,7 @@ You’re not galloping away. You’re sitting calmly in the saddle of your own m
 
 Stay here for up to ten minutes. Whenever your mind wanders, come back to the feeling of uplifted stillness. The dignified energy of someone who knows they are enough—just by being.
 
-That’s Windhorse. And once you’ve felt it, you can summon it anytime.
+That’s Windhorse. Once you’ve felt it, you know what you’re reaching for—even on the days it won’t come.
 
 ### Charging Water
 

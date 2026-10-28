@@ -4,8 +4,8 @@
   Creek's wire contract; see
   [ADR 0004](adr/0004-creek-vault-http-application-boundary.md) for
   the application-boundary decision and the version pin.
-- **Contract version:** 0.16.0
-- **Date:** 2026-09-12
+- **Contract version:** 0.22.0
+- **Date:** 2026-10-24
 - **Issue:** [#2044](https://github.com/Geoffe-Ga/adepthood/issues/2044)
   (epic [#2043](https://github.com/Geoffe-Ga/adepthood/issues/2043);
   originally drafted under [#950](https://github.com/Geoffe-Ga/adepthood/issues/950),
@@ -42,8 +42,8 @@ ADR 0004's Context section documents in detail. Instead:
 - Creek's ratified, canonical `/v1` contract **has shipped**
   (creek-vault#1072, closed). It is published as a generated bundle at
   `docs/contracts/adepthood-v1/` in the `Geoffe-Ga/Creek-Vault`
-  repository: at contract 0.16.0, 38 JSON Schemas, a
-  `retry-policy.json` disposition table, a nine-capability by
+  repository: at contract 0.22.0, 44 JSON Schemas, a
+  `retry-policy.json` disposition table, an eleven-capability by
   seven-state example matrix, and a `manifest.json` recording a sha256
   per generated file. Those counts move — the matrix was four
   capabilities wide through 0.7 and five at 0.8.0 — so read the
@@ -571,3 +571,257 @@ rule governing how adepthood copes with that absence — binding a
 configured vault to exactly one adepthood user — is recorded in
 [ADR 0004](adr/0004-creek-vault-http-application-boundary.md),
 Decision 7, not in this document.
+
+## Vault-agent access tokens (adepthood-owned)
+
+Adepthood is the OAuth 2.1 authorization server for the agents a person
+connects to their vault (adepthood #3532, #3533); the vault's `/mcp` endpoint
+is the resource server and verifies what Adepthood issues
+(Creek-Vault#1963). Both sides keep this claim set in lock-step.
+
+**Discovery.** `GET /.well-known/oauth-authorization-server` (RFC 8414) names
+`token_endpoint` (`/oauth/token`), `jwks_uri` (`/.well-known/jwks.json`) and
+`revocation_endpoint` (`/oauth/revoke`) under the issuer `OAUTH_ISSUER_URL`.
+
+**Acceptance clients (observed 2026-10-24).** Claude Code uses the CIMD client
+id `https://claude.ai/oauth/claude-code-client-metadata`, with declared redirects
+`http://localhost/callback` and `http://127.0.0.1/callback`; the authorize request
+adds the port of its loopback listener. It does not use dynamic registration.
+OpenClaw uses DCR with `http://127.0.0.1:8989/oauth/callback`, including its port.
+ChatGPT uses a per-app callback, `https://chatgpt.com/connector/oauth/{callback_id}`;
+`https://chatgpt.com/connector_platform_oauth_redirect` is legacy, for already
+published apps only. The per-client journeys pin these shapes. The network-isolated
+Claude journey arranges a validated fresh CIMD cache rather than fetching the
+vendor over the internet; backend route/service tests cover fetching, expiry and
+refusals.
+
+**The access token** is a JWT, `ES256` over P-256:
+
+| Part | Value |
+| --- | --- |
+| header `alg` | `ES256`, and nothing else |
+| header `kid` | the RFC 7638 thumbprint of the signing key; selects a key in the JWKS, whose own `alg` is `ES256` |
+| header `typ` | `at+jwt` (RFC 9068); no `crit` header |
+| `iss` | the issuer, exactly as the metadata publishes it |
+| `sub` | the account's stable, opaque consumer identity (below) |
+| `aud` | ONE string: the account's own vault MCP URL, the RFC 8707 `resource` the person approved |
+| `scope` | the approved grants, space-separated, in server order: `vault:read`, `vault:desk`, `vault:journal`, `vault:pipeline` (and `offline_access` when approved, which the vault ignores) |
+| `client_id` | the OAuth client id of the agent (RFC 9068), so the vault can audit per agent (Creek-Vault#1976) |
+| `iat`, `exp` | issue time and issue time plus 600 seconds |
+| `jti` | a random id |
+
+No claim carries an email, a name, or any vault address other than `aud`.
+
+**`sub`.** On a managed vault, the `consumer_identity` provisioning handed the
+vault (`vaultactivation.consumer_identity`, the same value in the provisioning
+handoff): a managed vault pins `sub` to exactly that. On a self-hosted vault,
+which was never provisioned, `adepthood-account-` followed by 32 hex digits of
+an HMAC of the account id under a key derived from the deployment secret --
+stable, and meaningless outside Adepthood. One person is one `sub`; the agent
+is `client_id`.
+
+**Refresh tokens** are issued only when the person checks `offline_access` on
+the consent page. Otherwise the token response omits `refresh_token` and no
+refresh-token row is stored. They are opaque (`rt_` plus 256 random bits), stored only as a
+SHA-256, valid 30 days and rotated on every use. Presenting a rotated-away
+token revokes its whole rotation family and answers `invalid_grant`; a replayed
+authorization code revokes every refresh token under its grant. Errors are the
+RFC 6749 codes (`invalid_request`, `invalid_grant`, `unsupported_grant_type`,
+`invalid_scope`) plus RFC 8707's `invalid_target`.
+
+A client requesting only the `vault:` permissions receives a 600-second access
+token and no refresh token, even if it previously received refresh tokens for
+those permissions. To stay connected it must request `offline_access` and the
+person must check that choice. Otherwise the client starts a new browser
+approval when its access token expires; the server never silently adds that
+permission to the request or the approved subset.
+
+**The key set.** `OAUTH_SIGNING_KEYS` lists PEM P-256 private keys newest
+first, the shape of `JOURNAL_ENCRYPTION_KEYS`: the first signs, all are
+published, so rotation is add-new, redeploy, drop-old. The JWKS response is
+cacheable for 300 seconds, the vault's own key-set TTL. Unset in production or on a
+hosted platform, nothing is signed (503); unset on a laptop or in CI, one
+process-local key is generated so the flow works end to end.
+
+**Revocation lands within one access-token lifetime.** Revoking a refresh token
+(RFC 7009) or the grant (`agent_grant.revoked_at`, from Settings) fails the
+agent's next refresh; an access token already issued runs out its ten minutes,
+because the vault verifies tokens offline and never calls back.
+
+## Agent grants in plain words, and the Settings list (adepthood-owned)
+
+**Choosing permissions (adepthood #3544).** The consent page offers a checkbox
+for each requested permission. Only requested `vault:read` and `vault:desk` are
+checked by default; journal, pipeline and staying connected are opt-in. The
+server bounds submitted choices by the signed request, rejects unrequested or
+malformed choices, and records exactly the approved subset in the code,
+`agent_grant.grants`, and token scope. Unchecking every permission returns
+`access_denied` without creating a code or grant. A narrower refresh request
+also omits a replacement refresh token if its scope drops `offline_access`.
+
+A person reads what an agent may do twice: on the consent page before they
+approve it (adepthood #3532), and under Settings, "Where your writing lives",
+"Agents that may read your vault", beside the control that stops it (#3534).
+Both surfaces use one mapping, word for word, and neither ever shows a scope
+name:
+
+| Grant (`scope` name) | What a person reads |
+| --- | --- |
+| `vault:read` | Read and search your Open and Personal writing |
+| `vault:desk` | Draft and reflect from your Open and Personal writing |
+| `vault:journal` | Add journal entries |
+| `vault:pipeline` | Re-sort your vault |
+| `offline_access` | Stay connected without asking you again |
+
+The mapping is owned by `backend/src/services/oauth_consent_copy.py`
+(`GRANT_DESCRIPTIONS`) and mirrored by
+`frontend/src/features/Settings/agentsCopy.ts` (`AGENT_GRANT_PHRASES`);
+`frontend/src/features/Settings/__tests__/agentGrantDrift.test.ts` reads the
+Python and fails when the two disagree. A grant the screen has no phrase for is
+not rendered at all. The vault's own tool-profile documentation
+(Creek-Vault#1964, #1969) should quote this table rather than restate it.
+
+**The routes**, keyed on the caller's token alone -- no account id is accepted
+from a path or a body:
+
+- `GET /vault/agents` -- every `agent_grant` the account holds with
+  `revoked_at IS NULL`, newest `created_at` first:
+  `[{id, name, grants[], created_at, last_used_at, redirect_host}]`. `name` is
+  the agent's own `client_name`, `null` when it gave none; `grants` are scope
+  names in server order; `last_used_at` is stamped on every code exchange and
+  refresh (roughly every ten minutes while an agent works), not per vault call;
+  `redirect_host` is the host of the agent's first registered redirect.
+- `DELETE /vault/agents/{agent_id}` -- sets `agent_grant.revoked_at` and revokes
+  every refresh token under the grant, in one commit; `204`, again `204` for a
+  grant already revoked (its first `revoked_at` is kept). Another account's id
+  is the same `404 {"detail": "agent_not_found"}` as a missing one, audited as
+  `resource_access_denied`.
+- `GET /vault/connection` carries `mcp_address`: the vault MCP URL in the one
+  spelling the authorization server compares a `resource` in (so it is exactly
+  the `aud` the agent's tokens will name). Nothing connected returns `null`.
+  A managed binding keeps its private `vault_url` hidden. Once the allocation
+  is ready, authenticated per-allocation discovery must name this account's
+  exact MCP resource and this deployment's exact issuer before `mcp_address`
+  is returned. Otherwise it remains `null`, and Settings says "Adepthood can’t
+  show an agent sign-in address for this vault yet." Existing agent Stop
+  controls remain available. The public resource is the handed-off `/v1` URL with `/v1`
+  dropped and `/mcp` added, exactly `account_vault_resource`'s derivation.
+
+**Authenticated agent discovery (0.24 extension; content pin stays 0.22).**
+Creek-Vault#1974 stores OAuth configuration per allocation, including a safe
+rollout for older allocations. Presence of a ready binding, or the shared
+edge's unauthenticated RFC 9728 metadata, cannot establish that one allocation
+has been rolled. The existing authenticated `GET /v1/capabilities` therefore
+adds `agent_mcp: {resource, authorization_server} | null` in discovery 0.24;
+older declared minors omit it. The producer reports it only for an actually
+mounted, OAuth-enabled public MCP surface. Managed private-TLS routing, whose
+public router has no `/mcp` route, remains `null` even with OAuth runtime vars.
+
+Adepthood's capability fetch is already unversioned discovery. Its optional
+parser validates exactly two bounded public HTTPS URLs and retains their
+verbatim spellings. It returns only the independently derived owned resource,
+never unrecognized metadata, and only when both resource and issuer match
+exactly. An absent, malformed, disabled or unavailable extension hides only
+the unconfirmed address; it does not disable an otherwise valid content
+handshake.
+Automatic address confirmation requires this 0.24 discovery extension at
+runtime. An older allocation can already support OAuth while omitting that
+metadata; a missing address does not assert that its existing agent sign-ins
+are disabled.
+
+Connection reads also gate Journal and import surfaces, so optional address
+discovery has its own **1-second total network budget**, covering DNS admission,
+client construction and the entire handshake. Ordinary content-call deadlines
+are unchanged. The route shares one owner-scoped config and one activation
+read; every scalar is copied before an unconditional commit, including paths
+that cannot probe or will use the cache. DNS and HTTP never hold that connection.
+
+A bounded process-local cache keeps up to **256** public address/null results,
+with **15-second positive** and **5-second negative** lifetimes. Its key is a
+framed digest of account, exact binding URL, credential, expected resource,
+issuer and activation/job identity. No raw credentials, clients or full
+handshakes remain in that cache. Current ownership, managed READY state and
+issuer are checked before every hit, so local revocation wins immediately and
+credential, binding, issuer or allocation changes require a new proof.
+
+Expired positives are never used when a new probe fails. A same-generation
+allocation rolled after its original handoff is observed once the brief cache
+expires (at most 5 seconds for an unconfirmed address), without a new handoff or
+migration. Ordinary status timestamps do not invalidate an otherwise unchanged
+binding. Caller cancellation propagates and does not become cached failure.
+
+This metadata extension is separate from content negotiation: all versioned
+content calls still declare `X-Creek-Contract-Version: 0.22`, and the discovery
+response must continue advertising support for that minor. Canonical 0.24
+schemas and ready/disabled discovery fixtures live separately under
+`backend/tests/fixtures/creek_discovery_0_24`; they do not replace the vendored
+0.22 content bundle. Their source is [Creek-Vault commit 541e1dc](https://github.com/Geoffe-Ga/Creek-Vault/tree/541e1dc5593153129d5af2f9dfeddc30d6850834/docs/contracts/adepthood-v1).
+The managed card's browser seam is tracked by #3546.
+
+Re-approving a revoked agent clears `revoked_at` and restarts `created_at`, so
+it reappears on the list; refresh tokens minted under the earlier consent stay
+dead.
+
+## Recent agent activity (adepthood-owned)
+
+Under the agent list, Settings shows "Recent activity": up to twenty of the
+vault's most recent calls, each as who asked, what for, how long ago, and a
+small "Refused" marker on a call the vault turned down before it ran -- under
+the one line "What each agent asked for, never what it read." (#3535). It is
+read when the screen opens and again each time it is returned to; it is never
+polled.
+
+**The route.** `GET /vault/agents/activity?limit=` (1-200, default 50; the
+screen asks for 20) reads Creek's `GET /v1/agent-activity` (contract 0.22,
+Creek-Vault#1968) through the caller's own resolved vault, declaring the
+content-free `open` ceiling and sending `limit` and nothing else. It answers,
+always with `200`:
+
+```json
+{"status": "ok", "rows": [{"agent": "Adepthood", "tool_label": "Saved a journal entry", "at": "2026-10-24T17:40:03Z", "outcome": "admitted"}]}
+```
+
+`status` is `unavailable` with no rows for every way the vault could not be
+read -- nothing connected, a vault not advertising `agent-activity`, a refusal,
+an unreadable or off-schema answer, a transport failure -- and the screen says
+it could not check, never "nothing yet". Each such degrade is logged through
+`services.creek_vault_read.log_read_degraded`, whose fields are a closed
+vocabulary.
+
+**Content-free, twice over.** The adapter
+(`backend/src/services/creek_vault_activity_wire.py`) validates Creek's answer
+strictly against the vendored `AgentActivityResponse`: a fifth field on a row,
+anything extra on the envelope, an outcome outside `admitted | refused`, a
+`tool` or `consumer` outside its published pattern, a naive instant or more
+than 200 rows refuse the whole answer. The route then re-projects each row onto
+four fields in adepthood's own words (`backend/src/services/
+vault_agent_activity_copy.py`), and both response models forbid extra fields,
+so no argument, fragment id, path or prose can cross it whatever a vault sends.
+Creek's `consumer` stamp and `tool` name are keys and are never echoed.
+
+**What a tool reads as.** One past-tense phrase per audited tool name --
+`creek.draft` "Drafted an essay", `creek.reflect` "Asked for a reflection",
+`creek.link` "Tried to re-sort the vault", `creek.mine` "Looked for seeds in
+your writing", `creek.journal` "Saved a journal entry", and so on -- and
+"Other" for a tool with no phrase. `outcome: admitted` means only that the
+call passed the vault's pre-dispatch gates; the audit chain never records what
+a tool returned, so neither can this list.
+
+**Who a row names, and the attribution limit.** Creek stamps each call with
+the static bearer's consumer name, or, for an agent's OAuth token, the token's
+`sub` -- which names the *person*, not the agent, until Creek-Vault#1976 stamps
+the agent's `client_id` instead. So the route names a row only from stamps the
+account owns, most specific first:
+
+| The stamp is | The row says |
+| --- | --- |
+| a `client_id` of one of the account's grants | the agent's own name ("An agent that did not give its name" if it gave none), or "An agent you stopped" once revoked |
+| `adepthood` (the app's own calls on a self-connected vault) | Adepthood |
+| the account's managed-vault consumer identity | "Adepthood or one of your agents" -- the app's own `/v1` calls and every agent's `sub` share it -- or "Adepthood" while no agent was ever approved |
+| the account's derived agent subject (a self-connected vault's `sub`) | One of your agents |
+| anything else | Something else with access to your vault |
+
+Today the first rule matches only a static consumer an operator named after an
+agent's client id; once #1976 lands it names every agent, with no change here.
+A cross-tenant test pins that a stamp naming another account's agent is
+"something else" for everyone but its owner.

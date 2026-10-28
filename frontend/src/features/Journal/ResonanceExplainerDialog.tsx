@@ -15,15 +15,18 @@
  * keep appearing does nothing to keep it.
  */
 import React from 'react';
-import { Text } from 'react-native';
+import { ScrollView, StyleSheet, Text } from 'react-native';
 
 import {
   DontShowAgainCheckbox,
   ExplainerActionPair,
+  PayerChangedNotice,
   explainerStyles as styles,
 } from './ExplainerDialogParts';
 import JournalModalShell from './JournalModalShell';
 import {
+  KEY_NEEDED_SETTINGS,
+  KEY_NEEDED_SETTINGS_A11Y,
   RESONANCE_EXPLAINER_CANCEL,
   RESONANCE_EXPLAINER_CANCEL_A11Y,
   RESONANCE_EXPLAINER_CHOICE,
@@ -38,7 +41,7 @@ import {
 
 export interface ResonanceExplainerDialogProps {
   visible: boolean;
-  /** Truthful price copy resolved from key presence and the served allowance. */
+  /** Truthful price copy resolved from the server route, key and served allowance. */
   cost: string;
   /** Prevent a pass while the payer is unknown or its wallet is exhausted. */
   continueDisabled: boolean;
@@ -49,17 +52,44 @@ export interface ResonanceExplainerDialogProps {
   onContinue: () => void;
   /** Leave without a pass. Also what the scrim and the hardware back do. */
   onCancel: () => void;
+  /**
+   * Only the writer's own key could pay (#3262): the charged arm becomes
+   * {@link onOpenSettings}, and the "don’t show" box is not offered, since this
+   * showing is a remedy rather than the disclosure.
+   */
+  keyNeeded?: boolean;
+  /** Leave for Settings to add a key. Required for ``keyNeeded`` to act. */
+  onOpenSettings?: () => void;
+  /** A request was refused because its payer changed; this price is the new one (#3385). */
+  payerChanged?: boolean;
 }
+
+const NO_SETTINGS = (): void => undefined;
 
 /** The two arms, in the disclosure's own words; the charged one waits on the payer. */
 function ResonanceArms({
   continueDisabled,
   onContinue,
   onCancel,
+  keyNeeded = false,
+  onOpenSettings = NO_SETTINGS,
 }: Pick<
   ResonanceExplainerDialogProps,
-  'continueDisabled' | 'onContinue' | 'onCancel'
+  'continueDisabled' | 'onContinue' | 'onCancel' | 'keyNeeded' | 'onOpenSettings'
 >): React.JSX.Element {
+  const proceed = keyNeeded
+    ? {
+        label: KEY_NEEDED_SETTINGS,
+        accessibilityLabel: KEY_NEEDED_SETTINGS_A11Y,
+        testID: 'resonance-explainer-open-settings',
+        onPress: onOpenSettings,
+      }
+    : {
+        label: RESONANCE_EXPLAINER_CONTINUE,
+        accessibilityLabel: RESONANCE_EXPLAINER_CONTINUE_A11Y,
+        testID: 'resonance-explainer-continue',
+        onPress: onContinue,
+      };
   return (
     <ExplainerActionPair
       cancel={{
@@ -68,13 +98,27 @@ function ResonanceArms({
         testID: 'resonance-explainer-cancel',
         onPress: onCancel,
       }}
-      proceed={{
-        label: RESONANCE_EXPLAINER_CONTINUE,
-        accessibilityLabel: RESONANCE_EXPLAINER_CONTINUE_A11Y,
-        testID: 'resonance-explainer-continue',
-        onPress: onContinue,
-      }}
-      proceedDisabled={continueDisabled}
+      proceed={proceed}
+      proceedDisabled={!keyNeeded && continueDisabled}
+    />
+  );
+}
+
+/** The "don’t show this again" box, offered only while this is the disclosure. */
+function DontShowAgain({
+  dontShowAgain,
+  onToggle,
+}: {
+  dontShowAgain: boolean;
+  onToggle: () => void;
+}): React.JSX.Element {
+  return (
+    <DontShowAgainCheckbox
+      checked={dontShowAgain}
+      onToggle={onToggle}
+      label={RESONANCE_EXPLAINER_DONT_SHOW}
+      accessibilityLabel={RESONANCE_EXPLAINER_DONT_SHOW_A11Y}
+      testID="resonance-explainer-dont-show"
     />
   );
 }
@@ -87,6 +131,9 @@ function ResonanceExplainerDialog({
   onToggleDontShowAgain,
   onContinue,
   onCancel,
+  keyNeeded = false,
+  onOpenSettings,
+  payerChanged = false,
 }: ResonanceExplainerDialogProps): React.JSX.Element {
   return (
     <JournalModalShell
@@ -96,34 +143,41 @@ function ResonanceExplainerDialog({
       scrimLabel={RESONANCE_EXPLAINER_SCRIM_A11Y}
       modalTestID="resonance-explainer"
       cardTestID="resonance-explainer-card"
-      cardStyle={styles.card}
+      cardStyle={[styles.card, layoutStyles.card]}
     >
-      <Text style={styles.title} accessibilityRole="header">
-        {RESONANCE_EXPLAINER_TITLE}
-      </Text>
-      <Text style={styles.body} testID="resonance-explainer-what">
-        {RESONANCE_EXPLAINER_WHAT}
-      </Text>
-      <Text style={styles.body} testID="resonance-explainer-cost">
-        {cost}
-      </Text>
-      <Text style={styles.body} testID="resonance-explainer-choice">
-        {RESONANCE_EXPLAINER_CHOICE}
-      </Text>
-      <DontShowAgainCheckbox
-        checked={dontShowAgain}
-        onToggle={onToggleDontShowAgain}
-        label={RESONANCE_EXPLAINER_DONT_SHOW}
-        accessibilityLabel={RESONANCE_EXPLAINER_DONT_SHOW_A11Y}
-        testID="resonance-explainer-dont-show"
-      />
-      <ResonanceArms
-        continueDisabled={continueDisabled}
-        onContinue={onContinue}
-        onCancel={onCancel}
-      />
+      <ScrollView style={layoutStyles.scroll}>
+        <Text style={styles.title} accessibilityRole="header">
+          {RESONANCE_EXPLAINER_TITLE}
+        </Text>
+        <Text style={styles.body} testID="resonance-explainer-what">
+          {RESONANCE_EXPLAINER_WHAT}
+        </Text>
+        <PayerChangedNotice visible={payerChanged} testID="resonance-explainer-payer-changed" />
+        <Text style={styles.body} testID="resonance-explainer-cost">
+          {cost}
+        </Text>
+        <Text style={styles.body} testID="resonance-explainer-choice">
+          {RESONANCE_EXPLAINER_CHOICE}
+        </Text>
+        {keyNeeded ? null : (
+          <DontShowAgain dontShowAgain={dontShowAgain} onToggle={onToggleDontShowAgain} />
+        )}
+        <ResonanceArms
+          continueDisabled={continueDisabled}
+          onContinue={onContinue}
+          onCancel={onCancel}
+          keyNeeded={keyNeeded}
+          onOpenSettings={onOpenSettings}
+        />
+      </ScrollView>
     </JournalModalShell>
   );
 }
+
+// Enlarged copy and both decisions stay reachable within the viewport.
+const layoutStyles = StyleSheet.create({
+  card: { maxHeight: '90%' },
+  scroll: { flexShrink: 1 },
+});
 
 export default ResonanceExplainerDialog;

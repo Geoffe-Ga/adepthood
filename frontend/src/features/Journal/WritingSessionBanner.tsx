@@ -2,7 +2,7 @@
  * ``WritingSessionBanner`` — one sentence about a writing session that ran its
  * length, and a way to put it away.
  *
- * Inline, never a modal: the writer has just finished writing and the page is
+ * A floating note, never a modal: the writer has just finished writing and the page is
  * theirs, so nothing seizes it. The note states what happened and offers only
  * dismissal — no count of sessions, no praise, and no invitation to start
  * another, because a finished session is not a reason to begin one.
@@ -35,9 +35,8 @@
  * which is always mounted while the note is.
  */
 import React, { createContext, useCallback, useContext, useRef } from 'react';
-import { StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 
-import { RESONANCE_BUTTON_CLEARANCE, WRITING_TIMER_PILL_MAX_HEIGHT } from './JournalEntry.styles';
 import type { WritingSessionResult } from './writingSession';
 import {
   WRITING_SESSION_DISMISS,
@@ -50,7 +49,7 @@ import {
   SPACING,
   colors,
   editorialType,
-  journalSheet,
+  journalLayout,
   spacing,
   touchTarget,
 } from '@/design/tokens';
@@ -65,22 +64,44 @@ export function useFocusBannerClose(): () => void {
 }
 
 export interface WritingSessionBannerProps {
+  /** Confirmed measured amount, shown independently of the optional offer. */
+  loggedMessage?: string;
   result: WritingSessionResult;
   onDismiss: () => void;
   children?: React.ReactNode;
+  /** The parent scrolls the full note when its fixed chrome cannot fit. */
+  scrollWholeSurface?: boolean;
 }
 
 function WritingSessionBanner({
+  loggedMessage,
   result,
   onDismiss,
   children,
+  scrollWholeSurface = false,
 }: WritingSessionBannerProps): React.JSX.Element {
   const closeRef = useRef<View>(null);
   const focusClose = useCallback(() => moveAccessibilityFocus(closeRef.current), []);
   return (
-    <View style={styles.banner} accessibilityLiveRegion="polite" testID="writing-session-banner">
+    <View
+      style={[styles.banner, scrollWholeSurface && styles.unboundedBanner]}
+      accessibilityLiveRegion="polite"
+      testID="writing-session-banner"
+    >
       <Text style={styles.summary}>{writingSessionSummary(result.elapsedMinutes)}</Text>
-      <FocusCloseContext.Provider value={focusClose}>{children}</FocusCloseContext.Provider>
+      {loggedMessage ? (
+        <Text style={styles.summary} testID="writing-session-log-notice">
+          {loggedMessage}
+        </Text>
+      ) : null}
+      <ScrollView
+        style={[styles.offerScroll, scrollWholeSurface && styles.unboundedOffers]}
+        scrollEnabled={!scrollWholeSurface}
+        keyboardShouldPersistTaps="handled"
+        testID="writing-session-offer-scroll"
+      >
+        <FocusCloseContext.Provider value={focusClose}>{children}</FocusCloseContext.Provider>
+      </ScrollView>
       <TouchableOpacity
         ref={closeRef}
         style={styles.dismiss}
@@ -97,25 +118,31 @@ function WritingSessionBanner({
 }
 
 const styles = StyleSheet.create({
-  /**
-   * Warm paper tone in the page's own margin rhythm — a note, not an alert.
-   *
-   * The bottom margin is load-bearing, not rhythm: this is an in-flow box at
-   * the foot of the same column the timer floats over, at the timer's own
-   * offset, so without it the timer pill paints across the Close target the
-   * writer is meant to use to put the note away — and across whatever a later
-   * lane hangs in the children slot beneath the text.
-   */
+  /** A bounded paper note, stacked above the pill inside its floating band. */
   banner: {
-    marginHorizontal: journalSheet.deskPaddingH,
+    flexShrink: 1,
+    minHeight: 0,
+    width: '100%',
+    maxWidth: journalLayout.pageMaxWidth,
+    alignSelf: 'center',
     marginTop: spacing(1),
-    marginBottom: RESONANCE_BUTTON_CLEARANCE + WRITING_TIMER_PILL_MAX_HEIGHT,
+    marginBottom: spacing(1),
     paddingHorizontal: SPACING.md,
     paddingVertical: SPACING.sm,
     backgroundColor: colors.paper.background,
     borderRadius: BORDER_RADIUS.md,
     borderWidth: StyleSheet.hairlineWidth,
     borderColor: colors.paper.sheetEdge,
+  },
+  unboundedBanner: {
+    flexShrink: 0,
+  },
+  unboundedOffers: {
+    flexShrink: 0,
+  },
+  offerScroll: {
+    flexGrow: 0,
+    flexShrink: 1,
   },
   summary: {
     ...editorialType.note,

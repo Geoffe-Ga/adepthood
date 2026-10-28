@@ -1,19 +1,26 @@
 /* eslint-env jest */
-import { jest, describe, it, expect } from '@jest/globals';
-import { fireEvent, render } from '@testing-library/react-native';
+import { jest, beforeEach, describe, it, expect } from '@jest/globals';
+import { act, fireEvent, render } from '@testing-library/react-native';
+import { X } from 'lucide-react-native';
 import React from 'react';
-
-const mockPressIn = jest.fn();
-const mockPressOut = jest.fn();
-jest.mock('@/hooks/usePressScale', () => ({
-  usePressScale: () => ({ scale: 1, onPressIn: mockPressIn, onPressOut: mockPressOut }),
-}));
+import { StyleSheet } from 'react-native';
 
 import { invitationCopy, INVITATION_COPY_ENTRIES } from '../invitationCopy';
 import InvitationNote from '../InvitationNote';
 
 import type { Invitation } from '@/api';
-import { touchTarget } from '@/design/tokens';
+import { accent, ink, touchTarget } from '@/design/tokens';
+import { BANNED_PHRASES } from '@/testing/bannedInvitationPhrases';
+
+const FALSE_MODESTY_PHRASES = [
+  'if it feels right',
+  'if you like',
+  "whenever you'd like",
+  'whenever you’re ready',
+  "whenever you're ready",
+  'no pressure',
+  'waiting quietly',
+] as const;
 
 function invitation(overrides: Partial<Invitation> = {}): Invitation {
   return {
@@ -27,27 +34,25 @@ function invitation(overrides: Partial<Invitation> = {}): Invitation {
 }
 
 const noop = () => Promise.resolve();
+const mockNavigate = jest.fn();
+jest.mock('@react-navigation/native', () => ({
+  ...jest.requireActual<object>('@react-navigation/native'),
+  useNavigation: () => ({ navigate: mockNavigate }),
+}));
+beforeEach(() => {
+  mockNavigate.mockClear();
+});
 
-const BANNED_PHRASES = [
-  'missing out',
-  "don't miss",
-  'dont miss',
-  'streak',
-  'falling behind',
-  'keep it up',
-  'last chance',
-  'almost there',
-  'you should',
-  'you need to',
-  "don't lose",
-  'dont lose',
-  'break your streak',
-  'broke your streak',
-  'on track',
-  'expire',
-  'hurry',
-  'now or never',
-] as const;
+const reading = {
+  content_id: 24,
+  stage_number: 2,
+  title: 'Noticing resentment',
+  entry_id: 8,
+  entry_title: 'Yesterday',
+  quote: 'resentment in my shoulders',
+  reason: 'You describe resentment as a bodily sensation.',
+  benefit: 'A practice for noticing that sensation before responding.',
+};
 
 /** Smallest of the flattened minHeight/minWidth on a pressable, for 44dp checks. */
 function StyleSheetMin(node: { props: { style: unknown } }): number {
@@ -57,6 +62,66 @@ function StyleSheetMin(node: { props: { style: unknown } }): number {
 }
 
 describe('InvitationNote', () => {
+  it('opens the invited course section without dismissing the invitation', () => {
+    const onDismiss = jest.fn(() => Promise.resolve());
+    const { getByRole } = render(
+      <InvitationNote
+        invitation={invitation({ target_type: 'course', target_id: 2, kind: 'readiness', reading })}
+        onDismiss={onDismiss}
+      />,
+    );
+    const open = getByRole('button', { name: reading.title });
+    expect(StyleSheetMin(open)).toBeGreaterThanOrEqual(touchTarget.minimum);
+    fireEvent.press(open);
+    expect(mockNavigate).toHaveBeenCalledTimes(1);
+    expect(mockNavigate).toHaveBeenCalledWith('Tabs', {
+      screen: 'Course',
+      params: { stageNumber: 2, contentId: 24, openReading: true },
+    });
+    expect(onDismiss).not.toHaveBeenCalled();
+  });
+
+  it('can open the invited section before its Aspect lookup succeeds', () => {
+    const { getByRole } = render(
+      <InvitationNote
+        invitation={invitation({
+          target_type: 'course',
+          target_id: 9,
+          reading: { ...reading, stage_number: 9 },
+        })}
+        onDismiss={noop}
+      />,
+    );
+    fireEvent.press(getByRole('button', { name: reading.title }));
+    expect(mockNavigate).toHaveBeenCalledWith('Tabs', {
+      screen: 'Course',
+      params: { stageNumber: 9, contentId: 24, openReading: true },
+    });
+  });
+
+  it('keeps the decline separate from opening the reading', () => {
+    const onDismiss = jest.fn(() => Promise.resolve());
+    const { getByTestId } = render(
+      <InvitationNote
+        invitation={invitation({ target_type: 'course', target_id: 2, reading })}
+        onDismiss={onDismiss}
+      />,
+    );
+    fireEvent.press(getByTestId('invitation-1-dismiss'));
+    expect(onDismiss).toHaveBeenCalledWith(1);
+    expect(mockNavigate).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    { target_type: 'course' as const, target_id: null },
+    { target_type: 'practice' as const, target_id: 2 },
+  ])('offers no reading action without a course destination: %s', (target) => {
+    const { queryByRole } = render(
+      <InvitationNote invitation={invitation(target)} onDismiss={noop} />,
+    );
+    expect(queryByRole('button', { name: reading.title })).toBeNull();
+  });
+
   it('renders derived microcopy line for habit/consistency invitation', () => {
     const inv = invitation({ id: 5, target_type: 'habit', kind: 'consistency' });
     const expected = invitationCopy('habit', 'consistency').line;
@@ -80,14 +145,13 @@ describe('InvitationNote', () => {
     expect(StyleSheetMin(btn)).toBeGreaterThanOrEqual(touchTarget.minimum);
   });
 
-  it('decline has accessibilityRole button and a non-empty accessibilityLabel', () => {
+  it('decline keeps its exact one-tap accessibility label', () => {
     const inv = invitation({ id: 4 });
     const { getByTestId } = render(<InvitationNote invitation={inv} onDismiss={noop} />);
     const btn = getByTestId('invitation-4-dismiss');
     expect(btn.props.accessibilityRole).toBe('button');
     const label: string = btn.props.accessibilityLabel;
-    expect(label).toBeTruthy();
-    expect(label.length).toBeGreaterThan(0);
+    expect(label).toBe('Dismiss this invitation');
   });
 
   it('decline accessibilityLabel contains none of the banned phrases', () => {
@@ -109,22 +173,52 @@ describe('InvitationNote', () => {
         expect(line).not.toContain(phrase);
         expect(a11y).not.toContain(phrase);
       }
+      for (const phrase of FALSE_MODESTY_PHRASES) {
+        expect(line).not.toContain(phrase);
+        expect(a11y).not.toContain(phrase);
+      }
       expect(entry.line.endsWith('!')).toBe(false);
       expect(entry.declineA11y.endsWith('!')).toBe(false);
     }
   });
 
-  it('wires the press-scale handlers to the decline touchable', () => {
+  it('shows the exact source, connection and benefit and links the original entry', () => {
+    const { getByText, getByTestId } = render(
+      <InvitationNote
+        invitation={invitation({ target_type: 'course', target_id: 2, reading })}
+        onDismiss={noop}
+      />,
+    );
+    expect(getByText(reading.reason)).toBeTruthy();
+    expect(getByText(`“${reading.quote}”`)).toBeTruthy();
+    expect(getByText(reading.benefit)).toBeTruthy();
+    fireEvent.press(getByTestId('invitation-1-source'));
+    expect(mockNavigate).toHaveBeenCalledWith('JournalEntry', { entryId: 8 });
+  });
+
+  it('uses a corner X with pressed-ink feedback', () => {
     // Pressing the decline button must drive usePressScale's handlers, so the
     // scale animation is live (the regression: they were never wired).
-    mockPressIn.mockClear();
-    mockPressOut.mockClear();
-    const inv = invitation({ id: 7 });
-    const { getByTestId } = render(<InvitationNote invitation={inv} onDismiss={noop} />);
+    const { getByTestId } = render(
+      <InvitationNote invitation={invitation({ id: 7 })} onDismiss={noop} />,
+    );
     const btn = getByTestId('invitation-7-dismiss');
+    expect(StyleSheet.flatten(btn.props.style).position).toBe('absolute');
     fireEvent(btn, 'pressIn');
+    expect(btn.findByType(X).props.color).toBe(accent.primary);
     fireEvent(btn, 'pressOut');
-    expect(mockPressIn).toHaveBeenCalledTimes(1);
-    expect(mockPressOut).toHaveBeenCalledTimes(1);
+    expect(btn.findByType(X).props.color).toBe(ink.soft);
   });
+});
+
+it('contains a rejected asynchronous decline inside its press handler', async () => {
+  const onDismiss = jest.fn(() => Promise.reject(new Error('offline decline')));
+  const { getByTestId } = render(
+    <InvitationNote invitation={invitation({ id: 7 })} onDismiss={onDismiss} />,
+  );
+  await act(async () => {
+    fireEvent.press(getByTestId('invitation-7-dismiss'));
+    await Promise.resolve();
+  });
+  expect(onDismiss).toHaveBeenCalledWith(7);
 });

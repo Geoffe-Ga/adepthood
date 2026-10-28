@@ -7,7 +7,7 @@ from datetime import date
 
 import pytest
 
-from domain.practice_resolution import effective_config, effective_name
+from domain.practice_resolution import effective_config, effective_duration_minutes, effective_name
 from models.practice import Practice
 from models.user_practice import UserPractice
 from schemas.practice_mode_config import (
@@ -103,6 +103,7 @@ def test_effective_config_uses_override_when_set() -> None:
     assert isinstance(cfg, MeditationTimerConfig)
     assert cfg.duration_minutes == 25
     assert cfg.halfway_bell is True
+    assert effective_duration_minutes(practice, user_practice) == 25
 
 
 def test_effective_config_handles_missing_user_practice() -> None:
@@ -111,6 +112,26 @@ def test_effective_config_handles_missing_user_practice() -> None:
     cfg = effective_config(practice, None)
     assert isinstance(cfg, CountUpConfig)
     assert cfg.soft_cap_minutes == 30
+
+
+@pytest.mark.parametrize(
+    ("mode", "config", "duration"),
+    [
+        ("count_up", {"mode": "count_up", "soft_cap_minutes": 30}, 10),
+        ("tarot", {"mode": "tarot", "per_card_minutes": 7}, 7),
+        (
+            "card_meditation",
+            {"mode": "card_meditation", "deck_id": "rws", "per_card_minutes": 8},
+            8,
+        ),
+        ("meditation_timer", {}, 10),
+    ],
+)
+def test_effective_duration_uses_an_ask_rather_than_a_soft_cap(
+    mode: str, config: dict[str, object], duration: float
+) -> None:
+    """Cards have a sit length; an open timer's optional cap is not a requirement."""
+    assert effective_duration_minutes(_practice(mode, config), _user_practice()) == duration
 
 
 def test_effective_config_rejects_override_with_mismatched_mode() -> None:

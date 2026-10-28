@@ -48,7 +48,7 @@ const NEW_ENTRY_LABEL = 'New entry';
 /** Row that opens the photograph-a-page capture flow. */
 const PHOTOGRAPH_LABEL = 'Photograph a page';
 /** Permanent door to the writing corpus behind reflections. */
-const CORPUS_LABEL = 'Your corpus';
+const CORPUS_LABEL = "Everything you've written";
 /**
  * Permanent door to the shelf of expanded margin notes.
  *
@@ -67,7 +67,7 @@ const VOICE_DRAFTS_LABEL = 'Voice drafts';
  * because the writer went looking, and never on a number beside this row.
  */
 export const PROMOTED_QUOTES_LABEL = 'Promoted quotes';
-const CORPUS_ERROR = "Couldn't open your corpus. Check your connection and try again.";
+const CORPUS_ERROR = "Couldn't open your writing just now. Check your connection and try again.";
 /** Row that fetches and appends the next page of older entries. */
 const LOAD_MORE_LABEL = 'Load older entries';
 /** Fallback label for an entry saved without a title. */
@@ -458,6 +458,19 @@ function DrawerActions({
         icon={<ScrollText color={ink.muted} size={NAV_ICON_SIZE} strokeWidth={NAV_ICON_STROKE} />}
         onPress={onOpenVoiceDrafts}
       />
+      <DrawerDoors onOpenPromotedQuotes={onOpenPromotedQuotes} />
+    </>
+  );
+}
+
+/** The count-free doors to whole-journal screens: Promoted quotes. */
+function DrawerDoors({
+  onOpenPromotedQuotes,
+}: {
+  onOpenPromotedQuotes: () => void;
+}): React.JSX.Element {
+  return (
+    <>
       <DrawerItem
         testID="journal-drawer-promoted-quotes"
         label={PROMOTED_QUOTES_LABEL}
@@ -479,9 +492,9 @@ function CorpusDrawerAction({
   const { width } = useWindowDimensions();
   const accessibilityLabel =
     state === 'pending'
-      ? 'Opening your corpus'
+      ? "Opening everything you've written"
       : state === 'error'
-        ? 'Your corpus. Previous attempt failed; try again'
+        ? "Everything you've written. It didn't open last time; try again"
         : CORPUS_LABEL;
   return (
     <>

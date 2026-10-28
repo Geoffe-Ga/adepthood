@@ -38,9 +38,10 @@ from tests.creek_bundle_facts import PINNED_CONTRACT_VERSION
 # caught against the bundle instead of against a copy. The count is the
 # non-vacuity control on that read, not a claim that the vocabulary is closed:
 # it grew by one at contract 0.8.0, when the upload route brought
-# ``unsupported_source`` with it.
+# ``unsupported_source`` with it, and by one more at 0.19.0, when the relayed
+# model-call cap brought ``rate_limited``.
 _ERROR_ENVELOPE_SCHEMA = "schemas/ErrorEnvelope.schema.json"
-_PUBLISHED_ERROR_CODE_COUNT = 10
+_PUBLISHED_ERROR_CODE_COUNT = 11
 
 # Creek's reflection response, whose ``status`` enum publishes the two outcomes a
 # 200 may carry. An escalation is a different published document at the same
@@ -59,6 +60,7 @@ _REFLECTION_FIELDS = (
     "routed_tier",
     "related_praxis",
     "related_eddies",
+    "inference_source",
 )
 
 # The ``$defs`` of that same schema which the two related-page value objects and
@@ -165,18 +167,20 @@ def test_tier_ceiling_keys_match_journal_classification_enum() -> None:
 
 
 class TestCreekCapability:
-    """Eleven capability members, nine of which Creek publishes a wire name for."""
+    """Fourteen capability members, twelve with published wire names."""
 
-    def test_has_eleven_members(self) -> None:
-        """Exactly eleven capabilities are defined.
+    def test_has_fourteen_members(self) -> None:
+        """Exactly fourteen capabilities are defined.
 
-        Nine of them are Creek's published wire names; ``SAVE`` and ``CLASSIFY``
-        are adepthood-side concepts Creek does not advertise. The count is easy
-        to misread: this enum held seven members while Creek published five, and
-        later held nine while Creek published seven. The count is deliberately
-        independent of the published capability count.
+        Twelve of them are Creek's published wire names (``reading-recommendations``
+        joined at 0.25); ``SAVE`` and ``CLASSIFY`` are adepthood-side concepts
+        Creek does not advertise. The count is easy to misread: this enum held
+        seven members while Creek published five, and later held nine while
+        Creek published seven. The count is deliberately independent of the
+        published capability count.
         """
-        assert len(CreekCapability) == 11
+        assert len(CreekCapability) == 14
+        assert CreekCapability.READING_RECOMMENDATIONS.value == "creek.reading_recommendations"
 
     def test_handshake_value_is_wire_name(self) -> None:
         """HANDSHAKE's value is the creek.handshake wire name."""
@@ -233,6 +237,7 @@ class TestRatifiedWireVocabularies:
             "privacy_refused",
             "not_found",
             "unavailable",
+            "rate_limited",
         ]
 
     def test_ingest_actions_are_the_three_upsert_outcomes(self) -> None:

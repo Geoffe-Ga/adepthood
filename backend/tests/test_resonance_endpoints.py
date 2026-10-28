@@ -83,7 +83,8 @@ def _billed_llm(monkeypatch: pytest.MonkeyPatch, *notes: dict[str, str]) -> None
 
     :func:`_fake_llm` answers as the stub, and stub responses are deliberately
     skipped by the usage log — so any assertion about metering made against it
-    would pass for the wrong reason.
+    would pass for the wrong reason. A stub pass is also a demo whose unit is
+    handed back (#3062), so a test about a charge that *stands* answers here.
     """
     payload = json.dumps({"notes": list(notes)})
 
@@ -152,7 +153,7 @@ async def test_resonance_persists_notes_and_charges_one(
     async_client: AsyncClient, db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """A successful pass persists the anchored notes and charges one message."""
-    _fake_llm(
+    _billed_llm(
         monkeypatch,
         {"kind": "symbol", "quote": "the willow bent without breaking", "note": "It holds."},
         {"kind": "theme", "quote": "I walked by the river", "note": "You return to water."},
@@ -464,7 +465,7 @@ async def test_normal_entry_returns_no_care(
     async_client: AsyncClient, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """A non-distress entry is unchanged: care is None, marginalia intact."""
-    _fake_llm(
+    _billed_llm(
         monkeypatch,
         {"kind": "theme", "quote": "I walked by the river", "note": "You return to water."},
     )
@@ -948,7 +949,7 @@ class TestZeroNotePassIsNeverSilent:
         self, async_client: AsyncClient, db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """The happy path must be untouched: notes, a charge, and no notice."""
-        _fake_llm(
+        _billed_llm(
             monkeypatch, {"kind": "theme", "quote": "I walked by the river", "note": "Water."}
         )
         headers = await _signup(async_client, "kept")
@@ -1008,7 +1009,6 @@ _PROVIDER_PROSE = (
     "Please go to Plans & Billing to upgrade or purchase credits."
 )
 _CREDIT_EXHAUSTED_DETAIL = "llm_credit_exhausted"
-_SERVICE_CREDIT_EXHAUSTED_DETAIL = "llm_service_credit_exhausted"
 
 
 def _raise_credit_exhausted(monkeypatch: pytest.MonkeyPatch, provider: str = "anthropic") -> None:
@@ -1066,18 +1066,23 @@ async def test_byok_credit_exhausted_is_402_not_502(
 
 
 @pytest.mark.asyncio
-async def test_server_key_credit_exhausted_is_503_not_502(
+async def test_a_spent_balance_on_a_keyless_pass_is_never_an_operator_outage(
     async_client: AsyncClient, db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """The server's own spent key is nothing the reader owns -- its own code."""
+    """No server-key ``503`` is left: a spent balance is answered 402, refunded.
+
+    In production a keyless pass reaches no vendor (ADR 0009 phase (a), #3067);
+    only the armed test seam lets one raise here, and the retired
+    ``llm_service_credit_exhausted`` code must not come back on it.
+    """
     _raise_credit_exhausted(monkeypatch)
     headers = await _signup(async_client, "serverdry")
     entry_id = await _create_entry(async_client, headers)
 
     resp = await async_client.post(f"/journal/{entry_id}/resonance", headers=headers)
 
-    assert resp.status_code == HTTPStatus.SERVICE_UNAVAILABLE, resp.text
-    assert resp.json()["detail"] == _SERVICE_CREDIT_EXHAUSTED_DETAIL
+    assert resp.status_code == HTTPStatus.PAYMENT_REQUIRED, resp.text
+    assert resp.json()["detail"] == _CREDIT_EXHAUSTED_DETAIL
     await _assert_nothing_was_charged(db_session, "serverdry@example.com", server_paid=True)
 
 
@@ -1106,33 +1111,32 @@ async def test_credit_exhausted_response_carries_no_provider_internals(
 
 
 @pytest.mark.asyncio
-async def test_server_key_exhaustion_warns_an_operator_with_ids_only(
+async def test_a_spent_balance_leaves_an_ids_only_operator_signal(
     async_client: AsyncClient, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
 ) -> None:
-    """The operator is the only one who can fix this, and today gets no signal at all.
+    """A spent balance is logged once, naming the provider and nothing the writer wrote.
 
-    The record names the provider and whose key it was; it carries no key
-    material and no word of the entry, matching the ids-and-counts discipline
-    every other record on this path already keeps.
+    It carries no key material and no word of the entry, matching the
+    ids-and-counts discipline every other record on this path already keeps.
     """
     _raise_credit_exhausted(monkeypatch)
     headers = await _signup(async_client, "opsignal")
     entry_id = await _create_entry(async_client, headers)
 
-    with caplog.at_level(logging.WARNING):
-        resp = await async_client.post(f"/journal/{entry_id}/resonance", headers=headers)
+    with caplog.at_level(logging.INFO):
+        resp = await async_client.post(
+            f"/journal/{entry_id}/resonance", headers={**headers, _BYOK_HEADER: _BYOK_KEY}
+        )
 
-    assert resp.status_code == HTTPStatus.SERVICE_UNAVAILABLE, resp.text
+    assert resp.status_code == HTTPStatus.PAYMENT_REQUIRED, resp.text
     exhausted = [
-        record
-        for record in caplog.records
-        if record.levelno == logging.WARNING and "byok" in record.__dict__
+        record for record in caplog.records if record.getMessage() == _CREDIT_EXHAUSTED_DETAIL
     ]
     assert len(exhausted) == 1
     fields = exhausted[0].__dict__
     assert fields["provider"] == "anthropic"
-    assert fields["byok"] is False
     assert _BODY not in str(fields)
+    assert _BYOK_KEY not in str(fields)
 
 
 # ---------------------------------------------------------------------------

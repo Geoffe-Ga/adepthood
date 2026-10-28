@@ -32,6 +32,10 @@ from sqlalchemy.sql.elements import BooleanClauseList
 
 from domain.resonance import PRIOR_DRAFT_CHARS, PRIOR_DRAFT_LIMIT
 from models.journal_entry import JournalClassification, JournalEntry
+from models.journal_withdrawal_obligation import (
+    JournalWithdrawalObligation,
+    JournalWithdrawalState,
+)
 from models.marginalia import Marginalia, MarginaliaKind
 from models.user import User
 from routers.journal import _expanded_drafts_query, _prior_letter_essays, _prior_letters_query
@@ -156,6 +160,27 @@ async def test_a_letter_about_a_deleted_entry_never_goes_out(db_session: AsyncSe
     entry_id = await _seed_entry(db_session, user_id)
     gone_id = await _seed_entry(db_session, user_id, deleted=True)
     await _seed_letter(db_session, user_id=user_id, entry_id=gone_id, essay="About deleted.")
+    await db_session.commit()
+
+    assert await _prior_letter_essays(db_session, user_id=user_id, exclude_entry_id=entry_id) == []
+
+
+@pytest.mark.asyncio
+async def test_a_letter_about_a_page_being_deleted_never_goes_out(
+    db_session: AsyncSession,
+) -> None:
+    """A page whose DELETE is in progress (#3098) withholds its letters like a deleted one."""
+    user_id = await _seed_user(db_session, "deleting@example.com")
+    entry_id = await _seed_entry(db_session, user_id)
+    going_id = await _seed_entry(db_session, user_id)
+    await _seed_letter(db_session, user_id=user_id, entry_id=going_id, essay="About going.")
+    db_session.add(
+        JournalWithdrawalObligation(
+            user_id=user_id,
+            journal_entry_id=going_id,
+            state=JournalWithdrawalState.PENDING_DELETE.value,
+        )
+    )
     await db_session.commit()
 
     assert await _prior_letter_essays(db_session, user_id=user_id, exclude_entry_id=entry_id) == []

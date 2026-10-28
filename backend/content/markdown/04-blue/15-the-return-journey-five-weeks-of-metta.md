@@ -34,7 +34,7 @@ You begin a Return Journey when you notice that you are overwhelmed—not “bus
 
 Any of those is the bell. You don’t need to earn it, justify it, or wait until things get worse. Pausing your current Stage’s Practice to walk a Return Journey is not falling behind—it is the curriculum. The Wavelength was never going to spare you the troughs; APTITUDE’s promise is that you’ll stop drowning in them.
 
-(And to be clear about sequencing: this tool unlocks *after* Blue, because it requires the Metta skill you’ve just spent three weeks building. If you’re reading ahead, or if the bottom falls out during Orange, Green, Yellow—any Stage from here to the end—this is the move. Come back to this chapter. It will keep.)
+(And to be clear about sequencing: I’m introducing this tool *after* Blue because it leans on the Metta skill you’ve just spent three weeks building. If you’re reading ahead, or if the bottom falls out during Orange, Green, Yellow—any Stage from here to the end—this is the move. Come back to this chapter. It will keep.)
 
 ### The five weeks
 
@@ -49,6 +49,32 @@ One week per circle, fifteen minutes a day, in this order:
 **Week Four: An “enemy.”** Someone difficult. Someone who hurt you, or someone you envy, resent, or can’t stop arguing with in the shower. Note the quotation marks—the practice doesn’t require you to declare anyone evil, only to pick the person your chest tightens around. Start gently; if the full phrases won’t come, use *May you be free from the suffering that makes you act this way.* This is the week that breaks the rage loop, because rage needs a frozen image of its target, and Metta melts the frame.
 
 **Week Five: The whole world.** All beings, everywhere, without exception—which, note, includes both you and the “enemy,” now held in the same field. *May all beings be safe. May all beings be happy.* This is the week the Journey earns its name: you started collapsed around a wound, and you end facing the world again, on speaking terms with all of it.
+
+### If Week One is a wall
+
+Some people hit Week One and simply cannot get the phrases to land. Shame argues back so loudly that the week stops being medicine and becomes a daily re-injury—and they stall there, and the Journey never reaches its other four circles. If that’s you, don’t abandon the Journey. Reorder it.
+
+Walk it this way instead: **someone easy to love → an acquaintance → an “enemy” → the whole world → yourself.** Same five circles, same fifteen minutes, same one week each. Only the starting point moves.
+
+It still works, because the Journey’s logic is de-isolation, and that runs in both directions. You can start at the wound and widen out, or warm the channel on someone your heart already opens toward and follow that warmth home. Arriving at yourself in Week Five, after a month of proof that the channel works, is sometimes the only way the phrases get through at all. This isn’t my improvisation, either: starting with a benefactor when self-directed Metta won’t take is a standard move in the traditional instructions.
+
+Be honest about the trade-off, though. The default order front-loads the hardest work while motivation is highest, and puts self-repair first when self-repair is the emergency. Reordering trades that for reachability. If you can do Week One first, do Week One first. This is a ramp, not a preference. You know your own weather; here’s how to read it: if the phrases land at all, even badly, stay the course. If they bounce off every day for a week, reorder.
+
+And so the ramp doesn’t become an exit: moving the Yourself circle to the end is not skipping it. Yourself is the circle that makes the rest hold. If you move it, you walk it.
+
+### When your mind wanders
+
+Here’s a refinement I use inside a Return Journey, offered as experience rather than doctrine. Holding one meditative object is hard even when that object is a person you love—maybe harder, because a person comes with history attached. Your attention will drift. Don’t white-knuckle it. Wandering isn’t failure; it’s the mechanism.
+
+The moment you notice you’ve wandered is the moment your intention reasserts itself, so treat it that way: congratulate yourself for staying true to what you came to do. Genuinely—not as a formality. On a Return Journey, when the inner monologue has turned prosecutorial, the habit of greeting your own lapse with warmth *is* the training.
+
+Then comes the move that departs from ordinary breath practice. Instead of dropping the content and going straight back to the phrases, take stock of what you were just thinking about. Very often it’s a memory—a person, a place, a thing. And during a Return Journey especially, very often it’s a memory that carries shame. That isn’t an interruption of the practice. That’s the practice surfacing its own material. The Journey exists because something knocked you down; of course your mind keeps walking back to it.
+
+So send Metta into the memory. Give each individual in it one round of every phrase—*May you be safe. May you be happy. May you be healthy. May you live with ease.* Then all beings. Then yourself, last. The memory hands you the other people first, which means you reach yourself already warmed up rather than cold, and widening to all beings before you turn inward keeps the self-directed round from landing in isolation. Then return to the day’s subject. The digression is complete; it doesn’t become the new session.
+
+Why this rather than pushing the memory away? Because a shame memory suppressed during Metta doesn’t leave. It waits, and it re-surfaces. Meeting it with the exact phrases you came to practice converts the intrusion into fuel—the same logic as Week Four, where rage needs a frozen image of its target and Metta melts the frame, applied to whatever ambushes you mid-sit.
+
+Keep a boundary on it. If memories keep arriving, you don’t have to service every one. Take the ones that carry charge; let the idle drift go. Otherwise a fifteen-minute sit becomes an hour of processing, which is a different practice.
 
 ### Why it works
 

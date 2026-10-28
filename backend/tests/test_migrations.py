@@ -5893,3 +5893,162 @@ def test_completion_suggestion_logged_on_migration_round_trip_on_sqlite(
 
     command.upgrade(cfg, _LOGGED_ON_REVISION)
     assert "logged_on" in _columns_of(db_url, _SUGGESTION_TABLE)
+
+
+# -- b1937b21d2f9: restoremarker reapply counts round-trip (#3244) -----------
+
+_REAPPLY_COUNTS_BASE_REVISION = "e0094da08afc"  # pragma: allowlist secret
+_REAPPLY_COUNTS_REVISION = "b1937b21d2f9"  # pragma: allowlist secret
+_RESTORE_MARKER_TABLE = "restoremarker"
+_REAPPLY_COUNT_COLUMNS = ("obligations_reapplied", "intimate_reapplied")
+_REAPPLY_COUNTS_CHECK = "ck_restoremarker_reapply_counts_range"
+_PRIOR_COUNTS_CHECK = "ck_restoremarker_counts_range"
+_LEGACY_MARKER_ID = 1
+_LEGACY_ENTRIES_REAPPLIED = 7
+
+
+def _bootstrap_restore_marker_table(sync_url: str) -> None:
+    """Pre-create ``restoremarker`` as ``f5539c70e00d`` left it, with one legacy marker.
+
+    The legacy row stands in for a marker written by a restore that ran
+    before tombstone format v3, so the upgrade's backfill-to-0 is observable.
+    """
+    engine = create_engine(sync_url)
+    with engine.begin() as conn:
+        conn.execute(
+            text(
+                "CREATE TABLE restoremarker ("
+                " id INTEGER PRIMARY KEY,"
+                " restore_id VARCHAR(64) NOT NULL UNIQUE,"
+                " state VARCHAR(16) NOT NULL,"
+                " started_at DATETIME NOT NULL,"
+                " completed_at DATETIME,"
+                " accounts_reapplied INTEGER NOT NULL,"
+                " entries_reapplied INTEGER NOT NULL,"
+                " identity_mismatches INTEGER NOT NULL,"
+                " build_version VARCHAR(64),"
+                " CONSTRAINT ck_restoremarker_counts_range CHECK ("
+                "accounts_reapplied >= 0 AND entries_reapplied >= 0"
+                " AND identity_mismatches >= 0)"
+                ")"
+            )
+        )
+        conn.execute(
+            text(
+                "INSERT INTO restoremarker"
+                " (id, restore_id, state, started_at, completed_at,"
+                " accounts_reapplied, entries_reapplied, identity_mismatches)"
+                " VALUES (:id, 'legacy-restore', 'completed', '2026-09-01 00:00:00',"
+                " '2026-09-01 00:05:00', 2, :entries, 0)"
+            ),
+            {"id": _LEGACY_MARKER_ID, "entries": _LEGACY_ENTRIES_REAPPLIED},
+        )
+    engine.dispose()
+
+
+@pytest.fixture
+def alembic_sqlite_config_reapply_counts(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> Config:
+    """Stamped SQLite config positioned just before ``b1937b21d2f9``."""
+    db_path = tmp_path / "restore_marker_reapply_counts_round_trip.sqlite"
+    sync_url = f"sqlite:///{db_path}"
+    async_url = f"sqlite+aiosqlite:///{db_path}"
+    monkeypatch.setenv("DATABASE_URL", async_url)
+
+    _bootstrap_restore_marker_table(sync_url)
+
+    cfg = Config(str(Path(__file__).parent.parent / "alembic.ini"))
+    cfg.config_file_name = None
+    cfg.set_main_option("script_location", str(Path(__file__).parent.parent / "migrations"))
+    cfg.set_main_option("sqlalchemy.url", async_url)
+    command.stamp(cfg, _REAPPLY_COUNTS_BASE_REVISION)
+    return cfg
+
+
+def _column_server_defaults(db_url: str, table: str) -> dict[str, object]:
+    """Map each column of ``table`` to the server default the database reports."""
+    engine = create_engine(_sync_url(db_url))
+    try:
+        return {col["name"]: col.get("default") for col in inspect(engine).get_columns(table)}
+    finally:
+        engine.dispose()
+
+
+# One literal statement per new column, so no SQL is assembled at runtime.
+_NEGATIVE_REAPPLY_COUNT_UPDATES = (
+    "UPDATE restoremarker SET obligations_reapplied = -1 WHERE id = :id",
+    "UPDATE restoremarker SET intimate_reapplied = -1 WHERE id = :id",
+)
+
+
+def _restore_marker_value(db_url: str, column: str) -> object:
+    """Read one column of the legacy restore marker."""
+    engine = create_engine(_sync_url(db_url))
+    try:
+        with engine.connect() as conn:
+            row = (
+                conn.execute(
+                    text("SELECT * FROM restoremarker WHERE id = :id"),
+                    {"id": _LEGACY_MARKER_ID},
+                )
+                .mappings()
+                .one()
+            )
+            return row[column]
+    finally:
+        engine.dispose()
+
+
+def test_restore_marker_reapply_counts_migration_round_trip_on_sqlite(
+    alembic_sqlite_config_reapply_counts: Config,
+) -> None:
+    """Round-trip ``b1937b21d2f9``: both counts arrive backfilled to 0, then leave cleanly.
+
+    Phase 1: upgrade adds both columns, backfills the legacy marker to 0,
+    clears the temporary server default, and the range CHECK refuses a
+    negative count in either column.
+    Phase 2: downgrade drops both columns and the CHECK, keeping the legacy
+    marker and the CHECK it already had.
+    Phase 3: re-upgrade reproduces the same shape.
+    """
+    cfg = alembic_sqlite_config_reapply_counts
+    db_url = cfg.get_main_option("sqlalchemy.url")
+    assert db_url is not None
+
+    # Phase 1: upgrade.
+    command.upgrade(cfg, _REAPPLY_COUNTS_REVISION)
+    assert set(_REAPPLY_COUNT_COLUMNS) <= _columns_of(db_url, _RESTORE_MARKER_TABLE)
+    defaults = _column_server_defaults(db_url, _RESTORE_MARKER_TABLE)
+    for column in _REAPPLY_COUNT_COLUMNS:
+        assert _restore_marker_value(db_url, column) == 0
+        assert defaults[column] is None, f"{column} kept its temporary server default"
+    assert _REAPPLY_COUNTS_CHECK in _check_constraints_of(db_url, _RESTORE_MARKER_TABLE)
+    # The legacy row's other counts survived the batch rebuild untouched.
+    assert _restore_marker_value(db_url, "entries_reapplied") == _LEGACY_ENTRIES_REAPPLIED
+    for negative_update in _NEGATIVE_REAPPLY_COUNT_UPDATES:
+        with pytest.raises(IntegrityError, match=_REAPPLY_COUNTS_CHECK):
+            _execute_on(db_url, negative_update, {"id": _LEGACY_MARKER_ID})
+    # The CHECK the table already carried still bites after the rebuild.
+    with pytest.raises(IntegrityError, match=_PRIOR_COUNTS_CHECK):
+        _execute_on(
+            db_url,
+            "UPDATE restoremarker SET accounts_reapplied = -1 WHERE id = :id",
+            {"id": _LEGACY_MARKER_ID},
+        )
+
+    # Phase 2: downgrade.
+    command.downgrade(cfg, _REAPPLY_COUNTS_BASE_REVISION)
+    assert set(_REAPPLY_COUNT_COLUMNS).isdisjoint(_columns_of(db_url, _RESTORE_MARKER_TABLE))
+    remaining_checks = _check_constraints_of(db_url, _RESTORE_MARKER_TABLE)
+    assert _REAPPLY_COUNTS_CHECK not in remaining_checks
+    assert _PRIOR_COUNTS_CHECK in remaining_checks
+    assert _restore_marker_value(db_url, "restore_id") == "legacy-restore"
+
+    # Phase 3: re-upgrade.
+    command.upgrade(cfg, _REAPPLY_COUNTS_REVISION)
+    assert set(_REAPPLY_COUNT_COLUMNS) <= _columns_of(db_url, _RESTORE_MARKER_TABLE)
+    assert _REAPPLY_COUNTS_CHECK in _check_constraints_of(db_url, _RESTORE_MARKER_TABLE)
+    for column in _REAPPLY_COUNT_COLUMNS:
+        assert _restore_marker_value(db_url, column) == 0

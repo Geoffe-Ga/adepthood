@@ -66,10 +66,10 @@ describe('releasePageFiles', () => {
     expect(deleteFile).toHaveBeenCalledWith(OUTPUT_URI);
   });
 
-  it('warns with only the cache-relative filename, never a full path or image data', async () => {
+  it('warns with a fixed code, never a filename, full path or image data', async () => {
     const warn = silenceWarnings();
     // Every delete fails, and the raised error itself carries a full path; the
-    // warning must still surface nothing beyond the cache-relative name.
+    // warning must retain neither the path nor even the selected filename.
     deleteFile.mockImplementation(() => {
       throw new Error('unlink failed for file:///cache/ImagePicker/page-photo.jpg');
     });
@@ -78,9 +78,12 @@ describe('releasePageFiles', () => {
       imageBase64: 'VEVSU0VDUkVU',
     } as PageFiles;
     await releasePageFiles(page);
-    expect(warn).toHaveBeenCalled();
+    expect(warn).toHaveBeenCalledWith('capture_cleanup_failed');
     const logged = warn.mock.calls.flat().map(String).join(' ');
-    expect(logged).toContain('ImagePicker/page-photo.jpg');
+    expect(logged).not.toContain('ImagePicker/page-photo.jpg');
+    for (const call of warn.mock.calls) {
+      for (const arg of call) expect(arg).not.toBeInstanceOf(Error);
+    }
     expect(logged).not.toContain('file:///');
     expect(logged).not.toContain('VEVSU0VDUkVU');
   });

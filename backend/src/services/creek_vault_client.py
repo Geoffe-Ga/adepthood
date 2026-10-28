@@ -94,15 +94,17 @@ import logging
 import os
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
+from functools import partial
 from http import HTTPStatus
 from types import MappingProxyType, TracebackType
-from typing import NoReturn, cast
+from typing import Final, NoReturn, cast
 from urllib.parse import quote
 
 import httpx
 
 from domain.creek_vault import (
     CONTRACT_VERSION,
+    JOB_FAILURE_CODE_SINCE_MINOR,
     CreekCapability,
     CreekCapabilityUnsupportedError,
     CreekVaultAuthError,
@@ -111,8 +113,10 @@ from domain.creek_vault import (
     CreekVaultError,
     CreekVaultPayloadError,
     CreekVaultPipelineClient,
+    CreekVaultRateLimitedError,
     CreekVaultUnavailableError,
     HandshakeResult,
+    VaultAgentActivity,
     VaultClassification,
     VaultClassificationMethod,
     VaultClassificationPass,
@@ -120,11 +124,14 @@ from domain.creek_vault import (
     VaultIngestRequest,
     VaultIngestResult,
     VaultJournalWithdrawResult,
+    VaultLetter,
+    VaultLetterRequest,
     VaultLinkPass,
     VaultLinkStage,
     VaultPipelineJob,
     VaultPipelineStage,
     VaultReflection,
+    VaultSendSuspendedError,
     VaultTierCeiling,
     VaultUploadRequest,
     VaultUploadResult,
@@ -133,11 +140,23 @@ from domain.creek_vault import (
     VaultVoiceDraftResult,
     VaultWheelBalance,
     WireTierCeiling,
+    signals_rate_limit,
     wire_ceiling_for,
+)
+from domain.reading_recommendations import (
+    ReadingRecommendation,
+    ReadingRequest,
+)
+from services.creek_vault_activity_wire import read_agent_activity
+from services.creek_vault_agent_discovery import parse_agent_mcp
+from services.creek_vault_call_errors import HTTP_CALL_FAILED_ERRORS as _HTTP_CALL_FAILED_ERRORS
+from services.creek_vault_call_errors import (
+    HTTP_CALL_TIMED_OUT_ERRORS as _HTTP_CALL_TIMED_OUT_ERRORS,
 )
 from services.creek_vault_payload import (
     _CALL_FAILED,
     _CREDENTIAL_REJECTED,
+    _LETTER_UNREADABLE_MESSAGE,
     _REFLECT_UNREADABLE_MESSAGE,
     _REQUEST_REJECTED,
     _RESPONSE_UNREADABLE,
@@ -146,10 +165,12 @@ from services.creek_vault_payload import (
     _capability_message,
     _classification_request_body,
     _journal_entry_body,
+    _letter_body,
     _link_request_body,
     _parse_classification_pass,
     _parse_http_ingest_result,
     _parse_http_journal_withdraw_result,
+    _parse_http_letter_result,
     _parse_http_upload_result,
     _parse_http_voice_draft_delete_result,
     _parse_http_voice_draft_result,
@@ -163,6 +184,8 @@ from services.creek_vault_payload import (
     _wheel_balance_from,
 )
 from services.creek_vault_pinned_transport import build_pinned_destination_transport
+from services.creek_vault_readings import recommend_from_vault
+from services.creek_vault_relay import parse_request_key_providers, relay_headers
 from services.creek_vault_telemetry import (
     VaultCallTimedOutError,
     VaultTelemetryOutcome,
@@ -171,12 +194,18 @@ from services.creek_vault_telemetry import (
     record_vault_outcome,
 )
 from services.creek_vault_upload_limits import guard_managed_upload_body
-from services.creek_vault_url import VaultUrlDefect, VaultUrlFinding, classify_vault_url
+from services.creek_vault_url import (
+    VaultUrlDefect,
+    VaultUrlFinding,
+    classify_vault_url,
+    vault_base_url,
+)
 from services.creek_vault_url_user import (
     UserVaultUrlFinding,
     classify_user_vault_url_host,
     vault_url_host,
 )
+from services.privacy_suspension import vault_send_suspended
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -256,40 +285,27 @@ _CONTENT_FREE_CEILING = WireTierCeiling.OPEN
 _CONTRACT_MINOR_COMPONENTS = 2
 CONTRACT_MINOR = ".".join(CONTRACT_VERSION.split(".")[:_CONTRACT_MINOR_COMPONENTS])
 
-# Every way an httpx call can fail to land, whether it left this process or
-# not. ``OSError`` covers connection and timeout errors (the whole-request
-# deadline raises ``TimeoutError``, an ``OSError`` subclass), and
-# ``httpx.HTTPError`` covers every transport and status failure.
-# ``httpx.InvalidURL`` has to be named separately because it is *not* an
-# ``HTTPError`` -- httpx raises it, from outside its own hierarchy, while
-# building the request, so an unparseable vault URL would otherwise escape every
-# degrade set and turn an optional replication into an exception on the caller's
-# request path. A URL httpx cannot build a request for is unreachable in exactly
-# the sense a refused connection is (the construction-time validator already
-# refused the *unsafe* URLs, which is a different question), so it degrades the
-# same way rather than raising.
-_HTTP_CALL_FAILED_ERRORS: tuple[type[Exception], ...] = (
-    OSError,
-    httpx.HTTPError,
-    httpx.InvalidURL,
-)
-
-# The two ways a call can end because it ran out of time rather than because it
-# failed to land. Both are already inside :data:`_HTTP_CALL_FAILED_ERRORS` --
-# ``TimeoutError`` is an ``OSError`` and ``httpx.TimeoutException`` is an
-# ``httpx.HTTPError`` -- so every ``except`` that wants to tell a slow vault from
-# an absent one has to name this set *first* or the wider one silently swallows
-# it. The distinction is worth the ordering: an operator reading "unreachable"
-# goes looking for a network that is up, while a timeout says the vault answered
-# and could not finish, whose remedy is capacity rather than connectivity.
-_HTTP_CALL_TIMED_OUT_ERRORS: tuple[type[Exception], ...] = (
-    TimeoutError,
-    httpx.TimeoutException,
-)
-
 # Payload-parsing failures. A malformed or wrong-typed handshake response should
 # degrade to unavailable exactly like a transport error, never propagate.
 _PARSE_ERROR_TYPES: tuple[type[Exception], ...] = (KeyError, TypeError, AttributeError, ValueError)
+
+
+#: The methods that write: a request with one of these is content-bearing even
+#: when it happens to carry no body, because the verb itself is the send.
+_CONTENT_BEARING_METHODS: Final = frozenset({"POST", "PUT", "PATCH"})
+
+
+def carries_content(method: str, json_body: Mapping[str, object] | None) -> bool:
+    """Whether a vault request may carry account content, and so is suspendable.
+
+    Structural rather than a list of verbs (#3075): any body, on any method, is
+    content -- so a future ``DELETE`` that grows a body is refused under
+    ``PRIVACY_SUSPEND_VAULT_SEND`` by construction -- and any write method is
+    content even without one. What remains is a body-free ``GET`` or ``DELETE``:
+    the capability probe, a job poll, the wheel read, and the two withdrawals,
+    which only ever reduce what the vault holds.
+    """
+    return json_body is not None or method.upper() in _CONTENT_BEARING_METHODS
 
 
 class _IncompatibleContractVersionError(Exception):
@@ -585,6 +601,7 @@ def _require_str(payload: Mapping[str, object], key: str) -> str:
 _CAPABILITY_BY_WIRE_NAME: Mapping[str, CreekCapability] = MappingProxyType(
     {
         "capabilities": CreekCapability.HANDSHAKE,
+        "reading-recommendations": CreekCapability.READING_RECOMMENDATIONS,
         "journal-upsert": CreekCapability.JOURNAL,
         "journal-withdraw": CreekCapability.JOURNAL_WITHDRAW,
         "reflections": CreekCapability.REFLECT,
@@ -593,6 +610,8 @@ _CAPABILITY_BY_WIRE_NAME: Mapping[str, CreekCapability] = MappingProxyType(
         "drive-connector": CreekCapability.DRIVE_CONNECTOR,
         "pipeline": CreekCapability.PIPELINE,
         "voice-drafts": CreekCapability.VOICE_DRAFTS,
+        "letters": CreekCapability.LETTERS,
+        "agent-activity": CreekCapability.AGENT_ACTIVITY,
     }
 )
 
@@ -709,7 +728,8 @@ def _parse_handshake(payload: Mapping[str, object]) -> HandshakeResult:
     and is caught by :meth:`HttpCreekVaultClient._probe`.
     """
     contract_version = _require_str(payload, "contract_version")
-    if not _contract_minor_supported(_require_str_sequence(payload, "supported_contract_minors")):
+    supported = _require_str_sequence(payload, "supported_contract_minors")
+    if not _contract_minor_supported(supported):
         raise _IncompatibleContractVersionError
     vault = payload.get("vault")
     if not isinstance(vault, Mapping) or vault.get("available") is not True:
@@ -720,7 +740,21 @@ def _parse_handshake(payload: Mapping[str, object]) -> HandshakeResult:
         ontology_version=_require_str(payload, "ontology_version"),
         capabilities=_parse_capabilities(payload["capabilities"]),
         attestation=_parse_attestation(payload.get("attestation")),
+        request_key_providers=parse_request_key_providers(payload.get("request_key_providers")),
+        keyless_inference=_parse_keyless_inference(payload.get("keyless_inference")),
+        agent_mcp=parse_agent_mcp(payload.get("agent_mcp"), minor=payload.get("contract_minor")),
+        supported_contract_minors=frozenset(supported),
     )
+
+
+def _parse_keyless_inference(raw: object) -> bool | None:
+    """Read Creek 0.20's ``keyless_inference`` leniently: a literal boolean, else ``None``.
+
+    ``None`` means "the vault did not say", which changes nothing about a pass, so
+    a vault that omits the field, or sends something other than a boolean, is
+    treated exactly as an older vault is.
+    """
+    return raw if isinstance(raw, bool) else None
 
 
 def _unsupported_message(capability: CreekCapability) -> str:
@@ -888,6 +922,11 @@ _UPLOADS_PATH = "/v1/uploads"
 # DELETE, and the distinction preserves Creek's fixed AI attribution.
 _VOICE_DRAFTS_PATH = "/v1/voice-drafts/"
 
+# Where the vault writes one margin note's letter (contract 0.17.0). Addressed by
+# the same caller-owned external id as the Voice Draft it stores, so the draft is
+# withdrawn through :data:`_VOICE_DRAFTS_PATH` exactly as a mirrored one is.
+_LETTERS_PATH = "/v1/letters/"
+
 # Where a whole-vault classification pass and one linker stage are asked for,
 # relative to the configured base URL. Two collections, ``POST``ed to with a body
 # and no identifier of any kind: neither route takes a fragment selector, and
@@ -970,6 +1009,9 @@ _VOICE_DRAFT_REJECTED_MESSAGE = _capability_message(_REQUEST_REJECTED, CreekCapa
 _VOICE_DRAFT_CREDENTIAL_MESSAGE = _capability_message(
     _CREDENTIAL_REJECTED, CreekCapability.VOICE_DRAFTS
 )
+_LETTER_FAILED_MESSAGE = _capability_message(_CALL_FAILED, CreekCapability.LETTERS)
+_LETTER_REJECTED_MESSAGE = _capability_message(_REQUEST_REJECTED, CreekCapability.LETTERS)
+_LETTER_CREDENTIAL_MESSAGE = _capability_message(_CREDENTIAL_REJECTED, CreekCapability.LETTERS)
 _WHEEL_FAILED_MESSAGE = _capability_message(_CALL_FAILED, CreekCapability.WHEEL)
 _REFLECT_FAILED_MESSAGE = _capability_message(_CALL_FAILED, CreekCapability.REFLECT)
 _PIPELINE_FAILED_MESSAGE = _capability_message(_CALL_FAILED, CreekCapability.PIPELINE)
@@ -1049,10 +1091,16 @@ class _CallDepartures:
             :data:`_VAULT_TOTAL_DEADLINE_SECONDS`, for the one class of call that
             genuinely cannot fit inside it. ``None`` is not "no deadline" but
             "the standing one".
+        forwards_provider_key: Whether this route spends a writer's
+            request-scoped key (reflections, letters, the classification pass).
+            ``False`` by default, so a capability added later never carries a
+            key unless it says so.
     """
 
+    contract_minor: str = CONTRACT_MINOR
     contract_versioned: bool = True
     deadline: float | None = None
+    forwards_provider_key: bool = False
 
 
 #: The departures of a call that departs from nothing, and of the one call that
@@ -1060,6 +1108,56 @@ class _CallDepartures:
 #: each site, so the common case allocates nothing and reads as the default it is.
 _STANDING_CALL = _CallDepartures()
 _UNVERSIONED_CALL = _CallDepartures(contract_versioned=False)
+_READING_CALL = _CallDepartures(contract_minor="0.25", deadline=30.0)
+
+# The job-status poll against a vault that serves contract 0.26, which is the
+# minor whose failed job says *why* it failed (Creek-Vault#1877). Only this read
+# departs: the body it changes is the status document, and every other call --
+# the admission that carries the writer's key included -- stays on the pin.
+_FAILURE_CODE_POLL = _CallDepartures(contract_minor=JOB_FAILURE_CODE_SINCE_MINOR)
+
+
+def _job_status_departures(handshake: HandshakeResult) -> _CallDepartures:
+    """Declare 0.26 on a job poll only to a vault that listed it, else the pin.
+
+    Creek refuses any minor its ``supported_contract_minors`` does not name, and
+    the deployed managed vaults run older images. Asking for the newer body
+    unconditionally would turn every poll against them into a ``409``, so an
+    older vault keeps hearing the pinned minor and answers the old body, whose
+    failed job simply carries no code.
+    """
+    if handshake.serves_minor(JOB_FAILURE_CODE_SINCE_MINOR):
+        return _FAILURE_CODE_POLL
+    return _STANDING_CALL
+
+
+# The departures one reflection runs under: keyed, like the letter route beside
+# it, and one of the two calls that ask for the standing deadline *explicitly*.
+# Its deadline is :data:`_VAULT_TOTAL_DEADLINE_SECONDS` rather than a longer
+# one, so
+# nothing about how long a reflection may take changes here -- what changes is
+# that the deadline becomes *reachable*. Naming it is the only way to say so,
+# because the standing path leaves the pooled client's per-phase budgets in
+# place and that client's ``read`` phase is :data:`_VAULT_TIMEOUT_SECONDS`: a
+# phase budget is checked long before a whole-request deadline is, so a
+# reflection asked for without a named deadline died ten seconds from request
+# to first byte -- the vault's model wake included -- however generous the
+# ``asyncio.timeout`` around it looked. Creek-Vault's ADR 0016 R2 holds a
+# reflection to a p95 of 25 s measured from the vault's receipt of the request,
+# and a promise the transport cuts off at 10 s is not a promise anybody can
+# measure, which is why the warm-pool latency harness names this widening as
+# its prerequisite.
+_REFLECTION_CALL = _CallDepartures(
+    deadline=_VAULT_TOTAL_DEADLINE_SECONDS, forwards_provider_key=True
+)
+
+# The departures one letter runs under: the reflection's values, for the
+# reflection's reason (#3493) -- a letter wakes the same model on the same
+# ``generation`` chokepoint, and this call site had simply not been given the
+# named deadline. Its own constant rather than an alias of
+# :data:`_REFLECTION_CALL`, so the two agree on a value and not an identity;
+# ``test_a_letter_runs_under_the_widened_phase_budgets`` holds both halves.
+_LETTER_CALL = _CallDepartures(deadline=_VAULT_TOTAL_DEADLINE_SECONDS, forwards_provider_key=True)
 
 
 def _widened_phase_budgets(deadline: float) -> httpx.Timeout:
@@ -1244,6 +1342,36 @@ def _coerce_error_code(raw: object) -> VaultErrorCode | None:
         return None
 
 
+def _availability_failure(
+    response: httpx.Response, message: str, code: VaultErrorCode | None = None
+) -> CreekVaultError:
+    """Return the availability failure *response* reports: a wait, or an absence.
+
+    The single place that distinction is made -- every ``/v1`` route, coded
+    and uncoded path alike -- which is what keeps the two model-backed routes
+    from telling a writer two stories about one cap (Creek-Vault#1903 step 6).
+
+    A wait on the vault's own ``rate_limited`` code, whatever status carried
+    it (code first, as its callers document), or on a bare ``429`` -- an
+    intermediary's shed carries no code to misattribute. Since the 0.21 pin
+    both routes send the code. The full argument is in
+    :mod:`tests.test_creek_vault_rate_limited`.
+
+    Args:
+        response: The non-2xx answer being classified.
+        message: The static, capability-named message to raise with.
+        code: The vault's own reason, when it named one we recognize.
+
+    Returns:
+        :class:`CreekVaultRateLimitedError` for a 429 or a ``rate_limited`` code, else
+        :class:`CreekVaultUnavailableError` -- the same degrade for every
+        existing caller, since the first is a subclass of the second.
+    """
+    if signals_rate_limit(response.status_code, code):
+        return CreekVaultRateLimitedError(message, code=code)
+    return CreekVaultUnavailableError(message, code=code)
+
+
 def _faults_our_request(response: httpx.Response) -> bool:
     """Return whether an uncoded status blames the request adepthood sent.
 
@@ -1295,7 +1423,7 @@ def _write_failure(
         return (
             CreekVaultContractError(request_rejected, code=code)
             if code in _CONTRACT_ERROR_CODES
-            else CreekVaultUnavailableError(call_failed, code=code)
+            else _availability_failure(response, call_failed, code)
         )
     return _uncoded_write_failure(
         response,
@@ -1354,7 +1482,7 @@ def _uncoded_write_failure(
         return CreekVaultAuthError(credential_rejected)
     if _faults_our_request(response):
         return CreekVaultContractError(request_rejected)
-    return CreekVaultUnavailableError(call_failed)
+    return _availability_failure(response, call_failed)
 
 
 def _ingest_failure(response: httpx.Response) -> CreekVaultError:
@@ -1403,7 +1531,23 @@ def _voice_draft_failure(response: httpx.Response) -> CreekVaultError:
     )
 
 
-def _coded_read_failure(capability: CreekCapability, code: VaultErrorCode) -> CreekVaultError:
+def _letter_failure(response: httpx.Response) -> CreekVaultError:
+    """Classify a failed letter under its own capability.
+
+    A write: the vault stores the letter it writes, so the write classifier
+    applies -- ``privacy_refused`` at 403 is a refusal, not a rejected key.
+    """
+    return _write_failure(
+        response,
+        call_failed=_LETTER_FAILED_MESSAGE,
+        request_rejected=_LETTER_REJECTED_MESSAGE,
+        credential_rejected=_LETTER_CREDENTIAL_MESSAGE,
+    )
+
+
+def _coded_read_failure(
+    capability: CreekCapability, code: VaultErrorCode, response: httpx.Response
+) -> CreekVaultError:
     """Classify a read error from the code the vault itself named.
 
     Total by construction: :data:`_CONTRACT_ERROR_CODES` names the codes that
@@ -1416,12 +1560,15 @@ def _coded_read_failure(capability: CreekCapability, code: VaultErrorCode) -> Cr
     request, and guessing "contract" sends someone hunting a bug that is not
     there. The code travels on the error either way, since it is one of our own
     members by the time it gets here.
+
+    *response* is carried through only so :func:`_availability_failure` can see
+    the status, which is what tells a cap from an absence.
     """
     if code in _CONTRACT_ERROR_CODES:
         return CreekVaultContractError(
             _capability_message(_REQUEST_REJECTED, capability), code=code
         )
-    return CreekVaultUnavailableError(_capability_message(_CALL_FAILED, capability), code=code)
+    return _availability_failure(response, _capability_message(_CALL_FAILED, capability), code)
 
 
 def _uncoded_read_failure(capability: CreekCapability, response: httpx.Response) -> CreekVaultError:
@@ -1436,7 +1583,7 @@ def _uncoded_read_failure(capability: CreekCapability, response: httpx.Response)
         return CreekVaultAuthError(_capability_message(_CREDENTIAL_REJECTED, capability))
     if _faults_our_request(response):
         return CreekVaultContractError(_capability_message(_REQUEST_REJECTED, capability))
-    return CreekVaultUnavailableError(_capability_message(_CALL_FAILED, capability))
+    return _availability_failure(response, _capability_message(_CALL_FAILED, capability))
 
 
 def _read_failure(capability: CreekCapability, response: httpx.Response) -> CreekVaultError:
@@ -1466,7 +1613,7 @@ def _read_failure(capability: CreekCapability, response: httpx.Response) -> Cree
     """
     code = _vault_error_code(response)
     if code is not None:
-        return _coded_read_failure(capability, code)
+        return _coded_read_failure(capability, code, response)
     return _uncoded_read_failure(capability, response)
 
 
@@ -1615,9 +1762,10 @@ class HttpCreekVaultClient:
         """
         _require_secure_vault_url(url)
         self._api_key = api_key
-        # Trailing slashes are stripped so a configured URL with or without one
-        # yields the same capability URL rather than a double-slashed path.
-        self._url = url.rstrip("/")
+        # Trailing slashes and an API-version suffix are stripped so a URL written
+        # with or without either yields the same capability URL rather than a
+        # double-slashed or ``/v1/v1/`` path.
+        self._url = vault_base_url(url)
         self._http_client = http_client
         self._pin_destination = pin_destination
         self._managed = managed
@@ -1717,13 +1865,27 @@ class HttpCreekVaultClient:
         phase moves: connecting, writing and acquiring a pooled connection are no
         slower against a busy vault than against an idle one, and widening them
         would bound nothing.
+
+        **The operator's vault-send suspension is checked first** (#3075): while
+        ``PRIVACY_SUSPEND_VAULT_SEND`` is on, a request that
+        :func:`carries_content` raises :class:`VaultSendSuspendedError` before
+        the credential header is even built, so nothing reaches the wire. It is
+        not an ``OSError`` or ``httpx`` error, so no verb's transport ``except``
+        rewraps it.
         """
+        if vault_send_suspended() and carries_content(method, json_body):
+            raise VaultSendSuspendedError
         headers = {
             "Authorization": f"Bearer {self._api_key}",
             _CEILING_HEADER: ceiling.value,
         }
         if departures.contract_versioned:
-            headers[_CONTRACT_VERSION_HEADER] = CONTRACT_MINOR
+            headers[_CONTRACT_VERSION_HEADER] = departures.contract_minor
+        headers.update(
+            relay_headers(
+                spends_key=departures.forwards_provider_key, handshake=self._last_handshake
+            )
+        )
         client = self._active_client()
         deadline = departures.deadline
         if deadline is None:
@@ -2001,9 +2163,7 @@ class HttpCreekVaultClient:
         """
         ceiling = wire_ceiling_for(request.tier_ceiling)
         body = _upload_document_body(request, wire_ceiling_for(request.tier))
-        if self._managed:
-            encoded = httpx.Request("POST", f"{self._url}{_UPLOADS_PATH}", json=body).content
-            guard_managed_upload_body(encoded)
+        guard_managed_upload_body(body, managed=self._managed)
         try:
             return await self._authorized_request(
                 "POST", f"{self._url}{_UPLOADS_PATH}", body, ceiling=ceiling
@@ -2171,6 +2331,58 @@ class HttpCreekVaultClient:
             )
             return result
 
+    async def _post_letter(self, request: VaultLetterRequest) -> httpx.Response:
+        """Ask the vault for one letter, normalizing any transport failure.
+
+        The tier is resolved before the body is built, so an intimate entry is
+        refused while its text is still a field on a frozen request. It is both
+        the stored draft's tier and the admission ceiling, as on the Voice
+        Draft PUT.
+
+        It departs on its budget as well as its key (:data:`_LETTER_CALL`), for
+        the reason :meth:`_post_reflection` does and with the same values: a
+        letter waits on a model rather than on a lookup, so the ``read`` phase
+        has to reach the deadline instead of capping the call ten seconds in.
+        """
+        tier = wire_ceiling_for(request.tier)
+        segment = _voice_draft_path_segment(request.external_id)
+        try:
+            return await self._authorized_request(
+                "POST",
+                f"{self._url}{_LETTERS_PATH}{segment}",
+                _letter_body(request, tier),
+                ceiling=tier,
+                departures=_LETTER_CALL,
+            )
+        except _HTTP_CALL_TIMED_OUT_ERRORS:
+            raise VaultCallTimedOutError(_LETTER_FAILED_MESSAGE) from None
+        except _HTTP_CALL_FAILED_ERRORS:
+            raise CreekVaultUnavailableError(_LETTER_FAILED_MESSAGE) from None
+
+    async def write_letter(self, request: VaultLetterRequest, /) -> VaultLetter:
+        """Have the vault write and store one margin note's letter (contract 0.17).
+
+        Gated on the cached handshake first, so a vault that did not advertise
+        ``letters`` never sees the entry. A non-2xx is classified by
+        :func:`_letter_failure`; a 2xx that will not decode, or whose identity,
+        tier or attribution does not verify, is a
+        :class:`CreekVaultPayloadError`; Creek's 200 care handoff leaves as
+        :class:`~domain.creek_vault.CreekVaultCareEscalationError`. Counted
+        once through :class:`_CountingOutcome`, escalation included.
+        """
+        with _CountingOutcome(CreekCapability.LETTERS):
+            if not self.supports(CreekCapability.LETTERS):
+                raise CreekCapabilityUnsupportedError(_unsupported_message(CreekCapability.LETTERS))
+            response = await self._post_letter(request)
+            if not response.is_success:
+                raise _letter_failure(response) from None
+            payload = _decoded_object(response)
+            if payload is None:
+                raise CreekVaultPayloadError(_LETTER_UNREADABLE_MESSAGE)
+            letter = _parse_http_letter_result(payload, request)
+            record_vault_outcome(VaultTelemetryOutcome.SUCCESS, CreekCapability.LETTERS)
+            return letter
+
     async def classify(self, _body: str, _tier_ceiling: VaultTierCeiling, /) -> VaultClassification:
         """Refuse classification: no *per-entry* ``/v1`` request shape is ratified.
 
@@ -2201,6 +2413,15 @@ class HttpCreekVaultClient:
         (:func:`_admissible_ceiling`): a ceiling declared and a ceiling honoured
         are two different claims.
 
+        It departs on its budget as well as its key (:data:`_REFLECTION_CALL`):
+        the deadline is the standing one, but declaring it carries it into
+        :func:`_widened_phase_budgets` so the transport's ``read`` phase reaches
+        it instead of capping the call at :data:`_VAULT_TIMEOUT_SECONDS`. A
+        reflection is the one read-shaped call that waits on a model rather than
+        on a lookup, which is why it needs what the cold embedding write already
+        has; a reflection cut off before the deadline it is measured against is a
+        timeout degrade the vault did nothing to earn.
+
         Every transport failure (connection refused, a socket error, a URL httpx
         will not build a request for) becomes
         :class:`CreekVaultUnavailableError` with ``from None``, and a call that
@@ -2215,6 +2436,7 @@ class HttpCreekVaultClient:
                 f"{self._url}{_REFLECTIONS_PATH}",
                 _reflection_request_body(body),
                 ceiling=ceiling,
+                departures=_REFLECTION_CALL,
             )
         except _HTTP_CALL_TIMED_OUT_ERRORS:
             raise VaultCallTimedOutError(_REFLECT_FAILED_MESSAGE) from None
@@ -2267,8 +2489,24 @@ class HttpCreekVaultClient:
         record_vault_outcome(VaultTelemetryOutcome.SUCCESS, CreekCapability.REFLECT)
         return reflection
 
+    async def recommend_reading(self, request: ReadingRequest) -> ReadingRecommendation | None:
+        """Use the advertised keyless model for a bounded grounded offer."""
+        send = partial(
+            self._authorized_request,
+            "POST",
+            f"{self._url}/v1/reading-recommendations",
+            departures=_READING_CALL,
+        )
+        with _CountingOutcome(CreekCapability.READING_RECOMMENDATIONS):
+            return await recommend_from_vault(request, self._last_handshake, send, _read_failure)
+
     async def _post_pipeline(
-        self, path: str, body: Mapping[str, object], deadline: float | None
+        self,
+        path: str,
+        body: Mapping[str, object],
+        deadline: float | None,
+        *,
+        forwards_provider_key: bool = False,
     ) -> httpx.Response:
         """Ask for one pipeline pass, normalizing any transport failure.
 
@@ -2284,6 +2522,10 @@ class HttpCreekVaultClient:
         embedding stage is the expected shape of a first pass over a cold vault
         rather than a fault: the work it performed lands in Creek's cache
         regardless, so the next pass resumes from it.
+
+        ``forwards_provider_key`` is the classification pass's alone: it is the
+        one pipeline route that calls a model, so the only one that may carry a
+        writer's key (#3437).
         """
         try:
             return await self._authorized_request(
@@ -2291,7 +2533,9 @@ class HttpCreekVaultClient:
                 f"{self._url}{path}",
                 body,
                 ceiling=_PIPELINE_WIRE_CEILING,
-                departures=_CallDepartures(deadline=deadline),
+                departures=_CallDepartures(
+                    deadline=deadline, forwards_provider_key=forwards_provider_key
+                ),
             )
         except _HTTP_CALL_TIMED_OUT_ERRORS:
             raise VaultCallTimedOutError(_PIPELINE_FAILED_MESSAGE) from None
@@ -2339,7 +2583,10 @@ class HttpCreekVaultClient:
         """
         self._pipeline_gate()
         response = await self._post_pipeline(
-            _CLASSIFICATIONS_PATH, _classification_request_body(), None
+            _CLASSIFICATIONS_PATH,
+            _classification_request_body(),
+            None,
+            forwards_provider_key=True,
         )
         if not response.is_success:
             raise _read_failure(CreekCapability.PIPELINE, response) from None
@@ -2405,6 +2652,7 @@ class HttpCreekVaultClient:
                 "GET",
                 f"{self._url}{_JOBS_PATH}/{job.job_id}",
                 ceiling=_PIPELINE_WIRE_CEILING,
+                departures=_job_status_departures(self._last_handshake),
             )
         except _HTTP_CALL_TIMED_OUT_ERRORS:
             raise VaultCallTimedOutError(_PIPELINE_FAILED_MESSAGE) from None
@@ -2488,6 +2736,27 @@ class HttpCreekVaultClient:
             raise CreekVaultPayloadError(_WHEEL_UNREADABLE_MESSAGE)
         record_vault_outcome(VaultTelemetryOutcome.SUCCESS, CreekCapability.WHEEL)
         return balance
+
+    async def agent_activity(self, limit: int, /) -> VaultAgentActivity:
+        """Read the vault's most recent calls, requiring the AGENT_ACTIVITY capability.
+
+        Counted exactly once, as :meth:`wheel` is. Everything particular to the
+        read -- the bounds on ``limit``, the gate on the cached handshake, the
+        one ``GET`` with ``limit`` its sole parameter at the content-free
+        ceiling, and the strict parse of the answer -- is
+        :func:`~services.creek_vault_activity_wire.read_agent_activity`. This
+        adapter lends it the two things only it has: the authorized, deadlined
+        transport (:meth:`_authorized_request`) and the one read classifier,
+        code first and status second (:func:`_read_failure`).
+        """
+        with _CountingOutcome(CreekCapability.AGENT_ACTIVITY):
+            return await read_agent_activity(
+                self._authorized_request,
+                self._url,
+                limit,
+                supported=self.supports(CreekCapability.AGENT_ACTIVITY),
+                read_failure=_read_failure,
+            )
 
 
 class LocalFallbackCreekVaultClient:
@@ -2577,6 +2846,11 @@ class LocalFallbackCreekVaultClient:
         record_vault_outcome(self._outcome, CreekCapability.VOICE_DRAFTS)
         return VaultVoiceDraftDeleteResult(deleted=False)
 
+    async def write_letter(self, _request: VaultLetterRequest, /) -> VaultLetter:
+        """Raise: a letter has no local vault to write it."""
+        record_vault_outcome(self._outcome, CreekCapability.LETTERS)
+        raise CreekCapabilityUnsupportedError(_unsupported_message(CreekCapability.LETTERS))
+
     async def classify(self, _body: str, _tier_ceiling: VaultTierCeiling, /) -> VaultClassification:
         """Raise: classification has no local vault to serve it."""
         record_vault_outcome(self._outcome, CreekCapability.CLASSIFY)
@@ -2591,6 +2865,11 @@ class LocalFallbackCreekVaultClient:
         """Raise: a vault wheel read has no local vault to serve it."""
         record_vault_outcome(self._outcome, CreekCapability.WHEEL)
         raise CreekCapabilityUnsupportedError(_unsupported_message(CreekCapability.WHEEL))
+
+    async def agent_activity(self, _limit: int, /) -> VaultAgentActivity:
+        """Raise: there is no vault whose audit chain could be read."""
+        record_vault_outcome(self._outcome, CreekCapability.AGENT_ACTIVITY)
+        raise CreekCapabilityUnsupportedError(_unsupported_message(CreekCapability.AGENT_ACTIVITY))
 
     async def classify_corpus(self) -> VaultClassificationPass | VaultPipelineJob:
         """Raise: there is no vault whose corpus could be classified.
@@ -2729,7 +3008,7 @@ def build_creek_vault_client() -> CreekVaultPipelineClient:
 def build_connected_vault_client(
     url: str, api_key: str, *, managed: bool = False
 ) -> CreekVaultPipelineClient:
-    """Return the per-account adapter, bounding managed upload envelopes.
+    """Return the adapter for a vault one user connected for themselves.
 
     The per-user twin of :func:`build_creek_vault_client`, and the differences
     between them are exactly the differences between the two configurations.

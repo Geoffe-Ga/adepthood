@@ -38,6 +38,7 @@ from typing import TYPE_CHECKING
 
 from sqlmodel import col, select
 
+from errors import forbidden
 from integrations.gumroad import GumroadUnavailableError, verify_license
 from models.entitlement import Entitlement, EntitlementKind
 
@@ -50,6 +51,7 @@ if TYPE_CHECKING:
     from schemas.gumroad import GumroadPurchase
 
 __all__ = [
+    "AI_ACCESS_REVOKED",
     "PRODUCT_IDS_ENV_VAR",
     "REASON_ADMIN_OVERRIDE",
     "REASON_CANCELLATION",
@@ -57,17 +59,22 @@ __all__ = [
     "REASON_LICENSE_ALREADY_BOUND",
     "REASON_REFUND",
     "REASON_SIGNUP_REDEMPTION",
+    "REASON_SUBSCRIPTION_ENDED",
+    "REASON_SUBSCRIPTION_RESTARTED",
     "REASON_WEBHOOK_SALE",
     "TOKEN_PACK_PRODUCT_IDS_ENV_VAR",
     "TOKEN_PACK_SIZES_ENV_VAR",
     "AptitudeLicenseCheck",
     "GumroadUnavailableError",
     "LicenseOutcome",
+    "ai_access_revoked",
     "grant_course_access",
     "grant_manual_course_access",
     "has_course_access",
     "is_aptitude_product_id",
     "is_token_pack_product_id",
+    "latest_course_revocation",
+    "refuse_if_ai_access_revoked",
     "revoke_course_access",
     "revoke_entitlement_by_id",
     "stage_course_access",
@@ -82,10 +89,16 @@ logger = logging.getLogger(__name__)
 # per code so grep-by-reason in log aggregation has a single spelling.
 REASON_SIGNUP_REDEMPTION = "signup_redemption"
 REASON_WEBHOOK_SALE = "webhook_sale"
-# The two webhook-driven revocations. Kept apart so an operator reading the
-# log can tell "the buyer got their money back" from "the subscription simply
-# lapsed" — the entitlement outcome is identical, the accounting is not.
+# The webhook-driven revocations. Kept apart so an operator reading the log
+# can tell "the buyer got their money back" from "the paid period ran out" —
+# the entitlement outcome is identical, the accounting is not.
 REASON_REFUND = "refund"
+REASON_SUBSCRIPTION_ENDED = "subscription_ended"
+# The re-grant a ``subscription_restarted`` ping makes (#3259).
+REASON_SUBSCRIPTION_RESTARTED = "subscription_restarted"
+# Written by the ``cancellation`` and ``subscription_ended`` pings until the
+# owner's cancel-timing decision (#3259), after which a cancellation changes no
+# access. Kept so rows revoked under it still read as what they are.
 REASON_CANCELLATION = "cancellation"
 # Both halves of the operator's manual surface: grant_manual_course_access and
 # revoke_entitlement_by_id, reached from the /admin/users/{user_id}/entitlements
@@ -97,6 +110,30 @@ REASON_DUPLICATE_SIGNUP = "duplicate_signup"
 # WARNING carrying it is the anomalous-claim signal ADR 0008 Decision 6 asks
 # for; the caller's response stays the generic refusal.
 REASON_LICENSE_ALREADY_BOUND = "license_already_bound"
+
+# The 403 detail a revoked member's operator-funded AI request is refused with
+# (#1938, B21 E1). Distinct from the 402 payer details on purpose: credits or a
+# key are not what is missing, so the client must not offer a refill.
+AI_ACCESS_REVOKED = "ai_access_revoked"
+
+# The metadata key a revocation records its reason code under, so the row
+# itself says *why* it was revoked (the JSON bag needs no migration). Rows
+# revoked before it existed carry no code.
+REVOCATION_REASON_CODE_KEY = "revocation_reason_code"
+# The metadata key a webhook revocation records the Gumroad sale under, so a
+# ``subscription_restarted`` ping can tell its own ending from anybody else's.
+REVOKED_BY_SALE_KEY = "revoked_by_gumroad_sale_id"
+# The revocation reasons that restrict AI (#1938, B21 E1): money returned (a
+# refund or a dispute, which share REASON_REFUND), the paid period ending
+# (the owner's cancel-timing decision, #3259) and an operator's revocation.
+# REASON_CANCELLATION is deliberately absent: a row the old handler wrote under
+# it cannot be told from a mere cancel click, so it is read user-protectively.
+_AI_RESTRICTING_REASONS = frozenset(
+    {REASON_REFUND, REASON_SUBSCRIPTION_ENDED, REASON_ADMIN_OVERRIDE}
+)
+# An operator revocation from before reason codes were recorded is still
+# recognisable: revoke_entitlement_by_id always wrote this key.
+_LEGACY_ADMIN_REVOCATION_KEY = "revoked_by_admin_id"
 
 # Comma-separated allowlist of Gumroad product ids that count as "the
 # APTITUDE course". Read at call time so a rotation needs no restart (and so
@@ -245,18 +282,33 @@ async def has_course_access(session: AsyncSession, user_id: int) -> bool:
     return await _find_active_entitlement(session, user_id) is not None
 
 
-async def revoke_course_access(session: AsyncSession, user_id: int, reason: str) -> None:
+async def revoke_course_access(
+    session: AsyncSession,
+    user_id: int,
+    reason: str,
+    *,
+    sale_id: str | None = None,
+) -> None:
     """Revoke the user's active ``course_access`` entitlement, if any.
 
     Sets ``revoked_at`` on the active row (freeing the partial-unique slot so
-    a later re-grant creates a fresh row), commits, and logs
-    ``entitlement_revoked`` with ``reason_code=reason``. A user with no
-    active grant is a silent no-op.
+    a later re-grant creates a fresh row), records ``reason`` in the row's
+    metadata under :data:`REVOCATION_REASON_CODE_KEY` -- and, when a Gumroad
+    ping drove it, the ping's ``sale_id`` under :data:`REVOKED_BY_SALE_KEY` --
+    commits, and logs ``entitlement_revoked`` with ``reason_code=reason``. A
+    user with no active grant is a silent no-op.
     """
     entitlement = await _find_active_entitlement(session, user_id)
     if entitlement is None:
         return
     entitlement.revoked_at = datetime.now(UTC)
+    # Recorded on the row as well as logged, so the AI restriction can read
+    # why access went away. Rebound, not mutated: SQLAlchemy does not track
+    # in-place edits to a JSON dict.
+    recorded: dict[str, str] = {REVOCATION_REASON_CODE_KEY: reason}
+    if sale_id is not None:
+        recorded[REVOKED_BY_SALE_KEY] = sale_id
+    entitlement.entitlement_metadata = {**entitlement.entitlement_metadata, **recorded}
     session.add(entitlement)
     await session.commit()
     logger.info(
@@ -267,6 +319,74 @@ async def revoke_course_access(session: AsyncSession, user_id: int, reason: str)
             "entitlement_id": entitlement.id,
         },
     )
+
+
+async def ai_access_revoked(session: AsyncSession, user_id: int) -> bool:
+    """Whether ``user_id``'s course entitlement was revoked in a way that restricts AI.
+
+    True only for an account holding no active ``course_access`` row whose
+    **most recent** revocation (#3221) carries a reason that restricts: a
+    refund or dispute (``REASON_REFUND``), a membership whose paid period ended
+    (``REASON_SUBSCRIPTION_ENDED``, the owner's cancel-timing decision, #3259)
+    or an operator's revocation. An account with no row at all -- a legacy
+    account from before the license gate, or one never comped -- has nothing
+    to lose and is *not* revoked; a revoke followed by a re-grant is live.
+    Only the latest revocation is read, so a refund long since re-granted
+    cannot outlive the access that replaced it.
+
+    A ``REASON_CANCELLATION`` row, written by the handler before the
+    cancel-timing decision, does **not** restrict, and neither does a webhook
+    revocation from before reasons were recorded on the row: neither can be
+    told from a cancel click, so both are read the user-protective way.
+
+    The owner's decision (#1938, B21 E1, 2026-10-07): revocation restricts AI
+    features only. The journal, export, deletion, course reading, habits and
+    practice never consult this.
+    """
+    if await has_course_access(session, user_id):
+        return False
+    latest = await latest_course_revocation(session, user_id)
+    return latest is not None and _revocation_restricts_ai(latest)
+
+
+async def latest_course_revocation(session: AsyncSession, user_id: int) -> Entitlement | None:
+    """Return the user's most recently revoked ``course_access`` row, if any.
+
+    Latest by ``revoked_at``, then by id, so two revocations stamped in the
+    same instant still resolve to the one written last.
+    """
+    result = await session.execute(
+        select(Entitlement)
+        .where(
+            Entitlement.user_id == user_id,
+            Entitlement.kind == EntitlementKind.COURSE_ACCESS,
+            col(Entitlement.revoked_at).is_not(None),
+        )
+        .order_by(col(Entitlement.revoked_at).desc(), col(Entitlement.id).desc())
+        .limit(1)
+    )
+    return result.scalars().first()
+
+
+def _revocation_restricts_ai(entitlement: Entitlement) -> bool:
+    """Whether one revoked row's recorded reason restricts AI."""
+    metadata = entitlement.entitlement_metadata
+    if metadata.get(REVOCATION_REASON_CODE_KEY) in _AI_RESTRICTING_REASONS:
+        return True
+    return _LEGACY_ADMIN_REVOCATION_KEY in metadata
+
+
+async def refuse_if_ai_access_revoked(session: AsyncSession, user_id: int) -> None:
+    """Raise ``403 ai_access_revoked`` when :func:`ai_access_revoked` holds for ``user_id``.
+
+    Called by the payer gate (``services.generation_access.require_ai_payer``)
+    at every AI route's admission and by ``services.wallet.preflight_deduction``,
+    the one function that charges -- so no operator-funded generation starts
+    for a revoked member, whichever way a route reaches the wallet. A writer's
+    own key never reaches this check: it pays its own provider.
+    """
+    if await ai_access_revoked(session, user_id):
+        raise forbidden(AI_ACCESS_REVOKED)
 
 
 async def grant_manual_course_access(
@@ -366,6 +486,7 @@ async def revoke_entitlement_by_id(
         **entitlement.entitlement_metadata,
         "revocation_reason": reason,
         "revoked_by_admin_id": actor_admin_id,
+        REVOCATION_REASON_CODE_KEY: REASON_ADMIN_OVERRIDE,
     }
     session.add(entitlement)
     await session.commit()

@@ -9,6 +9,7 @@ import type {
   ReflectionCurrentScope,
   ReflectionDue,
 } from '@/api';
+import { setActiveUser } from '@/storage/userScope';
 
 const mockList = jest.fn() as jest.MockedFunction<
   (_p?: { search?: string; limit?: number; offset?: number }) => Promise<JournalListResponse>
@@ -24,6 +25,11 @@ const mockCurrent = jest.fn() as jest.MockedFunction<
 // Every mounted focus effect, as a "run its cleanup then run it again" thunk.
 // Firing these is this suite's stand-in for leaving the shelf and coming back.
 const mockFocusReruns = new Set<() => void>();
+
+// The shelf is authenticated: its namespace and decoded credential agree.
+jest.mock('@/context/AuthContext', () => ({
+  useAuth: () => ({ token: 'x.eyJzdWIiOiIxIiwiZXhwIjo0MDAwMDAwMDAwfQ.y', userTimezone: 'UTC' }),
+}));
 
 jest.mock('@/api', () => ({
   journal: {
@@ -70,6 +76,13 @@ jest.mock('@react-navigation/native', () => {
   };
 });
 
+// The Notification Center's count reads five sources of its own; it has its
+// own suite, so the shelf's suites pin only the number it shows.
+let mockNotificationCount = 0;
+jest.mock('../useNotificationCount', () => ({
+  useNotificationCount: () => mockNotificationCount,
+}));
+
 jest.mock('../SearchBar', () => {
   const { TextInput, View } = require('react-native');
   const Stub = ({ onSearch }: { onSearch: (_q: string) => void }) => (
@@ -98,9 +111,14 @@ jest.mock('@/features/Invitations/InvitationStack', () => {
 jest.mock('../MorningPagesTip', () => {
   const { View } = require('react-native');
   const Stub = () => <View testID="morning-pages-tip-stub" />;
-  return { __esModule: true, default: Stub };
+  return {
+    ...jest.requireActual<Record<string, unknown>>('../MorningPagesTip'),
+    __esModule: true,
+    default: Stub,
+  };
 });
 
+const JournalPrimaryInvitation = require('../JournalPrimaryInvitation').default;
 const JournalShelfScreen = require('../JournalShelfScreen').default;
 
 function entry(id: number, overrides: Partial<JournalMessage> = {}): JournalMessage {
@@ -131,6 +149,7 @@ async function returnToTheShelf(): Promise<void> {
 }
 
 beforeEach(() => {
+  setActiveUser(1);
   mockFocusReruns.clear();
   mockList.mockReset();
   mockDelete.mockReset();
@@ -214,8 +233,10 @@ describe('the shelf when the writer comes back to it', () => {
     expect(mockList).toHaveBeenCalledTimes(callsBefore);
   });
 
-  it('re-reads which review is due, so a shelf left open overnight offers today’s', async () => {
-    const { findByTestId, findByText, queryByTestId } = render(<JournalShelfScreen />);
+  it('re-reads which review is due, so Prompts left open overnight offers today’s', async () => {
+    const { findByTestId, findByText, queryByTestId } = render(
+      <JournalPrimaryInvitation onBeginPage={jest.fn()} />,
+    );
     // Yesterday: nothing due, so the daily page holds the primary slot.
     await findByTestId('morning-pages-tip-stub');
     expect(queryByTestId('journal-reflection-band')).toBeNull();
@@ -251,7 +272,9 @@ describe('the shelf when the writer comes back to it', () => {
       existing_entry_id: null,
     };
     mockCurrent.mockResolvedValue({ scopes: [weekTwo] });
-    const { findByTestId, findByText, getByTestId } = render(<JournalShelfScreen />);
+    const { findByTestId, findByText, getByTestId } = render(
+      <JournalPrimaryInvitation onBeginPage={jest.fn()} />,
+    );
     await findByTestId('morning-pages-tip-stub');
     fireEvent.press(getByTestId('journal-review-early'));
     expect(await findByText('Weekly Review — Week 2')).toBeTruthy();

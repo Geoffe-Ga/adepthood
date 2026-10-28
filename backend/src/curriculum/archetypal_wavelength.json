@@ -1,17 +1,19 @@
 {
-  "dataset_version": "2.2.0",
+  "dataset_version": "2.4.0",
   "provenance": {
-    "stage_attributes_source": "APTITUDE Complete Map.csv (aptitude-course repository, database_of_course_curriculum), with the December 2025 supersessions recorded in that repository's CLAUDE.md: stage 4 aspect 'Community Love'; stage 8 color 'Teal', aspect 'True Self Connection', free-will archetype 'True Self Embodier'",
+    "stage_attributes_source": "APTITUDE Complete Map.csv (aptitude-course repository, database_of_course_curriculum), with the December 2025 supersessions recorded in that repository's CLAUDE.md: stage 4 aspect 'Community Love'; stage 8 color 'Teal' and free-will archetype 'True Self Embodier'. Stage 8's aspect 'True Self Wisdom' is the CSV's own cell (owner ruling 2026-10-13, #2664)",
     "manifestations_source": "Archetypal Wavelength spreadsheet, 'Expanded List' sheet (the six-phase Rx/OD manifestation copy and the Stage titles; the subtitles are sourced separately, see subtitles_source)",
-    "subtitles_source": "aptitude-course repository (Geoffe-Ga/aptitude-course) resource copy: markdown/resources/aptitude-stages.md headings and the markdown/resources/about.md item list. Stage 8 follows commit 3bf0df5 (2026-07-31), carried by the vendored pin at backend/content/CONTENT_VERSION since the re-pin to 9d0f896",
+    "manifestation_names_source": "Stages 1-9: every integrated (Rx) and shadow (OD) name equals the aptitude-course 'The Archetypal Wavelength - Modes of the Wavelength.csv' Medicine/Toxic cell, vendored by scripts/sync_content.py to backend/content/curriculum/modes_of_the_wavelength.csv and gated by scripts/check_wavelength_terms.py (issue #3135); descriptions are app-authored summaries of the vendored full-6-phase-wavelength-breakdown chapters. Stage 10 (Clear Light) has no CSV row, so its six pairs are app-authored and each carries \"source\": \"app-authored\".",
+    "subtitles_source": "aptitude-course repository (Geoffe-Ga/aptitude-course) resource copy: markdown/resources/04-aptitude-stages.md headings and the markdown/resources/02-about.md item list. Stage 8 follows commit 3bf0df5 (2026-07-31), carried by the vendored pin at backend/content/CONTENT_VERSION since the re-pin to 9d0f896",
     "extracted_from": "in-repo vendored course markdown (backend/content/markdown/backup/ and *full-6-phase-wavelength-breakdown chapters)",
-    "stage_2_free_will_source": "Stage 2's relationship_to_free_will 'Pleasure Seeker' and free_will_description follow the vendored course at the CONTENT_VERSION pin 9d0f896: the chapter backend/content/markdown/02-purple/04-the-relationship-to-free-will-at-purple-pleasure-seeker.md (the description is paraphrased from it) and the markdown/resources/aptitude-stages.md heading, superseding the stale archetype and habits/personalities description carried over from backup/2.PURPLE.md (issue #2915). APTITUDE Complete Map.csv is not vendored; its own description sentence replaces this one when #2664 vendors the CSV",
+    "stage_2_free_will_source": "Stage 2's relationship_to_free_will 'Pleasure Seeker' follows the vendored course at the CONTENT_VERSION pin 9d0f896: the chapter backend/content/markdown/02-purple/04-the-relationship-to-free-will-at-purple-pleasure-seeker.md and the markdown/resources/aptitude-stages.md heading, superseding the stale archetype carried over from backup/2.PURPLE.md (issue #2915). Its free_will_description is the vendored APTITUDE Complete Map.csv sentence carried by src/curriculum/stage_correspondence.json (#2664), replacing the earlier chapter paraphrase; tests/test_stage_correspondence.py holds it equal to the artifact (#2667) until #2666 retires this copy of the correspondence fields",
+    "free_will_descriptions_source": "Stages 1, 3, 4, 6, 7, 8 and 10 carry the free_will_description (and Stage 8 the growing_up_stage) that the generated stage_correspondence.json ships: verbatim spans of the vendored relationship-to-free-will chapters, recorded as supersessions of the Complete Map CSV in stage_correspondence_supersessions.json, since the CSV sentences read as textbook third person and Stage 8's named Teal as nonduality (chapter text wins over the CSV, owner ruling 2026-09-16)",
     "refresh_doc": "docs/curriculum.md",
     "supersessions": [
       {"stage_number": 4, "field": "aspect", "value": "Community Love"},
       {"stage_number": 8, "field": "spiral_dynamics_color", "value": "Teal"},
-      {"stage_number": 8, "field": "aspect", "value": "True Self Connection"},
-      {"stage_number": 8, "field": "relationship_to_free_will", "value": "True Self Embodier"}
+      {"stage_number": 8, "field": "relationship_to_free_will", "value": "True Self Embodier"},
+      {"stage_number": 8, "field": "growing_up_stage", "value": "True Self Connection"}
     ]
   },
   "phases": ["Rising", "Peaking", "Withdrawal", "Diminishing", "Bottoming Out", "Restoration"],
@@ -26,12 +28,12 @@
       "growing_up_stage": "Survival",
       "divine_gender_polarity": "Divine Masculine",
       "relationship_to_free_will": "Biological Machine",
-      "free_will_description": "Individuals are unaware of the concept of free will. Their actions are purely reactive and instinctual, driven by basic survival needs. This is the bottom of Maslow's Pyramid, the Root Chakra, the first stage Piaget's cognitive development or step one of Erikson's psychosocial development etc.",
+      "free_will_description": "When we first move through Beige we operate like a Biological Machine—a bundle of reflexes, needs, cravings, and instincts. Basically, a baby. An addict deep in the territory of abuse. A victim of trauma, deprivation, or circumstance struggling to survive. It’s not something to feel guilty about.",
       "manifestations": [
         {
           "phase": "Rising",
           "integrated": {"name": "Commitment", "description": "A grounded promise to begin showing up."},
-          "shadow": {"name": "Over-commitment", "description": "Taking on too much too fast."}
+          "shadow": {"name": "Overcommitment", "description": "Taking on too much too fast."}
         },
         {
           "phase": "Peaking",
@@ -50,7 +52,7 @@
         },
         {
           "phase": "Bottoming Out",
-          "integrated": {"name": "Stability", "description": "Deep stillness that anchors your nervous system."},
+          "integrated": {"name": "Planning", "description": "Resting deeply while gently naming what comes next."},
           "shadow": {"name": "Overwhelm", "description": "Flooded by unmet needs or collapsing structure."}
         },
         {
@@ -70,17 +72,17 @@
       "growing_up_stage": "Magic",
       "divine_gender_polarity": "Divine Feminine",
       "relationship_to_free_will": "Pleasure Seeker",
-      "free_will_description": "Will is steered from the Sacral, about three inches below the navel: toward the pleasant, away from the unpleasant, before the argument starts. Pleasure is real information, and it is also a leash; Free Will at Purple lives in the ability to tell one pleasure from another.",
+      "free_will_description": "Behavior is steered from the Sacral: toward what feels nice and away from what doesn't, before any argument has been made. Much of what feels nice was installed by inherited stories and by people with an interest in what you reach for, so pleasure is at once real information and an easy leash. Free Will here is not renouncing pleasure or obeying it, but learning to tell the yes that widens you from the yes that narrows you.",
       "manifestations": [
         {
           "phase": "Rising",
           "integrated": {"name": "Inspiration", "description": "Guided by subtle symbols, dreams, or intuitive nudges."},
-          "shadow": {"name": "Self-aggrandizement", "description": "Mistaking inspiration for spiritual superiority or specialness."}
+          "shadow": {"name": "Grandiosity", "description": "Mistaking inspiration for spiritual superiority or specialness."}
         },
         {
           "phase": "Peaking",
-          "integrated": {"name": "Attunement", "description": "In sync with feelings, symbols, and unseen rhythms."},
-          "shadow": {"name": "Intoxication", "description": "Overwhelmed by meaning, chasing mystical highs."}
+          "integrated": {"name": "Joy", "description": "The full crescendo of feeling, in sync with symbols and unseen rhythms."},
+          "shadow": {"name": "Ecstasy", "description": "Overwhelmed by meaning, chasing mystical highs."}
         },
         {
           "phase": "Withdrawal",
@@ -89,12 +91,12 @@
         },
         {
           "phase": "Diminishing",
-          "integrated": {"name": "Coziness", "description": "Soft retreat into comfort, nesting, and gentle beauty."},
+          "integrated": {"name": "Tranquility", "description": "Soft retreat into comfort, nesting, and gentle beauty."},
           "shadow": {"name": "Self-doubt", "description": "Losing confidence, questioning intuition and worth."}
         },
         {
           "phase": "Bottoming Out",
-          "integrated": {"name": "Fallow state", "description": "Restful emptiness, receptive to future renewal."},
+          "integrated": {"name": "Convalescence", "description": "Restful emptiness, receptive to future renewal."},
           "shadow": {"name": "Self-loathing", "description": "Turning symbolic failure inward as shame."}
         },
         {
@@ -114,7 +116,7 @@
       "growing_up_stage": "Ego-centrism",
       "divine_gender_polarity": "Divine Masculine",
       "relationship_to_free_will": "Dominator",
-      "free_will_description": "Behavior is driven by a subconscious urge to alleviate the pain of emotions (that may or may not even be consciously noticed) that tell us that we are not enough. Without self-love toward these aversion based feelings, the tendency is to forge dominator \"power over others.\"",
+      "free_will_description": "APTITUDE teaches that Free Will only becomes real when you learn to express power differently. The Dominator believes they are acting freely, but in truth, they are ruled by fear and shame. Their \"choices\" are reactions. Their \"power\" is armor.",
       "manifestations": [
         {
           "phase": "Rising",
@@ -133,7 +135,7 @@
         },
         {
           "phase": "Diminishing",
-          "integrated": {"name": "Humility", "description": "Recognizing your limits without shame."},
+          "integrated": {"name": "Self-Acceptance", "description": "Recognizing your limits without shame."},
           "shadow": {"name": "Shame", "description": "Believing your worth depends on dominance or perfection."}
         },
         {
@@ -151,14 +153,14 @@
     {
       "stage_number": 4,
       "title": "Conformity",
-      "subtitle": "Universal Love",
+      "subtitle": "Community Love",
       "category": "Love",
       "aspect": "Community Love",
       "spiral_dynamics_color": "Blue",
       "growing_up_stage": "Conformity",
       "divine_gender_polarity": "Divine Feminine",
       "relationship_to_free_will": "Victim",
-      "free_will_description": "Behavior is determined by the attempt to meet the expectations of the relationships that the individual is embedded within; we are defined by roles: partners, parents, children, coworkers, friends, pupils, etc",
+      "free_will_description": "At Blue, you do what you're told. You follow the rules. You meet the expectations.",
       "manifestations": [
         {
           "phase": "Rising",
@@ -246,7 +248,7 @@
       "growing_up_stage": "Pluralistic",
       "divine_gender_polarity": "Divine Feminine",
       "relationship_to_free_will": "Shadow Glorifier",
-      "free_will_description": "Behavior is driven by a desire to be virtuous, to apply rules fairly, to reduce the influence of hierarchy, and to respect everyone's perspectives. Free Will is still absent as behavior follows predictably from a set of pluralistic heuristics.",
+      "free_will_description": "Here's the truth: recognizing that you've been conditioned is not the same as freeing yourself from that conditioning. Naming your trauma is not the same as healing it. Understanding why you're afraid doesn't make you brave.",
       "manifestations": [
         {
           "phase": "Rising",
@@ -290,81 +292,81 @@
       "growing_up_stage": "Integrative",
       "divine_gender_polarity": "Divine Masculine",
       "relationship_to_free_will": "Despairing Analyst",
-      "free_will_description": "The ability to reflect on all the influences of stages prior to Yellow develops and the individual becomes convinced that Free Will is essentially an illusion.",
+      "free_will_description": "Yellow is where you start to see the forces. Where you develop enough metacognitive capacity to observe your own patterns as they arise. And from that observation, you gain the smallest sliver of space—the gap between impulse and action. And in that gap, choice becomes possible.",
       "manifestations": [
         {
           "phase": "Rising",
-          "integrated": {"name": "Focus", "description": "Bringing awareness to what matters and sustaining it."},
-          "shadow": {"name": "Hyperfocus", "description": "Locking on so hard you lose peripheral awareness."}
+          "integrated": {"name": "Rebellion", "description": "A precise refusal to keep running a structure that no longer serves."},
+          "shadow": {"name": "Mischief", "description": "Breaking things for the thrill of it, the working parts included."}
         },
         {
           "phase": "Peaking",
-          "integrated": {"name": "Concentration", "description": "Effortless unified absorption where the mind rests."},
-          "shadow": {"name": "Obsession", "description": "Addiction to peak states you chase and grasp at."}
+          "integrated": {"name": "Anarchy", "description": "The open moment when the old rules are down and anything can emerge."},
+          "shadow": {"name": "Chaos", "description": "The same open field with no witness, pushed around by every impulse."}
         },
         {
           "phase": "Withdrawal",
-          "integrated": {"name": "Adjustment", "description": "Noticing you have drifted and gently course-correcting."},
-          "shadow": {"name": "Stagnation", "description": "Awareness of being off course without any action."}
+          "integrated": {"name": "Organize", "description": "Sorting what the opening threw up into something you can act on."},
+          "shadow": {"name": "Discord", "description": "Every good idea taking priority at once, each fighting the others."}
         },
         {
           "phase": "Diminishing",
-          "integrated": {"name": "Reorienting", "description": "Stepping back to reassess the approach and recalibrate."},
-          "shadow": {"name": "Dithering", "description": "Endlessly changing course without ever committing."}
+          "integrated": {"name": "Establish", "description": "Committing the chosen arrangement to real life and not re-deciding it."},
+          "shadow": {"name": "Confusion", "description": "Re-opening every decision until nothing ever gets established."}
         },
         {
           "phase": "Bottoming Out",
-          "integrated": {"name": "Settling", "description": "Deep rest that comes from releasing all striving."},
-          "shadow": {"name": "Depression", "description": "The hopeless belief that the low point is permanent."}
+          "integrated": {"name": "Order", "description": "A maintained structure that carries you so you can rest inside it."},
+          "shadow": {"name": "Bureaucracy", "description": "Structure kept for its own sake after the why has gone."}
         },
         {
           "phase": "Restoration",
-          "integrated": {"name": "Reset", "description": "Beginning again fresh without the last cycle's baggage."},
-          "shadow": {"name": "Addiction", "description": "Reaching for a compulsive fix instead of a clean start."}
+          "integrated": {"name": "Disintegrate", "description": "Taking the scaffolding down on purpose once its work is done."},
+          "shadow": {"name": "The Aftermath", "description": "Living in the rubble of a structure you never chose to end."}
         }
       ]
     },
     {
       "stage_number": 8,
-      "title": "Nondual",
+      "title": "True Self Connection",
       "subtitle": "True Self Wisdom",
       "category": "Wisdom",
-      "aspect": "True Self Connection",
+      "aspect": "True Self Wisdom",
       "spiral_dynamics_color": "Teal",
-      "growing_up_stage": "Nonduality",
+      "growing_up_stage": "True Self Connection",
       "divine_gender_polarity": "Divine Feminine",
       "relationship_to_free_will": "True Self Embodier",
-      "free_will_description": "Spiritual development that leads to an experience of the nondual nature of the Kosmos that allows the Adept to burn off karma, develop nonreactivity, break unhealthy and ineffective patterns, escape samsara and unbridle from determinism effectively.",
+      "free_will_description": "The part of you that chose to incarnate into these conditions. The part that has a purpose, a mission, a knowing that the personality cannot access through effort alone.",
       "manifestations": [
         {
           "phase": "Rising",
-          "integrated": {"name": "Focus", "description": "Attention that gathers on its own, allowed not forced."},
-          "shadow": {"name": "Hyperfocus", "description": "A tight, straining grip that constricts the body."}
+          "integrated": {"name": "Epiphany", "description": "Knowing that arrives whole, received rather than reasoned out."},
+          "shadow": {"name": "Delusion", "description": "Mistaking every passing thought for a message from the True Self."}
         },
         {
           "phase": "Peaking",
-          "integrated": {"name": "Concentration", "description": "Unified awareness recognized rather than achieved."},
-          "shadow": {"name": "Obsession", "description": "The subtle grasp of preferring the state to continue."}
+          "integrated": {"name": "Gnosis", "description": "Recognizing what you know the way you know your own name."},
+          "shadow": {"name": "Psychosis", "description": "The inner voice becoming the only voice, unmoored from shared reality."}
         },
         {
           "phase": "Withdrawal",
-          "integrated": {"name": "Adjustment", "description": "Spontaneous return, since noticing itself is presence."},
-          "shadow": {"name": "Stagnation", "description": "The false refuge of drifting under the guise of acceptance."}
+          "integrated": {"name": "Receptivity", "description": "Staying open and listening while the knowing goes quiet."},
+          "shadow": {"name": "Paranoia", "description": "Reading the silence as threat, abandonment, or hidden meaning."}
         },
         {
           "phase": "Diminishing",
-          "integrated": {"name": "Reorienting", "description": "Effortlessly letting awareness recalibrate the path."},
-          "shadow": {"name": "Dithering", "description": "Restlessly second-guessing without resting in any choice."}
+          "integrated": {"name": "Absorption", "description": "Going under, letting what you learned soak into the body."},
+          "shadow": {"name": "Horror", "description": "Recoiling from the depths as if what rises there were the enemy."}
         },
         {
           "phase": "Bottoming Out",
-          "integrated": {"name": "Settling", "description": "Resting as awareness itself with nothing to make happen."},
-          "shadow": {"name": "Depression", "description": "Settling that has lost trust the wave will turn upward."}
+          "integrated": {"name": "Metabolism", "description": "Letting the body digest what was taken in, out of sight."},
+          "shadow": {"name": "Despair", "description": "Digestion tipping into the belief that nothing ever mattered."}
         },
         {
           "phase": "Restoration",
-          "integrated": {"name": "Reset", "description": "Renewing presence spontaneously as energy returns."},
-          "shadow": {"name": "Addiction", "description": "Clinging to an old comfort instead of fresh re-engagement."}
+          "integrated": {"name": "Pattern-Seeking", "description": "Noticing the shape of the cycle you just lived through."},
+          "shadow": {"name": "Belief Salience", "description": "Hardening the pattern into doctrine and folding everything into it."}
         }
       ]
     },
@@ -382,33 +384,33 @@
       "manifestations": [
         {
           "phase": "Rising",
-          "integrated": {"name": "Ascending", "description": "The natural deepening that comes from sustained practice."},
-          "shadow": {"name": "Transcending", "description": "Spiritual bypass that escapes rather than includes life."}
+          "integrated": {"name": "Unification of Mind", "description": "Scattered attention gathering toward one point on its own."},
+          "shadow": {"name": "Worldly Desire", "description": "The gathering mind pulled off course by what it wants."}
         },
         {
           "phase": "Peaking",
-          "integrated": {"name": "Clarity", "description": "Seeing reality as it is, as lived truth not concept."},
-          "shadow": {"name": "Superiority", "description": "Using realization as proof you are better than others."}
+          "integrated": {"name": "Jhana", "description": "Stable, bright absorption you can rest in and see by."},
+          "shadow": {"name": "Bliss Addiction", "description": "Sitting for the state instead of in it, chasing the high."}
         },
         {
           "phase": "Withdrawal",
-          "integrated": {"name": "Discernment", "description": "Precise seeing of distinctions held with compassion."},
-          "shadow": {"name": "Judgment", "description": "Using clarity to condemn, dismiss, and reject others."}
+          "integrated": {"name": "Metta and Meditative Joy", "description": "Warmth and quiet gladness that stay as absorption loosens."},
+          "shadow": {"name": "Agitation Due to Worry or Remorse", "description": "The restless rerun after the high, auditing your whole life."}
         },
         {
           "phase": "Diminishing",
-          "integrated": {"name": "Humility", "description": "Recognizing you are always the student before the mystery."},
-          "shadow": {"name": "Humiliation", "description": "Collapsing into shame that you are not enough."}
+          "integrated": {"name": "Sustained Attention", "description": "Staying with the object, sit after sit, because you said you would."},
+          "shadow": {"name": "Doubt", "description": "The reasonable-sounding voice that asks whether any of this is real."}
         },
         {
           "phase": "Bottoming Out",
-          "integrated": {"name": "Devotion", "description": "Practicing because the practice itself is sacred."},
-          "shadow": {"name": "Dogma", "description": "Mistaking your tradition for the one true path."}
+          "integrated": {"name": "Pleasure", "description": "Resting in one small pleasant thing when practice feels dry."},
+          "shadow": {"name": "Aversion", "description": "Pushing against what is here and hardening the bottom."}
         },
         {
           "phase": "Restoration",
-          "integrated": {"name": "Recommitment", "description": "Choosing the path again out of love, not obligation."},
-          "shadow": {"name": "Righteousness", "description": "Wielding devotion as a badge to judge others."}
+          "integrated": {"name": "Directed Attention", "description": "Deliberately aiming the mind at the object to begin again."},
+          "shadow": {"name": "Laziness or Lethargy", "description": "Sitting without pointing, sinking into a fog that is not rest."}
         }
       ]
     },
@@ -422,35 +424,41 @@
       "growing_up_stage": "Pure Awareness",
       "divine_gender_polarity": "Divine Hermaphrodite",
       "relationship_to_free_will": "Whole Adept",
-      "free_will_description": "There is no longer an individual who can have Free Will. This body becomes a perfect instrument of the evolution of consciousness, an empty Nobody who simply does the perfect thing in every situation—the thing that will result in the most spiritual growth for all involved.",
+      "free_will_description": "At Clear Light, the question of Free Will dissolves. Not because it's been answered, but because it's been seen through.",
       "manifestations": [
         {
           "phase": "Rising",
+          "source": "app-authored",
           "integrated": {"name": "Riding", "description": "Letting momentum carry you while staying rooted."},
           "shadow": {"name": "Grasping", "description": "Clutching at the returning energy and believing the hype."}
         },
         {
           "phase": "Peaking",
+          "source": "app-authored",
           "integrated": {"name": "Gratitude", "description": "Enjoying the flow fully and letting it pass in time."},
           "shadow": {"name": "Attachment", "description": "Clinging to the peak instead of releasing it."}
         },
         {
           "phase": "Withdrawal",
+          "source": "app-authored",
           "integrated": {"name": "Trust", "description": "Letting go as the descent unfolds its natural rhythm."},
           "shadow": {"name": "Collapse", "description": "Reading the natural ebb as failure and falling apart."}
         },
         {
           "phase": "Diminishing",
+          "source": "app-authored",
           "integrated": {"name": "Patience", "description": "Knowing this too shall pass, having been here before."},
           "shadow": {"name": "Despair", "description": "Believing the trough is permanent and hopeless."}
         },
         {
           "phase": "Bottoming Out",
+          "source": "app-authored",
           "integrated": {"name": "Rest", "description": "Ceasing to fix it and letting the ground hold you."},
           "shadow": {"name": "Fixing", "description": "Straining to repair the bottom instead of resting."}
         },
         {
           "phase": "Restoration",
+          "source": "app-authored",
           "integrated": {"name": "Recommitment", "description": "Returning to the same practice, path, and truth again."},
           "shadow": {"name": "Novelty-Seeking", "description": "Chasing something new instead of the proven path."}
         }

@@ -14,9 +14,11 @@ instead of slipping through unnoticed.
 
 from __future__ import annotations
 
+import json
 import re
 from collections.abc import Awaitable, Callable
 from http import HTTPStatus
+from pathlib import Path
 from typing import cast
 
 import pytest
@@ -38,7 +40,7 @@ from rate_limit import (
     limiter,
     reset_ambient_limit,
 )
-from tests.helpers.openapi_errors import route_index
+from tests.helpers.openapi_errors import live_document, route_index
 
 _LIMIT_3 = 3
 _LIMIT_5 = 5
@@ -429,6 +431,11 @@ async def _put_corpus_consent(client: AsyncClient, headers: dict[str, str]) -> R
     return await client.put("/corpus/consent/journal", json={"granted": True}, headers=headers)
 
 
+async def _post_corpus_sweep(client: AsyncClient, headers: dict[str, str]) -> Response:
+    """Ask for one more bounded pass over the backlog, the consent route's resume."""
+    return await client.post("/corpus/sweep", headers=headers)
+
+
 # ── Per-endpoint limits pinned exactly ───────────────────────────────────
 
 
@@ -441,6 +448,7 @@ async def _put_corpus_consent(client: AsyncClient, headers: dict[str, str]) -> R
         (_get_content_body, _LIMIT_30),
         (_get_site_resource_body, _LIMIT_30),
         (_put_corpus_consent, _LIMIT_5),
+        (_post_corpus_sweep, _LIMIT_5),
     ],
     ids=[
         "post-practices-pinned-at-5-per-minute",
@@ -448,6 +456,7 @@ async def _put_corpus_consent(client: AsyncClient, headers: dict[str, str]) -> R
         "get-content-body-pinned-at-30-per-minute",
         "get-site-resource-body-pinned-at-30-per-minute",
         "put-corpus-consent-pinned-at-5-per-minute",
+        "post-corpus-sweep-pinned-at-5-per-minute",
     ],
 )
 async def test_per_endpoint_rate_limit_pinned(
@@ -462,6 +471,26 @@ async def test_per_endpoint_rate_limit_pinned(
         return await make_request(async_client, headers)
 
     await _assert_limit_pinned(send, limit)
+
+
+@pytest.mark.asyncio
+async def test_corpus_sweep_budget_is_the_accounts_own(async_client: AsyncClient) -> None:
+    """``POST /corpus/sweep`` is limited per account, not per address.
+
+    Two accounts behind one address: the first spends its whole budget and is
+    refused, and the second is still admitted -- a shared NAT does not make one
+    person's backlog wait on another's.
+    """
+    first = await _signup(async_client, "sweeper-one")
+    second = await _signup(async_client, "sweeper-two")
+
+    async def send() -> Response:
+        return await _post_corpus_sweep(async_client, first)
+
+    await _assert_limit_pinned(send, _LIMIT_5)
+    admitted = await _post_corpus_sweep(async_client, second)
+
+    assert admitted.status_code == HTTPStatus.OK, admitted.text
 
 
 # ── Auth rate limits unchanged ───────────────────────────────────────────
@@ -777,12 +806,13 @@ async def test_a_decorated_route_still_refuses_at_its_own_tighter_limit(
     assert responses[_LIMIT_5].status_code == HTTPStatus.TOO_MANY_REQUESTS
 
 
-# The 31 limits declared with ``@limiter.limit``, frozen. This table is the
+# The 38 limits declared with ``@limiter.limit``, frozen. This table is the
 # ratchet for #2909: the ambient floor was added *underneath* these, and the
 # one way that change could do harm is by disturbing one of them. Reading it
 # back from the limiter proves the decorators registered what the source says,
 # which a grep over the router modules could not.
 _DECLARED_ROUTE_LIMITS: dict[str, tuple[str, ...]] = {
+    "routers.admin.adjust_user_balance": ("10 per 1 minute",),
     "routers.admin.grant_entitlement": ("10 per 1 minute",),
     "routers.admin.revoke_entitlement": ("10 per 1 minute",),
     "routers.admin_feedback.act_on_feedback_report": ("60 per 1 minute",),
@@ -799,6 +829,8 @@ _DECLARED_ROUTE_LIMITS: dict[str, tuple[str, ...]] = {
     "routers.botmason.add_balance": ("5 per 1 minute",),
     "routers.corpus.import_corpus_document": ("20 per 1 minute",),
     "routers.corpus.put_corpus_consent": ("5 per 1 minute",),
+    # The resume a repeated consent grant used to be, keyed per account (#3498).
+    "routers.corpus.run_corpus_sweep": ("5 per 1 minute",),
     "routers.course.get_content_body": ("30 per 1 minute",),
     "routers.course.get_site_resource_body": ("30 per 1 minute",),
     "routers.course.get_stage_intro_body": ("30 per 1 minute",),
@@ -808,6 +840,14 @@ _DECLARED_ROUTE_LIMITS: dict[str, tuple[str, ...]] = {
     "routers.journal.list_journal_entries": ("30 per 1 minute",),
     "routers.journal.list_voice_drafts": ("30 per 1 minute",),
     "routers.journal.run_resonance": ("10 per 1 minute",),
+    # The vault-agent consent page's sign-in form gets login's budget, and
+    # anonymous client registration a per-address hourly one (#3532).
+    "routers.oauth.authorize_sign_in": ("5 per 1 minute",),
+    "routers.oauth.register_oauth_client": ("20 per 1 hour",),
+    # The token endpoint and revocation bound load per address; the secrets
+    # they read are 256 bits, so neither budget is about guessing (#3533).
+    "routers.oauth_tokens.exchange_token": ("60 per 1 minute",),
+    "routers.oauth_tokens.revoke": ("30 per 1 minute",),
     "routers.practice_share.create_share_link": ("10 per 1 hour",),
     "routers.practice_share.import_share_link": ("30 per 1 hour",),
     "routers.practice_share.preview_share_link": ("30 per 1 hour",),
@@ -817,6 +857,9 @@ _DECLARED_ROUTE_LIMITS: dict[str, tuple[str, ...]] = {
     # Per address and per account: an uncharged unusable read (#2851) must not
     # be buyable by rotating addresses.
     "routers.transcription.transcribe_page": ("20 per 1 minute", "20 per 1 minute"),
+    # The content-free admission a device asks before a client-direct page read
+    # (#3067) keeps the page-read budget it replaced.
+    "routers.transcription.direct_admission": ("20 per 1 minute", "20 per 1 minute"),
 }
 
 # One sentinel for every ``{param}`` segment. The coverage guard below only
@@ -825,14 +868,21 @@ _DECLARED_ROUTE_LIMITS: dict[str, tuple[str, ...]] = {
 _PATH_PARAM_SENTINEL = "1"
 _PATH_PARAM = re.compile(r"\{[^}]+\}")
 
-# 155 mounted ``APIRoute``s share 129 distinct paths. Pinned so a future router
-# that collapses the walk (the failure mode #2909 itself was) fails here rather
-# than quietly guarding fewer paths than it claims.
-_DISTINCT_MOUNTED_PATHS = 129
+_MOUNTED_PATHS_FIXTURE = Path(__file__).parent / "fixtures" / "rate_limit_mounted_paths.json"
+
+
+def _expected_mounted_paths() -> set[str]:
+    """Load the reviewed inventory independently of both live route producers.
+
+    Each feature adds its path explicitly. A collapsed walker or OpenAPI render
+    cannot silently shrink the asserted surface, and parallel additions compose
+    as individual fixture lines instead of competing edits to one numeric pin.
+    """
+    return set(json.loads(_MOUNTED_PATHS_FIXTURE.read_text(encoding="utf-8")))
 
 
 def test_every_declared_route_limit_matches_the_frozen_table() -> None:
-    """The 31 declared limits: the 27 from before the ambient floor, #2900's three, and #2865's.
+    """The 38 declared limits, including the audited admin wallet correction.
 
     Also a tripwire for the one regression the new layer could hide: slowapi's
     ``@limiter.exempt`` and ``request_filter`` escape hatches govern the
@@ -852,7 +902,7 @@ async def test_every_mounted_path_is_charged_to_the_ambient_budget(
     """Every distinct mounted path is charged, not merely the three app-level ones.
 
     Deliberately iterates distinct *paths* with a reset between them rather than
-    routes: 155 routes share 129 paths, the ambient bucket is keyed per path,
+    routes: several methods can share a path, the ambient bucket is keyed per path,
     and a per-route walk would see the second and third method on a shared path
     charged to a bucket the first already spent.
     """
@@ -860,7 +910,9 @@ async def test_every_mounted_path_is_charged_to_the_ambient_budget(
     for method, path in route_index():
         by_path.setdefault(path, method)
 
-    assert len(by_path) == _DISTINCT_MOUNTED_PATHS
+    expected_paths = _expected_mounted_paths()
+    assert set(by_path) == expected_paths
+    assert set(live_document()["paths"]) == expected_paths
 
     for path, method in sorted(by_path.items()):
         reset_ambient_limit()

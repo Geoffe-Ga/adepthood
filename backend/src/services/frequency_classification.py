@@ -62,13 +62,14 @@ from dataclasses import dataclass
 from types import MappingProxyType
 
 from domain.frequencies import Frequency, frequency_table
-from models.journal_entry import JournalClassification
+from domain.privacy_tier import admits_egress
 from services.botmason import (
     LLMCreditExhaustedError,
     LLMProviderError,
     LLMResponse,
     generate_response,
 )
+from services.reflection_boundary import ReflectionBoundary, require_app_provider_boundary
 
 logger = logging.getLogger(__name__)
 
@@ -77,10 +78,10 @@ logger = logging.getLogger(__name__)
 # A distinct event name rather than another `_degraded` reason, because it is a
 # distinct kind of fact: `frequency_classification_degraded` records that one
 # piece of writing was not placed, and this records that nothing will be until
-# an operator acts. It is WARNING for the same reason
-# ``botmason.credit_exhausted_error`` logs the server-key branch at WARNING --
-# this path never threads a caller's own key, so the only person who can settle
-# the bill is reading server logs.
+# an operator acts. It is WARNING because the corpus path never threads a
+# caller's own key, so nobody downstream of this line is told; since ADR 0009
+# phase (a) (#3067) a keyless call reaches no vendor at all, so this fires only
+# on the select path that does thread the caller's key.
 CREDIT_EXHAUSTED_EVENT = "frequency_classification_credit_exhausted"
 
 # The per-fragment cost ceiling, in characters of input.
@@ -130,11 +131,14 @@ and an overall_confidence of 0.0."""
 
 
 class IntimateContentRefusedError(Exception):
-    """Raised when classification is asked for INTIMATE-tier content.
+    """Raised when classification is asked for content whose tier may not egress.
 
-    Not a degradation. Reaching this means a caller tried to route the most
-    sensitive tier to a cloud provider, which is a defect in the caller, so it
-    is raised loudly enough to fail a test rather than logged and forgotten.
+    Named for INTIMATE, the tier it was written for, but since #3059 raised for
+    *any* tier outside :data:`domain.privacy_tier.EGRESS_ELIGIBLE_TIERS` --
+    intimate, unknown, empty or wrongly spelled alike. Not a degradation.
+    Reaching this means a caller tried to route a tier that may not egress to
+    a cloud provider, which is a defect in the caller, so it is raised loudly
+    enough to fail a test rather than logged and forgotten.
     """
 
 
@@ -272,9 +276,16 @@ def _degraded(reason: str) -> FrequencyClassification:
 
 
 async def _reply_within(
-    content: str, *, api_key: str | None, timeout_seconds: float | None
+    content: str,
+    *,
+    boundary: ReflectionBoundary,
+    api_key: str | None,
+    timeout_seconds: float | None,
 ) -> LLMResponse:
     """Ask the provider for a classification, abandoning it at the bound.
+
+    The boundary gate is the first statement, in the same function as the dial,
+    so the structural chokepoint test can see that this dial is gated (#3156).
 
     ``asyncio.wait_for`` cancels the *whole* call, so a caller's bound covers
     the retries and the backoff sleeps inside it as well as the attempt in
@@ -284,6 +295,7 @@ async def _reply_within(
     a cancellation mid-statement would take the caller's open transaction with
     it and lose the fragments already written.
     """
+    require_app_provider_boundary(boundary)
     call = generate_response(
         user_message=content[:MAX_FRAGMENT_CHARS],
         conversation_history=[],
@@ -311,14 +323,17 @@ def _classification_of(response: LLMResponse) -> FrequencyClassification:
 async def classify_frequencies(
     content: str,
     *,
-    classification: JournalClassification,
+    classification: str,
+    boundary: ReflectionBoundary,
     api_key: str | None = None,
     timeout_seconds: float | None = None,
 ) -> FrequencyClassification:
-    """Classify ``content`` into the frequency ontology.
+    """Classify ``content`` into the frequency ontology, on the app provider.
 
-    Raises :class:`IntimateContentRefusedError` for INTIMATE content, before any
-    provider call is constructed, and re-raises
+    Raises :class:`IntimateContentRefusedError` for any tier that is not
+    egress-eligible (intimate, unknown, empty -- see
+    :func:`domain.privacy_tier.admits_egress`), before any provider call is
+    constructed, and re-raises
     :class:`services.botmason.LLMCreditExhaustedError` after logging which
     provider refused. Every other failure -- no key, a transient provider
     failure, a timeout, a malformed reply, a code outside the ontology --
@@ -331,6 +346,18 @@ async def classify_frequencies(
     single piece of writing may treat it as :data:`UNCLASSIFIED` and lose
     nothing by doing so.
 
+    ``boundary`` is the caller's resolved
+    :class:`~services.reflection_boundary.ReflectionBoundary`, required and with
+    no default so that no caller can reach the provider by omission (#3156).
+    This classifier *is* the app provider, so under
+    :attr:`~services.reflection_boundary.ReflectionBoundary.VAULT_BOUND` it
+    raises :class:`~services.reflection_boundary.AppProviderRefusedError` before
+    any dial: a caller with a vault-bound writer answers its own honest refusal
+    first (:func:`services.corpus_ingest.ingest_content`) or asks the vault
+    (:func:`services.frequency_source.select_frequency_classification`), so
+    reaching here vault-bound is a missing check, never a fallback. The tier
+    refusal still comes first, ahead of the boundary.
+
     ``api_key`` is the caller's own key (BYOK), threaded to
     :func:`services.botmason.generate_response` exactly as the chat path does;
     ``None`` falls back to the server-side key.
@@ -341,10 +368,12 @@ async def classify_frequencies(
     default, and what every interactive write passes -- leaves the provider
     layer's own timeout and retry budget in charge.
     """
-    if classification is JournalClassification.INTIMATE:
+    if not admits_egress(classification):
         raise IntimateContentRefusedError
     try:
-        response = await _reply_within(content, api_key=api_key, timeout_seconds=timeout_seconds)
+        response = await _reply_within(
+            content, boundary=boundary, api_key=api_key, timeout_seconds=timeout_seconds
+        )
     except LLMCreditExhaustedError as exc:
         # Ordered ahead of the base type or it would never be reached: the
         # subclass exists precisely so this condition keeps its identity past a

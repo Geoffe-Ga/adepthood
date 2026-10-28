@@ -82,6 +82,13 @@ export const SKIPPED: readonly SkippedRoute[] = [
     name: 'Voice transcription (VoiceDrafts)',
     reason: 'a paid transcription; the shelf is censused, no draft is transcribed',
   },
+  {
+    name: 'CorpusSweep',
+    reason:
+      'its Settings row shows only under a standing yes to sorting with writing still ' +
+      'unsorted (#3499); the walking account has neither, and granting would send its ' +
+      'writing to the provider -- the screen is pinned by CorpusSweepScreen.test.tsx',
+  },
 ];
 
 const SEEDED_HABITS = [
@@ -191,7 +198,7 @@ export async function seedCensusAccount(
  * with no address an account may see. The app reads it as unknown, which keeps
  * the seeding picker (#3017).
  */
-const MANAGED_VAULT_CONNECTION = { connected: true, vault_url: null } as const;
+const MANAGED_VAULT_CONNECTION = { connected: true, vault_url: null, mcp_address: null } as const;
 
 const goTo = async (page: Page, path: string): Promise<void> => {
   await page.goto(`${frontendUrl()}${path}`);
@@ -233,9 +240,19 @@ const settingsRow = (name: string, label: string, row: string, anchor: string): 
 
 export const ROUTES: readonly Route[] = [
   tab('Journal', 'Journal shelf', '/journal', 'journal-shelf'),
+  tab('Prompts', 'Prompts', '/prompts', 'journal-notification-center'),
   tab('Habits', 'Habits grid', '/habits', 'habits-list'),
   tab('Practice', 'Practice player', PRACTICE_PATH, 'practice-screen'),
-  tab('Course', 'Course reader', '/course', 'content-list'),
+  {
+    name: 'Course',
+    label: 'Course reader',
+    anchor: 'content-list',
+    open: async (page) => {
+      await goTo(page, '/course');
+      // The bare tab opens Start Here; retain the Frequency chapter-list census.
+      await page.getByTestId('stage-pill-1').click();
+    },
+  },
   tab('Map', 'Map', '/map', 'journey-read'),
   {
     name: 'JournalEntry',
@@ -260,17 +277,43 @@ export const ROUTES: readonly Route[] = [
   settingsRow('TimezoneSettings', 'Timezone settings', 'timezone', 'timezone-settings-screen'),
   settingsRow('VaultSettings', 'Vault settings', 'vault', 'vault-settings-screen'),
   {
+    // The lane enrols user ids 1..100 in the managed-vault pilot (the backend
+    // caps the list at 100), and every spec signs up its own accounts, so the
+    // walking account's id depends on how many specs ran first. Once it passes
+    // 100 the server rightly answers "not in the pilot" and the offer never
+    // renders. The census measures this screen's text, not the pilot gate, so
+    // for this one open the activation read keeps the real response but
+    // answers it as open to a new activation; both the Vault settings read and
+    // the activation screen's own read are awaited, and the pin is removed in
+    // `finally`. The gate itself is covered unstubbed by the vault specs.
     name: 'VaultActivation',
     label: 'Managed vault activation',
     anchor: 'private-vault-activation-screen',
     open: async (page) => {
-      await throughSettings(page, 'settings-row-vault');
-      await page.getByTestId('open-vault-activation').click();
+      const pattern = `${backendUrl()}/vault/activation`;
+      const isActivationRead = (response: PlaywrightResponse): boolean =>
+        response.url() === pattern && response.request().method() === 'GET';
+      await page.route(pattern, async (route) => {
+        if (route.request().method() !== 'GET') return route.fallback();
+        const response = await route.fetch();
+        const real = (await response.json()) as Record<string, unknown>;
+        return route.fulfill({ response, json: { ...real, new_activation_available: true } });
+      });
+      try {
+        const settingsRead = page.waitForResponse(isActivationRead);
+        await throughSettings(page, 'settings-row-vault');
+        await settingsRead;
+        const screenRead = page.waitForResponse(isActivationRead);
+        await page.getByTestId('open-vault-activation').click();
+        await screenRead;
+      } finally {
+        await page.unroute(pattern);
+      }
     },
   },
   {
     // The walking account has no vault, so since #3017 the hub's seed row
-    // opens Where your corpus lives and the screen shows an invitation in
+    // opens Where your writing lives and the screen shows an invitation in
     // place of its picker. To keep measuring the picker, the vault read is
     // answered with the managed shape (connected, no address -- which reads
     // unknown) for this one open only: the real response is still fetched so
@@ -361,4 +404,35 @@ export const ROUTES: readonly Route[] = [
 export async function openRoute(page: Page, route: Route, context: WalkContext): Promise<void> {
   await route.open(page, context);
   await expect(page.getByTestId(route.anchor).first()).toBeVisible();
+  await settleLens(page, route);
+}
+
+/** The Map's magnifier lens, which glides onto the current stage once the grid has measured. */
+const LENS_TEST_ID = 'map-magnifier';
+/** The one walked route that draws the lens. */
+const LENS_ROUTE = 'Map';
+
+/**
+ * On the Map, wait for the lens to come to rest: it glides from where the
+ * unmeasured grid first put it to the current stage's measured anchor, and a
+ * frame taken in flight would hold its caption against text it is only
+ * passing over. Every other route has no lens and returns at once.
+ *
+ * The lens mounts only once the grid has a measured size, which can come after
+ * the route's anchor is visible, so the Map waits for it to mount rather than
+ * reading once whether it is there yet (#3481).
+ */
+async function settleLens(page: Page, route: Route): Promise<void> {
+  if (route.name !== LENS_ROUTE) return;
+  const lens = page.getByTestId(LENS_TEST_ID);
+  await expect(lens).toHaveCount(1);
+  let resting = '';
+  await expect
+    .poll(async () => {
+      const box = JSON.stringify(await lens.boundingBox());
+      const settled = box === resting;
+      resting = box;
+      return settled;
+    })
+    .toBe(true);
 }

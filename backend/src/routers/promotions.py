@@ -29,6 +29,7 @@ from error_responses import build_router
 from errors import not_found, unprocessable
 from models.journal_entry import JournalEntry, JournalTag
 from models.promoted_quote import PROMOTED_QUOTE_TEXT_MAX, PromotedQuote
+from observability import route_template
 from rate_limit import limiter
 from routers.auth import get_current_user
 from schemas.pagination import DEFAULT_PAGE_SIZE, MAX_PAGE_SIZE, count_query_total, page_has_more
@@ -41,10 +42,11 @@ from schemas.promotion import (
     PromotionUpdate,
 )
 from security import TextTooLongError, sanitize_user_text
+from services.journal_withdrawal_obligation import refuse_if_deletion_pending
 
 logger = logging.getLogger(__name__)
 
-router = build_router(tags=["promotions"])
+router = build_router(tags=["promotions"], extra_statuses=(status.HTTP_409_CONFLICT,))
 
 # A list read, limited like the journal list it sits beside (#2865).
 LIST_PROMOTIONS_RATE_LIMIT = "30/minute"
@@ -98,6 +100,7 @@ async def promote_quote(
     soft-deleted, or foreign entry all resolve to 404). The span is sliced and
     snapshotted server-side, so the quote starts life pending (unfolded).
     """
+    await refuse_if_deletion_pending(session, entry)
     anchor_text = _slice_anchor_text(entry, payload)
     quote = PromotedQuote(
         user_id=current_user,
@@ -314,7 +317,11 @@ async def list_all_promotions(
     # keeps the read observable beside the write events above.
     logger.info(
         "promoted_quotes_listed",
-        extra={"user_id": current_user, "status": params.status.value, "path": request.url.path},
+        extra={
+            "user_id": current_user,
+            "status": params.status.value,
+            "path": route_template(request),
+        },
     )
     return PromotedQuoteListResponse(
         items=[_list_item(*row) for row in page.all()],

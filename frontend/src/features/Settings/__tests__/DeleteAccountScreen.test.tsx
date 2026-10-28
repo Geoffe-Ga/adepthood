@@ -1,6 +1,6 @@
 /* eslint-env jest */
 /* global describe, test, expect, beforeEach, jest */
-import { fireEvent, render, waitFor } from '@testing-library/react-native';
+import { fireEvent, render, waitFor, within } from '@testing-library/react-native';
 import React from 'react';
 
 import DeleteAccountScreen from '../DeleteAccountScreen';
@@ -59,6 +59,19 @@ describe('DeleteAccountScreen', () => {
     expect(warning).toContain('no grace period');
   });
 
+  test('says a backup taken before the deletion still holds a copy until it ages out', () => {
+    setAuthState();
+
+    const { getByTestId } = render(<DeleteAccountScreen />);
+
+    // The day count is derived from DEPLOYMENT.md's backup table and pinned by
+    // backend/tests/test_deletion_backup_copy.py; this pins that it is said here.
+    const warning = getByTestId('delete-account-warning').props.children as string;
+    expect(warning).toContain('Backups made before you delete still hold a copy');
+    expect(warning).toContain('on our backup schedule');
+    expect(warning).not.toContain('nothing left to restore');
+  });
+
   test('lists both what is erased and what deliberately survives', () => {
     setAuthState();
 
@@ -66,6 +79,24 @@ describe('DeleteAccountScreen', () => {
 
     expect(getByTestId('delete-account-erased')).toBeTruthy();
     expect(getByTestId('delete-account-retained')).toBeTruthy();
+  });
+
+  test('says a linked purchase receipt stays without the email address on it', () => {
+    setAuthState();
+
+    const { getByTestId } = render(<DeleteAccountScreen />);
+
+    // Deletion blanks the email on every sale linked to the account and keeps
+    // the receipt; only a sale never linked to an account keeps its address
+    // (backend services/account_deletion.py, _anonymise_linked_sales).
+    const retained = within(getByTestId('delete-account-retained'))
+      .getAllByText(/^• /)
+      .map((node) => node.props.children as string);
+    const receipt = retained.find((line) => line.includes('Purchase receipts stay'));
+    expect(receipt).toBeDefined();
+    expect(receipt).toContain('the email address is removed from every purchase linked to');
+    expect(receipt).toContain('never linked to any account keeps its address');
+    expect(receipt).not.toContain('including the address on them');
   });
 
   test('refuses to call the API until a confirmation is typed', async () => {
@@ -103,6 +134,21 @@ describe('DeleteAccountScreen', () => {
     expect(getByTestId('delete-account-vault-guidance').props.children).toBe(
       RECEIPT.vault.guidance,
     );
+  });
+
+  test('the receipt says the live service is clear and backups age out, not that nothing remains', async () => {
+    setAuthState();
+    mockDeleteMyAccount.mockResolvedValue(RECEIPT);
+    const { getByTestId } = render(<DeleteAccountScreen />);
+
+    fireEvent.changeText(getByTestId('delete-account-email-input'), 'writer@example.com');
+    fireEvent.press(getByTestId('delete-account-submit'));
+
+    await waitFor(() => expect(getByTestId('delete-account-receipt-summary')).toBeTruthy());
+    const summary = getByTestId('delete-account-receipt-summary').props.children as string;
+    expect(summary).toContain(`We removed ${RECEIPT.rows_erased} records belonging to you`);
+    expect(summary).toContain('On our backup schedule, backups made before now age out');
+    expect(summary).not.toContain('nothing left to restore');
   });
 
   test('clears the local session only once the server has confirmed', async () => {
@@ -151,7 +197,7 @@ describe('DeleteAccountScreen — navigation owns the title (#2962)', () => {
     const screen = render(<DeleteAccountScreen />);
     const warning = screen.getByTestId('delete-account-warning');
     expect(warning.props.children).toMatch(
-      /^Deleting your account is immediate and irreversible\./,
+      /^Deleting your account removes it from Adepthood immediately and is irreversible\./,
     );
     expect(warning.props.accessibilityRole).toBeUndefined();
     expect(screen.queryAllByRole('header')).toHaveLength(0);

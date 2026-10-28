@@ -18,13 +18,13 @@ In earlier stages, behavior was reactive (Beige), archetypal (Purple), shame-dri
 
 And compared to where you've been, it is.
 
-But APTITUDE asks you to look closer. Because while Orange grants you agency, it doesn't grant you true autonomy—not yet. The archetype that emerges here is the **Status Seeker**. And the Status Seeker's choices, while more sophisticated than the Dominator's or the Victim's, are still fundamentally conditioned by *what the culture values*.
+But APTITUDE asks you to look closer. Because while Orange grants you agency, it doesn't grant you true autonomy—not yet. The archetype that emerges here is the **Status Seeker**. And the Status Seeker's choices, for all their strategy, are still conditioned by *what the culture values*—the way the Dominator's are conditioned by threat and the Victim's by the group. A longer leash is still a leash.
 
 You're chasing things: money, prestige, recognition, achievement. And you believe you're choosing these things freely. But are you? Or are you just executing the programming of a meritocratic, capitalist, hyper-individualist society that told you from birth that your worth is measured by what you accomplish?
 
 At Orange, Free Will is still uninteresting. You're too busy achieving to question whether achievement itself is the right metric. You're optimizing without asking whether you're optimizing the right things.
 
-The Status Seeker is not evil. They're not even wrong. They're just… incomplete. They've figured out how to play the game, but they haven't yet asked whether the game is worth playing. They're free to pursue their goals, but they're not free *from* the need to pursue them.
+The Status Seeker isn't evil. It isn't even wrong. It's a capacity running the show by itself—it knows how to play the game and hasn't thought to ask whether the game is worth playing. It's free to pursue its goals, but it isn't free *from* the need to pursue them.
 
 This is the paradox of Orange: it gives you competence and agency, but it doesn't give you meaning. It teaches you *how* to achieve, but not *why* it matters. And so you achieve, and achieve, and achieve—and somehow it's never enough. The goalpost keeps moving. The dopamine hit gets smaller. The hunger grows.
 

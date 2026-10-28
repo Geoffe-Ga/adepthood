@@ -243,7 +243,7 @@ describe('a multi-document run', () => {
     });
 
     await waitFor(() => {
-      expect(statuses(result.current.items)).toEqual(['ingested', 'failed', 'ingested']);
+      expect(statuses(result.current.items)).toEqual(['ingested', 'unconfirmed', 'ingested']);
     });
   });
 
@@ -289,7 +289,13 @@ describe('a multi-document run', () => {
     });
 
     expect(result.current.items.map((item) => item.name)).toEqual(['one.md', 'two.md']);
-    expect(result.current.tally).toEqual({ total: 2, landed: 2, waiting: 0, refused: 0 });
+    expect(result.current.tally).toEqual({
+      total: 2,
+      landed: 2,
+      waiting: 0,
+      refused: 0,
+      unconfirmed: 0,
+    });
   });
 
   test('lands a document in the corpus for an account that has no vault', async () => {
@@ -305,7 +311,13 @@ describe('a multi-document run', () => {
     });
 
     expect(statuses(result.current.items)).toEqual(['in_corpus']);
-    expect(result.current.tally).toEqual({ total: 1, landed: 1, waiting: 0, refused: 0 });
+    expect(result.current.tally).toEqual({
+      total: 1,
+      landed: 1,
+      waiting: 0,
+      refused: 0,
+      unconfirmed: 0,
+    });
     expect(mockFetch.mock.calls[0][0]).toBe('http://test/corpus/import');
     expect(result.current.needsConsent).toBe(false);
   });

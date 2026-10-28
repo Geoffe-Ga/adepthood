@@ -12,7 +12,7 @@ media: []
 
 ## The Practice of Ultraviolet: Cultivating Samatha Jhanas
 
-Ultraviolet's practice is the most advanced formal meditation in the APTITUDE sequence: **Cultivating the Samatha Jhanas**.
+Ultraviolet's practice asks for the most scaffolding of any sit in the APTITUDE sequence: **Cultivating the Samatha Jhanas**.
 
 The jhanas (or dhyanas in Sanskrit) are eight progressive states of meditative absorption described in the Pali Canon. They're accessed through sustained concentration (samatha) and they represent the deepening of the mind's capacity to unify, stabilize, and enter into blissful, luminous awareness.
 
@@ -144,7 +144,7 @@ Immediately after a jhana sit, take 5-10 minutes to journal. Not long analysis�
 
 - How long did you sit?
 - What phase did you reach? (Access concentration? First jhana? Deeper?)
-- What were the dominant phenomenological features?
+- What did it feel like—in the body, in time, in the texture of attention?
 - What helped you enter? What pulled you out?
 - How do you feel now, post-practice?
 
@@ -154,13 +154,13 @@ This is how you learn your own system. Jhana practice is not one-size-fits-all. 
 
 **Why the Jhanas?**
 
-Because they prove—experientially—that consciousness is trainable. That bliss, clarity, and equanimity are not accidents. They're *accessible*. And when you've tasted them repeatedly, your baseline shifts. You start to live from a place of inner resource that doesn't depend on external conditions.
+Because they prove—experientially—that consciousness is trainable. That bliss, clarity, and equanimity are not accidents. They're *accessible*. And when you've tasted them repeatedly, something in you remembers the way. Not an inner resource that never runs dry—bad weeks still come—but a place you know how to walk back to.
 
 The jhanas are also the foundation for insight. Culadasa, Leigh Brasington, and countless others emphasize: stable concentration is what allows you to *see* the three characteristics (impermanence, suffering, non-self) clearly enough for awakening to occur.
 
 Without concentration, insight is just intellectual. With concentration, insight is *liberating*.
 
-This is the work of Ultraviolet. Deep. Rigorous. Transformative.
+This is the work of Ultraviolet: sitting long enough, often enough, that the mind learns to settle on its own.
 
 **Common Challenges and How to Work With Them:**
 

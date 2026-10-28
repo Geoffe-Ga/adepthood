@@ -130,6 +130,11 @@ const SCHEMA_VERDICTS: Readonly<Record<string, SchemaVerdict>> = {
         'Optional for the same reason as mode, and read only through the mode discriminator, which is itself absent on pre-mode payloads.',
     },
   },
+  vaultKeyVendorSchema: {
+    component: 'VaultKeyProvider',
+    reason:
+      'The client names the value by what it means to a writer (the vendor of their own key) while the server names the domain enum it validates against; mapping it pins the two vendors to the published set (#3437).',
+  },
   relatedPraxisKindSchema: {
     component: 'VaultPraxisKind',
     reason:
@@ -146,6 +151,11 @@ const SCHEMA_VERDICTS: Readonly<Record<string, SchemaVerdict>> = {
     component: null,
     reason:
       'The routing kind is an inline enum inside CareResourceResponse, not a named component; the client hoists it so the four remedies can be exhaustively handled.',
+  },
+  copyLocationSchema: {
+    component: null,
+    reason:
+      'An inline enum inside JournalErasureReceipt rather than a named component; hoisted so the receipt copy can map every location the server can name (#3094).',
   },
   dataExportArchiveSchema: {
     component: null,
@@ -290,6 +300,12 @@ function literalType(value: unknown): string {
 function leafTypes(node: JsonSchemaNode): string[] {
   if (typeof node.type === 'string') {
     return [node.type];
+  }
+  // JSON Schema 2020-12 also allows a type list. Zod >= 4.6 emits a nullable
+  // field as ``type: ["string", "null"]`` rather than an ``anyOf`` of two
+  // leaves, so the list is the same set of leaf types the union would give.
+  if (Array.isArray(node.type)) {
+    return node.type as string[];
   }
   if (Array.isArray(node.enum)) {
     return (node.enum as unknown[]).map(literalType);

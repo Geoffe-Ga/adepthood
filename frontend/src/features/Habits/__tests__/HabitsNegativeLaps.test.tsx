@@ -123,12 +123,11 @@ jest.mock('../components/AddHabitModal', () => ({
 }));
 jest.mock('../components/GoalModal', () => () => null);
 jest.mock('../components/HabitSettingsModal', () => () => null);
-jest.mock('../components/MissedDaysModal', () => () => null);
 jest.mock('../components/OnboardingModal', () => () => null);
 jest.mock('../components/ReorderHabitsModal', () => () => null);
-jest.mock('../components/StatsModal', () => ({
+jest.mock('../story/HabitStorySheet', () => ({
   __esModule: true,
-  default: jest.fn(() => null),
+  HabitStorySheet: jest.fn(() => null),
 }));
 
 const { habits: habitsApi } = require('../../../api');
@@ -326,7 +325,7 @@ describe('Habits screen negative carryover laps', () => {
     expect(fill.props.style.backgroundColor).toBe(brightenColor(accent.primary));
     const achieved = tile
       .findAllByType(Text)
-      .find((node: any) => String(node.props.children ?? '').includes('ACHIEVED TODAY'));
+      .find((node: any) => String(node.props.children ?? '').includes('KEPT TODAY'));
     const streakStyle = Array.isArray(achieved.props.style)
       ? Object.assign({}, ...achieved.props.style)
       : achieved.props.style;
@@ -354,7 +353,7 @@ describe('Habits screen negative carryover laps', () => {
     expect(tileBorderAt(tree, 0)).toBe(accentDark.primary);
     const achieved = uniqueTiles(tree)[0]
       .findAllByType(Text)
-      .find((node: any) => String(node.props.children ?? '').includes('ACHIEVED TODAY'));
+      .find((node: any) => String(node.props.children ?? '').includes('KEPT TODAY'));
     const streakStyle = Array.isArray(achieved.props.style)
       ? Object.assign({}, ...achieved.props.style)
       : achieved.props.style;

@@ -19,7 +19,7 @@ from models.vault_activation import VaultActivation, VaultActivationState
 from schemas.vault_activation import CreekConnectionHandoff
 from schemas.vault_config import credential_is_usable
 from services.creek_provisioning_client import handoff_bearer_is_valid
-from services.creek_vault_url import classify_vault_url
+from services.creek_vault_url import classify_vault_url, vault_base_url
 from services.email import (
     EmailDeliveryError,
     EmailMessagePayload,
@@ -99,7 +99,9 @@ async def _validated_handoff(
         payload.consumer_credential
     ):
         raise bad_request("invalid_provisioning_handoff")
-    return payload
+    # Creek hands over its route with ``/v1`` attached; storing the base keeps a
+    # redelivery equal to the stored row and the client's paths single-prefixed.
+    return payload.model_copy(update={"vault_url": vault_base_url(payload.vault_url)})
 
 
 async def _validated_fleet_alert(

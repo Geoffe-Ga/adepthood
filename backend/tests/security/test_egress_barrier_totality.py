@@ -97,7 +97,7 @@ DETACHED_ENTRY_POINTS: Mapping[str, Site] = {
 #: the exact failure mode this gate exists to make impossible. The number is the
 #: measured site count, and it is meant to be raised when a real site is added,
 #: never lowered to make a run go green.
-_MINIMUM_DERIVED_ROUTES = 9
+_MINIMUM_DERIVED_ROUTES = 10
 
 #: Routes that hand this account's *stored* content outward -- to a vault, to a
 #: language model, or to both -- and therefore take the per-account egress
@@ -108,11 +108,14 @@ BARRIERED: frozenset[_Route] = frozenset(
         ("POST", "/journal/"),
         ("PATCH", "/journal/{entry_id}"),
         ("DELETE", "/journal/{entry_id}"),
+        ("POST", "/journal/{entry_id}/erase-locally"),
         ("POST", "/journal/{entry_id}/resonance"),
         ("POST", "/journal/{entry_id}/suggestions/detect"),
         ("POST", "/journal/marginalia/{marginalia_id}/essay"),
         ("POST", "/corpus/import"),
         ("PUT", "/corpus/consent/{source}"),
+        ("POST", "/corpus/sweep"),
+        ("GET", "/invitations"),
     }
 )
 
@@ -124,10 +127,15 @@ EXCLUSIONS: Mapping[_Route, str] = {
         "read-only dial: select_wheel_balance fetches a wheel and transmits no "
         "stored adepthood content, so a late call after erasure exposes nothing"
     ),
-    ("GET", "/invitations"): (
-        "read-only dial: generate_invitation_signals reads signals and transmits "
-        "no stored adepthood content, and it is a parallel app-load fetch that a "
-        "per-account exclusive lock would serialize for no confidentiality gain"
+    ("GET", "/user/vault-key-vendors"): (
+        "read-only dial: the capability handshake asks the vault which vendors' "
+        "writer keys it would spend (#3437) and transmits no stored adepthood "
+        "content and no key, so a late call after erasure exposes nothing"
+    ),
+    ("GET", "/vault/agents/activity"): (
+        "read-only dial: read_agent_activity asks the vault for its content-free "
+        "audit projection (#3535) with no body and transmits no stored adepthood "
+        "content, so a late call after erasure exposes nothing"
     ),
     ("POST", "/journal/transcribe-page"): (
         "the bytes are caller-supplied in the same request: nothing of the "

@@ -107,7 +107,23 @@ class VaultConnectionResponse(OwnedResourcePublic):
     ``connected`` is carried explicitly rather than left to be inferred from a
     null URL, so a client renders "you have not connected a vault" from a field
     that says so instead of from an absence it has to interpret.
+
+    ``mcp_address`` is the address a person gives an agent they run elsewhere
+    (#3534), and the audience every token for that vault names. A managed
+    binding keeps ``vault_url`` private. Its agent address is returned only
+    after authenticated per-allocation discovery reports the exact owned
+    resource and this deployment's issuer. Legacy, disabled, malformed or
+    unreachable discovery returns ``None``; the stored binding stays connected.
+
+    ``classification_key_rejected`` is true when the account's latest settled
+    vault classification failed because the writer's own provider key was
+    refused by its vendor (Creek contract 0.26, #3595). It is read from the
+    account's pipeline rows rather than from the connection row, so it holds
+    for the deployment-wide vault's owner too, and it carries no key material
+    and no vendor text -- the client owns the sentence it renders.
     """
 
     connected: bool
     vault_url: str | None
+    mcp_address: str | None
+    classification_key_rejected: bool = False

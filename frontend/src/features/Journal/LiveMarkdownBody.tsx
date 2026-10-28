@@ -279,7 +279,7 @@ function useSourceCaret(
 
 /**
  * The prose field starts generous and grows into the page-level scroll surface;
- * the formatting toolbar trails it, at the end of the text it formats (#3002).
+ * its formatting toolbar leads the body, below the page's exit row (#3250).
  */
 export default function LiveMarkdownBody({
   body,
@@ -298,6 +298,7 @@ export default function LiveMarkdownBody({
   const sourceSelection = useSourceCaret(body, markdown, inputRef);
   return (
     <>
+      <MarkdownFormatToolbar state={toolbarState} onCommand={runCommand} />
       <View style={liveStyles.frame}>
         {mirrored ? (
           <LiveMarkdownMirror body={body} selection={sourceSelection} textStyle={LIVE_TAB_STYLE} />
@@ -313,6 +314,7 @@ export default function LiveMarkdownBody({
           value={body}
           onChangeText={markdown.changeBody}
           onContentSizeChange={growth.onContentSizeChange}
+          onLayout={growth.onLayout}
           selection={markdown.selection}
           onSelectionChange={markdown.changeSelection}
           onKeyPress={onKeyPress}
@@ -326,7 +328,6 @@ export default function LiveMarkdownBody({
           testID="journal-body-input"
         />
       </View>
-      <MarkdownFormatToolbar state={toolbarState} onCommand={runCommand} />
     </>
   );
 }

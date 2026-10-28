@@ -69,6 +69,12 @@ asked is not a third :class:`models.corpus_consent.ConsentDecision` -- and the
 count the cooldown runs on never crosses this boundary. ``GET`` reads two rows
 and commits nothing; ``PUT`` is one upsert and one commit, fans out to nothing,
 and so is unrated like ``GET /voice-readiness``.
+
+``GET`` and ``POST /sweep`` are the backlog: how much of the account's own
+writing is still without a fragment, and one more bounded pass over it. The
+pass is the grant's own sweep run under the decision already standing, so it
+is the resume a repeated ``PUT /consent/journal`` used to be, with a door of its
+own and the same rate limit.
 """
 
 from __future__ import annotations
@@ -80,14 +86,18 @@ from fastapi import Depends, Request, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from database import get_session
-from dependencies.creek_vault import get_creek_vault_client
+from dependencies.creek_vault import (
+    OnboardingVault,
+    get_onboarding_vault,
+    resolve_reflection_boundary,
+)
 from dependencies.document_payload import guard_document_payload
 from domain.corpus_import import ImportDestination
-from domain.creek_vault import CreekVaultPipelineClient
 from error_responses import build_router
 from errors import payload_too_large
 from models.corpus_fragment import CorpusSource
 from rate_limit import limiter
+from rate_limit_keys import per_user_rate_limit_key
 from routers.auth import get_current_user
 from schemas.corpus import (
     CONSENT_RATE_LIMIT,
@@ -96,22 +106,32 @@ from schemas.corpus import (
     CorpusConsentUpdate,
     CorpusInvitationResponse,
     CorpusInvitationUpdate,
+    CorpusSweepEstimateResponse,
+    CorpusSweepResponse,
 )
 from schemas.corpus_import import CORPUS_IMPORT_MESSAGES, DocumentImportResponse
 from schemas.journal_upload import UPLOAD_MESSAGES, UPLOAD_RATE_LIMIT, UploadDocumentRequest
 from schemas.voice_readiness import VOICE_READINESS_MESSAGES, VoiceReadinessResponse
+from services import corpus_backfill
 from services.account_egress_barrier import ensure_account_live, hold_account
 from services.corpus_backfill import backfill_after_consent
-from services.corpus_consent import ConsentState, load_every_consent, set_consent
+from services.corpus_consent import (
+    ConsentState,
+    load_every_consent,
+    set_consent,
+    standing_consent_change,
+)
 from services.corpus_import import (
     CorpusImportResult,
     DocumentImportResult,
     VaultImportResult,
     import_document,
 )
+from services.corpus_ingest import INGEST_SOURCE
 from services.corpus_invitation import InvitationOffer, dismiss_invitation, load_invitation
 from services.creek_vault_pipeline import VaultPipelineTrigger, drive_vault_pipeline
-from services.creek_vault_upload import UploadedDocument
+from services.creek_vault_relay import forwarding_provider_key
+from services.creek_vault_upload import FolderSource, UploadedDocument
 from services.creek_vault_upload_limits import ManagedUploadTooLargeError
 from services.voice_readiness import VoiceReadiness, load_voice_readiness
 
@@ -206,12 +226,18 @@ async def put_corpus_consent(
     under a decision already standing -- so it goes where sweeps are kept, the
     append-only :class:`models.corpus_sweep.CorpusSweep` log and the log line,
     rather than onto a shape that also answers ``GET``.
+
+    The sweep runs under the account's AI-operation boundary, resolved here from
+    server state: a writer who connected a vault has nothing classified by the
+    app provider, so their grant is recorded and the sweep stops before its
+    first offer (#3156).
     """
     async with hold_account(session, user_id):
         await ensure_account_live(session, user_id)
         change = await set_consent(session, user_id=user_id, source=source, granted=payload.granted)
         await session.commit()
-    await backfill_after_consent(session, user_id=user_id, change=change)
+    boundary = await resolve_reflection_boundary(session, user_id)
+    await backfill_after_consent(session, user_id=user_id, change=change, boundary=boundary)
     await session.commit()
     return _to_response(change.state)
 
@@ -256,6 +282,85 @@ async def get_voice_readiness(
     """
     readiness = await load_voice_readiness(session, user_id=user_id)
     return _voice_readiness_response(readiness)
+
+
+@router.get("/sweep", response_model=CorpusSweepEstimateResponse)
+async def get_corpus_sweep_estimate(
+    user_id: Annotated[int, Depends(get_current_user)],
+    session: Annotated[AsyncSession, Depends(get_session)],
+) -> CorpusSweepEstimateResponse:
+    """Report how much of this account's writing is still unsorted.
+
+    A sweep is bounded, so an account with a backlog finishes it by asking
+    again -- and asking again is only a decision somebody can make if they can
+    see what is left. This is the read that makes the remainder visible.
+
+    Never a 404 and never an error state, the contract
+    :func:`get_voice_readiness` keeps: an account that has written nothing is
+    told zero, which is the most common answer rather than a missing resource.
+    Consent is deliberately *not* required -- granting it runs a sweep, so this
+    number is exactly what a prospective yes would reach, and withholding it
+    until after the yes would put the disclosure after the decision.
+
+    The account comes from the token, so no request can read anyone else's
+    backlog. One indexed count, no commit, and no provider call.
+    """
+    return CorpusSweepEstimateResponse(
+        entries_pending=await corpus_backfill.count_pending_entries(session, user_id)
+    )
+
+
+@router.post("/sweep", response_model=CorpusSweepResponse)
+@limiter.limit(CONSENT_RATE_LIMIT, key_func=per_user_rate_limit_key)
+async def run_corpus_sweep(
+    request: Request,  # noqa: ARG001 — consumed by @limiter.limit decorator
+    user_id: Annotated[int, Depends(get_current_user)],
+    session: Annotated[AsyncSession, Depends(get_session)],
+) -> CorpusSweepResponse:
+    """Sort the next bounded share of this account's backlog, and say what is left.
+
+    Until this route the remainder of a bounded sweep was reachable only by
+    re-sending a consent decision already given. This is the same pass given a
+    door of its own: it runs
+    :func:`services.corpus_backfill.backfill_after_consent` -- the sweep itself,
+    not a copy of it -- under the decision already standing, so the consent
+    gate, the intimate-tier refusal, the per-entry clock, the deadline and the
+    one-receipt-per-reach rule are the ones the grant path ratified.
+
+    No second consent gate here, deliberately. The standing change of an
+    account that never said yes, or said it and withdrew it, is not a grant,
+    and the sweep's own ``_authorising_event_id`` already answers that with
+    "no sweep". So such an account is told it sorted nothing and how much is
+    still waiting -- a 200 rather than a refusal, because the request was
+    understood and the answer is a count, the contract ``GET /corpus/sweep``
+    keeps.
+
+    Resuming is not deciding: :func:`services.corpus_consent.standing_consent_change`
+    reads the decision and appends nothing, and no account barrier is held for
+    it. The sweep takes that hold per entry, re-reading consent inside each, so
+    a revocation or an erasure arriving mid-pass waits for the dial in flight
+    and nothing more -- the reasoning :func:`put_corpus_consent` gives.
+
+    Free, like every path that ontologizes an entry: nothing here is charged or
+    priced. Rate-limited per account at :data:`schemas.corpus.CONSENT_RATE_LIMIT`
+    because this is the resume that limit was sized for.
+
+    The remainder is counted after the commit rather than taken from the pass,
+    so an account the sweep declined to reach is told what is actually waiting
+    instead of the zero a sweep that never started reports.
+    """
+    change = await standing_consent_change(session, user_id=user_id, source=INGEST_SOURCE)
+    boundary = await resolve_reflection_boundary(session, user_id)
+    outcome = await backfill_after_consent(
+        session, user_id=user_id, change=change, boundary=boundary
+    )
+    await session.commit()
+    remaining = await corpus_backfill.count_pending_entries(session, user_id)
+    return CorpusSweepResponse(
+        entries_pending=remaining,
+        entries_sorted=outcome.fragments_added,
+        entries_remaining=remaining,
+    )
 
 
 def _invitation_response(offer: InvitationOffer) -> CorpusInvitationResponse:
@@ -349,6 +454,19 @@ def _to_import_response(result: DocumentImportResult) -> DocumentImportResponse:
     return _corpus_response(result)
 
 
+def _folder_source(payload: UploadDocumentRequest) -> FolderSource | None:
+    """Carry the request's validated folder identity into the service's vocabulary.
+
+    The schema has already required both fields or neither (#3554), so a
+    single absent field here means a single-file upload, exactly as before.
+    """
+    if payload.source_namespace is None or payload.source_relative_path is None:
+        return None
+    return FolderSource(
+        namespace=payload.source_namespace, relative_path=payload.source_relative_path
+    )
+
+
 @router.post(
     "/import",
     response_model=DocumentImportResponse,
@@ -360,7 +478,7 @@ async def import_corpus_document(
     payload: UploadDocumentRequest,
     user_id: Annotated[int, Depends(get_current_user)],
     session: Annotated[AsyncSession, Depends(get_session)],
-    vault_client: Annotated[CreekVaultPipelineClient, Depends(get_creek_vault_client)],
+    vault: Annotated[OnboardingVault, Depends(get_onboarding_vault)],
 ) -> DocumentImportResponse:
     """Take one document to this account's vault, or answer that it needs one.
 
@@ -388,29 +506,35 @@ async def import_corpus_document(
     Bounded and synchronous, like everything else on this route: the pass stands
     down inside its own per-stage intervals, starts no stage it cannot afford,
     and never raises.
+
+    The optional ``X-LLM-API-Key`` is relayed to the vault only for that pass's
+    classification call, and only when the vault advertised the key's vendor
+    (#3437); the upload itself never carries it.
     """
     guard_document_payload(payload.content_base64)
     async with hold_account(session, user_id):
         await ensure_account_live(session, user_id)
         try:
             result = await import_document(
-                vault_client,
+                vault.client,
                 UploadedDocument(
                     owner_user_id=user_id,
                     filename=payload.filename,
                     content_base64=payload.content_base64,
                     classification=payload.classification,
                     created_at=datetime.now(UTC),
+                    source=_folder_source(payload),
                 ),
             )
         except ManagedUploadTooLargeError:
             raise payload_too_large("managed_document_too_large") from None
         await session.commit()
         if isinstance(result, VaultImportResult) and result.stored:
-            await drive_vault_pipeline(
-                session,
-                vault_client,
-                user_id=user_id,
-                trigger=VaultPipelineTrigger.DOCUMENT_IMPORT,
-            )
+            with forwarding_provider_key(vault.relay_key):
+                await drive_vault_pipeline(
+                    session,
+                    vault.client,
+                    user_id=user_id,
+                    trigger=VaultPipelineTrigger.DOCUMENT_IMPORT,
+                )
     return _to_import_response(result)

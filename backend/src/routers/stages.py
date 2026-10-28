@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import logging
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from typing import Annotated
 
 from fastapi import Depends, status
@@ -17,13 +17,15 @@ from dependencies.creek_vault import get_creek_vault_client
 from dependencies.timezone import current_user_timezone
 from domain.constants import STAGE_START_WEEKS, TOTAL_STAGES
 from domain.creek_vault import CreekVaultClient
-from domain.dates import ensure_aware
+from domain.dates import day_bounds_in_tz, ensure_aware, to_user_date, today_in_tz
 from domain.program_calendar import calendar_stage, calendar_week, resolve_program_anchor
-from domain.stage_authority import record_stage_entry
+from domain.program_start import program_start_verdict
+from domain.stage_authority import reanchor_program, record_stage_entry
 from domain.stage_keys import STAGE_KEYS
 from domain.stage_progress import (
     compute_stage_progress,
     compute_stage_progress_batch,
+    ensure_user_progress,
     get_stage_habit_history,
     get_stage_practice_history,
     get_user_progress,
@@ -32,14 +34,16 @@ from domain.stage_progress import (
     stage_exists,
 )
 from error_responses import build_router
-from errors import conflict, forbidden, not_found
+from errors import conflict, forbidden, not_found, unprocessable
 from models.course_stage import CourseStage
 from models.stage_progress import StageProgress
+from models.user import User
 from routers.auth import get_current_user
 from schemas import Page, PaginationParams, build_page
 from schemas.pagination import paginate_query
 from schemas.stage import (
     ProgramCalendarResponse,
+    ProgramStartRequest,
     StageCorrespondenceProvenance,
     StageCorrespondenceResponse,
     StageExpression,
@@ -55,6 +59,9 @@ from services.creek_vault_wheel import select_wheel_balance
 logger = logging.getLogger(__name__)
 
 router = build_router(prefix="/stages", tags=["stages"], extra_statuses=(status.HTTP_409_CONFLICT,))
+
+#: The only cycle whose start date the person may pick (see ``set_program_start``).
+_FIRST_CYCLE = 1
 
 #: The week each Stage opens on, by stable key.
 _START_WEEK_BY_KEY: dict[str, int] = dict(zip(STAGE_KEYS, STAGE_START_WEEKS, strict=True))
@@ -145,7 +152,9 @@ async def _record_visit(session: AsyncSession, user_id: int, tz: str) -> StagePr
     :func:`domain.stage_authority.record_stage_entry` runs: entry into a window
     the calendar has already opened is recorded here, server-side, with nobody
     asking for it. A user with no progress row yet is left alone — these are
-    read endpoints and provisioning a row is the course's job, not the Map's.
+    read endpoints, and provisioning a row is the job of the depths a person can
+    take alone (the course reading, and the habits list when a laddered habit
+    awaits its ring), not the Map's.
     """
     progress = await get_user_progress(session, user_id)
     if progress is None:
@@ -258,14 +267,85 @@ async def get_program_calendar(
             current_stage=1,
             cycle_number=1,
         )
+    return _calendar_response(progress, user_tz)
+
+
+def _calendar_response(progress: StageProgress, tz: str) -> ProgramCalendarResponse:
+    """Project a progress row onto the calendar contract, counted in ``tz``."""
     anchor = resolve_program_anchor(progress)
     return ProgramCalendarResponse(
         program_started_at=anchor,
-        calendar_stage=calendar_stage(anchor, tz=user_tz),
-        calendar_week=calendar_week(anchor, tz=user_tz),
+        calendar_stage=calendar_stage(anchor, tz=tz),
+        calendar_week=calendar_week(anchor, tz=tz),
         current_stage=progress.current_stage,
         cycle_number=progress.cycle_number,
     )
+
+
+#: Refusal reasons for a picked start date, by :func:`program_start_verdict` verdict.
+_PROGRAM_START_REFUSALS: dict[str, str] = {
+    "future": "program_start_in_future",
+    "too_early": "program_start_too_early",
+}
+
+
+async def _validate_program_start(
+    session: AsyncSession, user_id: int, chosen: date, tz: str
+) -> None:
+    """Refuse a date outside the pickable range with 422, before anything is written."""
+    user = await session.get(User, user_id)
+    if user is None:
+        raise not_found("user")
+    verdict = program_start_verdict(
+        chosen,
+        today=today_in_tz(tz),
+        account_created=to_user_date(tz, ensure_aware(user.created_at)),
+    )
+    if verdict != "ok":
+        raise unprocessable(_PROGRAM_START_REFUSALS[verdict])
+
+
+@router.put("/program-calendar", response_model=ProgramCalendarResponse)
+async def set_program_start(
+    payload: ProgramStartRequest,
+    current_user: Annotated[int, Depends(get_current_user)],
+    session: Annotated[AsyncSession, Depends(get_session)],
+    user_tz: Annotated[str, Depends(current_user_timezone)],
+) -> ProgramCalendarResponse:
+    """Let the person pick, or change, the date their program starts on (#3097).
+
+    The anchor is stored as local midnight of ``program_start_date`` in the
+    caller's zone, so the calendar counts exactly the days the person sees.
+    A person with no progress row yet -- a habits-only account the first time
+    it needs an anchor -- gets one provisioned here, so the choice can be made
+    before the server would otherwise stamp ``now``.
+
+    The record moves with the anchor in the same write
+    (:func:`domain.stage_authority.reanchor_program`), so every reader --
+    habit reveal, course drip, prompts -- agrees from the next request on.
+    Invitations already consumed stay consumed: a habit ring revealed under the
+    old date is neither re-locked nor re-stamped.
+
+    Refused with 422 outside the range :mod:`domain.program_start` defines, and
+    with 409 ``program_start_fixed_after_first_cycle`` once begin-again has run,
+    because a later cycle's anchor is also its predecessor's recorded end.
+    """
+    chosen = payload.program_start_date
+    await _validate_program_start(session, current_user, chosen, user_tz)
+    progress = await ensure_user_progress(session, current_user)
+    await session.refresh(progress, with_for_update=True)
+    if progress.cycle_number > _FIRST_CYCLE:
+        raise conflict("program_start_fixed_after_first_cycle")
+    anchor, _ = day_bounds_in_tz(user_tz, chosen)
+    reanchor_program(progress, anchor, tz=user_tz)
+    session.add(progress)
+    await session.commit()
+    await session.refresh(progress)
+    logger.info(
+        "program_start_picked",
+        extra={"user_id": current_user, "current_stage": progress.current_stage},
+    )
+    return _calendar_response(progress, user_tz)
 
 
 @router.get("/wheel", response_model=WheelBalanceResponse)

@@ -47,17 +47,19 @@ const BLOCK_SEPARATOR = '\n\n';
 const SEAM_SEPARATOR = '\n';
 
 /**
- * Failure kinds no per-page gesture can clear: the configured model cannot read
- * images at all, or the balance behind the key is spent. Either way a retry only
- * re-charges the wallet to fail again, so the screen offers a hand-typed offramp
- * instead of a per-block retry. Offering one here would contradict the copy,
- * which says in words that waiting cannot help.
+ * Failure kinds no per-page gesture can clear: there is no key to read with, the
+ * balance behind the key is spent, or the server will not read the tier the run
+ * declared (#3059 AC15) -- every page of a run declares the same one. A retry
+ * would only fail again, so the screen offers a hand-typed offramp instead of a
+ * per-block retry. Offering one here would contradict the copy, which says in
+ * words that waiting cannot help.
  */
 export const TERMINAL_ERROR_KINDS: ReadonlySet<TranscriptionErrorKind> =
   new Set<TranscriptionErrorKind>([
-    'model_lacks_vision',
+    'key_required',
     'credit_exhausted',
-    'service_credit_exhausted',
+    'tier_refused',
+    'ai_access_revoked',
   ]);
 
 /** One page's lifecycle within a run. */

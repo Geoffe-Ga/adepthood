@@ -9,7 +9,10 @@ import { ApiError, auth, journal, resonance, setTokenGetter } from '@/api';
  *
  * This journey logs in as the lane's pre-provisioned vault owner, so the live
  * FastAPI server resolves its production `HttpCreekVaultClient` and talks to the
- * isolated Creek contract process. The first Voice Draft DELETE is made to fail
+ * isolated Creek contract process. The owner is vault-bound (#3061), so the
+ * page's margin note and its letter are both written by that vault -- the
+ * letter through Creek's `letters` capability, stored there as an AI-attributed
+ * Voice Draft, never by the app's provider (#3203). The first Voice Draft DELETE is made to fail
  * at that external boundary. Adepthood must answer with its stable retryable
  * error and keep the page visible; only a later confirmed Voice Draft deletion
  * plus journal withdrawal may make the local page disappear.
@@ -43,6 +46,12 @@ const HTTP_SERVICE_UNAVAILABLE = 503;
 const RETRYABLE_WITHDRAWAL = 'vault_withdrawal_pending';
 const PAGE =
   'The cedar held the rain all night. By morning I could hear each drop arrive and leave.';
+
+/** What `fakeCreekVault.mjs` answers every reflection with, quoting the page's first sentence. */
+const LANE_VAULT_NOTE = 'The lane vault reads this line back to you.';
+/** The letter `fakeCreekVault.mjs` writes for every margin note. */
+const LANE_VAULT_LETTER = 'The lane vault wrote this letter back to you.';
+const PAGE_FIRST_SENTENCE = 'The cedar held the rain all night';
 
 const lane = readLaneState();
 
@@ -102,6 +111,11 @@ describe('journal withdrawal from a connected Creek vault', () => {
   });
 
   it('stores both the page and its generated Voice Draft in the connected vault', async () => {
+    const draftsBefore = new Set(
+      (await vaultLedger()).fragments
+        .filter((fragment) => fragment.kind === 'voice-draft')
+        .map((fragment) => fragment.externalId),
+    );
     const entry = await journal.create({ message: PAGE, classification: 'personal' });
     entryId = entry.id;
     await journal.update(entryId, { status: 'finished' });
@@ -110,18 +124,37 @@ describe('journal withdrawal from a connected Creek vault', () => {
     // The explicit, priced ask the essay modal sends (#623).
     const expanded = await resonance.essay(note.id, { priceAcknowledged: true });
 
-    expect((expanded.essay ?? '').trim()).not.toBe('');
-    const { fragments } = await vaultLedger();
+    // The vault wrote the letter (#3203): its text, not an app-provider one.
+    expect(expanded.essay).toBe(LANE_VAULT_LETTER);
+    const { fragments, received } = await vaultLedger();
+    // The owner is vault-bound (#3061): the note is the vault's own answer,
+    // quoting the page, and never an app-provider substitute.
+    expect(note.note).toBe(LANE_VAULT_NOTE);
+    expect(note.anchor_text).toBe(PAGE_FIRST_SENTENCE);
+    expect(received.some((call) => call.method === 'POST' && call.path === '/v1/reflections')).toBe(
+      true,
+    );
     expect(
       fragments.some(
         (fragment) => fragment.kind === 'journal' && fragment.externalId === String(entryId),
       ),
     ).toBe(true);
     const draft = required(
-      fragments.find((fragment) => fragment.kind === 'voice-draft'),
+      fragments.find(
+        (fragment) => fragment.kind === 'voice-draft' && !draftsBefore.has(fragment.externalId),
+      ),
       'Voice Draft fragment',
     );
     voiceDraftExternalId = draft.externalId;
+    // Written and stored by the vault in one call: no second PUT carried it.
+    expect(
+      received.some(
+        (call) => call.method === 'POST' && call.path === `/v1/letters/${voiceDraftExternalId}`,
+      ),
+    ).toBe(true);
+    expect(received.some((call) => call.path === `/v1/voice-drafts/${voiceDraftExternalId}`)).toBe(
+      false,
+    );
   });
 
   it('keeps the page visible when Creek cannot confirm the Voice Draft deletion', async () => {

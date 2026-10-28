@@ -15,7 +15,7 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from models.corpus_fragment import CorpusSource
 
@@ -36,6 +36,11 @@ from models.corpus_fragment import CorpusSource
 #: bounded by their own journal either way -- once the backlog is swept, a
 #: repeat costs one indexed count and stops -- so what this bounds is the
 #: burst.
+#:
+#: ``POST /corpus/sweep`` (#3498) is that resume given a door of its own, so it
+#: carries the same budget for the same reason, keyed per account rather than
+#: per address: the cost is one account's backlog, and a shared address is not
+#: a shared backlog.
 CONSENT_RATE_LIMIT = "5/minute"
 
 
@@ -105,3 +110,42 @@ class CorpusInvitationResponse(BaseModel):
     offer: bool
     dismissed_at: datetime | None
     do_not_ask_again: bool
+
+
+class CorpusSweepEstimateResponse(BaseModel):
+    """How much of this account's own writing is still without a fragment.
+
+    A count, and deliberately nothing else. Nothing from any entry, for the
+    reason :class:`CorpusConsentResponse` gives about the audit log: an account
+    is entitled to know how much of its writing is waiting, and a surface that
+    could render the writing itself would be describing egress this read does
+    not perform.
+
+    No price either, because sorting has none: every path that ontologizes an
+    entry is free, and the consent screen says so. What bounds the provider
+    bill is a per-account ceiling on server-paid classifications, not a charge
+    somebody is quoted here.
+    """
+
+    entries_pending: int = Field(ge=0)
+
+
+class CorpusSweepResponse(CorpusSweepEstimateResponse):
+    """What one ``POST /corpus/sweep`` pass did, on top of what is still waiting.
+
+    A strict superset of :class:`CorpusSweepEstimateResponse`, so a client
+    renders the backlog the same way whichever verb it last called.
+
+    ``entries_sorted`` counts entries that gained a fragment in this pass.
+    ``entries_remaining`` is what the pass left behind, counted once the pass
+    was over -- which is the backlog the next ``GET`` would report, so the two
+    agree by construction. It can stay above zero after a pass that sorted
+    nothing: an account that has not granted consent sweeps nothing, and an
+    entry the classifier places nowhere stays pending on purpose and comes
+    round again only after everything never offered has been tried. A client
+    driving the remainder down therefore asks again on a person's request, not
+    in a loop that waits for zero.
+    """
+
+    entries_sorted: int = Field(ge=0)
+    entries_remaining: int = Field(ge=0)

@@ -34,8 +34,11 @@ and rebinds nothing -- the request path is untouched, which is precisely what
 keeps the lane's guarantee intact. The next reader will reasonably ask what got
 faked, so, stated plainly: the only thing faked is the passage of time, and it is
 faked in the database rather than anywhere on the path under test. The row is
-provisioned by the same ``ensure_user_progress`` the course router calls, so a
-model rename breaks this helper loudly instead of silently arranging nothing.
+provisioned by the same ``ensure_user_progress`` the course router and the
+habits list's reveal pass call, so a model rename breaks this helper loudly
+instead of silently arranging nothing. Because ``anchor`` provisions, a spec
+proving that some *other* path provisions must observe the row (``show``)
+before it calls ``anchor``.
 
 ``anchor`` moves ``program_started_at`` and ``stage_started_at`` and nothing
 else. ``current_stage``, ``completed_stages``, ``highest_stage_reached`` and
@@ -226,7 +229,8 @@ async def _require_progress(session: AsyncSession, email: str) -> StageProgress:
     if row is None:
         msg = (
             f"{email!r} has no stage progress row; it is created on first "
-            f"course access, or by the anchor subcommand"
+            f"course access, on a habits read with a laddered habit awaiting "
+            f"its ring, or by the anchor subcommand"
         )
         raise ProgramAnchorError(msg)
     return row

@@ -862,7 +862,7 @@ async def test_begin_again_second_loop_increments_to_cycle_3(
 # ── GET /stages/correspondence (#2665) ─────────────────────────────────
 
 _CORRESPONDENCE_PATH = "/stages/correspondence"
-_PINNED_CONTENT_SHA = "9d0f8962ef7b2f096ed1b5bb5d031df79e309d20"  # pragma: allowlist secret
+_PINNED_CONTENT_SHA = "59df2a259f042559989086d0ed4b0efd54faca35"  # pragma: allowlist secret
 _ARTIFACT_FILE = (
     Path(__file__).resolve().parents[1] / "src" / "curriculum" / "stage_correspondence.json"
 )
@@ -954,9 +954,7 @@ async def test_stage_correspondence_serves_every_field_of_a_stage(
         "divine_gender_polarity": "Divine Feminine",
         "relationship_to_free_will": "Victim",
         "free_will_description": (
-            "Behavior is determined by the attempt to meet the expectations of the "
-            "relationships that the individual is embedded within; we are defined by roles: "
-            "partners, parents, children, coworkers, friends, pupils, etc"
+            "At Blue, you do what you're told. You follow the rules. You meet the expectations."
         ),
     }
     reconciled_at = provenance.pop("reconciled_at")

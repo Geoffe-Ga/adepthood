@@ -215,7 +215,9 @@ CLEAR: tuple[ClearRoute, ...] = (
             "sources, commits their read-only transaction, and only then gathers the "
             "optional vault themes. Candidate computation and signal writes remain "
             "below the remote call, so the release cannot make partial invitations "
-            "durable."
+            "durable. The reading recommendation gathers current consented sources "
+            "under the account barrier and commits before its one vault model call; "
+            "it revalidates only after that call completes."
         ),
     ),
     ClearRoute(

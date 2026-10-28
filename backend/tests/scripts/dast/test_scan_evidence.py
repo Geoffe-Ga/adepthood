@@ -23,8 +23,13 @@ from scripts.dast.report import EXIT_CLEAN, EXIT_HARNESS_ERROR
 from scripts.dast.runner import DEFAULT_AUTH_PROBE_PATH
 from scripts.dast.scan_evidence import main, reached_handlers, requests_in
 
-# Uvicorn's access line, as it is actually written at ``--log-level info``.
-_LINE = 'INFO:     127.0.0.1:52012 - "{method} {path} HTTP/1.1" {status} {reason}'
+# The app's own access record, as ``middleware/logging.py`` renders it through
+# the deployed handler (``test_scan_evidence_reads_the_app_log.py`` pins that
+# the real app still writes this shape).
+_LINE = (
+    "2026-10-06 12:00:00,000 INFO adepthood.access [abc123] "
+    "request_completed method={method} route={path} status={status} elapsed_ms=1.00"
+)
 
 
 def _log(*lines: str) -> str:
@@ -32,9 +37,9 @@ def _log(*lines: str) -> str:
     return "\n".join(["INFO:     Application startup complete.", *lines, ""])
 
 
-def _access(path: str, status: int, method: str = "GET", reason: str = "OK") -> str:
-    """Return one uvicorn access line."""
-    return _LINE.format(method=method, path=path, status=status, reason=reason)
+def _access(path: str, status: int, method: str = "GET") -> str:
+    """Return one app access line."""
+    return _LINE.format(method=method, path=path, status=status)
 
 
 def _written(tmp_path: Path, text: str) -> Path:
@@ -45,7 +50,7 @@ def _written(tmp_path: Path, text: str) -> Path:
 
 
 def test_a_request_line_is_read_off_the_access_log() -> None:
-    """The parser keys on the quoted request and the status, not on uvicorn's prefix."""
+    """The parser keys on the record's named fields, not on the log prefix."""
     parsed = requests_in(_log(_access("/habits/", 200)))
 
     assert parsed == [("GET", "/habits/", 200)]
@@ -54,6 +59,13 @@ def test_a_request_line_is_read_off_the_access_log() -> None:
 def test_lines_that_are_not_requests_are_not_invented() -> None:
     """Startup banners and tracebacks share the file; neither is a request."""
     assert requests_in(_log("INFO:     Waiting for application startup.")) == []
+
+
+def test_uvicorns_raw_request_line_is_not_read() -> None:
+    """Uvicorn's access line carries the raw query string; it is no evidence source."""
+    raw = 'INFO:     127.0.0.1:52012 - "GET /habits/ HTTP/1.1" 200 OK'
+
+    assert requests_in(_log(raw)) == []
 
 
 def test_a_scan_answered_everywhere_at_the_door_reached_nothing() -> None:
@@ -83,15 +95,19 @@ def test_success_somewhere_else_does_not_count_as_authentication() -> None:
 
 
 def test_an_attacked_probe_route_still_counts_as_reached() -> None:
-    """ZAP appends payloads to the path it attacks; the route is still that route."""
-    log = _log(_access("/habits/?id=%27+OR+1%3D1", 422))
+    """ZAP appends payloads to the path it attacks; the route is still that route.
+
+    The record names the matched template, so an attacked id segment reads as
+    ``/habits/{habit_id}``, which is still under the probe route.
+    """
+    log = _log(_access("/habits/{habit_id}", 422))
 
     assert reached_handlers(requests_in(log), DEFAULT_AUTH_PROBE_PATH)
 
 
 def test_a_server_error_on_the_probe_route_is_not_the_door_turning_it_away() -> None:
     """A 500 means a handler ran and broke, which is a finding rather than a blind scan."""
-    log = _log(_access("/habits/", 500, reason="Internal Server Error"))
+    log = _log(_access("/habits/", 500))
 
     assert reached_handlers(requests_in(log), DEFAULT_AUTH_PROBE_PATH)
 

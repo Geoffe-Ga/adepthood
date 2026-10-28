@@ -1,6 +1,6 @@
 /* eslint-env jest */
-import { jest, describe, it, expect, beforeEach } from '@jest/globals';
-import { fireEvent, render, waitFor } from '@testing-library/react-native';
+import { jest, describe, it, expect, beforeEach, afterEach } from '@jest/globals';
+import { act, fireEvent, render, waitFor } from '@testing-library/react-native';
 import React from 'react';
 
 import { keepAsPractice } from '../keepAsPractice';
@@ -8,22 +8,33 @@ import {
   linkedHabitConfirmation,
   savedAndLinkedConfirmation,
   savedHabitConfirmation,
+  SAVE_AS_HABIT_ACCEPT_A11Y,
+  SAVE_AS_HABIT_DECLINE_A11Y,
+  SAVE_AS_HABIT_PROMPT,
 } from '../saveAsHabitCopy';
+import { SAVE_AS_PRACTICE_ACCEPT_A11Y, SAVE_AS_PRACTICE_PROMPT } from '../saveAsPracticeCopy';
 import WritingSessionOffer from '../WritingSessionOffer';
 
 import type { UiFlags, UiFlagsUpdate } from '@/api';
 import type { Goal, Habit } from '@/features/Habits/Habits.types';
 import { habitManager } from '@/features/Habits/services/habitManager';
+import { setActiveUser } from '@/storage/userScope';
 import { loadWritingOfferAnswered, saveWritingOfferAnswered } from '@/storage/writingOfferStorage';
+import { useDepthPreferencesStore } from '@/store/useDepthPreferencesStore';
 import { useHabitStore } from '@/store/useHabitStore';
 import { useWritingHabitLinkStore } from '@/store/useWritingHabitLinkStore';
 
 const mockUserTimezone = 'America/Los_Angeles';
+const mockToken = 'e30.eyJzdWIiOiIxIiwiZXhwIjo0MDAwMDAwMDAwfQ.sig';
 
 const keepPractice = keepAsPractice as jest.Mock;
 
 jest.mock('@/context/AuthContext', () => ({
-  useAuth: () => ({ userTimezone: mockUserTimezone, token: 'offer-tok' }),
+  useAuth: () => ({
+    userTimezone: mockUserTimezone,
+    token: mockToken,
+    authStatus: 'authenticated',
+  }),
 }));
 
 const mockFlagsUpdate = jest.fn<(_partial: UiFlagsUpdate, _token?: string) => Promise<UiFlags>>();
@@ -89,6 +100,7 @@ const THREE_HABITS = [
 
 beforeEach(() => {
   jest.clearAllMocks();
+  setActiveUser(1);
   loadAnswered.mockImplementation(() => Promise.resolve(false));
   insertHabitAt.mockImplementation(() => Promise.resolve(KEPT));
   useHabitStore.setState({ habits: THREE_HABITS, loading: false, error: null });
@@ -97,6 +109,7 @@ beforeEach(() => {
     Promise.resolve({
       has_seen_welcome: true,
       energy_scaffolding_archived: false,
+      course_last_stage: null,
       writing_session_habit_id: partial.writing_session_habit_id ?? null,
     }),
   );
@@ -126,6 +139,7 @@ async function renderOffer() {
 async function openPlacing(view: ReturnType<typeof render>): Promise<void> {
   fireEvent.press(view.getByTestId('save-as-habit-accept'));
   fireEvent.press(view.getByTestId('writing-habit-new'));
+  fireEvent.press(view.getByTestId('writing-habit-goals-save'));
   await waitFor(() => expect(view.queryByTestId('save-as-habit-confirm')).not.toBeNull());
 }
 
@@ -163,6 +177,75 @@ describe('WritingSessionOffer — the invitation', () => {
     expect(saveAnswered).toHaveBeenCalledWith(true);
     await waitFor(() => expect(view.queryByTestId('save-as-habit-accept')).toBeNull());
     expect(insertHabitAt).not.toHaveBeenCalled();
+  });
+});
+
+describe('WritingSessionOffer — only the depths the writer kept (#3073)', () => {
+  afterEach(() => {
+    useDepthPreferencesStore.getState().reset();
+  });
+
+  it('offers only the practice, with the decline, once the habits ring is declined', async () => {
+    useDepthPreferencesStore.setState({ enable_habits: false });
+    const view = render(<WritingSessionOffer result={RESULT} />);
+
+    await waitFor(() => expect(view.queryByTestId('save-as-practice-accept')).not.toBeNull());
+    expect(view.queryByTestId('save-as-habit-accept')).toBeNull();
+    expect(view.queryByText(SAVE_AS_HABIT_PROMPT)).toBeNull();
+    // The note still says what it offers: a practice-worded prompt replaces it.
+    expect(view.getByText(SAVE_AS_PRACTICE_PROMPT)).toBeTruthy();
+    expect(view.getByLabelText(SAVE_AS_PRACTICE_ACCEPT_A11Y)).toBeTruthy();
+    expect(view.getByLabelText(SAVE_AS_HABIT_DECLINE_A11Y)).toBeTruthy();
+  });
+
+  it('offers only the habit, with the decline, once the practices ring is declined', async () => {
+    useDepthPreferencesStore.setState({ enable_practices: false });
+    const view = await renderOffer();
+
+    expect(view.queryByTestId('save-as-practice-accept')).toBeNull();
+    expect(view.getByText(SAVE_AS_HABIT_PROMPT)).toBeTruthy();
+    expect(view.queryByText(SAVE_AS_PRACTICE_PROMPT)).toBeNull();
+    expect(view.getByLabelText(SAVE_AS_HABIT_ACCEPT_A11Y)).toBeTruthy();
+    expect(view.getByLabelText(SAVE_AS_HABIT_DECLINE_A11Y)).toBeTruthy();
+  });
+
+  it('makes no offer at all when both rings are declined, and says so once settled', async () => {
+    useDepthPreferencesStore.setState({ enable_habits: false, enable_practices: false });
+    const view = render(<WritingSessionOffer result={RESULT} />);
+
+    // A positive settle point: the marker renders only once the stored answer
+    // has been read and the rings have withheld the offer, so "no offer" is
+    // never confused with "still reading".
+    await waitFor(() =>
+      expect(
+        view.queryByTestId('writing-session-offer-withheld', { includeHiddenElements: true }),
+      ).not.toBeNull(),
+    );
+    expect(view.queryByTestId('save-as-habit-offer')).toBeNull();
+    expect(view.queryByTestId('save-as-habit-accept')).toBeNull();
+    expect(view.queryByTestId('save-as-practice-accept')).toBeNull();
+  });
+
+  it('shows no withheld marker while either depth is still offered', async () => {
+    useDepthPreferencesStore.setState({ enable_habits: false });
+    const view = render(<WritingSessionOffer result={RESULT} />);
+
+    await waitFor(() => expect(view.queryByTestId('save-as-practice-accept')).not.toBeNull());
+    expect(
+      view.queryByTestId('writing-session-offer-withheld', { includeHiddenElements: true }),
+    ).toBeNull();
+  });
+
+  it('shows no withheld marker for an offer already answered', async () => {
+    loadAnswered.mockImplementation(() => Promise.resolve(true));
+    useDepthPreferencesStore.setState({ enable_habits: false, enable_practices: false });
+    const view = render(<WritingSessionOffer result={RESULT} />);
+
+    await waitFor(() => expect(loadAnswered).toHaveBeenCalled());
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(view.toJSON()).toBeNull();
   });
 });
 
@@ -265,7 +348,19 @@ describe('WritingSessionOffer — confirming', () => {
 
     await waitFor(() => expect(insertHabitAt).toHaveBeenCalled());
     expect(insertHabitAt).toHaveBeenCalledWith(
-      { name: 'Journaling', icon: '📓' },
+      {
+        name: 'Journaling',
+        icon: '📓',
+        revealed: true,
+        goals: {
+          target_unit: 'minutes',
+          frequency: 1,
+          frequency_unit: 'per_day',
+          low: 10,
+          clear: 20,
+          stretch: 45,
+        },
+      },
       1,
       mockUserTimezone,
     );
@@ -437,7 +532,7 @@ const ladderGoals = (): Goal[] =>
     title: tier,
     tier,
     target: index + 1,
-    target_unit: 'pages',
+    target_unit: 'minutes',
     frequency: 1,
     frequency_unit: 'per_day',
     is_additive: true,
@@ -473,7 +568,7 @@ describe('WritingSessionOffer — keeping it as a habit the writer already has (
 
     await waitFor(() => expect(view.queryByTestId('save-as-habit-linked')).not.toBeNull());
     expect(mockFlagsUpdate).toHaveBeenCalledTimes(1);
-    expect(mockFlagsUpdate).toHaveBeenCalledWith({ writing_session_habit_id: 22 }, 'offer-tok');
+    expect(mockFlagsUpdate).toHaveBeenCalledWith({ writing_session_habit_id: 22 }, mockToken);
     expect(saveAnswered).toHaveBeenCalledWith(true);
     expect(view.getByText(linkedHabitConfirmation('Stretch'))).toBeTruthy();
     expect(insertHabitAt).not.toHaveBeenCalled();
@@ -498,6 +593,7 @@ describe('WritingSessionOffer — keeping it as a habit the writer already has (
     finish?.({
       has_seen_welcome: true,
       energy_scaffolding_archived: false,
+      course_last_stage: null,
       writing_session_habit_id: 21,
     });
     await waitFor(() => expect(view.queryByTestId('save-as-habit-linked')).not.toBeNull());
@@ -587,7 +683,7 @@ describe('WritingSessionOffer — a new Journaling habit is linked too (#2861)',
     expect(mockFlagsUpdate).toHaveBeenCalledTimes(1);
     expect(mockFlagsUpdate).toHaveBeenCalledWith(
       { writing_session_habit_id: NEW_HABIT_ID },
-      'offer-tok',
+      mockToken,
     );
     expect(useWritingHabitLinkStore.getState().habitId).toBe(NEW_HABIT_ID);
   });

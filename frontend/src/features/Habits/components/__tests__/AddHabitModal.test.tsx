@@ -3,6 +3,7 @@ import { render, fireEvent, act } from '@testing-library/react-native';
 import React from 'react';
 
 import AddHabitModal from '../AddHabitModal';
+import { ADD_HABIT_CLOSE_LABEL } from '../modalCloseLabels';
 
 jest.mock('../../constants', () => ({ DEFAULT_ICONS: ['⭐'] }));
 
@@ -87,5 +88,14 @@ describe('AddHabitModal', () => {
     rerender(<AddHabitModal visible={false} onClose={jest.fn()} onAdd={onAdd} />);
     rerender(<AddHabitModal visible onClose={jest.fn()} onAdd={onAdd} />);
     expect(getByTestId('add-habit-name').props.value).toBe('');
+  });
+
+  it('names its header close button and closes on press, keeping its test id', () => {
+    const onClose = jest.fn();
+    const { getByRole } = render(<AddHabitModal visible onClose={onClose} onAdd={noopAdd} />);
+    const close = getByRole('button', { name: ADD_HABIT_CLOSE_LABEL });
+    expect(close.props.testID).toBe('add-habit-close');
+    fireEvent.press(close);
+    expect(onClose).toHaveBeenCalledTimes(1);
   });
 });

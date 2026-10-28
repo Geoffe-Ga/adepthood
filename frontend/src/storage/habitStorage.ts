@@ -1,10 +1,18 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { v4 as uuidv4 } from 'uuid';
 
 import type { Habit } from '../features/Habits/Habits.types';
 
 import { getJsonArray, getJsonArrayForUpdate } from './jsonStore';
 import { serialize } from './serializedWrite';
-import { scopedKey } from './userScope';
+import {
+  getActiveUser,
+  getActiveUserGeneration,
+  isActiveUserTransitioning,
+  scopedKey,
+} from './userScope';
+
+import { reportDiagnostic } from '@/observability/diagnostics';
 
 /**
  * The three caches below are per-account, so every one of them is resolved
@@ -28,6 +36,24 @@ function pendingCheckInsKey(): string {
   return scopedKey(PENDING_CHECKINS_KEY_BASE);
 }
 
+/** A drain holds the original key and owner across every awaited POST. */
+export interface PendingCheckInScope {
+  key: string;
+  owner: number | null;
+  generation: number;
+}
+
+export function capturePendingCheckInScope(): PendingCheckInScope {
+  return {
+    key: pendingCheckInsKey(),
+    owner: getActiveUser(),
+    generation: getActiveUserGeneration(),
+  };
+}
+
+const isPendingScopeCurrent = (scope: PendingCheckInScope): boolean =>
+  scope.generation === getActiveUserGeneration();
+
 /** This account's dropped-check-in quarantine key. */
 function droppedCheckInsKey(): string {
   return scopedKey(DROPPED_CHECKINS_KEY_BASE);
@@ -48,6 +74,8 @@ export interface PendingCheckIn {
   completed_units?: number;
   /** Durable identity for exactly-once replay of an explicit signed delta. */
   operation_id?: string;
+  /** Device-only identity for legacy replay; never sent as a backend operation ID. */
+  replay_id?: string;
   timestamp: string;
   /** Explicit backfill day for a backdated log; replay forwards it verbatim. */
   completed_on?: string;
@@ -61,6 +89,8 @@ export interface DroppedCheckIn {
   completed_units?: number;
   /** Exactly-once operation identity carried over from the pending entry. */
   operation_id?: string;
+  /** Device-only identity for legacy replay; never sent as a backend operation ID. */
+  replay_id?: string;
   timestamp: string;
   /** Explicit backfill day carried over from the queued entry, if it had one. */
   completed_on?: string;
@@ -68,7 +98,17 @@ export interface DroppedCheckIn {
   status: number;
   /** ISO instant the replay dropped the entry. */
   dropped_at: string;
+  /**
+   * Why it was dropped: ``'rejected'`` when the server refused it outright,
+   * ``'gave_up'`` when an unclassified rejection kept recurring past the
+   * replay's attempt cap and age floor (#2473). Records written before the
+   * field existed carry none, and read as ``'rejected'``.
+   */
+  reason?: DroppedCheckInReason;
 }
+
+/** The two ways a replay drops a check-in; see ``DroppedCheckIn.reason``. */
+export type DroppedCheckInReason = 'rejected' | 'gave_up';
 
 /**
  * Rehydrate Date fields that JSON.parse leaves as strings.
@@ -85,8 +125,28 @@ function rehydrateHabit(raw: Habit): Habit {
   };
 }
 
+/**
+ * #3372: every habit-cache write runs in the cache key's serialized lane, the
+ * same lane ``clearHabits`` uses. A caller's generation guard only fences the
+ * *start* of a write; an ``AsyncStorage.setItem`` already in flight when
+ * account cleanup begins would otherwise commit after the clear and resurrect
+ * the rows the wipe removed. In the lane, the clear waits for that write to
+ * land and then removes it.
+ *
+ * The key and account generation are captured at call time, so a write that
+ * is still queued when cleanup bumps the generation (logout, a change of
+ * owner, or a transition in progress) is dropped instead of committed. A
+ * same-owner re-authentication does not bump the generation, so its writes
+ * stay durable.
+ */
 export async function saveHabits(habits: Habit[]): Promise<void> {
-  await AsyncStorage.setItem(habitsKey(), JSON.stringify(habits));
+  const key = habitsKey();
+  const generation = getActiveUserGeneration();
+  const payload = JSON.stringify(habits);
+  await serialize(key, async () => {
+    if (generation !== getActiveUserGeneration() || isActiveUserTransitioning()) return;
+    await AsyncStorage.setItem(key, payload);
+  });
 }
 
 export async function loadHabits(): Promise<Habit[] | null> {
@@ -95,8 +155,10 @@ export async function loadHabits(): Promise<Habit[] | null> {
   return parsed.map(rehydrateHabit);
 }
 
+/** Drop the habit cache, after any write already in its lane (#3372). */
 export async function clearHabits(): Promise<void> {
-  await AsyncStorage.removeItem(habitsKey());
+  const key = habitsKey();
+  await serialize(key, () => AsyncStorage.removeItem(key));
 }
 
 /**
@@ -118,13 +180,10 @@ export async function savePendingCheckIn(checkIn: PendingCheckIn): Promise<void>
     let result: PendingCheckIn[] | null;
     try {
       result = await getJsonArrayForUpdate<PendingCheckIn>(key);
-    } catch (err: unknown) {
+    } catch {
       // A transient read must abort the write; falling back to [] here would
       // overwrite an intact on-disk queue with a single-item array.
-      console.warn(
-        '[storage] transient read during pending check-in append, aborting write to preserve queue',
-        err,
-      );
+      reportDiagnostic('storage_read_failed', { storage: 'pending_checkins' });
       return;
     }
     const existing = result ?? [];
@@ -147,8 +206,33 @@ export async function replacePendingCheckIns(checkIns: PendingCheckIn[]): Promis
   });
 }
 
-export async function loadPendingCheckIns(): Promise<PendingCheckIn[]> {
-  return (await getJsonArray<PendingCheckIn>(pendingCheckInsKey())) ?? [];
+export async function loadPendingCheckIns(
+  scope: PendingCheckInScope = capturePendingCheckInScope(),
+  prepareForReplay = false,
+): Promise<PendingCheckIn[]> {
+  if (!prepareForReplay) return (await getJsonArray<PendingCheckIn>(scope.key)) ?? [];
+  return serialize(scope.key, () => preparePendingReplay(scope));
+}
+
+/** Persist identities under the append lane before any legacy entry reaches a POST. */
+async function preparePendingReplay(scope: PendingCheckInScope): Promise<PendingCheckIn[]> {
+  if (!isPendingScopeCurrent(scope)) return [];
+  try {
+    const entries = (await getJsonArrayForUpdate<PendingCheckIn>(scope.key)) ?? [];
+    if (!isPendingScopeCurrent(scope)) return [];
+    let changed = false;
+    const prepared = entries.map((entry) => {
+      if (entry.operation_id || entry.replay_id) return entry;
+      changed = true;
+      return { ...entry, replay_id: uuidv4() };
+    });
+    if (changed) await AsyncStorage.setItem(scope.key, JSON.stringify(prepared));
+    return isPendingScopeCurrent(scope) ? prepared : [];
+  } catch {
+    // A failed read or identity write must retain the queue and defer the POST.
+    console.warn('[storage] could not prepare pending check-in identities; retaining queue');
+    return [];
+  }
 }
 
 /**
@@ -165,27 +249,81 @@ export async function clearPendingCheckIns(): Promise<void> {
 }
 
 /**
+ * Remove only terminal replay entries from the queue as it exists now. The
+ * foreground may have appended during a POST; rebuilding from the replay's
+ * snapshot would erase that tap. Legacy entries are matched one at a time so
+ * even an identical later append survives.
+ */
+export async function removePendingCheckIns(
+  completed: PendingCheckIn[],
+  scope: PendingCheckInScope,
+): Promise<void> {
+  const { key } = scope;
+  if (completed.length === 0 || !isPendingScopeCurrent(scope)) return;
+  await serialize(key, async () => {
+    if (!isPendingScopeCurrent(scope)) return;
+    let current: PendingCheckIn[] | null;
+    try {
+      current = await getJsonArrayForUpdate<PendingCheckIn>(key);
+    } catch {
+      reportDiagnostic('storage_read_failed', { storage: 'pending_checkins' });
+      return;
+    }
+    const remaining = [...(current ?? [])];
+    for (const entry of completed) {
+      const index = remaining.findIndex((candidate) =>
+        entry.operation_id
+          ? candidate.operation_id === entry.operation_id
+          : entry.replay_id
+            ? candidate.replay_id === entry.replay_id
+            : candidate.operation_id === undefined &&
+              candidate.replay_id === undefined &&
+              candidate.goal_id === entry.goal_id &&
+              candidate.timestamp === entry.timestamp &&
+              candidate.did_complete === entry.did_complete &&
+              candidate.completed_units === entry.completed_units &&
+              candidate.completed_on === entry.completed_on,
+      );
+      if (index >= 0) remaining.splice(index, 1);
+    }
+    if (!isPendingScopeCurrent(scope)) return;
+    if (remaining.length === 0) await AsyncStorage.removeItem(key);
+    else await AsyncStorage.setItem(key, JSON.stringify(remaining));
+  });
+}
+
+/**
  * Append `entry` to the quarantine, keeping only the newest
  * `MAX_DROPPED_CHECK_INS` records. Runs inside the serialized lane, so the
  * read-modify-write is atomic with respect to the other quarantine writers.
  */
-async function appendDroppedCheckIn(key: string, entry: DroppedCheckIn): Promise<void> {
+async function appendDroppedCheckIn(
+  key: string,
+  entry: DroppedCheckIn,
+  generation: number,
+): Promise<void> {
   let result: DroppedCheckIn[] | null;
   try {
     result = await getJsonArrayForUpdate<DroppedCheckIn>(key);
-  } catch (err: unknown) {
+  } catch {
     // Same rule as the pending queue: a transient read aborts the write.
     // Falling back to [] would replace an intact quarantine with one record,
     // erasing the very losses the quarantine exists to report.
-    console.warn(
-      '[storage] transient read during dropped check-in append, aborting write to preserve quarantine',
-      err,
-    );
+    reportDiagnostic('storage_read_failed', { storage: 'quarantine' });
     return;
   }
   const existing = result ?? [];
+  if (
+    existing.some((item) =>
+      entry.operation_id
+        ? item.operation_id === entry.operation_id
+        : entry.replay_id !== undefined && item.replay_id === entry.replay_id,
+    )
+  )
+    return;
   existing.push(entry);
   // Oldest-first storage, so trimming from the front evicts the oldest.
+  if (getActiveUserGeneration() !== generation) return;
   await AsyncStorage.setItem(key, JSON.stringify(existing.slice(-MAX_DROPPED_CHECK_INS)));
 }
 
@@ -199,12 +337,20 @@ async function appendDroppedCheckIn(key: string, entry: DroppedCheckIn): Promise
  * of the drain. ``serialize`` deliberately forwards the lambda's rejection to
  * its caller, so the write is wrapped here rather than left to the lane.
  */
-export async function recordDroppedCheckIn(entry: DroppedCheckIn): Promise<void> {
+export async function recordDroppedCheckIn(
+  entry: DroppedCheckIn,
+  owner: number | null = getActiveUser(),
+): Promise<void> {
+  if (getActiveUser() !== owner) return;
   const key = droppedCheckInsKey();
+  const generation = getActiveUserGeneration();
   try {
-    await serialize(key, () => appendDroppedCheckIn(key, entry));
-  } catch (err: unknown) {
-    console.warn('[storage] could not quarantine a dropped check-in', err);
+    await serialize(key, async () => {
+      if (getActiveUserGeneration() === generation)
+        await appendDroppedCheckIn(key, entry, generation);
+    });
+  } catch {
+    reportDiagnostic('storage_write_failed', { storage: 'quarantine' });
   }
 }
 

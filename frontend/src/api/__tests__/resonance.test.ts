@@ -9,6 +9,9 @@ import {
   setLlmApiKeyGetter,
 } from '../index';
 import type { Marginalia, ResonanceResponse } from '../index';
+import { botmasonUsageSchema } from '../schemas';
+
+import { loadCostState, unknownCostState } from '@/features/Journal/resonanceCost';
 
 const mockFetch = jest.fn() as jest.Mock;
 global.fetch = mockFetch;
@@ -60,6 +63,7 @@ describe('BotMason pricing inputs', () => {
   test('reads and validates the deployment-served usage policy', async () => {
     mockFetch.mockReturnValueOnce(
       jsonResponse({
+        resonance_route: 'vault_bound',
         monthly_messages_used: 3,
         monthly_messages_remaining: 4,
         monthly_cap: 7,
@@ -74,6 +78,91 @@ describe('BotMason pricing inputs', () => {
     expect(result.monthly_cap).toBe(7);
     expect(result.monthly_messages_remaining).toBe(4);
   });
+});
+
+describe('server-reported resonance route (#3262)', () => {
+  const usage = {
+    monthly_messages_used: 0,
+    monthly_messages_remaining: 20,
+    monthly_cap: 20,
+    monthly_reset_date: '2026-11-01T00:00:00Z',
+    offering_balance: 0,
+  };
+  test.each([false, true])('preserves the explicit demo boolean %s', async (available) => {
+    mockFetch.mockReturnValueOnce(
+      jsonResponse({
+        ...usage,
+        resonance_route: 'app_provider',
+        resonance_demo_available: available,
+      }),
+    );
+    expect((await botmasonUsage.get('tok')).resonance_demo_available).toBe(available);
+  });
+  test.each(['true', 1, null])('rejects a nonboolean demo capability %s', (available) => {
+    expect(
+      botmasonUsageSchema.safeParse({
+        ...usage,
+        resonance_route: 'app_provider',
+        resonance_demo_available: available,
+      }).success,
+    ).toBe(false);
+  });
+  test('keeps a legacy app-provider response without the capability key-required', async () => {
+    mockFetch.mockReturnValueOnce(jsonResponse({ ...usage, resonance_route: 'app_provider' }));
+    const result = await loadCostState(false, 'reading', 'tok');
+    expect(result.canContinue).toBe(false);
+    expect(result.keyNeeded).toBe(true);
+  });
+  test.each([undefined, 'future_route'])(
+    'an explicit demo capability cannot admit the invalid route %s',
+    async (route) => {
+      mockFetch.mockReturnValueOnce(
+        jsonResponse({ ...usage, resonance_route: route, resonance_demo_available: true }),
+      );
+      expect(await loadCostState(false, 'reading', 'tok')).toEqual(unknownCostState());
+    },
+  );
+  test.each(['vault_bound', 'app_provider'] as const)(
+    'preserves %s through the usage client',
+    async (route) => {
+      mockFetch.mockReturnValueOnce(jsonResponse({ ...usage, resonance_route: route }));
+      const result = await botmasonUsage.get('tok');
+      expect(result.resonance_route).toBe(route);
+      expect(mockFetch.mock.calls[0][0]).toBe('http://test/user/usage');
+    },
+  );
+  test('rejects a usage response missing the required route', async () => {
+    expect(botmasonUsageSchema.safeParse(usage).success).toBe(false);
+    mockFetch.mockReturnValueOnce(jsonResponse(usage));
+    await expect(botmasonUsage.get('tok')).rejects.toThrow();
+  });
+  test.each([false, true])(
+    'blocks a missing route through the real usage client and cost reader, own key=%s',
+    async (hasKey) => {
+      mockFetch.mockReturnValueOnce(jsonResponse(usage));
+      const result = await loadCostState(hasKey, 'reading', 'tok');
+      expect(result).toEqual(unknownCostState());
+      expect(mockFetch).toHaveBeenCalledTimes(1);
+      expect(mockFetch.mock.calls[0][0]).toBe('http://test/user/usage');
+    },
+  );
+  test.each([false, true])(
+    'blocks an unsupported route through the real usage client and cost reader, own key=%s',
+    async (hasKey) => {
+      mockFetch.mockReturnValueOnce(jsonResponse({ ...usage, resonance_route: 'future_route' }));
+      const result = await loadCostState(hasKey, 'reading', 'tok');
+      expect(result).toEqual(unknownCostState());
+      expect(mockFetch).toHaveBeenCalledTimes(1);
+    },
+  );
+  test.each(['shared_provider', 'vault_available', null, true])(
+    'rejects unsupported route %s',
+    (route) => {
+      expect(botmasonUsageSchema.safeParse({ ...usage, resonance_route: route }).success).toBe(
+        false,
+      );
+    },
+  );
 });
 
 describe('journal.update', () => {
@@ -128,12 +217,65 @@ describe('resonance.generate', () => {
     expect(mockFetch.mock.calls[0][1].headers[LLM_API_KEY_HEADER]).toBeUndefined();
   });
 
+  test('names the payer route the writer was shown, so a changed route is refused (#3385)', async () => {
+    mockFetch.mockReturnValueOnce(jsonResponse(resonancePayload(), 200));
+
+    await resonance.generate(7, 'tok', 'sk-byok', 'app_provider');
+
+    const [url, init] = mockFetch.mock.calls[0];
+    expect(url).toBe('http://test/journal/7/resonance?disclosed_route=app_provider');
+    expect(init.headers[LLM_API_KEY_HEADER]).toBe('sk-byok');
+  });
+
+  test('surfaces a changed route as the unconfirmed-payment ApiError (#3385)', async () => {
+    mockFetch.mockReturnValueOnce(jsonResponse({ detail: 'resonance_payment_unconfirmed' }, 409));
+    await expect(resonance.generate(7, 'tok', null, 'vault_bound')).rejects.toMatchObject({
+      name: 'ApiError',
+      status: 409,
+      detail: 'resonance_payment_unconfirmed',
+    });
+  });
+
   test('surfaces a 402 as an ApiError', async () => {
     mockFetch.mockReturnValueOnce(jsonResponse({ detail: 'insufficient_offerings' }, 402));
     await expect(resonance.generate(7, 'tok')).rejects.toMatchObject({
       name: 'ApiError',
       status: 402,
       detail: 'insufficient_offerings',
+    });
+  });
+});
+
+describe('resonance.freeExits', () => {
+  test('asks the same route for its free exits only, with no key a later load could add', async () => {
+    setLlmApiKeyGetter(() => 'sk-saved-key-the-vault-never-uses');
+    mockFetch.mockReturnValueOnce(
+      jsonResponse(
+        {
+          ...resonancePayload(),
+          marginalia: [],
+          private: true,
+          private_message: 'This entry stays private.',
+        },
+        200,
+      ),
+    );
+
+    const result = await resonance.freeExits(7, 'tok');
+
+    const [url, init] = mockFetch.mock.calls[0];
+    expect(url).toBe('http://test/journal/7/resonance?free_only=true');
+    expect(init.method).toBe('POST');
+    expect(init.headers[LLM_API_KEY_HEADER]).toBeUndefined();
+    expect(result.private).toBe(true);
+  });
+
+  test('surfaces the unconfirmed-payment refusal as an ApiError', async () => {
+    mockFetch.mockReturnValueOnce(jsonResponse({ detail: 'resonance_payment_unconfirmed' }, 409));
+    await expect(resonance.freeExits(7, 'tok')).rejects.toMatchObject({
+      name: 'ApiError',
+      status: 409,
+      detail: 'resonance_payment_unconfirmed',
     });
   });
 });
@@ -180,6 +322,45 @@ describe('resonance.essay', () => {
     expect(result.monthly_reset_date).toBe('2026-10-01T00:00:00Z');
   });
 
+  test("carries a vault care escalation's reviewed care surface through validation (#3380)", async () => {
+    const care = {
+      title: "You're not alone in this",
+      message: 'Reaching out to a person is a sign of strength.',
+      resources: [
+        {
+          kind: 'hotline',
+          name: '988 Suicide & Crisis Lifeline',
+          contact: 'Call or text 988',
+          what_it_is: 'Free, confidential support, 24/7.',
+        },
+      ],
+    };
+    mockFetch.mockReturnValueOnce(jsonResponse({ ...marginalia(), ...ESSAY_BALANCES, care }));
+
+    const result = await resonance.essay(1, { priceAcknowledged: true });
+
+    expect(result.essay).toBeNull();
+    expect(result.care).toEqual(care);
+  });
+
+  test('reads an answer with no care field as no care surface', async () => {
+    mockFetch.mockReturnValueOnce(
+      jsonResponse({ ...marginalia({ essay: 'A warm letter.' }), ...ESSAY_BALANCES }),
+    );
+
+    const result = await resonance.essay(1, { priceAcknowledged: true });
+
+    expect(result.care ?? null).toBeNull();
+  });
+
+  test('refuses a care surface that is not the published shape', async () => {
+    mockFetch.mockReturnValueOnce(
+      jsonResponse({ ...marginalia(), ...ESSAY_BALANCES, care: { title: '', resources: [] } }),
+    );
+
+    await expect(resonance.essay(1, { priceAcknowledged: true })).rejects.toThrow();
+  });
+
   test('sends the price acknowledgement only when the caller gives it', async () => {
     mockFetch
       .mockReturnValueOnce(jsonResponse({ ...marginalia(), ...ESSAY_BALANCES }))
@@ -190,6 +371,17 @@ describe('resonance.essay', () => {
 
     expect(JSON.parse(mockFetch.mock.calls[0][1].body)).toEqual({ price_acknowledged: true });
     expect(JSON.parse(mockFetch.mock.calls[1][1].body)).toEqual({ price_acknowledged: false });
+  });
+
+  test('sends the disclosed payer route beside the acknowledgement when given (#3385)', async () => {
+    mockFetch.mockReturnValueOnce(jsonResponse({ ...marginalia(), ...ESSAY_BALANCES }));
+
+    await resonance.essay(1, { priceAcknowledged: true, disclosedRoute: 'vault_bound' });
+
+    expect(JSON.parse(mockFetch.mock.calls[0][1].body)).toEqual({
+      price_acknowledged: true,
+      disclosed_route: 'vault_bound',
+    });
   });
 
   test('rejects an answer without balances instead of pretending it is free', async () => {

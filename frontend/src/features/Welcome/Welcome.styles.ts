@@ -49,6 +49,11 @@ export const welcomeStyles = StyleSheet.create({
   },
   panel: {
     flex: 1,
+  },
+  // Centre cards when they fit; let their content grow and scroll when they do not.
+  panelContent: {
+    flexGrow: 1,
+    paddingVertical: rhythm.blockGap,
     paddingHorizontal: rhythm.screenPaddingH,
     justifyContent: 'center',
   },

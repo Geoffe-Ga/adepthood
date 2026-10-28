@@ -22,6 +22,8 @@ from sqlmodel import select
 from content_config import CONTENT_REF_SCHEME
 from models.course_stage import CourseStage
 from models.stage_content import StageContent
+from models.stage_progress import StageProgress
+from models.user import User
 from seed_content import seed_content
 from seed_stages import seed_stages, stage_definitions
 from services.content_repository import (
@@ -32,8 +34,10 @@ from services.content_repository import (
 
 _VENDORED_CONTENT_DIR = Path(__file__).resolve().parents[1] / "content"
 
-#: Stage 1 (Beige) ships exactly 17 chapters in the vendored manifest.
-_STAGE_ONE_CHAPTER_COUNT = 17
+#: Stage 1 (Beige) ships exactly 16 chapters in the vendored manifest; it
+#: shipped 17 until "Energy Scaffolding" (beige-8) moved upstream to the site
+#: resources (aptitude-course#76).
+_STAGE_ONE_CHAPTER_COUNT = 16
 
 #: Only the first three (unlocked) stages get a CourseStage row in the
 #: partial-coverage fixture -- the manifest still ships stages 4-10.
@@ -43,6 +47,11 @@ _UNLOCKED_STAGE_COUNT = 3
 _DAY_ZERO = 0
 
 _BEIGE_ONE_TITLE = "What is Beige?"
+
+#: Orange (stage 5) ships 26 chapters once orange-26..28 were removed
+#: upstream (#3137, aptitude-course#74); it shipped 29 before.
+_ORANGE_STAGE_NUMBER = 5
+_ORANGE_CHAPTER_COUNT = 26
 
 
 @pytest_asyncio.fixture
@@ -91,7 +100,7 @@ async def partially_seeded_vendored_course(db_session: AsyncSession) -> AsyncIte
 async def test_stage_one_serves_chapters_when_higher_stages_have_no_row(
     async_client: AsyncClient,
 ) -> None:
-    """P0: unlocked Stage 1 still shows all 17 chapters when stages 4-10 are unmapped."""
+    """P0: unlocked Stage 1 still shows all 16 chapters when stages 4-10 are unmapped."""
     headers = await _signup(async_client, "partial-stage-adept")
 
     resp = await async_client.get("/course/stages/1/progress", headers=headers)
@@ -104,8 +113,40 @@ async def test_stage_one_serves_chapters_when_higher_stages_have_no_row(
 
 @pytest.mark.asyncio
 @pytest.mark.usefixtures("seeded_vendored_course")
+async def test_orange_progress_counts_the_vendored_chapters(
+    async_client: AsyncClient,
+    db_session: AsyncSession,
+) -> None:
+    """#3137: Orange's total drops to 26 with the three removed essays gone."""
+    headers = await _signup(async_client, "orange-adept")
+    user = (
+        (await db_session.execute(select(User).where(User.email == "orange-adept@example.com")))
+        .scalars()
+        .one()
+    )
+    assert user.id is not None
+    # Orange is locked at signup; place the reader on it, with 1-4 behind them.
+    db_session.add(
+        StageProgress(
+            user_id=user.id,
+            current_stage=_ORANGE_STAGE_NUMBER,
+            completed_stages=list(range(1, _ORANGE_STAGE_NUMBER)),
+        )
+    )
+    await db_session.commit()
+
+    resp = await async_client.get(
+        f"/course/stages/{_ORANGE_STAGE_NUMBER}/progress", headers=headers
+    )
+
+    assert resp.status_code == HTTPStatus.OK
+    assert resp.json()["total_items"] == _ORANGE_CHAPTER_COUNT
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("seeded_vendored_course")
 async def test_stage_one_progress_reflects_vendored_manifest(async_client: AsyncClient) -> None:
-    """Regression: a fresh signup sees all 17 vendored Beige chapters, none read."""
+    """Regression: a fresh signup sees all 16 vendored Beige chapters, none read."""
     headers = await _signup(async_client, "fresh-adept")
 
     resp = await async_client.get("/course/stages/1/progress", headers=headers)
@@ -174,3 +215,19 @@ async def test_stage_one_rows_carry_content_refs_not_urls(db_session: AsyncSessi
 
     assert len(rows) == _STAGE_ONE_CHAPTER_COUNT
     assert all(row.url.startswith(f"{CONTENT_REF_SCHEME}://") for row in rows)
+
+
+#: The vendored Start Here reading order (aptitude-course#76): "Who Benefits?"
+#: first, then the intro, then the Energy Scaffolding essay that left Beige.
+_START_HERE_LEAD = ("liminal-creep", "about", "energy-scaffolding")
+
+
+def test_vendored_start_here_is_served_in_order() -> None:
+    """The real pin numbers its resources 1..N and the reader honours it (#3148).
+
+    Pins the contract the Start Here list leans on: a gap or a duplicate in
+    the upstream numbering, or a reshuffled lead, fails here on re-pin.
+    """
+    resources = ContentRepository(_VENDORED_CONTENT_DIR).list_resources()
+    assert [r.order for r in resources] == list(range(1, len(resources) + 1))
+    assert tuple(r.slug for r in resources[: len(_START_HERE_LEAD)]) == _START_HERE_LEAD

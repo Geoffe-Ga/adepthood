@@ -57,6 +57,16 @@ export const TARGET_UNITS = [
 
 export const FREQUENCY_UNITS = ['per_day', 'per_week', 'per_month', 'per_session'];
 
+/**
+ * The units a timer-fed habit may count in (#3150, #3154): a timer measures
+ * elapsed minutes, or one whole session. Mirrors the backend's
+ * ``LINKED_HABIT_UNITS`` in ``domain/habit_links.py``.
+ */
+export const LINKED_HABIT_TARGET_UNITS: readonly string[] = ['minutes', 'sessions'];
+
+/** The cadences a timer-fed habit may be scored over (``LINKED_HABIT_FREQUENCY_UNITS``). */
+export const LINKED_HABIT_FREQUENCY_UNITS: readonly string[] = ['per_day', 'per_week'];
+
 export const DAYS_OF_WEEK = [
   'Monday',
   'Tuesday',

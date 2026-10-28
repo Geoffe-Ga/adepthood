@@ -42,15 +42,17 @@ import { BACKEND_DIR, pythonExecutable, readLaneState, type LaneState } from './
  * 2. The same provider, same status, a *different* code: a genuine rate limit
  *    keeps its transient copy and its retry. This is the counterweight — without
  *    it, a carve-out that swallowed every 429 would pass the test above.
- * 3. The server's own key is refused (503): "ours to restore, not yours".
+ * 3. The server's own key is never spent on a writer's page (ADR 0009 phase (a),
+ *    #3067): with that key and the retired provider-probe marker both still
+ *    armed on the lane's server, a keyless page reaches no provider at all.
  *
  * A fourth account proves the privacy floor holds while all of this is armed: an
  * intimate page cannot reach a provider even when the server has a live one to
  * reach and the page is marked for it.
  *
  * Vacuity is the failure mode this file guards hardest against. BYOK must leave
- * no audit rows, while a failed server-paid pass must leave a spend/refund pair;
- * either wallet result is meaningless if the provider was never reached. So
+ * no audit rows, and a keyless page must reach no provider at all; either result
+ * is meaningless unless the counters can see a dial when one happens. So
  * every press is bracketed by the fake's own attempt counters and by the wallet
  * audit trail, and the copy is read out of the margin before anything is
  * asserted absent from it.
@@ -83,9 +85,7 @@ interface Wallet {
 }
 
 const HTTP_OK = 200;
-/** How the wallet service names the credit that settles a pass that failed. */
-const REFUND_FAILED_PASS = 'refund_failed_pass';
-/** `services.provider_probe.MIN_PROBE_TOKEN_LENGTH` — a shorter token arms nothing. */
+/** The retired probe's length floor (`MIN_PROBE_TOKEN_LENGTH`): the lane mints a token past it. */
 const MIN_PROBE_TOKEN_LENGTH = 16;
 
 /** A finished page with sentences in it, so nothing but the refusal is unusual. */
@@ -126,8 +126,8 @@ async function readAttempts(request: APIRequestContext): Promise<Attempts> {
  *
  * `walletaudit` has no API by design — it is a forensic surface for operators —
  * and it is also the only place that distinguishes caller-paid "never charged"
- * from server-paid "charged and put back". A spec that could see only the final
- * balance would pass against either policy and could not verify who paid.
+ * from "charged and put back". A spec that could see only the final balance
+ * would pass against either policy and could not verify who paid.
  */
 function readWallet(email: string): Wallet {
   const state = lane();
@@ -144,25 +144,6 @@ function readWallet(email: string): Wallet {
     throw new Error(`wallet audit read failed: ${result.stderr || result.stdout}`);
   }
   return JSON.parse(result.stdout) as Wallet;
-}
-
-/**
- * Assert the pass cost the writer nothing, and that it cost them nothing the way
- * the code claims: a deduction and a compensating credit, not an absent charge.
- *
- * The pair is bucket-agnostic on purpose. The monthly counter counts up and the
- * offering balance counts down, so which sign each row carries depends on which
- * wallet paid; what has to be true either way is that the two deltas cancel.
- */
-function expectChargeReversed(before: Wallet, after: Wallet): void {
-  expect(after.monthly_messages_used).toBe(before.monthly_messages_used);
-  expect(after.offering_balance).toBe(before.offering_balance);
-  const added = after.rows.slice(before.rows.length);
-  expect(added.map((row) => row.reason)).toEqual([
-    expect.stringMatching(/^spend_/u),
-    REFUND_FAILED_PASS,
-  ]);
-  expect(Number(added[0]?.delta) + Number(added[1]?.delta)).toBe(0);
 }
 
 /** A caller-owned key must leave both wallet buckets and their audit trail alone. */
@@ -199,7 +180,7 @@ async function writeFinishedPage(
  * Driven through the real screen rather than written into storage directly: the
  * 402 half of this journey is *about* the caller's own key, and a key that the
  * app never accepted would send the server the same request as no key at all —
- * which is the 503 half, silently.
+ * which reaches no provider, silently.
  */
 async function storeApiKey(page: Page, apiKey: string): Promise<void> {
   await page.goto(`${frontendUrl()}/api-key-settings`);
@@ -256,12 +237,12 @@ test("a spent balance behind the writer's own key is named, and a rate limit is 
   // The condition, and the one action that clears it. Named before anything is
   // asserted absent, so "no retry" is a claim about copy that actually rendered.
   expect(spentCopy).toContain('has run out of credit');
-  expect(spentCopy).toContain('Add credit with your provider');
+  expect(spentCopy).toContain('Top it up with whoever issued the key');
   // The affordance is the sentence: there is no retry button in this margin, so
   // pointing the writer at a retry means saying the word. The transient story
   // the bug told must be gone in full -- both halves of it, because either half
   // alone still reads as "this will pass, try again".
-  expect(spentCopy).not.toContain('having trouble connecting');
+  expect(spentCopy).not.toContain("can't reach the AI service");
   expect(spentCopy).not.toMatch(/tap retry/iu);
   expect(spentCopy).not.toMatch(/retry/iu);
   // And no control offering one either, in this margin or anywhere on the page.
@@ -290,7 +271,7 @@ test("a spent balance behind the writer's own key is named, and a rate limit is 
   // A carve-out that read the status instead of the code would have swallowed
   // this into the spent-balance copy and told the writer to go buy credit they
   // already have.
-  expect(throttledCopy).toContain('having trouble connecting');
+  expect(throttledCopy).toContain("can't reach the AI service");
   expect(throttledCopy).toMatch(/tap retry/iu);
   expect(throttledCopy).not.toContain('run out of credit');
 
@@ -305,65 +286,56 @@ test("a spent balance behind the writer's own key is named, and a rate limit is 
   expect(afterThrottled.openaiUnrecognised).toBe(0);
 });
 
-test("the server's own spent balance is ours to restore, and still costs the writer nothing", async ({
+test("the server's own key is never spent on a writer's page, even with the retired probe marker", async ({
   page,
 }) => {
   const { providerProbeToken } = lane();
-  // Without an armed probe a keyless request is answered by the stub, which
-  // cannot refuse: the press would succeed and this spec would quietly assert
-  // nothing. Checked against the floor the server itself applies.
+  // The arrangement that used to dial: before ADR 0009 phase (a) (#3067) a
+  // keyless page carrying this marker went past the stub to the provider on the
+  // server's own (spent) key and came back 503. The token and that key are both
+  // still set on this lane's server, and nothing reads either any more.
   expect(providerProbeToken.length).toBeGreaterThanOrEqual(MIN_PROBE_TOKEN_LENGTH);
   const before = await readAttempts(page.request);
-  expect(before.anthropicSpent).toBe(0);
 
-  const email = await signUp(page, 'service-credit-exhausted');
+  const email = await signUp(page, 'server-key-unspent');
   const token = await tokenFor(page.request, email);
-  // No key is stored in Settings, so this pass is paid for by the server's own
-  // key -- which is what makes it the 503 half rather than the 402 one. The
-  // marker is what sends it past the stub to the provider that key belongs to.
   const entryId = await writeFinishedPage(
     page.request,
     token,
     `${providerProbeToken}:anthropic — ${READABLE_PAGE}`,
   );
-
   const walletBefore = readWallet(email);
-  await openEntry(page, entryId);
-  await askForResonance(page);
 
-  const copy = await marginErrorText(page);
-  expect(copy).toContain('shared AI access has run out of credit');
-  // The remedy names the right person. The writer holds no key here, so a
-  // sentence telling them to go add credit would be advice they cannot take.
-  expect(copy).toContain('ours to do');
-  // Also not the caller's remedy: pointing someone at a key they do not hold is
-  // the same failure as pointing them at a retry that cannot work.
-  expect(copy).not.toContain('Add credit with your provider');
-  expect(copy).not.toContain('having trouble connecting');
-  expect(copy).not.toMatch(/retry/iu);
-  await expect(page.getByRole('button', { name: /retry/iu })).toHaveCount(0);
+  // Asked directly, with no key of the writer's own: the lane's armed stub seam
+  // answers, as a demo, and nothing leaves the process.
+  const response = await page.request.post(`${backendUrl()}/journal/${String(entryId)}/resonance`, {
+    headers: bearer(token),
+  });
+  expect(response.status()).toBe(HTTP_OK);
+  const body = (await response.json()) as { provenance: { paid_by: string } };
+  expect(body.provenance.paid_by).toBe('free');
 
-  const after = await readAttempts(page.request);
-  // Anthropic publishes no code for this, so the refusal is a 400 whose prose is
-  // the only signal -- a different shape from OpenAI's, recognised separately,
-  // and reached here as a real response body rather than a raised error.
-  expect(after.anthropicSpent).toBe(1);
-  expect(after.anthropicUnrecognised).toBe(0);
-  expectChargeReversed(walletBefore, readWallet(email));
+  // No provider was reached, on any surface the fake listens on -- in
+  // particular not the spent Anthropic account behind the server's own key.
+  expect(await readAttempts(page.request)).toEqual(before);
+  // And the writer kept every unit: whatever the demo pass staged was put back.
+  const walletAfter = readWallet(email);
+  expect(walletAfter.monthly_messages_used).toBe(walletBefore.monthly_messages_used);
+  expect(walletAfter.offering_balance).toBe(walletBefore.offering_balance);
 });
 
 test('an intimate page never reaches the provider, even with one armed and the page marked for it', async ({
   page,
 }) => {
-  const { providerProbeToken } = lane();
+  const { providerProbeToken, throttledOpenaiKey } = lane();
   const before = await readAttempts(page.request);
 
   const email = await signUp(page, 'intimate-privacy-floor');
   const token = await tokenFor(page.request, email);
-  // Deliberately the hardest version of the page: it carries the same marker
-  // that sent the previous journey's entry to a live provider, on a server whose
-  // own key is armed and whose provider is reachable. Nothing about this entry
-  // is unreachable by accident -- only the privacy floor stands in the way.
+  // Deliberately the hardest version of the page: it carries the marker that,
+  // before ADR 0009 phase (a), sent a keyless entry to a live provider, on a
+  // server whose own key is still set and whose provider is reachable. The
+  // intimate floor answers before any payer or provider question is asked.
   const entryId = await writeFinishedPage(
     page.request,
     token,
@@ -381,9 +353,12 @@ test('an intimate page never reaches the provider, even with one armed and the p
 
   // The server's half, asked directly, because a disabled button proves only
   // that this client did not send the request. The floor that matters is the one
-  // the route keeps for every client.
+  // the route keeps for every client. The request carries the writer's own key
+  // -- since ADR 0009 phase (a) the only thing that can reach a provider -- so
+  // the intimate floor is the one thing standing between this page and a live
+  // dial, and the attempt counters below mean something.
   const response = await page.request.post(`${backendUrl()}/journal/${String(entryId)}/resonance`, {
-    headers: bearer(token),
+    headers: { ...bearer(token), 'X-LLM-API-Key': throttledOpenaiKey },
   });
   expect(response.status()).toBe(HTTP_OK);
   expect((await response.json()) as { private: boolean }).toMatchObject({ private: true });

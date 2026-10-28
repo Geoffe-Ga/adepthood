@@ -7,6 +7,8 @@ import type { StyleProp, ViewStyle } from 'react-native';
 import type { ContentItem, CourseProgress, Stage } from '../../../api';
 import { colors, rhythm, STAGE_COLORS } from '../../../design/tokens';
 import { tabParamsFromPath } from '../../../navigation/__tests__/deepLinkTestKit';
+import type { RootTabParamList } from '../../../navigation/BottomTabs';
+import { useProgramStore } from '../../../store/useProgramStore';
 
 import { settle } from '@/testing/asyncSettle';
 
@@ -86,6 +88,9 @@ const sampleProgress: CourseProgress = {
   next_unlock_day: 3,
 };
 
+const mockTokenA = 'e30.eyJzdWIiOiIxIiwiZXhwIjo0MTAyNDQ0ODAwfQ.signature';
+const mockTokenB = 'e30.eyJzdWIiOiIyIiwiZXhwIjo0MTAyNDQ0ODAwfQ.signature';
+let mockSessionToken = mockTokenA;
 const mockStagesList = (jest.fn() as any).mockResolvedValue(sampleStages);
 // GET /stages/program-calendar — the server's one answer to which stage this
 // person is in. Default matches ``sampleStages``: they have just finished stage 1.
@@ -97,6 +102,7 @@ const defaultProgramCalendar = {
   cycle_number: 1,
 };
 const mockProgramCalendar = (jest.fn() as any).mockResolvedValue(defaultProgramCalendar);
+const mockUiFlags = (jest.fn() as any).mockResolvedValue({ course_last_stage: null });
 const mockStageContent = (jest.fn() as any).mockResolvedValue(sampleContent);
 const mockStageProgress = (jest.fn() as any).mockResolvedValue(sampleProgress);
 const mockMarkRead = (jest.fn() as any).mockResolvedValue({
@@ -105,20 +111,31 @@ const mockMarkRead = (jest.fn() as any).mockResolvedValue({
   content_id: 1,
   completed_at: '2026-01-15T10:00:00Z',
 });
-const mockSiteResources = (jest.fn() as any).mockResolvedValue([
+const mockStartHereProgress = (jest.fn() as any).mockResolvedValue({
+  total_items: 2,
+  read_items: 2,
+  progress_percent: 100,
+  next_unlock_day: null,
+});
+const sampleResources = [
   {
     slug: 'philosophy',
     title: 'Philosophy',
     description: '',
     url: 'content://philosophy',
+    order: 1,
+    is_read: true,
   },
   {
     slug: 'about',
     title: 'About',
     description: '',
     url: 'content://about',
+    order: 2,
+    is_read: true,
   },
-]);
+];
+const mockSiteResources = (jest.fn() as any).mockResolvedValue(sampleResources);
 const mockContentBody = (jest.fn() as any).mockResolvedValue({
   title: 'Chapter One',
   content_type: 'chapter',
@@ -138,16 +155,22 @@ const mockStageIntroBody = (jest.fn() as any).mockResolvedValue({
   body_markdown: '# Welcome to Beige\n\nintro\n',
 });
 
+jest.mock('@/context/AuthContext', () => require('./authContextTestKit'));
+
 jest.mock('../../../api', () => ({
+  captureSessionToken: () => mockSessionToken,
+  uiFlags: { get: (...args: unknown[]) => mockUiFlags(...args) },
   stages: {
     listAll: (...args: unknown[]) => mockStagesList(...args),
     programCalendar: (...args: unknown[]) => mockProgramCalendar(...args),
   },
   course: {
+    nextUnread: () => Promise.resolve(null),
     stageContentAll: (...args: unknown[]) => mockStageContent(...args),
     stageProgress: (...args: unknown[]) => mockStageProgress(...args),
     markRead: (...args: unknown[]) => mockMarkRead(...args),
     contentBody: (...args: unknown[]) => mockContentBody(...args),
+    startHereProgress: () => mockStartHereProgress(),
     siteResources: (...args: unknown[]) => mockSiteResources(...args),
     siteResourceBody: (...args: unknown[]) => mockSiteResourceBody(...args),
     stageIntro: (...args: unknown[]) => mockStageIntro(...args),
@@ -158,7 +181,10 @@ jest.mock('../../../api', () => ({
 const mockNavigate = jest.fn() as any;
 // Mutable route params so a test can simulate a second Map->Course deep-link
 // reaching the already-mounted Course tab by reassigning this between renders.
-let mockRouteParams: { stageNumber?: number } | undefined;
+let mockRouteParams: RootTabParamList['Course'];
+const mockSetParams = jest.fn((params: Partial<NonNullable<RootTabParamList['Course']>>) => {
+  mockRouteParams = { ...mockRouteParams, ...params };
+});
 // CourseScreen installs its header-left drawer toggle through useAppNavigation
 // (useScreenDrawer), which calls navigation.setOptions in a layout effect on
 // every mount -- without this mock every test below would crash reading
@@ -169,7 +195,7 @@ jest.mock('../../../navigation/hooks', () => ({
 }));
 // The reflect action now pushes the root-stack JournalEntry via useNavigation.
 jest.mock('@react-navigation/native', () => ({
-  useNavigation: () => ({ navigate: mockNavigate }),
+  useNavigation: () => ({ navigate: mockNavigate, setParams: mockSetParams }),
 }));
 
 jest.mock('react-native-safe-area-context', () => {
@@ -198,16 +224,124 @@ const flushMicrotasks = async (): Promise<void> => {
   }
 };
 
+beforeEach(() => {
+  useProgramStore.setState({ programStartDate: null, programStartDay: null });
+});
+
 describe('CourseScreen', () => {
   beforeEach(() => {
     jest.clearAllMocks();
     mockRouteParams = undefined;
+    mockSessionToken = mockTokenA;
+    mockSiteResources.mockResolvedValue(sampleResources);
+    mockStartHereProgress.mockResolvedValue({
+      total_items: 2,
+      read_items: 2,
+      progress_percent: 100,
+      next_unlock_day: null,
+    });
     mockStagesList.mockResolvedValue(sampleStages);
     mockProgramCalendar.mockResolvedValue(defaultProgramCalendar);
+    mockUiFlags.mockResolvedValue({ course_last_stage: null });
     mockStageContent.mockResolvedValue(sampleContent);
     mockStageProgress.mockResolvedValue(sampleProgress);
     // Default: no intro for the stage — card hidden unless a test opts in.
     mockStageIntro.mockRejectedValue({ detail: 'content_not_found' });
+  });
+
+  it('opens unread Start Here before the saved Frequency without ever requesting stage zero', async () => {
+    mockSiteResources.mockResolvedValue(
+      sampleResources.map((resource) => ({ ...resource, is_read: false })),
+    );
+    mockStartHereProgress.mockResolvedValue({
+      total_items: 2,
+      read_items: 0,
+      progress_percent: 0,
+      next_unlock_day: null,
+    });
+    mockUiFlags.mockResolvedValue({ course_last_stage: 2 });
+    const view = render(<CourseScreen />);
+    await settle();
+    expect(view.getByTestId('start-here-section')).toBeTruthy();
+    expect(view.getByText('0 of 2 read')).toBeTruthy();
+    expect(mockStageContent).not.toHaveBeenCalledWith(0);
+    expect(mockStageProgress).not.toHaveBeenCalledWith(0);
+    expect(view.queryByTestId('stage-intro-card')).toBeNull();
+  });
+
+  it('preserves an explicit Frequency route while Start Here remains unread', async () => {
+    mockStartHereProgress.mockResolvedValue({
+      total_items: 2,
+      read_items: 0,
+      progress_percent: 0,
+      next_unlock_day: null,
+    });
+    mockRouteParams = { stageNumber: 2 };
+    const view = render(<CourseScreen />);
+    await settle();
+    expect(view.getByTestId('stage-pill-2').props.accessibilityState.selected).toBe(true);
+    expect(view.queryByTestId('start-here-section')).toBeNull();
+    expect(mockStageContent).toHaveBeenCalledWith(2);
+  });
+
+  it("does not start another account's resource or flag reads from a held old stage response", async () => {
+    let finish!: (_stages: Stage[]) => void;
+    mockStagesList.mockReturnValueOnce(
+      new Promise<Stage[]>((resolve) => {
+        finish = resolve;
+      }),
+    );
+    render(<CourseScreen />);
+    await settle();
+    require('@/storage/userScope').setActiveUser(2);
+    mockSessionToken = mockTokenB;
+    await act(async () => finish(sampleStages));
+    await settle();
+    expect(mockStartHereProgress).not.toHaveBeenCalled();
+    expect(mockUiFlags).not.toHaveBeenCalled();
+    expect(mockStageContent).not.toHaveBeenCalled();
+  });
+
+  const holdFirstReadingFlags = (): ((_flags: { course_last_stage: number }) => void) => {
+    let finish!: (_flags: { course_last_stage: number }) => void;
+    mockUiFlags.mockReturnValueOnce(
+      new Promise((resolve) => {
+        finish = resolve;
+      }),
+    );
+    return (flags) => finish(flags);
+  };
+
+  it('drops held account A reading flags after an owner transition', async () => {
+    const finish = holdFirstReadingFlags();
+    const view = render(<CourseScreen />);
+    await settle();
+    expect(mockUiFlags).toHaveBeenCalledTimes(1);
+    require('@/storage/userScope').setActiveUser(2);
+    mockSessionToken = mockTokenB;
+    await act(async () => finish({ course_last_stage: 2 }));
+    await settle();
+    expect(view.queryByTestId('stage-cover')).toBeNull();
+    expect(mockStageContent).not.toHaveBeenCalled();
+  });
+
+  it('drops held account A reading flags after an A-to-B-to-A transition', async () => {
+    const finish = holdFirstReadingFlags();
+    // The returning account is a new lifecycle that reloads its own reading
+    // state (#3343); only that fresh answer may choose the Frequency.
+    mockUiFlags.mockResolvedValueOnce({ course_last_stage: 1 });
+    const view = render(<CourseScreen />);
+    await settle();
+    expect(mockUiFlags).toHaveBeenCalledTimes(1);
+    require('@/storage/userScope').setActiveUser(2);
+    mockSessionToken = mockTokenB;
+    require('@/storage/userScope').setActiveUser(1);
+    mockSessionToken = mockTokenA;
+    await act(async () => finish({ course_last_stage: 2 }));
+    await settle();
+    expect(mockUiFlags).toHaveBeenCalledTimes(2);
+    expect(view.getByTestId('stage-pill-1').props.accessibilityState.selected).toBe(true);
+    expect(mockStageContent).not.toHaveBeenCalledWith(2);
   });
 
   it('shows loading spinner initially', () => {
@@ -261,7 +395,7 @@ describe('CourseScreen', () => {
     expect(flat.flex).toBe(1);
   });
 
-  it('defaults to the stage the server reports as current', async () => {
+  it('defaults to the server current stage before any reading', async () => {
     const { getByTestId } = render(<CourseScreen />);
 
     await settle();
@@ -270,7 +404,7 @@ describe('CourseScreen', () => {
     expect(getByTestId('stage-selector')).toBeTruthy();
   });
 
-  it('takes the server stage over the completion count when they disagree', async () => {
+  it('takes the server stage over completion count before any reading', async () => {
     // Someone who put the app down for two months: the calendar has opened
     // stage 4 and the server has recorded them entering it, while only stage 1
     // is complete. Counting completions would answer 2 and drop them back into
@@ -296,6 +430,52 @@ describe('CourseScreen', () => {
     expect(mockStageContent).not.toHaveBeenCalledWith(2);
   });
 
+  it('opens on the last read Frequency ahead of the calendar', async () => {
+    const anchor = new Date();
+    anchor.setDate(anchor.getDate() - 21);
+    useProgramStore.setState({ programStartDate: anchor });
+    mockUiFlags.mockResolvedValue({ course_last_stage: 1 });
+    render(<CourseScreen />);
+    await settle();
+    expect(mockStageContent).toHaveBeenCalledWith(1);
+    expect(mockProgramCalendar).not.toHaveBeenCalled();
+  });
+
+  it('uses the program date before the server stage when no Frequency has been read', async () => {
+    const anchor = new Date();
+    anchor.setDate(anchor.getDate() - 42);
+    useProgramStore.setState({ programStartDate: anchor });
+    render(<CourseScreen />);
+    await settle();
+    expect(mockStageContent).toHaveBeenCalledWith(3);
+    expect(mockProgramCalendar).not.toHaveBeenCalled();
+  });
+
+  it.each([3, 10])('falls back when saved Frequency %s is locked or absent', async (stage) => {
+    mockUiFlags.mockResolvedValue({ course_last_stage: stage });
+    render(<CourseScreen />);
+    await settle();
+    expect(mockStageContent).toHaveBeenCalledWith(2);
+  });
+
+  it('keeps a newer route selection when an older saved-Frequency request resolves', async () => {
+    let resolveFlags!: (_flags: { course_last_stage: number }) => void;
+    mockUiFlags.mockReturnValueOnce(
+      new Promise((resolve) => {
+        resolveFlags = resolve;
+      }),
+    );
+    const { rerender, getByTestId } = render(<CourseScreen />);
+    await settle();
+    mockRouteParams = { stageNumber: 2 };
+    rerender(<CourseScreen />);
+    await settle();
+    resolveFlags({ course_last_stage: 1 });
+    await settle();
+    expect(getByTestId('stage-pill-2').props.accessibilityState.selected).toBe(true);
+    expect(mockStageContent).not.toHaveBeenCalledWith(1);
+  });
+
   it('displays stage metadata for selected stage', async () => {
     const { getByTestId, getByText } = render(<CourseScreen />);
 
@@ -305,7 +485,7 @@ describe('CourseScreen', () => {
     expect(getByText('Second stage')).toBeTruthy();
   });
 
-  it('hangs the "Start here" band from the screen gutter with the rest of the landing', async () => {
+  it('hangs the "About this stage" band from the screen gutter with the rest of the landing', async () => {
     const { getByText } = render(<CourseScreen />);
 
     await settle();
@@ -315,7 +495,7 @@ describe('CourseScreen', () => {
       props: { style?: StyleProp<ViewStyle> };
       parent: Node | null;
     }
-    let node: Node | null = (getByText('Start here') as Node).parent;
+    let node: Node | null = (getByText('About this stage') as Node).parent;
     let inset: number | undefined;
     while (node && inset === undefined) {
       const padding = StyleSheet.flatten(node.props.style)?.paddingHorizontal;
@@ -445,11 +625,87 @@ describe('CourseScreen', () => {
     expect(mockStagesList.mock.calls.length).toBe(stagesCallsAfterMount);
   });
 
+  it('consumes an invitation section request even when its routed stage has not changed', async () => {
+    mockRouteParams = { stageNumber: 2 };
+    const { getByTestId, rerender } = render(<CourseScreen />);
+    await settle();
+    fireEvent.press(getByTestId('stage-pill-1'));
+    await settle();
+    expect(getByTestId('stage-pill-1').props.accessibilityState.selected).toBe(true);
+
+    mockRouteParams = { stageNumber: 2, openSection: true };
+    rerender(<CourseScreen />);
+    await settle();
+    expect(getByTestId('stage-pill-2').props.accessibilityState.selected).toBe(true);
+    expect(mockSetParams).toHaveBeenCalledWith({
+      openSection: undefined,
+      openReading: undefined,
+      contentId: undefined,
+      scrollOffset: undefined,
+    });
+
+    // Once consumed, ordinary browsing must not keep snapping back to stage 2.
+    fireEvent.press(getByTestId('stage-pill-1'));
+    await settle();
+    expect(getByTestId('stage-pill-1').props.accessibilityState.selected).toBe(true);
+  });
+
+  it('clears an old reader and stale restore hints when an invitation opens a section', async () => {
+    mockRouteParams = { stageNumber: 1 };
+    const { getByTestId, queryByTestId, rerender } = render(<CourseScreen />);
+    await settle();
+    fireEvent.press(getByTestId('content-card-1'));
+    await settle();
+    expect(getByTestId('chapter-reader')).toBeTruthy();
+
+    mockRouteParams = { stageNumber: 2, openSection: true, contentId: 1, scrollOffset: 80 };
+    rerender(<CourseScreen />);
+    await settle();
+    expect(queryByTestId('chapter-reader')).toBeNull();
+    expect(getByTestId('stage-pill-2').props.accessibilityState.selected).toBe(true);
+    expect(mockRouteParams.contentId).toBeUndefined();
+    expect(mockRouteParams.scrollOffset).toBeUndefined();
+  });
+
+  it('opens the specific suggested chapter again after backing out, from its beginning', async () => {
+    mockRouteParams = { stageNumber: 1 };
+    const { getByTestId, queryByTestId, rerender } = render(<CourseScreen />);
+    await settle();
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      mockRouteParams = { stageNumber: 1, contentId: 1, openReading: true, scrollOffset: 80 };
+      rerender(<CourseScreen />);
+      await settle();
+      // The navigation stub mutates params; emulate the route render emitted by setParams.
+      rerender(<CourseScreen />);
+      await settle();
+      expect(getByTestId('chapter-reader')).toBeTruthy();
+      expect(mockRouteParams.openReading).toBeUndefined();
+      expect(mockRouteParams.scrollOffset).toBe(0);
+      fireEvent.press(getByTestId('reader-back-button'));
+      await settle();
+      expect(queryByTestId('chapter-reader')).toBeNull();
+    }
+  });
+
+  it('keeps an open reader on an ordinary return to Course', async () => {
+    mockRouteParams = { stageNumber: 1 };
+    const { getByTestId, rerender } = render(<CourseScreen />);
+    await settle();
+    fireEvent.press(getByTestId('content-card-1'));
+    await settle();
+    mockRouteParams = { stageNumber: 1 };
+    rerender(<CourseScreen />);
+    await settle();
+    expect(getByTestId('chapter-reader')).toBeTruthy();
+    expect(mockSetParams).not.toHaveBeenCalled();
+  });
+
   // #2958: params resolved through the real linking config, exactly as a
   // ``/course/<n>`` deep link delivers them. The derived default here is stage
   // 2 (the program calendar), so stage 1 can only come from the link itself.
   describe('opened through a /course/:stageNumber deep link', () => {
     it('shows the linked stage cover and metadata and selects its pill', async () => {
+      mockUiFlags.mockResolvedValue({ course_last_stage: 2 });
       mockRouteParams = tabParamsFromPath('course/1', 'Course');
       const { getByTestId, getByText } = render(<CourseScreen />);
 
@@ -460,6 +716,7 @@ describe('CourseScreen', () => {
       expect(getByTestId('stage-metadata')).toBeTruthy();
       expect(getByText('First stage')).toBeTruthy();
       expect(mockStageContent).toHaveBeenCalledWith(1);
+      expect(mockUiFlags).not.toHaveBeenCalled();
     });
 
     it.each(['course/abc', 'course/0', 'course/11'])(
@@ -599,10 +856,11 @@ describe('CourseScreen', () => {
     const { getByTestId, getByText, queryByTestId } = render(<CourseScreen />);
 
     await settle();
-    expect(getByTestId('site-resources-panel')).toBeTruthy();
+    await act(async () => fireEvent.press(getByTestId('start-here-pill')));
+    expect(getByTestId('start-here-section')).toBeTruthy();
 
     await act(async () => {
-      fireEvent.press(getByTestId('site-resource-chip-philosophy'));
+      fireEvent.press(getByTestId('start-here-resource-philosophy'));
     });
 
     await settle();
@@ -827,6 +1085,13 @@ describe('single scroll surface', () => {
   beforeEach(() => {
     jest.clearAllMocks();
     mockRouteParams = undefined;
+    mockSessionToken = mockTokenA;
+    mockStartHereProgress.mockResolvedValue({
+      total_items: 0,
+      read_items: 0,
+      progress_percent: 0,
+      next_unlock_day: null,
+    });
     mockStagesList.mockResolvedValue(sampleStages);
     mockProgramCalendar.mockResolvedValue(defaultProgramCalendar);
     mockStageContent.mockResolvedValue(sampleContent);
@@ -898,6 +1163,13 @@ describe('CourseScreen Spiral-Dynamics accent colors', () => {
   beforeEach(() => {
     jest.clearAllMocks();
     mockRouteParams = undefined;
+    mockSessionToken = mockTokenA;
+    mockStartHereProgress.mockResolvedValue({
+      total_items: 0,
+      read_items: 0,
+      progress_percent: 0,
+      next_unlock_day: null,
+    });
     mockStagesList.mockResolvedValue(sampleStages);
     mockProgramCalendar.mockResolvedValue(defaultProgramCalendar);
     mockStageContent.mockResolvedValue(sampleContent);
@@ -943,4 +1215,9 @@ describe('CourseScreen Spiral-Dynamics accent colors', () => {
     expect(backgroundColorOf(getByTestId('stage-cover-progress').props.style)).toBe(colors.neutral);
     expect(backgroundColorOf(getByTestId('progress-bar-fill').props.style)).toBe(colors.neutral);
   });
+});
+
+beforeEach(() => {
+  require('@/storage/userScope').setActiveUser(1);
+  require('../startHereStore').useStartHereStore.getState().reset();
 });

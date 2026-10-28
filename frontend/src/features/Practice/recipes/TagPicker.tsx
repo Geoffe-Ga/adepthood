@@ -12,6 +12,7 @@ import PersonalTagRow from './PersonalTagRow';
 import { nameToSlug } from './types';
 
 import type { PracticeTag, PracticeTagCreate } from '@/api';
+import { formatApiError } from '@/api/errorMessages';
 
 export interface TagPickerProps {
   stepIndex: number;
@@ -128,7 +129,7 @@ function useTagDropdown(props: TagPickerProps): TagDropdownController {
       selected === undefined
         ? undefined
         : {
-            text: selected.owner_user_id === null ? 'System' : 'Custom',
+            text: selected.owner_user_id === null ? 'Built in' : 'Yours',
             testID: `tag-picker-${props.stepIndex}-badge`,
           },
     toggle: () => setOpen((prev) => !prev),
@@ -299,7 +300,7 @@ function useCreatorFormState(
     try {
       await onCreate({ slug: derivedSlug, label: label.trim() });
     } catch (err: unknown) {
-      setError(err instanceof Error ? err.message : 'Could not create tag.');
+      setError(formatApiError(err, { fallback: 'Could not create that tag.' }));
     } finally {
       setBusy(false);
     }
@@ -315,7 +316,7 @@ const InlineTagCreator = (props: InlineTagCreatorProps): React.JSX.Element => {
         value={form.label}
         onChangeText={form.setLabel}
         style={dropdownCreateStyles.input}
-        placeholder="Tag label (what users see)"
+        placeholder="Tag name (what you'll see)"
         maxLength={LABEL_MAX}
         testID={`${props.base}-creator-label`}
       />
@@ -323,7 +324,7 @@ const InlineTagCreator = (props: InlineTagCreatorProps): React.JSX.Element => {
         value={form.slug.length > 0 ? form.slug : form.derivedSlug}
         onChangeText={form.setSlug}
         style={dropdownCreateStyles.input}
-        placeholder="slug_in_snake_case"
+        placeholder="short_name_like_this"
         maxLength={SLUG_MAX}
         autoCapitalize="none"
         autoCorrect={false}

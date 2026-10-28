@@ -82,7 +82,7 @@ const TalliedHeader = ({ config, position, surface }: HeaderProps): React.JSX.El
       style={[groundingHeaderStyles.badge, { color: surface.text }]}
       testID="tallied-grounding-badge"
     >
-      {`${config.categories.length} × ${config.rounds}`}
+      {`${config.categories.length} ${config.categories.length === 1 ? 'kind' : 'kinds'} × ${config.rounds} ${config.rounds === 1 ? 'round' : 'rounds'}`}
     </Text>
     {position && (
       <Text style={[styles.round, { color: surface.text }]} testID="tallied-grounding-round">

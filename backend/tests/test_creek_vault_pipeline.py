@@ -37,6 +37,8 @@ from sqlmodel import col, select
 from domain.creek_vault import (
     CreekCapability,
     CreekCapabilityUnsupportedError,
+    VaultClassificationMethod,
+    VaultClassificationPass,
     VaultLinkStage,
     VaultPipelineJob,
     VaultPipelineStage,
@@ -69,6 +71,9 @@ from services.creek_vault_pipeline import _commit_finished_run as commit_finishe
 from services.creek_vault_pipeline import _PipelinePlan as PipelinePlan
 from services.creek_vault_pipeline import _reconcile_run as reconcile_run
 from services.creek_vault_pipeline import _RunResult as RunResult
+from services.creek_vault_pipeline import (
+    _settle_despite_cancellation as settle_despite_cancellation,
+)
 from services.creek_vault_pipeline import _StageCounts as StageCounts
 from services.creek_vault_pipeline import _start_queued_run as start_queued_run
 from services.creek_vault_telemetry import (
@@ -76,6 +81,7 @@ from services.creek_vault_telemetry import (
     reset_vault_telemetry_for_tests,
     vault_outcome_counts,
 )
+from services.privacy_suspension import VAULT_SEND_SUSPEND_ENV_VAR
 
 _VAULT_URL = "https://vault.example.test"
 _API_KEY = "test-key"  # pragma: allowlist secret
@@ -189,6 +195,15 @@ class _Recorder:
         ]
 
 
+# A trickling answer takes this long, far beyond every budget the trickle
+# tests set; a run that was not cut short therefore takes at least this long.
+_TRICKLE_SECONDS = 3.0
+# A run that was cut short finishes well under the trickle. The gap between
+# the two absorbs scheduler delay on a loaded machine without letting an
+# uncut run pass.
+_CUT_RUN_CEILING_SECONDS = 2.0
+
+
 class _SlowRecorder:
     """An async handler that answers only after ``delay`` seconds have really passed.
 
@@ -252,6 +267,7 @@ class _DurableJobRecorder:
         reject_first_classification: bool = False,
         fail_first_classification_job: bool = False,
         lose_first_classification_job: bool = False,
+        classification_method: str = "llm",
     ) -> None:
         """Optionally fault the first admission or first admitted job."""
         self.requests: list[httpx.Request] = []
@@ -261,6 +277,7 @@ class _DurableJobRecorder:
         self._fail_first_classification_job = fail_first_classification_job
         self._lose_first_classification_job = lose_first_classification_job
         self._polls: dict[str, int] = {}
+        self._classification_method = classification_method
 
     def __call__(self, request: httpx.Request) -> httpx.Response:
         """Serve the published admission, status, and synchronous response shapes."""
@@ -330,7 +347,7 @@ class _DurableJobRecorder:
             )
         if job_id == self.CLASSIFICATION_JOB:
             result = _example("pipeline", "success")
-            result["method"] = "llm"
+            result["method"] = self._classification_method
         else:
             result = _link_body("embeddings")
         return httpx.Response(
@@ -503,6 +520,54 @@ async def test_a_journal_write_converges_through_a_durable_llm_job(
 
 
 @pytest.mark.asyncio
+async def test_a_durable_rules_fallback_keeps_counts_without_retrying_as_a_failure(
+    db_session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Creek's managed fallback lands labels but has not completed semantic classification."""
+    monkeypatch.setattr(pipeline, "_JOB_POLL_INITIAL_SECONDS", 0.001)
+    monkeypatch.setattr(pipeline, "_RETRY_INITIAL_SECONDS", 0.001)
+    recorder = _DurableJobRecorder(classification_method="rules")
+    async with httpx.AsyncClient(transport=httpx.MockTransport(recorder)) as http:
+        client = HttpCreekVaultClient(_VAULT_URL, _API_KEY, http_client=http)
+        await client.handshake()
+        await drive_vault_pipeline(
+            db_session, client, user_id=_OWNER, trigger=VaultPipelineTrigger.JOURNAL_WRITE
+        )
+        await _wait_for_background_pipeline()
+
+    assert recorder.classification_submissions == 1
+    rows = await _rows(db_session)
+    assert [(row.stage, row.outcome) for row in rows] == [
+        ("classify", VaultPipelineOutcome.INCOMPLETE),
+        ("temporal", VaultPipelineOutcome.COMPLETED),
+    ]
+    assert rows[0].attempt_count == 1
+    assert rows[0].job_id == recorder.CLASSIFICATION_JOB
+    assert (rows[0].fragments_seen, rows[0].fragments_touched) == (12, 10)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("method", ["llm", "rules"])
+async def test_a_classification_result_preserves_the_method_that_actually_ran(
+    method: str,
+    http_clients: Callable[[_RecorderLike], httpx.AsyncClient],
+    handshaken: Callable[[_RecorderLike, httpx.AsyncClient], Any],
+) -> None:
+    """A rules floor must never be projected into a successful LLM receipt."""
+    body = _example("pipeline", "success")
+    body["method"] = method
+    recorder = _Recorder(classification=httpx.Response(200, json=body))
+    client = await handshaken(recorder, http_clients(recorder))
+
+    result = await client.classify_corpus()
+
+    assert isinstance(result, VaultClassificationPass)
+    assert result.method is VaultClassificationMethod(method)
+    assert result.complete is True
+
+
+@pytest.mark.asyncio
 async def test_an_accepted_job_tolerates_a_transient_status_outage(
     db_session: AsyncSession,
     monkeypatch: pytest.MonkeyPatch,
@@ -643,6 +708,94 @@ async def test_a_terminal_failed_job_is_readmitted_with_bounded_backoff(
 
 
 @pytest.mark.asyncio
+async def test_a_suspension_arriving_before_a_retry_ends_the_run_failed(
+    db_session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A retry the vault-send switch refused never left the process (#3075).
+
+    The first admission's job fails, and the operator suspends vault sends
+    before the readmission. The readmission is refused locally, and the only
+    earlier attempt is provably over (its job definitively failed), so no
+    attempt can have landed: the run closes FAILED at once, with no further
+    attempt and no further wire request.
+    """
+    monkeypatch.setattr(pipeline, "_RETRY_INITIAL_SECONDS", 0.001)
+    monkeypatch.setattr(pipeline, "_JOB_POLL_INITIAL_SECONDS", 0.001)
+    monkeypatch.delenv(VAULT_SEND_SUSPEND_ENV_VAR, raising=False)
+    recorder = _DurableJobRecorder(fail_first_classification_job=True)
+
+    def _suspend_on_first_poll(request: httpx.Request) -> httpx.Response:
+        if request.url.path.startswith(_JOBS_PREFIX):
+            monkeypatch.setenv(VAULT_SEND_SUSPEND_ENV_VAR, "true")
+        return recorder(request)
+
+    http = httpx.AsyncClient(transport=httpx.MockTransport(_suspend_on_first_poll))
+    client = HttpCreekVaultClient(_VAULT_URL, _API_KEY, http_client=http)
+    await client.handshake()
+    recorder.requests.clear()
+
+    await drive_vault_pipeline(
+        db_session, client, user_id=_OWNER, trigger=VaultPipelineTrigger.JOURNAL_WRITE
+    )
+    await _wait_for_background_pipeline()
+    await http.aclose()
+
+    assert recorder.classification_submissions == 1
+    assert recorder.paths.count(_CLASSIFICATIONS_PATH) == 1
+    rows = await _rows(db_session)
+    assert [(row.stage, row.outcome, row.attempt_count) for row in rows] == [
+        ("classify", VaultPipelineOutcome.FAILED, 2)
+    ]
+
+
+@pytest.mark.asyncio
+async def test_a_resumed_unanswered_run_under_suspension_stays_ambiguous(
+    db_session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A suspension proves only that *its* attempt never left the process (#3075).
+
+    The row's earlier attempt went out and was never answered, so it may have
+    landed. The suspended retry sends nothing and ends the run, but must keep
+    that uncertainty: AMBIGUOUS, never FAILED, which would understate exposure.
+    """
+    monkeypatch.setattr(pipeline, "_RETRY_INITIAL_SECONDS", 0.001)
+    monkeypatch.setenv(VAULT_SEND_SUSPEND_ENV_VAR, "true")
+    recorder = _DurableJobRecorder()
+    http = httpx.AsyncClient(transport=httpx.MockTransport(recorder))
+    client = HttpCreekVaultClient(_VAULT_URL, _API_KEY, http_client=http)
+    db_session.add(
+        VaultPipelineRun(
+            user_id=_OWNER,
+            stage="classify",
+            trigger=VaultPipelineTrigger.JOURNAL_WRITE.value,
+            outcome=VaultPipelineOutcome.ATTEMPTED.value,
+            job_id=None,
+            attempt_count=1,
+            fragments_seen=0,
+            fragments_touched=0,
+            fragments_lost=0,
+        )
+    )
+    await db_session.commit()
+
+    async def _resolve(_session: AsyncSession, user_id: int) -> HttpCreekVaultClient:
+        assert user_id == _OWNER
+        return client
+
+    await pipeline.resume_vault_pipeline_runs(_test_session_factory(db_session), _resolve)
+    await _wait_for_background_pipeline()
+    await http.aclose()
+
+    assert _CLASSIFICATIONS_PATH not in recorder.paths
+    rows = await _rows(db_session)
+    assert [(row.stage, row.outcome, row.attempt_count) for row in rows] == [
+        ("classify", VaultPipelineOutcome.AMBIGUOUS, 2)
+    ]
+
+
+@pytest.mark.asyncio
 async def test_a_lost_job_handle_is_readmitted_instead_of_polled_forever(
     db_session: AsyncSession,
     monkeypatch: pytest.MonkeyPatch,
@@ -722,6 +875,22 @@ async def test_an_accepted_job_is_not_duplicated_when_its_commit_outlives_the_bu
     ]
 
 
+class _NeverTerminalRecorder(_DurableJobRecorder):
+    """A durable-job vault whose every admitted job stays running forever."""
+
+    def _status(self, job_id: str) -> httpx.Response:
+        """Keep every admitted job running forever."""
+        return httpx.Response(
+            200,
+            json={
+                "status": "ok",
+                "job_id": job_id,
+                "state": "running",
+                "result": None,
+            },
+        )
+
+
 @pytest.mark.asyncio
 async def test_a_job_that_never_finishes_releases_its_continuation_as_ambiguous(
     concurrent_session_factory: async_sessionmaker[AsyncSession],
@@ -734,25 +903,11 @@ async def test_a_job_that_never_finishes_releases_its_continuation_as_ambiguous(
     in-memory SQLite URL has a different, empty database; under a loaded xdist
     worker that made this assertion test the fixture rather than the pipeline.
     """
-
-    class _NeverTerminal(_DurableJobRecorder):
-        def _status(self, job_id: str) -> httpx.Response:
-            """Keep every admitted job running forever."""
-            return httpx.Response(
-                200,
-                json={
-                    "status": "ok",
-                    "job_id": job_id,
-                    "state": "running",
-                    "result": None,
-                },
-            )
-
     monkeypatch.setattr(pipeline, "_JOURNAL_RUN_BUDGET_SECONDS", 0.005)
     monkeypatch.setattr(pipeline, "_LEAST_WORTH_STARTING_SECONDS", 0.001)
     monkeypatch.setattr(pipeline, "_JOB_POLL_INITIAL_SECONDS", 0.001)
     monkeypatch.setattr(pipeline, "_JOB_RECONCILIATION_BUDGET_SECONDS", 0.01)
-    recorder = _NeverTerminal()
+    recorder = _NeverTerminalRecorder()
     http = httpx.AsyncClient(transport=httpx.MockTransport(recorder))
     client = HttpCreekVaultClient(_VAULT_URL, _API_KEY, http_client=http)
     await client.handshake()
@@ -773,6 +928,92 @@ async def test_a_job_that_never_finishes_releases_its_continuation_as_ambiguous(
     assert rows[0].outcome == VaultPipelineOutcome.AMBIGUOUS
     assert rows[0].attempt_count == 1
     assert rows[0].job_id == recorder.CLASSIFICATION_JOB
+
+
+#: The polling ceiling the test below sets, and a liveness read held well past
+#: it, so the ceiling is certain to expire while that read is in flight.
+_SHORT_POLLING_CEILING_SECONDS = 0.01
+_LIVENESS_READ_OUTLASTING_THE_CEILING_SECONDS = 0.05
+
+
+@pytest.mark.asyncio
+async def test_the_polling_ceiling_never_cancels_the_detached_gates_liveness_read(
+    concurrent_session_factory: async_sessionmaker[AsyncSession],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The clock that abandons a job never lands inside a database round trip (#3216).
+
+    The detached ladder orders every status poll behind a liveness read on a
+    gate session of its own, and that read sits inside the reconciliation
+    ceiling. A cancellation landing between SQLAlchemy's aiosqlite ``execute``
+    and its ``fetchall`` leaves the read's statement stepped and unfinalized on
+    a pooled connection -- a SHARED lock that the pool's reset-on-return
+    rollback does not release -- so the ladder's own ``AMBIGUOUS`` commit then
+    waited out the whole busy timeout and failed ``database is locked``. Holding
+    the read past the ceiling makes that landing certain instead of a race.
+    """
+    real_liveness_read = pipeline.account_is_live
+    cancelled_reads: list[int] = []
+
+    async def _liveness_read_outlasting_the_ceiling(session: AsyncSession, user_id: int) -> bool:
+        try:
+            await asyncio.sleep(_LIVENESS_READ_OUTLASTING_THE_CEILING_SECONDS)
+        except asyncio.CancelledError:
+            cancelled_reads.append(user_id)
+            raise
+        return await real_liveness_read(session, user_id)
+
+    monkeypatch.setattr(pipeline, "account_is_live", _liveness_read_outlasting_the_ceiling)
+    monkeypatch.setattr(pipeline, "_JOURNAL_RUN_BUDGET_SECONDS", 0.005)
+    monkeypatch.setattr(pipeline, "_LEAST_WORTH_STARTING_SECONDS", 0.001)
+    monkeypatch.setattr(pipeline, "_JOB_POLL_INITIAL_SECONDS", 0.001)
+    monkeypatch.setattr(
+        pipeline, "_JOB_RECONCILIATION_BUDGET_SECONDS", _SHORT_POLLING_CEILING_SECONDS
+    )
+    recorder = _NeverTerminalRecorder()
+    http = httpx.AsyncClient(transport=httpx.MockTransport(recorder))
+    client = HttpCreekVaultClient(_VAULT_URL, _API_KEY, http_client=http)
+    await client.handshake()
+
+    async with concurrent_session_factory() as session:
+        await drive_vault_pipeline(
+            session, client, user_id=_OWNER, trigger=VaultPipelineTrigger.JOURNAL_WRITE
+        )
+    await _wait_for_background_pipeline()
+    await http.aclose()
+
+    assert cancelled_reads == []
+    async with concurrent_session_factory() as session:
+        rows = await _rows(session)
+    assert [(row.stage, row.outcome) for row in rows] == [
+        ("classify", VaultPipelineOutcome.AMBIGUOUS),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_a_settling_read_outlives_every_cancellation_before_reraising() -> None:
+    """Repeated cancellations wait for the read to end, then the first is re-raised."""
+    release = asyncio.Event()
+    finished = asyncio.Event()
+
+    async def _read() -> bool:
+        await release.wait()
+        finished.set()
+        return True
+
+    waiter = asyncio.create_task(settle_despite_cancellation(_read()))
+    await asyncio.sleep(0)
+    waiter.cancel()
+    await asyncio.sleep(0)
+    waiter.cancel()
+    await asyncio.sleep(0)
+    assert not waiter.done()
+    assert not finished.is_set()
+
+    release.set()
+    with pytest.raises(asyncio.CancelledError):
+        await waiter
+    assert finished.is_set()
 
 
 @pytest.mark.asyncio
@@ -2453,6 +2694,39 @@ async def test_a_classification_missing_a_required_field_is_a_payload_error(
 
 
 @pytest.mark.asyncio
+async def test_a_stage_refused_by_the_operator_suspension_is_failed_not_ambiguous(
+    db_session: AsyncSession,
+    http_clients: Callable[[_Recorder], httpx.AsyncClient],
+    handshaken: Callable[[_Recorder, httpx.AsyncClient], Any],
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A send the vault-send switch refused never left the process (#3075).
+
+    So it is a definitive refusal, recorded FAILED on its first attempt and not
+    retried, never AMBIGUOUS ("may have landed"), which would be false.
+    """
+    recorder = _Recorder()
+    client = await handshaken(recorder, http_clients(recorder))
+    recorder.requests.clear()
+    monkeypatch.setenv(VAULT_SEND_SUSPEND_ENV_VAR, "true")
+
+    with caplog.at_level("INFO"):
+        await drive_vault_pipeline(
+            db_session, client, user_id=_OWNER, trigger=VaultPipelineTrigger.JOURNAL_WRITE
+        )
+
+    rows = await _rows(db_session)
+    assert [row.outcome for row in rows] == [VaultPipelineOutcome.FAILED]
+    assert rows[0].attempt_count == 1
+    assert recorder.requests == []
+    assert any(
+        record.getMessage() == "creek vault pipeline stage suspended by operator"
+        for record in caplog.records
+    )
+
+
+@pytest.mark.asyncio
 async def test_a_boolean_in_a_count_field_is_a_payload_error(
     db_session: AsyncSession,
     http_clients: Callable[[_Recorder], httpx.AsyncClient],
@@ -2738,7 +3012,7 @@ async def test_a_journal_save_is_bounded_by_a_wall_clock_not_by_a_read_phase(
     budget = 0.2
     monkeypatch.setattr(pipeline, "_JOURNAL_RUN_BUDGET_SECONDS", budget)
     monkeypatch.setattr(pipeline, "_LEAST_WORTH_STARTING_SECONDS", 0.05)
-    slow = _SlowRecorder(delay=0.5, slow_link=VaultLinkStage.TEMPORAL.value)
+    slow = _SlowRecorder(delay=_TRICKLE_SECONDS, slow_link=VaultLinkStage.TEMPORAL.value)
     http = httpx.AsyncClient(transport=httpx.MockTransport(slow))
     client = HttpCreekVaultClient(_VAULT_URL, _API_KEY, http_client=http)
     await client.handshake()
@@ -2756,7 +3030,7 @@ async def test_a_journal_save_is_bounded_by_a_wall_clock_not_by_a_read_phase(
     await _wait_for_background_pipeline()
     await http.aclose()
 
-    assert elapsed < 0.45
+    assert elapsed < _CUT_RUN_CEILING_SECONDS
     # Non-vacuous: the bound cut a call short rather than declining to make one.
     assert any(
         request.url.path == _LINKS_PATH
@@ -2780,7 +3054,7 @@ async def test_an_import_cuts_a_trickling_clustering_rung_at_its_own_budget(
     monkeypatch.setattr(pipeline, "_DEEP_RUN_BUDGET_SECONDS", 0.3)
     monkeypatch.setattr(pipeline, "_LEAST_WORTH_STARTING_SECONDS", 0.05)
     monkeypatch.setattr(pipeline, "_RETRY_INITIAL_SECONDS", 0.001)
-    slow = _SlowRecorder(delay=0.5, slow_link=VaultLinkStage.EDDIES.value)
+    slow = _SlowRecorder(delay=_TRICKLE_SECONDS, slow_link=VaultLinkStage.EDDIES.value)
     http = httpx.AsyncClient(transport=httpx.MockTransport(slow))
     client = HttpCreekVaultClient(_VAULT_URL, _API_KEY, http_client=http)
     await client.handshake()
@@ -2793,7 +3067,7 @@ async def test_an_import_cuts_a_trickling_clustering_rung_at_its_own_budget(
     await _wait_for_background_pipeline()
     await http.aclose()
 
-    assert elapsed < 0.45
+    assert elapsed < _CUT_RUN_CEILING_SECONDS
     assert any(
         request.url.path == _LINKS_PATH
         and json.loads(request.content)["method"] == VaultLinkStage.EDDIES.value
@@ -2815,7 +3089,7 @@ async def test_a_trickling_job_submit_is_bounded_by_the_adapter_deadline(
     """
     monkeypatch.setattr(pipeline, "_JOURNAL_RUN_BUDGET_SECONDS", 0.2)
     monkeypatch.setattr(pipeline, "_LEAST_WORTH_STARTING_SECONDS", 0.05)
-    slow = _SlowRecorder(delay=0.5)
+    slow = _SlowRecorder(delay=_TRICKLE_SECONDS)
     http = httpx.AsyncClient(transport=httpx.MockTransport(slow))
     client = HttpCreekVaultClient(_VAULT_URL, _API_KEY, http_client=http)
     await client.handshake()
@@ -2828,7 +3102,7 @@ async def test_a_trickling_job_submit_is_bounded_by_the_adapter_deadline(
     elapsed = time.monotonic() - started
     await http.aclose()
 
-    assert elapsed < 0.45
+    assert elapsed < _CUT_RUN_CEILING_SECONDS
     assert any(request.url.path == _CLASSIFICATIONS_PATH for request in slow.requests)
 
 

@@ -3,6 +3,24 @@ import { jest, describe, it, expect, beforeEach } from '@jest/globals';
 import { act, renderHook, waitFor } from '@testing-library/react-native';
 
 import type { MettaReturnState, ReleasedHabit, ReturnArc, ReturnWeek } from '@/api';
+import type * as UserScope from '@/storage/userScope';
+
+// Construct a fixture credential from explicit non-secret claims, never a stored token.
+const mockToken = [
+  Buffer.from(JSON.stringify({ alg: 'HS256' })).toString('base64url'),
+  Buffer.from(JSON.stringify({ sub: '1', exp: 4102444800 })).toString('base64url'),
+  'test-signature',
+].join('.');
+jest.mock('@/context/AuthContext', () => ({ useAuth: () => ({ token: mockToken }) }));
+jest.mock('@/storage/userScope', () => ({
+  ...jest.requireActual<typeof UserScope>('@/storage/userScope'),
+  getActiveUser: () => 1,
+  getActiveUserGeneration: () => 1,
+}));
+jest.mock('@/storage/useActiveUser', () => ({
+  useActiveUser: () => 1,
+  useActiveUserGeneration: () => 1,
+}));
 
 type RealUseState = (_initial: unknown) => [unknown, (_next: unknown) => void];
 
@@ -109,6 +127,7 @@ function stateResult(overrides: Partial<MettaReturnState> = {}): MettaReturnStat
     eligible: true,
     weeks: fiveWeeks(),
     arc: null,
+    offer_episode: 'opaque-current-episode',
     offer_dismissed: false,
     released_habits: [],
     ...overrides,
@@ -200,7 +219,10 @@ describe('useMettaReturn', () => {
 
     expect(result.current.offerVisible).toBe(false);
     expect(mockDismissOffer).toHaveBeenCalledTimes(1);
-    expect(mockSaveDismissed).toHaveBeenCalledWith(true);
+    expect(mockSaveDismissed).toHaveBeenCalledWith(
+      { userId: 1, episode: 'opaque-current-episode' },
+      true,
+    );
   });
 
   it('server offer_dismissed true hides the offer even when the cache is empty', async () => {
@@ -221,12 +243,13 @@ describe('useMettaReturn', () => {
     expect(result.current.offerVisible).toBe(false);
   });
 
-  it('server offer_dismissed false overrides a stale cached-true (episode reset)', async () => {
+  it('same-episode pending decline survives an uncertain server response', async () => {
     mockUseContractionSignalActive.mockReturnValue(true);
     mockLoadDismissed.mockResolvedValue(true);
     mockState.mockResolvedValue(stateResult({ eligible: true, arc: null, offer_dismissed: false }));
     const { result } = renderHook(() => useMettaReturn());
-    await waitFor(() => expect(result.current.offerVisible).toBe(true));
+    await waitFor(() => expect(mockDismissOffer).toHaveBeenCalledTimes(1));
+    expect(result.current.offerVisible).toBe(false);
   });
 
   it('falls back to the cached dismissal flag when state() rejects', async () => {
@@ -343,16 +366,15 @@ describe('useMettaReturn', () => {
   });
 
   it('unmount guard: a late cached-dismissal resolution dispatches no state update on the dead hook', async () => {
-    // The cache read carries its own unmount guard; with the server call left
-    // pending it cannot mask a stray dispatch from the late cache resolution.
+    // Resolve an observed episode, then unmount during its scoped cache read.
     let resolveCache: (_value: boolean) => void = () => {};
     mockLoadDismissed.mockReturnValue(
       new Promise<boolean>((resolve) => {
         resolveCache = resolve;
       }),
     );
-    mockState.mockReturnValue(new Promise<MettaReturnState>(() => {}));
     const { result, unmount } = renderHook(() => useMettaReturn());
+    await waitFor(() => expect(mockLoadDismissed).toHaveBeenCalledTimes(1));
     unmount();
     mockUnmountTrackingArmed = true;
 
@@ -365,9 +387,7 @@ describe('useMettaReturn', () => {
     expect(result.current.offerVisible).toBe(false);
   });
 
-  it('revert guard: a cache resolution arriving after the server does not revert the applied flag', async () => {
-    // The server answer wins: a slow cache read resolving afterwards must not
-    // re-suppress an offer the server already un-dismissed (episode reset).
+  it('a delayed same-episode cache read stays quiet until its pending choice is known', async () => {
     mockUseContractionSignalActive.mockReturnValue(true);
     let resolveCache: (_value: boolean) => void = () => {};
     mockLoadDismissed.mockReturnValue(
@@ -375,16 +395,13 @@ describe('useMettaReturn', () => {
         resolveCache = resolve;
       }),
     );
-    mockState.mockResolvedValue(stateResult({ eligible: true, arc: null, offer_dismissed: false }));
     const { result } = renderHook(() => useMettaReturn());
-    await waitFor(() => expect(result.current.offerVisible).toBe(true));
-
+    await waitFor(() => expect(mockLoadDismissed).toHaveBeenCalledTimes(1));
+    expect(result.current.offerVisible).toBe(false);
     await act(async () => {
       resolveCache(true);
-      await Promise.resolve();
     });
-
-    expect(result.current.offerVisible).toBe(true);
+    expect(result.current.offerVisible).toBe(false);
   });
 });
 
@@ -436,7 +453,7 @@ describe('useMettaReturn — let-go and re-commit', () => {
       await result.current.release([7]);
     });
 
-    expect(mockRelease).toHaveBeenCalledWith([7]);
+    expect(mockRelease).toHaveBeenCalledWith([7], mockToken);
     expect(result.current.releasedHabits).toEqual([
       releasedHabit({ habit_id: 7, name: 'Cold plunge' }),
     ]);
@@ -458,7 +475,7 @@ describe('useMettaReturn — let-go and re-commit', () => {
       await expect(result.current.release([7])).resolves.toBeUndefined();
     });
 
-    expect(mockRelease).toHaveBeenCalledWith([7]);
+    expect(mockRelease).toHaveBeenCalledWith([7], mockToken);
     expect(result.current.letGoVisible).toBe(false);
     expect(result.current.releasedHabits).toEqual([]);
   });
@@ -500,7 +517,7 @@ describe('useMettaReturn — let-go and re-commit', () => {
       await result.current.recommit([3]);
     });
 
-    expect(mockRecommit).toHaveBeenCalledWith([3]);
+    expect(mockRecommit).toHaveBeenCalledWith([3], mockToken);
     expect(result.current.releasedHabits).toEqual([
       releasedHabit({ habit_id: 3, recommitted: true }),
     ]);
@@ -525,7 +542,7 @@ describe('useMettaReturn — let-go and re-commit', () => {
       await expect(result.current.recommit([3])).resolves.toBeUndefined();
     });
 
-    expect(mockRecommit).toHaveBeenCalledWith([3]);
+    expect(mockRecommit).toHaveBeenCalledWith([3], mockToken);
     expect(result.current.releasedHabits).toEqual([
       releasedHabit({ habit_id: 3, recommitted: false }),
     ]);
@@ -545,5 +562,40 @@ describe('useMettaReturn — let-go and re-commit', () => {
     expect(result.current.releasedHabits).toEqual([
       releasedHabit({ habit_id: 9, name: 'Journaling' }),
     ]);
+  });
+});
+
+describe('useMettaReturn read options (#3142)', () => {
+  it('reads nothing while disabled, and reads once enabled', async () => {
+    mockState.mockResolvedValue(stateResult({ arc: arc() }));
+    const { result, rerender } = renderHook(
+      ({ enabled }: { enabled: boolean }) => useMettaReturn({ enabled }),
+      { initialProps: { enabled: false } },
+    );
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(mockState).not.toHaveBeenCalled();
+    expect(result.current.arc).toBeNull();
+
+    rerender({ enabled: true });
+    await waitFor(() => expect(result.current.arc).not.toBeNull());
+    expect(mockState).toHaveBeenCalledTimes(1);
+  });
+
+  it('re-reads the state when the refresh key moves', async () => {
+    mockState.mockResolvedValue(stateResult({ arc: arc() }));
+    const { result, rerender } = renderHook(
+      ({ refreshKey }: { refreshKey: number }) => useMettaReturn({ refreshKey }),
+      { initialProps: { refreshKey: 0 } },
+    );
+    await waitFor(() => expect(result.current.arc).not.toBeNull());
+    expect(mockState).toHaveBeenCalledTimes(1);
+
+    // Left elsewhere (the Notification Center): the next read has no arc.
+    mockState.mockResolvedValue(stateResult({ arc: null }));
+    rerender({ refreshKey: 1 });
+    await waitFor(() => expect(result.current.arc).toBeNull());
+    expect(mockState).toHaveBeenCalledTimes(2);
   });
 });

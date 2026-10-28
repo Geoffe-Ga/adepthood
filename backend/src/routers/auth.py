@@ -905,6 +905,31 @@ async def login(
     return AuthResponse(token=token, user_id=user.id, timezone=user.timezone)
 
 
+async def verify_password_sign_in(
+    session: AsyncSession, payload: AuthRequest, ip_address: str
+) -> User:
+    """Run login's lockout, credential and account-state gates for another sign-in surface.
+
+    The agent consent page (#3532) signs a person in on a server-rendered form
+    rather than through ``POST /auth/login``. It must be exactly as hard to
+    guess a password there as here, so it goes through the same serialized
+    lockout-and-verify sequence and records its attempts in the same table,
+    and raises the same uniform ``invalid_credentials`` 401 on every refusal.
+    """
+    async with _serialize_login(session, payload.email):
+        return await _verify_login_or_raise(session, payload, ip_address)
+
+
+def session_signing_secret() -> str:
+    """Return the deployment secret, for a caller that derives its own key from it.
+
+    Public so a module minting a token of another kind -- the OAuth consent
+    ticket -- can derive a separate key from the same secret rather than read
+    the environment a second time or sign with this one directly.
+    """
+    return _get_secret_key()
+
+
 def _decode_token_payload(authorization: str | None) -> dict[str, object]:
     """Decode the bearer JWT and return its payload, or raise 401.
 
@@ -1299,9 +1324,9 @@ def _build_change_notification_email(to_address: str) -> EmailMessagePayload:
     """
     body = (
         "Your Adepthood password was just changed.\n\n"
-        "If this was you, no action is needed.\n\n"
-        "If this was NOT you, request another reset immediately so we can\n"
-        f"freeze the account and email {_get_security_contact_address()}."
+        "If that was you, you're all set.\n\n"
+        "If it wasn't, ask for a new password reset right away so we can lock\n"
+        f"the account down, and email {_get_security_contact_address()} so we can help."
     )
     return EmailMessagePayload(
         to=to_address,

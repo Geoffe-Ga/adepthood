@@ -12,7 +12,7 @@ import {
  * The one read of `GET /vault/connection` every surface shares (#3017).
  *
  * The hub, the band, the drawer and the seeding screen all gate "Bring in your
- * writing" on it, and Where your corpus lives renders from it, so its answer
+ * writing" on it, and Where your writing lives renders from it, so its answer
  * has to mean the same thing everywhere: unknown until the server says
  * otherwise, and unknown again when the server could not be reached -- never
  * "nothing attached", which would send somebody with a vault off to set one up.
@@ -44,7 +44,7 @@ describe('useVaultConnectionState', () => {
   });
 
   test('reads an account with nothing attached as none', async () => {
-    mockConnection.mockResolvedValue({ connected: false, vault_url: null });
+    mockConnection.mockResolvedValue({ connected: false, vault_url: null, mcp_address: null });
 
     const { result } = renderHook(() => useVaultConnectionState());
 
@@ -53,21 +53,58 @@ describe('useVaultConnectionState', () => {
   });
 
   test('reads a vault at an address as connected', async () => {
-    mockConnection.mockResolvedValue({ connected: true, vault_url: 'https://v.example' });
+    mockConnection.mockResolvedValue({
+      connected: true,
+      vault_url: 'https://v.example',
+      mcp_address: null,
+    });
 
     const { result } = renderHook(() => useVaultConnectionState());
 
     await waitFor(() => expect(result.current.loading).toBe(false));
-    expect(result.current.state).toEqual({ kind: 'connected', address: 'https://v.example' });
+    expect(result.current.state).toEqual({
+      kind: 'connected',
+      address: 'https://v.example',
+      agentAddress: null,
+    });
   });
 
   test('reads a managed vault, answered with no address, as managed', async () => {
-    mockConnection.mockResolvedValue({ connected: true, vault_url: null });
+    mockConnection.mockResolvedValue({ connected: true, vault_url: null, mcp_address: null });
 
     const { result } = renderHook(() => useVaultConnectionState());
 
     await waitFor(() => expect(result.current.loading).toBe(false));
-    expect(result.current.state).toEqual({ kind: 'managed' });
+    expect(result.current.state).toEqual({ kind: 'managed', agentAddress: null });
+  });
+
+  test('carries a refused writer key from the same read (#3595)', async () => {
+    mockConnection.mockResolvedValue({
+      connected: false,
+      vault_url: null,
+      mcp_address: null,
+      classification_key_rejected: true,
+    });
+
+    const { result } = renderHook(() => useVaultConnectionState());
+
+    expect(result.current.keyRejected).toBe(false);
+    await waitFor(() => expect(result.current.loading).toBe(false));
+    expect(result.current.keyRejected).toBe(true);
+    expect(result.current.state).toEqual({ kind: 'none' });
+    expect(mockConnection).toHaveBeenCalledTimes(1);
+  });
+
+  test('reads an absent refused-key flag, and a failed read, as not refused', async () => {
+    mockConnection.mockResolvedValueOnce({ connected: true, vault_url: null, mcp_address: null });
+    const answered = renderHook(() => useVaultConnectionState());
+    await waitFor(() => expect(answered.result.current.loading).toBe(false));
+    expect(answered.result.current.keyRejected).toBe(false);
+
+    mockConnection.mockRejectedValueOnce(new Error('offline'));
+    const failed = renderHook(() => useVaultConnectionState());
+    await waitFor(() => expect(failed.result.current.loading).toBe(false));
+    expect(failed.result.current.keyRejected).toBe(false);
   });
 
   test('reads a failed read as unknown, never as none, and reports it once', async () => {
@@ -102,7 +139,7 @@ describe('useVaultConnectionState', () => {
   });
 
   test('reads once across rerenders, even when the error handler changes', async () => {
-    mockConnection.mockResolvedValue({ connected: false, vault_url: null });
+    mockConnection.mockResolvedValue({ connected: false, vault_url: null, mcp_address: null });
 
     const { result, rerender } = renderHook(
       ({ handler }: { handler: () => void }) => useVaultConnectionState(handler),
@@ -150,7 +187,7 @@ describe('readVaultConnection', () => {
 
 describe('fetchVaultConnectionState', () => {
   test('resolves the server answer as a state', async () => {
-    mockConnection.mockResolvedValue({ connected: false, vault_url: null });
+    mockConnection.mockResolvedValue({ connected: false, vault_url: null, mcp_address: null });
 
     await expect(fetchVaultConnectionState()).resolves.toEqual({ kind: 'none' });
   });

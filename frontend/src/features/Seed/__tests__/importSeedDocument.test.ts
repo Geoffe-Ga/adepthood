@@ -1,12 +1,13 @@
 /* eslint-env jest */
-/* global describe, test, expect, beforeEach, jest */
+/* global describe, test, expect, beforeEach, afterEach, jest */
 import * as FileSystem from 'expo-file-system';
 
-import { importSeedDocument } from '../importSeedDocument';
+import { attemptSeedDocument, importSeedDocument } from '../importSeedDocument';
 import type { PickedDocument } from '../pickSeedDocuments';
 import { MAX_SEED_DOCUMENT_BYTES } from '../readSeedDocument';
 
 import { corpus } from '@/api';
+import { setNetworkOnlineGetter } from '@/api/networkSignal';
 
 jest.mock('@/config', () => ({ API_BASE_URL: 'http://test' }));
 
@@ -61,6 +62,10 @@ function vaultReply(vaultStatus: string) {
   });
 }
 
+afterEach(() => {
+  setNetworkOnlineGetter(null);
+});
+
 beforeEach(() => {
   mockFetch.mockReset();
   mocked.__fileBase64.mockReset();
@@ -70,6 +75,23 @@ beforeEach(() => {
 });
 
 describe('picker to request body', () => {
+  test('names where a folder document sat, so same-named notes stay two documents', async () => {
+    mockFetch.mockReturnValueOnce(vaultReply('accepted'));
+
+    await importSeedDocument(
+      document({
+        name: 'Index.md',
+        source: { namespace: 'My Vault', relativePath: 'Work/Index.md' },
+      }),
+      'personal',
+    );
+
+    const body = JSON.parse(mockFetch.mock.calls[0][1].body);
+    expect(body.filename).toBe('Index.md');
+    expect(body.source_namespace).toBe('My Vault');
+    expect(body.source_relative_path).toBe('Work/Index.md');
+  });
+
   test('sends the picked file as base64 JSON under its own name and tier', async () => {
     mockFetch.mockReturnValueOnce(corpusReply('stored', 7));
 
@@ -179,6 +201,26 @@ describe('what never reaches the network', () => {
     expect(mockFetch).not.toHaveBeenCalled();
   });
 
+  test('a device known to be offline never sends, and says so', async () => {
+    // #3239. Only the platform's own connectivity signal may say "offline";
+    // with it, the request is never made, so "wasn't sent" is a fact.
+    setNetworkOnlineGetter(() => false);
+
+    const status = await importSeedDocument(document(), 'personal');
+
+    expect(status).toBe('offline');
+    expect(mockFetch).not.toHaveBeenCalled();
+  });
+
+  test('a device with no connectivity signal still sends', async () => {
+    // "We don't know" is not "offline": with no signal registered the request
+    // goes, rather than being refused on a guess.
+    mockFetch.mockReturnValueOnce(vaultReply('accepted'));
+
+    await expect(importSeedDocument(document(), 'personal')).resolves.toBe('ingested');
+    expect(mockFetch).toHaveBeenCalledTimes(1);
+  });
+
   test('a file that will not open is refused on device', async () => {
     mocked.__fileBase64.mockRejectedValue(new Error('gone'));
 
@@ -190,10 +232,32 @@ describe('what never reaches the network', () => {
 });
 
 describe('a request that produced no outcome', () => {
-  test('settles as failed rather than throwing at the run', async () => {
+  // #3239. A request that left the device and then lost its answer may already
+  // be stored: these settle as `unconfirmed`, never as a failure that claims
+  // nothing was kept.
+  test('a server error settles as unconfirmed rather than throwing at the run', async () => {
     mockFetch.mockReturnValue(accepted(500, { detail: 'boom' }));
 
-    await expect(importSeedDocument(document(), 'personal')).resolves.toBe('failed');
+    await expect(importSeedDocument(document(), 'personal')).resolves.toBe('unconfirmed');
+  });
+
+  test('a timeout settles as unconfirmed', async () => {
+    // The client's own clock aborting the fetch, which it reports as a timeout.
+    mockFetch.mockRejectedValue(Object.assign(new Error('aborted'), { name: 'AbortError' }));
+
+    await expect(importSeedDocument(document(), 'personal')).resolves.toBe('unconfirmed');
+  });
+
+  test('a dropped connection settles as unconfirmed', async () => {
+    mockFetch.mockRejectedValue(new TypeError('Network request failed'));
+
+    await expect(importSeedDocument(document(), 'personal')).resolves.toBe('unconfirmed');
+  });
+
+  test('a 2xx the client cannot read settles as unconfirmed', async () => {
+    mockFetch.mockReturnValue(accepted(202, { destination: 'somewhere-new' }));
+
+    await expect(importSeedDocument(document(), 'personal')).resolves.toBe('unconfirmed');
   });
 
   test('keeps the managed size refusal actionable rather than retryable', async () => {
@@ -207,10 +271,34 @@ describe('a request that produced no outcome', () => {
     await expect(importSeedDocument(document(), 'personal')).resolves.toBe('too_large');
   });
 
-  test('settles as failed when the answer names a destination but no outcome', async () => {
-    // A body that cannot say what happened is not a body to render a sentence
-    // from: "stored: false" alone is not one of the eight things that can be
-    // wrong, and guessing which would put a sentence on screen nobody wrote.
+  test.each([
+    [422, 'invalid_document'],
+    [401, 'not_authenticated'],
+  ])('a definite %s refusal settles as failed', async (status, detail) => {
+    // The upload is a single, unretried POST, so a 4xx is the answer to the only
+    // attempt there was: the server turned it away and kept nothing.
+    mockFetch.mockReturnValue(accepted(status as number, { detail }));
+
+    await expect(importSeedDocument(document(), 'personal')).resolves.toBe('failed');
+  });
+
+  test('a rate-limit refusal settles as rate_limited, never as a failure of the document', async () => {
+    // #3556: a 429 is the server asking for a pause, not turning the document
+    // away. Nothing was kept, and the same document can go again in a moment.
+    mockFetch.mockReturnValue(accepted(429, { detail: 'rate_limit_exceeded' }));
+
+    await expect(importSeedDocument(document(), 'personal')).resolves.toBe('rate_limited');
+  });
+
+  test('a request timeout answer is not treated as a definite refusal', async () => {
+    mockFetch.mockReturnValue(accepted(408, { detail: 'request_timeout' }));
+
+    await expect(importSeedDocument(document(), 'personal')).resolves.toBe('unconfirmed');
+  });
+
+  test('settles as unconfirmed when the answer names a destination but no outcome', async () => {
+    // A 202 means the server took the request; a body that cannot say what
+    // happened to it cannot honestly be rendered as "nothing was stored".
     mockFetch.mockReturnValue(
       accepted(202, {
         destination: 'corpus',
@@ -221,10 +309,10 @@ describe('a request that produced no outcome', () => {
       }),
     );
 
-    await expect(importSeedDocument(document(), 'personal')).resolves.toBe('failed');
+    await expect(importSeedDocument(document(), 'personal')).resolves.toBe('unconfirmed');
   });
 
-  test('settles as failed when a vault answer carries no vault status', async () => {
+  test('settles as unconfirmed when a vault answer carries no vault status', async () => {
     mockFetch.mockReturnValue(
       accepted(202, {
         destination: 'vault',
@@ -235,7 +323,7 @@ describe('a request that produced no outcome', () => {
       }),
     );
 
-    await expect(importSeedDocument(document(), 'personal')).resolves.toBe('failed');
+    await expect(importSeedDocument(document(), 'personal')).resolves.toBe('unconfirmed');
   });
 
   test('never writes the document bytes anywhere but the request body', async () => {
@@ -252,5 +340,65 @@ describe('a request that produced no outcome', () => {
     warn.mockRestore();
     error.mockRestore();
     log.mockRestore();
+  });
+});
+
+describe('one attempt, as the run sees it', () => {
+  function rateLimited(retryAfter: string | null) {
+    return Promise.resolve({
+      ok: false,
+      status: 429,
+      headers: new Headers(retryAfter === null ? {} : { 'Retry-After': retryAfter }),
+      json: () => Promise.resolve({ detail: 'rate_limit_exceeded' }),
+    });
+  }
+
+  test("hands the run a 429's wait, so it can wait out exactly that long", async () => {
+    mockFetch.mockReturnValue(rateLimited('12'));
+
+    await expect(attemptSeedDocument(document(), 'personal')).resolves.toEqual({
+      status: 'rate_limited',
+      answered: false,
+      retryAfterSeconds: 12,
+    });
+  });
+
+  test('names no wait when the 429 named none', async () => {
+    mockFetch.mockReturnValue(rateLimited(null));
+
+    const attempt = await attemptSeedDocument(document(), 'personal');
+
+    expect(attempt.retryAfterSeconds).toBeNull();
+  });
+
+  test('counts an answered upload toward the pace, whatever the answer said', async () => {
+    mockFetch.mockReturnValueOnce(vaultReply('accepted'));
+    mockFetch.mockReturnValueOnce(accepted(422, { detail: 'invalid_document' }));
+
+    await expect(attemptSeedDocument(document(), 'personal')).resolves.toEqual({
+      status: 'ingested',
+      answered: true,
+      retryAfterSeconds: null,
+    });
+    await expect(attemptSeedDocument(document(), 'personal')).resolves.toMatchObject({
+      status: 'failed',
+      answered: true,
+    });
+  });
+
+  test('counts a request whose answer was lost, since the server may have counted it', async () => {
+    mockFetch.mockRejectedValue(new TypeError('Network request failed'));
+
+    await expect(attemptSeedDocument(document(), 'personal')).resolves.toMatchObject({
+      status: 'unconfirmed',
+      answered: true,
+    });
+  });
+
+  test('counts nothing for a document refused on device', async () => {
+    await expect(
+      attemptSeedDocument(document({ name: 'x.exe', seedable: false }), 'personal'),
+    ).resolves.toEqual({ status: 'unsupported_format', answered: false, retryAfterSeconds: null });
+    expect(mockFetch).not.toHaveBeenCalled();
   });
 });

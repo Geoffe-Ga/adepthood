@@ -1,6 +1,13 @@
 import { expect, test, type APIRequestContext, type Page } from '@playwright/test';
 
-import { backendUrl, bearer, signUp, tokenFor } from './journalHabitsBrowserSupport';
+import {
+  backendUrl,
+  bearer,
+  goOffline,
+  goOnline,
+  signUp,
+  tokenFor,
+} from './journalHabitsBrowserSupport';
 
 /**
  * #2930: a journal save that fails is re-sent — by the footer's Retry, or by
@@ -38,22 +45,6 @@ async function writeSavedPage(page: Page): Promise<number> {
   const entryId = ((await (await created).json()) as { id: number }).id;
   await expect(page.getByTestId('journal-save-hint')).toHaveText(SAVED);
   return entryId;
-}
-
-/**
- * Take the device offline and wait until the app itself says so. The reconnect
- * retry acts on the app's offline → online edge, so reconnecting before the
- * app has registered the outage would test nothing.
- */
-async function goOffline(page: Page): Promise<void> {
-  await page.context().setOffline(true);
-  await expect(page.getByTestId('offline-banner')).toBeVisible();
-}
-
-/** Bring the device back online and wait until the app has registered it. */
-async function goOnline(page: Page): Promise<void> {
-  await page.context().setOffline(false);
-  await expect(page.getByTestId('offline-banner')).toHaveCount(0);
 }
 
 async function storedEntry(

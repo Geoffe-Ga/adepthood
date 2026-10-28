@@ -147,7 +147,7 @@ describe('validateIntervalBell', () => {
         interval_minutes: null,
         cue_offsets_minutes: null,
       })[0],
-    ).toMatch(/select/i);
+    ).toMatch(/choose/i);
   });
 
   it('accepts custom offsets within duration', () => {
@@ -167,7 +167,7 @@ describe('validateIntervalBell', () => {
         interval_minutes: null,
         cue_offsets_minutes: [0, 30],
       })[0],
-    ).toMatch(/within/);
+    ).toMatch(/after the start/);
   });
 
   it('rejects empty offset list', () => {
@@ -177,7 +177,7 @@ describe('validateIntervalBell', () => {
         interval_minutes: null,
         cue_offsets_minutes: [],
       })[0],
-    ).toMatch(/At least one/);
+    ).toMatch(/at least one bell/i);
   });
 
   it('rejects unknown bell tone', () => {
@@ -210,12 +210,12 @@ describe('validateRepCounter', () => {
   });
 
   it('rejects blank unit label', () => {
-    expect(validateRepCounter({ ...base, unit_label: '   ' })[0]).toMatch(/Unit label/);
+    expect(validateRepCounter({ ...base, unit_label: '   ' })[0]).toMatch(/what you're counting/i);
   });
 
   it('rejects oversize unit label', () => {
     expect(validateRepCounter({ ...base, unit_label: 'a'.repeat(UNIT_LABEL_MAX + 1) })[0]).toMatch(
-      new RegExp(`≤ ${UNIT_LABEL_MAX}`),
+      new RegExp(`${UNIT_LABEL_MAX} characters or fewer`),
     );
   });
 
@@ -307,7 +307,7 @@ describe('validateTalliedGrounding', () => {
         ...base,
         categories: [{ key: 'Bad-Key', label: 'a square', target_count: 3 }],
       })[0],
-    ).toMatch(/key must match/);
+    ).toMatch(/went wrong/);
   });
 
   it('rejects blank labels', () => {
@@ -345,7 +345,7 @@ describe('validateTalliedGrounding', () => {
           { key: 'squares', label: 'a square', target_count: 3 },
           { key: 'squares', label: 'a circle', target_count: 3 },
         ],
-      }).some((e) => /duplicate key/.test(e)),
+      }).some((e) => /mixed up with an earlier one/.test(e)),
     ).toBe(true);
   });
 
@@ -394,7 +394,9 @@ describe('validateCardMeditation', () => {
   });
 
   it('rejects an invalid deck id', () => {
-    expect(validateCardMeditation({ ...bundled, deck_id: 'Bad Deck' })[0]).toMatch(/deck id/i);
+    expect(validateCardMeditation({ ...bundled, deck_id: 'Bad Deck' })[0]).toMatch(
+      /deck isn't available/i,
+    );
   });
 
   it('rejects a custom deck with no cards', () => {
@@ -451,7 +453,7 @@ describe('validateCardMeditation', () => {
         { name: 'Both', image_asset_key: 'rws/the_fool', image_uri: 'file:///x', symbolism: null },
       ],
     };
-    expect(validateCardMeditation(config)[0]).toMatch(/at most one image/i);
+    expect(validateCardMeditation(config)[0]).toMatch(/photo or a built-in picture/i);
   });
 
   it('rejects a custom card with an oversize name', () => {
@@ -545,7 +547,9 @@ describe('validateMindfulAnchor', () => {
         { key: 'desc', label: 'ok', description: 'x'.repeat(OPTION_DESCRIPTION_MAX + 1) },
       ],
     });
-    expect(errors.some((e) => /Option 1: key/.test(e))).toBe(true);
+    expect(errors.some((e) => /Option 1: something went wrong/.test(e))).toBe(true);
+    // The malformed key is an internal detail; the reader never sees it.
+    expect(errors.some((e) => /Bad Key|slug/.test(e))).toBe(false);
     expect(errors.some((e) => /Option 2: label cannot be empty/.test(e))).toBe(true);
     expect(errors.some((e) => /Option 3: label must be/.test(e))).toBe(true);
     expect(errors.some((e) => /Option 4: description must be/.test(e))).toBe(true);
@@ -560,7 +564,7 @@ describe('validateMindfulAnchor', () => {
           { key: 'grass', label: 'More grass' },
         ],
       }),
-    ).toContain('Option keys must be unique');
+    ).toContain('Two of these options got mixed up — remove one and add it again');
   });
 
   it('rejects requiring a choice with no options', () => {

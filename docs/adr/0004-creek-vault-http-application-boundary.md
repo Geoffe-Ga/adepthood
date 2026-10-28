@@ -4,14 +4,20 @@
 - **Date:** 2026-07-31
 - **Issue:** [#2044](https://github.com/Geoffe-Ga/adepthood/issues/2044)
   (epic [#2043](https://github.com/Geoffe-Ga/adepthood/issues/2043))
-- **Pinned contract version:** 0.16.0 (tracks Creek's published
+- **Pinned contract version:** 0.22.0 (tracks Creek's published
   constant; the pin opened at 0.2.0 with the 2026-07-31 note at the end
   of this document, moved to 0.8.0 with the 2026-08-19 note, which
   records why that move became a prerequisite rather than housekeeping,
   moved to 0.10.0 with the 2026-08-30 note, moved to 0.14.0 with
   the 2026-09-05 note, moved to 0.15.0 with the 2026-09-06 note,
-  which adopts the AI-attributed Voice Draft resource, and moved to 0.16.0
-  with the 2026-09-12 note, which adopts journal withdrawal)
+  which adopts the AI-attributed Voice Draft resource, moved to 0.16.0
+  with the 2026-09-12 note, which adopts journal withdrawal, moved to
+  0.17.0 with the 2026-10-15 note, which adopts vault-written letters, and
+  moved to 0.18.0 with the 2026-10-20 note, which adopts request-scoped keys
+  on a managed vault, moved to 0.21.0 with the 2026-10-22 note, which
+  adopts the coded model-call cap on both model-backed routes, and moved to
+  0.22.0 with the 2026-10-24 note, which adopts the content-free agent-activity
+  read)
 
 ## Context
 
@@ -1439,3 +1445,270 @@ withdrawal from plaintext files, retrieval and wheel eligibility, one Personal
 remirror under the same stable id, and final deletion. This closes that journal
 lifecycle proof only. Epic #2043's broader operator run across every adopted
 capability and its telemetry remains independently outstanding.
+
+## Note, 2026-10-13 — the reflection boundary: a vault-bound writer is answered by their vault or not at all
+
+Issues [#3061](https://github.com/Geoffe-Ga/adepthood/issues/3061) and
+[#3078](https://github.com/Geoffe-Ga/adepthood/issues/3078); built in #3085.
+This note records a decision about the read side of this boundary that the
+decisions above never made explicit. Before it, a writer who connected a vault
+had their resonance pass quietly re-asked of the app's own model provider
+whenever the vault said nothing, failed, was still provisioning, or was not
+asked at all. Completion detection always went to the app provider, vault or
+not. The writer could not see any of this.
+
+**The split.** Each request resolves one `ReflectionBoundary`
+(`backend/src/services/reflection_boundary.py`):
+
+- `APP_PROVIDER`: the account has no vault, so every AI operation is answered
+  by the app provider, as before.
+- `VAULT_BOUND`: the account has a vault, so every AI operation is answered by
+  that vault or not at all.
+
+`resolve_reflection_boundary` (`backend/src/dependencies/creek_vault.py`)
+decides this from local state only. It runs one indexed read of the stored
+connection row plus the deployment binding. Nothing the client sends feeds it:
+not a body field, not a header, and not a BYOK key. The client attaches a stored
+key to every request, so the key pays for calls and permits none. The resolver
+also never dials the vault, so it gives the same answer during a vault outage.
+It sits beside the vault-client dependency rather than being read off the
+client. That matters because a provisioned-but-not-ready connection and an
+undialable host are both served the local fallback client, exactly like a
+writer with no vault. Only the boundary tells "chose a vault, and it is not
+usable now" apart from "has none."
+
+**No substitution; fail closed.** A vault-bound reflection that the vault
+cannot answer gets an honest, refunded, retryable `503
+reflection_source_unavailable`. It never falls back to the app provider. This
+covers every failure: a handshake that is unavailable or malformed, a missing
+REFLECT capability, a refused, unreadable, credential, or timed-out call, and an
+unknown tier. The refusal is logged under a closed-vocabulary reason
+(`VaultSourceUnavailableReason`) and carries no writing, quote, or key. Nothing
+in `services/creek_vault_reflect.py` holds or can be handed the app provider,
+and `select_reflection_llm` takes no `fallback` parameter. A vault-then-provider
+composite therefore cannot be expressed through it. Two answers are legitimate
+rather than failures: a vault with nothing to say, and one whose notes do not
+anchor to the entry. Both are zero-note passes, explained and refunded. A
+distress-flagged entry is answered with adepthood's own care surface and asks no
+model. So is a care escalation raised by the vault.
+
+**The fallback-permission criterion is waived.** #3078 originally asked for an
+explicit, revocable permission letting a vault-bound reflection fall back to a
+named recipient. The owner waived that criterion on 2026-10-13. Failing closed,
+with no fallback, is the accepted behaviour. No permission path exists, and
+none is planned: an informed-choice prompt would be the same substitution with
+a click in front of it.
+
+**The deployment owner counts as vault-bound.** The bound owner of the
+deployment-wide vault (`CREEK_VAULT_URL` with `CREEK_VAULT_OWNER_USER_ID`,
+Decision 7 and its 2026-08-21 note) is `VAULT_BOUND` alongside every account
+with a stored connection row, whatever that row's state. This is the more
+restrictive reading of a binding the operator made on that user's behalf. The
+owner ratified it as the intended rule on 2026-10-13.
+
+**Completion detection inherits the same boundary.** Under `VAULT_BOUND` the
+resonance pass makes no detection call. Standalone
+`POST /journal/{id}/suggestions/detect` answers `{"items": [], "checked":
+false}` before it reads a single candidate. Creek publishes no detection
+capability, so "the vault or not at all" means "not at all" here until one
+exists.
+
+**A pass keeps the destination it resolved.** The vault client is resolved
+once, when the request starts. If the writer reconnects to a different vault,
+or disconnects, while a reflection is in flight, that pass dials neither the
+new destination nor the app provider. If its own vault then fails, the pass
+answers the same refunded `503`. The change applies from the next request.
+
+**Evidence.** `backend/tests/security/test_vault_boundary_no_fallback.py` pins
+all of the above at the route, against a recording sink installed at both
+app-provider seams. It includes:
+
+- the not-ready, undialable, and deployment-owner cases with no dependency
+  overrides;
+- a real HTTP client timing out on the wire;
+- a matrix of malformed capability handshakes, each failing closed with a safe
+  reason code;
+- a reconnect and a disconnect made through `/vault/connection` mid-reflection.
+
+The no-vault guard proves the sink is live.
+
+## Note, 2026-10-15 — the pin moves to 0.17.0; the vault writes letters
+
+Creek-Vault #1865 publishes `letters` (#1862) and Adepthood #3203 adopts it.
+The vendored bundle is re-cut byte-for-byte from upstream `a9d682c0`: 112
+manifest entries, 114 vendored files, 41 schemas, and a 10 × 7 example matrix.
+The ontology version is unchanged.
+
+The new capability is `POST /v1/letters/{external_id}`: the vault expands one
+margin note into a letter with its own tier-routed generation and stores it as
+an AI-attributed Voice Draft (`ai-as-user`, zero voice weight) at the caller's
+external id, first writer wins (`unchanged` on a repeat). An acute-distress
+entry answers a 200 care escalation, as `POST /v1/reflections` does.
+
+A vault-bound writer (#3156) whose vault advertises both `letters` and
+`voice-drafts` now gets their first letter from the vault; one whose vault does
+not, or is unreachable, or answers with anything that is not a verified letter,
+keeps #3183's fail-closed 503 `reflection_source_unavailable`, and no answer is
+ever re-asked of the app provider — a BYOK key is not consent. The launch
+economy is unchanged: one unit, refunded on every ending that is not a cached
+letter, and a vault-answered letter is charged whatever key header rides along
+(#3258). The content-free Voice Draft intent row is committed before the call
+under the same external id a mirrored draft uses, so Intimate reclassification
+and deletion withdraw a vault-written letter through `DELETE
+/v1/voice-drafts/{external_id}` exactly as they withdraw a mirrored one.
+
+## Note, 2026-10-20 — the pin moves to 0.18.0; a managed vault writes with the writer's key
+
+Creek-Vault #1876 (merged at `a134bf44`) publishes request-scoped keys
+(Creek-Vault#1873, Creek-Vault ADR-0015) and Adepthood #3437 adopts them. The
+vendored bundle is re-cut byte-for-byte from upstream `a134bf44`. Only four
+files move: the `CapabilitiesResponse` schema, its `success` and `empty`
+examples, and the manifest. The counts are unchanged: 112 manifest entries, 114
+vendored files, 41 schemas, a 10 × 7 example matrix. The ontology version is
+unchanged.
+
+The handshake gains `request_key_providers`, the vendors (`anthropic`,
+`openai`) whose writer key the vault will spend. A managed vault lists both;
+a self-connected vault lists none. The field is minor-gated: Creek withholds it
+from a caller declaring a minor below 0.18. That gate is why this move is a
+prerequisite, not housekeeping. On 0.17, adepthood would never see a managed
+vault's advertisement, and the relay would stay inert. The model routes
+(`POST /v1/reflections`, `POST /v1/letters/{external_id}`, `POST
+/v1/classifications`) accept the optional `X-Creek-Provider` /
+`X-Creek-Provider-Key` header pair whatever minor the caller declares.
+
+Adepthood relays a vault-bound writer's own Anthropic or OpenAI key only on
+those three routes, and only to a vault whose handshake listed that vendor. The
+key then pays instead of a credit. ADR 0009's 2026-10-16 amendment records the
+custody and payment decision; this note records only the contract move.
+INTIMATE content never reaches a key-spending path. The vault routes any
+INTIMATE work it is asked for onto its local model or refuses it, and
+adepthood's own egress gate is unchanged.
+
+## Note, 2026-10-22 — the pin moves to 0.21.0; a capped model call is a coded wait on both routes
+
+The pin moves in lockstep with the deployed vault, not ahead of it. Creek
+refuses any minor its `supported_contract_minors` does not list exactly, so a
+pin ahead of the image fails every handshake with `incompatible_version`
+(Creek-Vault#1888 was that outage, at 0.18). This move ships together with the
+managed vault's re-image to Creek `main`, whose window runs from 0.2 up to
+0.21.
+
+The vendored bundle is re-cut byte-for-byte from upstream `e6d021b9`. Thirteen
+files move: six schemas (`CapabilitiesResponse`, `ErrorEnvelope`,
+`ReflectionResponse`, `LetterResponse`, `ClassificationResponse`, and
+`JobStatusResponse`, which embeds the last), five examples
+(`capabilities/success`, `capabilities/empty`, `reflections/success`,
+`reflections/empty`, `letters/success`), `retry-policy.json` and the manifest.
+No file is added or removed: 112 manifest entries, 114 vendored files, 41
+schemas, a 10 × 7 example matrix, and an unchanged ontology version.
+
+What 0.19 through 0.21 publish, and what adepthood does with each:
+
+- **`rate_limited` (0.19)** joins the error vocabulary at `429`, with a
+  `retry_with_backoff` disposition. Creek serves it on `POST /v1/reflections`
+  to callers at or above 0.19 and on `POST /v1/letters/{external_id}` to
+  callers at or above 0.21; below either gate the cap is downgraded to `503
+  temporarily_unavailable`, indistinguishable from an outage. At 0.21 both
+  routes now reach adepthood as a coded `429`. `VaultErrorCode` gains
+  `RATE_LIMITED`, and the one availability classifier raises
+  `CreekVaultRateLimitedError` for that code or for a `429` status, so the two
+  routes tell a writer one story about one budget (Creek-Vault#1903 step 6).
+- **`inference_source` (0.19)** on reflection, letter and classification
+  answers, **`inference_pool` (0.19)** and **`keyless_inference` (0.20)** on
+  the handshake. Parsed and ignored. Labelling each use from the route,
+  refusing a route that differs from the disclosed one as the existing `409`,
+  and asking for a writer's key when a vault reports `keyless_inference: false`
+  are Creek-Vault#1903 steps 3 and 4, and they rest on an owner ADR 0009
+  decision that is still open. `tests/test_creek_contract_0_21.py` pins that
+  none of the three fields changes what adepthood does with an answer.
+
+## Note, 2026-10-24 — the pin moves to 0.22.0; Settings reads what agents asked the vault for
+
+The pin moves in lockstep with the deployed vault, as the 2026-10-22 note
+requires: this move ships together with the managed vault's re-image to Creek
+`main` at `c72f4362`, the image that serves `/mcp` for epic Creek-Vault#1961,
+whose window runs from 0.2 up to 0.22. A vault still on the 0.21 image fails
+the handshake as `incompatible_version`, exactly as the #1888 rule says it
+must, so the re-image is a prerequisite of this pin rather than a follow-up.
+
+The vendored bundle is re-cut byte-for-byte from upstream `c72f4362`. Ten files
+are added -- the `agent-activity` example column (seven cells, two of them
+unreachable sentinels) and three schemas (`AgentActivityQuery`,
+`AgentActivityResponse`, `AgentActivityRow`) -- and four move:
+`CapabilitiesResponse`, `capabilities/success`, `capabilities/empty` and the
+manifest. 122 manifest entries, 124 vendored files, 44 schemas, an 11 × 7
+example matrix, and an unchanged ontology version.
+
+What 0.22 publishes, and what adepthood does with it:
+
+- **`agent-activity` (0.22, Creek-Vault#1968)**: `GET /v1/agent-activity`,
+  the vault's MCP audit chain projected onto four fields per call --
+  `consumer`, `tool`, `at`, `outcome` (`admitted | refused`). Consumed by
+  `GET /vault/agents/activity` (#3535), which Settings renders as "Recent
+  activity" under the agents a person approved. The adapter validates the
+  published response strictly -- a fifth field, an unknown outcome or a value
+  outside a published pattern refuses the whole answer as a payload fault --
+  and the route re-projects each row onto `{agent, tool_label, at, outcome}`
+  in adepthood's own words, so no argument, path, fragment id or prose can
+  cross it whatever a vault sends.
+- **Attribution is per person, not per agent, until Creek-Vault#1976.** Creek
+  stamps a JWT agent's calls with the token's `sub`, which names the person
+  (on a managed vault, the same consumer identity the app's own `/v1` calls
+  carry). The route therefore names an agent only when the stamp is one of
+  the person's own grant `client_id`s -- which is what #1976 will make it --
+  and otherwise says what the stamp can honestly support. See
+  `docs/creek-vault-mcp-contract.md`, "Recent agent activity".
+- `tests/test_creek_contract_0_22.py` pins the move: the declared minor, the
+  re-imaged window negotiating, a 0.21-only vault refused as version skew, and
+  the new capability advertised and called.
+
+## Note, 2026-10-24 — a pool-less vault's keyless pass is refused before any charge
+
+No pin move: `keyless_inference` (Creek 0.20) has been on the handshake since
+the 0.21 move, parsed and ignored. Adepthood #3501 consumes it, on the owner's
+decision of 2026-10-21.
+
+**Why.** On 2026-10-21 every reflection on the managed pilot vault failed. A
+managed vault ships no inference runtime and refuses its operator's cloud key,
+so until the shared pool (Creek-Vault ADR-0016) is pinned, it writes only with
+the writer's own key. Adepthood charged a credit, dialled, was refused,
+refunded, and told the writer to "give it a moment and try again". Retrying
+could never help.
+
+**What.** When a vault-bound pass carries no key its vault will spend, and the
+vault reports `keyless_inference: false`, the pass is answered
+`402 vault_key_required` ahead of the payer gate. No wallet row is written and
+no reflect call is made. The frontend routes that to the existing add-a-key
+remedy. A locally care-flagged entry still gets care, a pass with no vault tier
+is never probed, and the reflect gate reuses the probe's handshake, so a pass
+still handshakes once. `inference_source` and `inference_pool` stay parsed and
+ignored.
+
+## Note, 2026-10-28 — "paid by your own key" is the vault's receipt, not a guess
+
+Issue #3483, from the adversarial review of #3482.
+
+**Why.** Since #3437 a vault-bound pass that relayed the writer's key took no
+credit and was labelled "Written by your own {Vendor} key". That was decided
+before the dial, from the key's prefix and the handshake's
+`request_key_providers`. Neither says the vault spent the key. A forged,
+prefix-valid key on a vault that answers anyway (a local model,
+Creek-Vault#1849) would buy unlimited free readings and letters. A handshake
+that changed between the admission probe and the dial would drop the key header
+and still bill the pass as key-paid.
+
+**What.** `inference_source` (contract 0.19) is now consumed on reflection and
+letter answers. It is surfaced on `VaultReflection` / `VaultLetter`, and any
+value outside the published vocabulary reads as no receipt. Only
+`request_key:<vendor>` naming the vendor adepthood relayed counts as the key
+paying (`domain.creek_vault.spent_request_key`). `paid_by: own_key` and
+`own_key_vendor` are decided from that receipt. A pass or letter that relayed a
+key, and so took no credit, but comes back with any other receipt is refused:
+the reflection raises `KEY_NOT_SPENT` and settles as the retryable
+`503 reflection_source_unavailable`, the letter ends `FAILED`, and nothing is
+kept or charged. An `unchanged` letter carries no receipt, so it is held to the
+same rule. An empty reflection gives nothing away and is not refused.
+Charging after the fact was rejected because the writer was never shown a
+price for a key-paid pass (#623). Classification is not billed (R1-2), and its
+receipt is unchanged. `inference_pool` stays parsed and ignored.

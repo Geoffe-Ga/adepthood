@@ -61,6 +61,26 @@ with Playwright. A local machine that already has Google Chrome can avoid the
 separate Chromium download with `PLAYWRIGHT_BROWSER_CHANNEL=chrome`; CI always
 installs and runs the package-pinned Chromium build.
 
+CI splits browser specs across four isolated runners using Playwright's
+`--shard=N/4`. Each runner boots its own backend, database, fakes and Expo server,
+and runs one worker with file-level sharding. Keep `fullyParallel: false` and
+`workers: 1`: tests within a file share fixtures, and the checkout's lane state,
+frontend ports and fake-vault owner cannot be shared by concurrent workers.
+To reproduce one shard locally, append `-- --shard=1/4` to `npm run test:e2e:web`.
+
+Every run writes test and hook timings to `playwright-report/results.json`;
+CI publishes these as `browser-journey-report-N`, including failures. Trace
+artifacts also carry the shard number. The text census and action-row sweep
+retain their existing artifact names: each walk lives in a single spec file,
+so only its owning shard produces that folder. Other shards finish even if one
+fails, preserving their coverage and review artifacts.
+The `browser-journey` aggregate check keeps the original required-check name
+and passes only when every selected shard succeeds. It runs even after a shard
+is cancelled, since skipping a required job would count as success.
+A separate success-only barrier preserves earlier failures when a maintainer
+selectively reruns one matrix job; the aggregate validates that barrier instead
+of reading the matrix result directly.
+
 ## What is real, and the four external boundaries that are not
 
 Real: the routers, the middleware stack, CORS, session handling, the Pydantic
@@ -122,18 +142,15 @@ by shape and never by key, which is what lets a spec prove a press actually
 reached a provider instead of a wallet that never moved because nothing was ever
 charged.
 
-`BOTMASON_PROVIDER` stays unset, so every other journey still runs the stub. Two
-things reach the fake at all: a request carrying a BYOK key (whose prefix selects
-its own provider, which is what the 402 half is _about_), and a request whose
-prompt carries the `BOTMASON_PROVIDER_PROBE_TOKEN` marker. The probe is the only
-way a pass paid for by the _server's_ key can reach a provider on a
-stub-configured deployment, which is the 503 half. It is off unless configured,
-consulted only when no real provider is configured — so no text in a request can
-redirect a deployment that already dials OpenAI or Anthropic — and
-`main.validate_provider_probe_config` refuses a production boot while it is
-armed, on the same terms as the capture email backend below. The privacy floor is
-asserted with all of it live: an intimate page carrying the marker, on a server
-whose own key is armed, still reaches no provider at all.
+`BOTMASON_PROVIDER` stays unset, so every other journey still runs the stub. One
+thing reaches the fake at all: a request carrying a BYOK key, whose prefix selects
+its own provider, which is what the 402 half is _about_. Since ADR 0009 phase (a)
+(#3067) the server's own key never pays for a writer's page and the provider probe
+is retired, so the lane still sets `LLM_API_KEY` (the spent Anthropic account) and
+`BOTMASON_PROVIDER_PROBE_TOKEN` only to prove that nothing reads them: a keyless
+page carrying the old probe marker reaches no provider. The privacy floor is
+asserted the same way: an intimate page carrying the marker still reaches no
+provider at all.
 
 That journey also reads `walletaudit` out of band, through
 `backend/tests/e2e/wallet_audit.py`. The table has no API by design (it is a
@@ -172,9 +189,10 @@ connect-your-own path cannot reach a stand-in vault beside the lane, and why
 this boundary is configured deployment-wide.
 
 Two things keep it from disturbing any other journey. The vault advertises only
-the five capabilities those two journeys exercise — capabilities, upload,
-journal upsert, journal withdrawal, and Voice Drafts — with the exact list
-ratcheted by `e2eLaneGuard.test.ts`. And `CREEK_VAULT_OWNER_USER_ID` binds the
+the seven capabilities those journeys exercise — capabilities, upload, journal
+upsert, journal withdrawal, Voice Drafts, reflections, and letters (the
+vault-bound owner's letter is written by the vault itself, #3203) — with the
+exact list ratcheted by `e2eLaneGuard.test.ts`. And `CREEK_VAULT_OWNER_USER_ID` binds the
 vault to exactly one pre-provisioned account used only by those specs: every
 other account in the lane is served the local fallback, which is byte-for-byte
 the behaviour it had before.

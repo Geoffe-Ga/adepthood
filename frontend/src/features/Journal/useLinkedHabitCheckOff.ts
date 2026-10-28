@@ -12,22 +12,39 @@
  * fresh device honours a link made elsewhere). The returned handler always
  * calls the wrapped one first, then — only when a link is known — checks the
  * habit off, fire-and-forget: the page never waits on it and never hears of a
- * failure beyond a ``console.warn``.
+ * failure beyond a fixed diagnostic. Confirmed logs can supply a factual note
+ * to the page, including a session the writer stopped early.
  */
-import { useCallback, useEffect } from 'react';
+import { useCallback, useEffect, useRef } from 'react';
 
+import { usePaymentScope } from './usePaymentScope';
 import { checkOffLinkedHabit } from './writingHabitCheckOff';
-import type { WritingSessionResult } from './writingSession';
+import type { LoggedWritingSession, WritingSessionResult } from './writingSession';
 
 import { useToast } from '@/components/ToastProvider';
 import { useAuth } from '@/context/AuthContext';
-import { useWritingHabitLinkStore } from '@/store/useWritingHabitLinkStore';
+import {
+  getWritingHabitLinkGeneration,
+  useWritingHabitLinkStore,
+} from '@/store/useWritingHabitLinkStore';
 
 type SessionHandler = (_result: WritingSessionResult) => void;
 
-export function useLinkedHabitCheckOff(inner: SessionHandler): SessionHandler {
+export function useLinkedHabitCheckOff(
+  inner: SessionHandler,
+  onLogged?: (_notice: LoggedWritingSession) => void,
+): SessionHandler {
   const { token, userTimezone } = useAuth();
+  const currentSession = usePaymentScope();
   const { showToast } = useToast();
+  const latestResult = useRef<WritingSessionResult | null>(null);
+  const mounted = useRef(false);
+  useEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+    };
+  }, []);
   const hydrate = useWritingHabitLinkStore((state) => state.hydrate);
 
   useEffect(() => {
@@ -36,18 +53,25 @@ export function useLinkedHabitCheckOff(inner: SessionHandler): SessionHandler {
 
   return useCallback(
     (result: WritingSessionResult) => {
+      latestResult.current = result;
       inner(result);
+      if (!currentSession()) return;
       // Read at the moment the session ends, not at render: a link chosen from
       // the offer mid-page must count for the very next session.
       const { habitId } = useWritingHabitLinkStore.getState();
       if (habitId === null) return;
+      const linkGeneration = getWritingHabitLinkGeneration();
       void checkOffLinkedHabit({
         habitId,
-        elapsedMs: result.elapsedMs,
+        result,
         tz: userTimezone,
         showToast,
+        isCurrent: () => currentSession() && getWritingHabitLinkGeneration() === linkGeneration,
+        onLogged: (message) => {
+          if (mounted.current && latestResult.current === result) onLogged?.({ result, message });
+        },
       });
     },
-    [inner, showToast, userTimezone],
+    [currentSession, inner, onLogged, showToast, userTimezone],
   );
 }

@@ -2,13 +2,13 @@ import enum
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
-from sqlalchemy import JSON, CheckConstraint, Column, DateTime, Index, String, and_
+from sqlalchemy import CheckConstraint, Column, DateTime, Index, String, and_
 from sqlmodel import Field, Relationship, SQLModel
 
 from domain.constants import TOTAL_STAGES
 from domain.reflection_hierarchy import ReflectionLevel
 from security.idempotency import IDEMPOTENCY_DIGEST_COLUMN_WIDTH
-from services.journal_encryption import EncryptedString
+from services.journal_encryption import EncryptedJSONList, EncryptedString
 
 # The inclusive lower bound of a valid Aspect tag. The upper bound is
 # ``TOTAL_STAGES`` (an Aspect == a stage 1..TOTAL_STAGES), so the range never
@@ -19,6 +19,8 @@ ASPECT_MIN = 1
 # schemas (JournalEntryUpdate, PromptSubmit) so the DB column bound and the
 # request validation can't drift.
 JOURNAL_TITLE_MAX_LENGTH = 200
+#: Width of an opaque vault-destination fingerprint (hex characters).
+VAULT_DESTINATION_WIDTH = 32
 
 # Bound at module scope so the partial unique index's ``*_where`` predicates can
 # resolve these columns by name at table-creation time (mirrors
@@ -143,9 +145,11 @@ class JournalEntry(SQLModel, table=True):
     habit-related thoughts.
 
     BUG-JOURNAL-007: hard delete is replaced with a soft-delete ``deleted_at``
-    column so deleted rows can be recovered within the retention window and the
-    ``LLMUsageLog.journal_entry_id`` FK is never orphaned.  All read endpoints
-    filter ``deleted_at IS NULL``; soft-deleted rows are retained indefinitely.
+    column so the ``LLMUsageLog.journal_entry_id`` FK is never orphaned.  All
+    read endpoints filter ``deleted_at IS NULL`` and no recovery path is
+    exposed.  There is no automatic retention window: a soft-deleted row and
+    its derivatives persist until account deletion or an operator purge
+    (#3063; the lifetime is declared in ``domain.retention``).
     """
 
     # ``ix_journalentry_deleted_at`` is created by migration ``a0b1c2d3e4f5``
@@ -246,11 +250,26 @@ class JournalEntry(SQLModel, table=True):
     # sent to a vault and after Creek confirms withdrawal. A newly-intimate or
     # deleting row may retain both temporarily as its durable retry marker when
     # Creek is offline; the row is not hidden or deleted until that confirmation.
-    # Declared with no length / as JSON to match the migration exactly
-    # (drift-free), and both nullable so the write path is purely additive over
-    # existing rows.
+    # ``vault_ref`` is declared with no length to match the migration exactly
+    # (drift-free). ``vault_tags`` says what the vault found in the writing, so
+    # it is encrypted at rest like the writing (#3263): ``EncryptedJSONList``
+    # stores the JSON of the labels as ``EncryptedString`` ciphertext. It is
+    # only ever null-checked in Python, never queried inside in SQL. Both are
+    # nullable so the write path is purely additive over existing rows.
     vault_ref: str | None = Field(default=None, sa_column=Column(String, nullable=True))
-    vault_tags: list[str] | None = Field(default=None, sa_column=Column(JSON, nullable=True))
+    vault_tags: list[str] | None = Field(
+        default=None, sa_column=Column(EncryptedJSONList(), nullable=True)
+    )
+    # Opaque fingerprint of the vault this entry was offered to, written and
+    # committed *before* the ingest is dialled. A withdrawal is trusted only
+    # from that same destination: a replaced connection answering "unknown id,
+    # withdrawn" proves nothing about the vault that actually holds the copy.
+    # NULL for legacy rows and for entries never offered to a dialable vault.
+    vault_destination: str | None = Field(
+        default=None,
+        max_length=VAULT_DESTINATION_WIDTH,
+        nullable=True,
+    )
     # When the consent backfill last *offered* this entry to the corpus writer,
     # whatever came of it. NULL means never offered. Not a record of success --
     # the fragment's own existence is that -- but of attention, and the sweep

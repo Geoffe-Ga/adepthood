@@ -115,7 +115,7 @@ describe('validateAndAddHabit (BUG-FE-HABIT-105)', () => {
     const result = validateAndAddHabit('NewOne', fullList);
     expect(result.kind).toBe('error');
     if (result.kind === 'error') {
-      expect(result.message).toMatch(/10-habit limit/i);
+      expect(result.message).toMatch(/up to 10 habits/i);
     }
   });
 });

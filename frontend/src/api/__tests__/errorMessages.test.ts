@@ -2,17 +2,31 @@
 /* global describe, it, expect */
 
 import {
+  AI_ACCESS_REVOKED_COPY,
   CREDIT_EXHAUSTED_COPY,
   DAILY_GENERATION_LIMIT_COPY,
   formatApiError,
   GENERATION_IN_PROGRESS_COPY,
   GENERIC_FALLBACK,
+  INSUFFICIENT_OFFERINGS_COPY,
   messageForCode,
-  SERVICE_CREDIT_EXHAUSTED_COPY,
   UNREACHABLE_MESSAGE,
   USER_FACING_ERROR_MESSAGES,
 } from '../errorMessages';
 import { ApiError } from '../index';
+
+describe('withdrawal errors preserve their operation context (#3275)', () => {
+  it.each([
+    'vault_withdrawal_pending',
+    'vault_withdrawal_previous_vault',
+    'vault_withdrawal_disconnected_vault',
+    'vault_withdrawal_unrecorded_vault',
+  ])('does not turn an Intimate withdrawal into deletion or editing lock: %s', (code) => {
+    const copy = messageForCode(code);
+    expect(copy).not.toMatch(/set to be deleted|can't be edited|delete the page here only/i);
+    expect(copy).toMatch(/not.*confirmed|cannot.*confirm|can't.*confirm/i);
+  });
+});
 
 describe('USER_FACING_ERROR_MESSAGES', () => {
   it('covers every backend error code the backend emits', () => {
@@ -60,22 +74,29 @@ describe('USER_FACING_ERROR_MESSAGES', () => {
       'active_practice_exists_for_stage',
       'habits_must_not_be_empty',
       'vault_withdrawal_pending',
+      'vault_withdrawal_previous_vault',
+      'vault_withdrawal_disconnected_vault',
+      'vault_withdrawal_unrecorded_vault',
+      'journal_entry_deletion_pending',
       // wallet
       'payment_required',
       'insufficient_offerings',
       'essay_price_unacknowledged',
+      // a revoked entitlement restricts AI features only (#1938, B21 E1)
+      'ai_access_revoked',
       // generation guardrails (#623)
       'generation_in_progress',
       'daily_generation_limit_reached',
       'generation_guard_unavailable',
       'llm_key_required',
+      'vault_key_required',
       'invalid_llm_api_key_format',
-      // permanently exhausted provider balance -- caller's key, then ours
+      // permanently exhausted provider balance on the caller's own key
       'llm_credit_exhausted',
-      'llm_service_credit_exhausted',
       // streaming / rate limits / network
       'rate_limit_exceeded',
       'llm_provider_error',
+      'reflection_source_unavailable',
       'malformed_stream_frame',
       'incomplete_stream',
       'network_error',
@@ -112,7 +133,7 @@ describe('practice-selection codes (BUG-PRACTICE-012)', () => {
   it('maps stage_locked to actionable copy instead of the generic 403 wall', () => {
     const err = new ApiError(403, 'stage_locked');
     const msg = formatApiError(err);
-    expect(msg).toMatch(/unlock(ed)? this stage/i);
+    expect(msg).toMatch(/this stage hasn't opened yet/i);
     expect(msg).not.toMatch(/don't have access/i);
   });
 
@@ -293,7 +314,7 @@ describe('formatApiError', () => {
 
   it('falls back to status-code copy when detail is unknown and no fallback set', () => {
     const err = new ApiError(503, 'some_unmapped_code');
-    expect(formatApiError(err)).toMatch(/service is temporarily unavailable/i);
+    expect(formatApiError(err)).toMatch(/down for a moment/i);
   });
 
   it('prefers a known code over a status override', () => {
@@ -303,7 +324,7 @@ describe('formatApiError', () => {
     const result = formatApiError(err, {
       statusOverrides: { 402: 'This should not be used.' },
     });
-    expect(result).toMatch(/BotMason messages/);
+    expect(result).toBe(INSUFFICIENT_OFFERINGS_COPY);
   });
 
   it('returns GENERIC_FALLBACK for null/undefined inputs with no fallback', () => {
@@ -392,15 +413,38 @@ describe('rate_limit_exceeded copy is surface-neutral', () => {
   });
 });
 
+describe('revoked entitlement (AI features only, #1938 B21 E1)', () => {
+  // What the reader sees: formatApiError, the call a screen actually makes.
+  const message = formatApiError(new ApiError(403, 'ai_access_revoked'));
+
+  it('gets its own copy, not the generic 403 wall or a wallet refill', () => {
+    expect(message).toBe(AI_ACCESS_REVOKED_COPY);
+    expect(message).not.toBe(formatApiError(new ApiError(403, 'forbidden')));
+    expect(message).not.toBe(INSUFFICIENT_OFFERINGS_COPY);
+  });
+
+  it('says plainly that the journal, export and deletion are unaffected', () => {
+    expect(message).toMatch(/journal/i);
+    expect(message).toMatch(/export/i);
+    expect(message).toMatch(/delete/i);
+    expect(message).toMatch(/nothing was charged/i);
+  });
+
+  it('carries no price, purchase prompt or pressure', () => {
+    expect(message).not.toMatch(
+      /\$|price|buy|purchase|upgrade|renew|subscribe|credits|don't miss|now\b/i,
+    );
+  });
+});
+
 describe('exhausted provider balance (permanent, not transient)', () => {
   // The copy that must NOT be reused: a permanent billing refusal presented as
   // a connectivity blip sends the reader back to a retry button forever.
   const PROVIDER_TROUBLE_COPY =
-    "BotMason's AI provider is having trouble connecting. Give it a moment and tap retry.";
-  const TRANSIENT_503_COPY =
-    'The service is temporarily unavailable. Give it a moment, then try again.';
+    "BotMason can't reach the AI service it runs on right now. Give it a moment and tap retry.";
+  const TRANSIENT_503_COPY = "We're down for a moment. Give it a minute, then try again.";
   const MONTHLY_ALLOTMENT_COPY =
-    "You've reached this month's free allotment. Add your own API key in Settings, or wait until the next monthly reset.";
+    "You've used up this month's free BotMason messages. Add your own API key in Settings, or wait for next month's fresh batch.";
 
   // Anything a provider said, or anything that identifies the account or the
   // key, is for the operator's log and never for the reader.
@@ -418,11 +462,12 @@ describe('exhausted provider balance (permanent, not transient)', () => {
     expect(message.length).toBeGreaterThan(0);
   });
 
-  it('gives our own spent key its own copy, not the transient 503 fallback', () => {
-    const message = formatApiError(new ApiError(503, 'llm_service_credit_exhausted'));
-    expect(message).not.toBe(TRANSIENT_503_COPY);
-    expect(message).not.toBe(PROVIDER_TROUBLE_COPY);
-    expect(message.length).toBeGreaterThan(0);
+  it('has no copy for the retired server-key balance: the server key never pays (#3067)', () => {
+    expect(USER_FACING_ERROR_MESSAGES).not.toHaveProperty('llm_service_credit_exhausted');
+    // Were it ever emitted again, it would read as any other brief outage.
+    expect(formatApiError(new ApiError(503, 'llm_service_credit_exhausted'))).toBe(
+      TRANSIENT_503_COPY,
+    );
   });
 
   // The three assertions below all read the RENDERED string, not the raw map.
@@ -432,34 +477,18 @@ describe('exhausted provider balance (permanent, not transient)', () => {
   // over exactly the rungs that made the original bug invisible.
   const rendered = {
     caller: () => formatApiError(new ApiError(402, 'llm_credit_exhausted')),
-    ours: () => formatApiError(new ApiError(503, 'llm_service_credit_exhausted')),
   };
 
   it('renders the intended copy rather than falling through to a status default', () => {
     expect(rendered.caller()).toBe(CREDIT_EXHAUSTED_COPY);
-    expect(rendered.ours()).toBe(SERVICE_CREDIT_EXHAUSTED_COPY);
   });
 
-  it('tells the two apart, because the remedy is not the same person', () => {
-    expect(rendered.caller()).not.toBe(rendered.ours());
-  });
-
-  it('offers no retry affordance for either, since retrying can never work', () => {
+  it('offers no retry affordance, since retrying can never work', () => {
     expect(rendered.caller()).not.toMatch(RETRY_AFFORDANCE);
-    expect(rendered.ours()).not.toMatch(RETRY_AFFORDANCE);
   });
 
   it('leaks no provider internals, account reference, or key material', () => {
     expect(rendered.caller()).not.toMatch(PROVIDER_INTERNALS);
-    expect(rendered.ours()).not.toMatch(PROVIDER_INTERNALS);
-  });
-
-  it('never tells a reader to settle a bill on an account they do not hold', () => {
-    // The server's key is nobody's but ours; pointing the reader at "Plans &
-    // Billing" would be an instruction they cannot carry out.
-    expect(rendered.ours()).not.toMatch(
-      /your (provider|openai|anthropic) account|top up|purchase credits|upgrade your plan/i,
-    );
   });
 });
 
@@ -483,9 +512,12 @@ describe('generation guardrail refusals (#623)', () => {
     expect(formatApiError(daily)).toBe(DAILY_GENERATION_LIMIT_COPY);
   });
 
-  it('says the daily limit resets at midnight UTC', () => {
+  it('says the daily limit resets at midnight UTC, and puts that in evening terms', () => {
     expect(DAILY_GENERATION_LIMIT_COPY).toMatch(/midnight UTC/);
+    expect(DAILY_GENERATION_LIMIT_COPY).toMatch(/evening/i);
     expect(DAILY_GENERATION_LIMIT_COPY).toMatch(/today/i);
+    // A tap is not a "request": the reader never issued one.
+    expect(DAILY_GENERATION_LIMIT_COPY).not.toMatch(/request/i);
   });
 
   it('tells the in-progress writer to ask again once the current one finishes', () => {
@@ -504,10 +536,50 @@ describe('generation guardrail refusals (#623)', () => {
 
   it('leaves the generic per-minute copy unchanged', () => {
     expect(USER_FACING_ERROR_MESSAGES.rate_limit_exceeded).toBe(
-      "That's a lot of requests in a short time. Give it a moment and try again.",
+      "That's a lot all at once. Give it a moment and try again.",
     );
     expect(formatApiError(new ApiError(429, 'rate_limit_exceeded'))).toBe(
       USER_FACING_ERROR_MESSAGES.rate_limit_exceeded,
     );
+  });
+});
+
+describe('vault-bound reflection refusal (#3061)', () => {
+  const copy = formatApiError(new ApiError(503, 'reflection_source_unavailable'));
+
+  it('maps the refusal to its own copy rather than the generic server error', () => {
+    expect(copy).toBe(USER_FACING_ERROR_MESSAGES.reflection_source_unavailable);
+    expect(copy).not.toBe(USER_FACING_ERROR_MESSAGES.llm_provider_error);
+  });
+
+  it('says the pass was not charged and the entry is intact', () => {
+    expect(copy).toMatch(/nothing was charged/);
+    expect(copy).toMatch(/entry is saved/);
+  });
+
+  it('makes no claim about where writing is or is not processed', () => {
+    expect(copy).not.toMatch(/vault|local|device|cloud|never leaves|boundary|private/i);
+  });
+});
+
+describe('payer refusals say how to proceed (#3096)', () => {
+  // With no personal key and nothing to pay with, every AI feature is refused
+  // before anything is spent. A refusal that names no way forward is a dead end,
+  // so each one says what to do and that nothing was charged.
+  it('an empty wallet names both remedies: credits, or a key of your own', () => {
+    const copy = messageForCode('insufficient_offerings');
+
+    expect(copy).toMatch(/credits/iu);
+    expect(copy).toMatch(/API key/u);
+    expect(copy).toMatch(/Settings/u);
+    expect(copy).toMatch(/nothing was charged/iu);
+  });
+
+  it('a server with nothing credits could buy asks for a key, and charges nothing', () => {
+    const copy = messageForCode('llm_key_required');
+
+    expect(copy).toMatch(/API key/u);
+    expect(copy).toMatch(/Settings/u);
+    expect(copy).toMatch(/nothing was charged/iu);
   });
 });

@@ -5,15 +5,17 @@ import type { DepthPreferences, DepthPreferencesUpdate } from '../api';
 
 import { registerStoreReset } from './registry';
 
+import { getActiveUser, getActiveUserGeneration } from '@/storage/userScope';
+
 /**
  * Depth-preferences store — the client-side mirror of the "you choose your
  * depth" ring toggles. Every ring is on by default, matching the product
  * principle that nothing is gated: a user opts *out* of a depth, never in.
  *
- * Unlike an optimistic toggle, ``update`` waits for the server's echoed full
- * state before mutating: the four flags interact (a backend rule may force a
- * dependent ring off), so the authoritative post-update snapshot is the only
- * safe thing to store. A failed call leaves the current flags untouched.
+ * ``update`` waits for confirmation before publishing the submitted flags.
+ * The backend changes each submitted ring independently; per-field request
+ * ordering keeps an old full response from undoing another confirmed choice.
+ * A failed call leaves the current flags untouched.
  */
 export interface DepthPreferencesStoreState {
   enable_habits: boolean;
@@ -23,7 +25,7 @@ export interface DepthPreferencesStoreState {
 
   /** Fetch the current ring toggles and replace local state with the result. */
   load: (_token?: string) => Promise<void>;
-  /** Flip one or more rings; stores the server's echoed full state on resolve. */
+  /** Flip one or more rings; stores confirmed submitted flags on resolve. */
   update: (_partial: DepthPreferencesUpdate, _token?: string) => Promise<void>;
   /** Wipe every field back to the all-on defaults on logout. */
   reset: () => void;
@@ -36,37 +38,128 @@ const INITIAL_STATE = {
   enable_sangha: true,
 };
 
-/** Narrow the four toggle flags out of a full API response. */
-const toToggles = (prefs: DepthPreferences) => ({
-  enable_habits: prefs.enable_habits,
-  enable_practices: prefs.enable_practices,
-  enable_course: prefs.enable_course,
-  enable_sangha: prefs.enable_sangha,
-});
+type Field = keyof DepthPreferences;
+type Revisions = Partial<Record<Field, number>>;
+const FIELDS = Object.keys(INITIAL_STATE) as Field[];
+/** Ordering invariants (all counters are process-local, never server versions):
+ * - generation plus the account epoch invalidates every response after reset or
+ *   account replacement, including A -> B -> A. requestSequence orders starts.
+ * - written records the latest issued PATCH for each field; pendingWrites counts
+ *   unsettled PATCHes. GET publishes only if no write was pending at its start
+ *   or completion, no write was issued meanwhile, and no newer GET confirmed it.
+ * - confirmedWrites orders successful PATCHes per field, so a late older echo
+ *   cannot undo a newer confirmation. Each echo owns only its submitted fields,
+ *   plus never-read/never-written fields recovered from an initial GET failure.
+ * - confirmedReads prevents backwards GET publication and records recovered
+ *   unknown fields. A failed write publishes nothing and only releases its
+ *   pending count; its issued revision still fences pre-write GET snapshots.
+ * Reset clears the four maps and advances generation, never reusing old fences.
+ */
+let generation = 0;
+let requestSequence = 0;
+let written: Revisions = {};
+let confirmedWrites: Revisions = {};
+let pendingWrites: Revisions = {};
+let confirmedReads: Revisions = {};
+
+function sessionGuard(): () => boolean {
+  const owner = getActiveUser();
+  const epoch = generation;
+  const ownerEpoch = getActiveUserGeneration();
+  return () =>
+    getActiveUser() === owner && getActiveUserGeneration() === ownerEpoch && generation === epoch;
+}
+
+/** A read cannot know a field while its write is unsettled, or undo a later write. */
+function readResponse(): (_prefs: DepthPreferences) => DepthPreferencesUpdate {
+  const current = sessionGuard();
+  const sequence = ++requestSequence;
+  const revisions = { ...written };
+  const unsettled = { ...pendingWrites };
+  return (prefs) => {
+    if (!current()) return {};
+    const result: DepthPreferencesUpdate = {};
+    for (const field of FIELDS) {
+      const unchanged = revisions[field] === written[field];
+      const idle = !unsettled[field] && !pendingWrites[field];
+      if (!unchanged || !idle || sequence < (confirmedReads[field] ?? 0)) continue;
+      confirmedReads[field] = sequence;
+      result[field] = prefs[field];
+    }
+    return result;
+  };
+}
+
+/** The backend changes submitted fields independently; compare write confirmations per field. */
+function writeResponse(partial: DepthPreferencesUpdate) {
+  const current = sessionGuard();
+  const sequence = ++requestSequence;
+  const fields = Object.keys(partial) as Field[];
+  for (const field of fields) {
+    written[field] = sequence;
+    pendingWrites[field] = (pendingWrites[field] ?? 0) + 1;
+  }
+  return {
+    apply: (prefs: DepthPreferences): DepthPreferencesUpdate => {
+      if (!current()) return {};
+      const result: DepthPreferencesUpdate = {};
+      // A PATCH is also the first authoritative snapshot when initial GETs
+      // failed. Recover only fields never read or written; independent writes
+      // and previously confirmed snapshots retain their existing fences.
+      for (const field of FIELDS) {
+        if (written[field] === undefined && confirmedReads[field] === undefined) {
+          confirmedReads[field] = sequence;
+          result[field] = prefs[field];
+        }
+      }
+      for (const field of fields) {
+        if (sequence < (confirmedWrites[field] ?? 0)) continue;
+        confirmedWrites[field] = sequence;
+        result[field] = prefs[field];
+      }
+      return result;
+    },
+    settle: () => {
+      if (!current()) return;
+      for (const field of fields) pendingWrites[field] = (pendingWrites[field] ?? 1) - 1;
+    },
+  };
+}
 
 export const useDepthPreferencesStore = create<DepthPreferencesStoreState>((set) => ({
   ...INITIAL_STATE,
 
   load: async (token) => {
+    const confirmedFields = readResponse();
     try {
       const prefs = await depthPreferences.get(token);
-      set({ ...toToggles(prefs) });
+      set(confirmedFields(prefs));
     } catch {
       // Leave the existing flags intact — a failed read must not flip a ring.
     }
   },
 
   update: async (partial, token) => {
+    const response = writeResponse(partial);
     try {
       const prefs = await depthPreferences.update(partial, token);
-      // Non-optimistic: state comes only from the server's echoed full snapshot.
-      set({ ...toToggles(prefs) });
+      // Only this request's submitted fields are authoritative in its full echo.
+      set(response.apply(prefs));
     } catch {
       // Leave the existing flags intact — a failed update must not flip a ring.
+    } finally {
+      response.settle();
     }
   },
 
-  reset: () => set({ ...INITIAL_STATE }),
+  reset: () => {
+    generation += 1;
+    written = {};
+    confirmedWrites = {};
+    pendingWrites = {};
+    confirmedReads = {};
+    set({ ...INITIAL_STATE });
+  },
 }));
 
 // Publish our reset to the shared registry so a single ``resetAllStores()``
@@ -85,7 +178,7 @@ registerStoreReset(() => {
 export const load = (token?: string): Promise<void> =>
   useDepthPreferencesStore.getState().load(token);
 
-/** Flip one or more rings; stores the server's echoed full state on resolve. */
+/** Flip one or more rings; stores confirmed submitted flags on resolve. */
 export const update = (partial: DepthPreferencesUpdate, token?: string): Promise<void> =>
   useDepthPreferencesStore.getState().update(partial, token);
 

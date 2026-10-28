@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from pathlib import Path
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -614,6 +615,9 @@ _TEAL_COUNT_UP_NAMES: tuple[str, ...] = (
     "Hierarchical Re-Feeling",
 )
 
+#: The vendored course markdown the alternatives are drawn from.
+_CONTENT_DIR = Path(__file__).resolve().parents[1] / "content" / "markdown"
+
 #: All TEAL alternative names — used by the idempotency sweep below.
 _TEAL_ALTERNATIVE_NAMES: tuple[str, ...] = (
     *(name for name, _, _ in _TEAL_TIMER_SPECS),
@@ -658,6 +662,104 @@ async def test_teal_count_up_preset_seeds(db_session: AsyncSession, name: str) -
     assert row.mode_config["soft_cap_minutes"] is None
 
 
+#: The course's own alternatives chapter for each stage that has one, keyed by
+#: stage number. Every seeded alternative on these stages must be named in its
+#: chapter — the catalog may only offer what the course itself prescribes.
+_ALTERNATIVES_CHAPTERS: dict[int, Path] = {
+    7: _CONTENT_DIR / "07-yellow" / "10-alternatives-for-yellow-practice.md",
+    9: _CONTENT_DIR / "09-ultraviolet" / "07-alternatives-for-ultraviolet-practice.md",
+}
+
+#: Stage-7 YELLOW alternatives (yellow-10), all 45-minute timers with no
+#: halfway bell — drives :func:`test_course_alternative_timer_preset_seeds`.
+_YELLOW_TIMER_SPECS: tuple[tuple[str, float, bool], ...] = (
+    ("Walking Meditation", 45, False),
+    ("Yoga Practice", 45, False),
+    ("Free-Writing", 45, False),
+    ("Subtle Energy Scanning", 45, False),
+    ("Chanting / Kirtan", 45, False),
+    ("Noting Practice", 45, False),
+)
+
+#: Stage-9 ULTRAVIOLET alternatives (ultraviolet-7), all 45-minute timers.
+_ULTRAVIOLET_TIMER_SPECS: tuple[tuple[str, float, bool], ...] = (
+    ("Vipassana Noting", 45, False),
+    ("Metta Jhanas", 45, False),
+    ("Kasina Practice", 45, False),
+    ("Body Scanning for Jhana", 45, False),
+    ("Mantra Repetition", 45, False),
+    ("Channeling Writing (45 min)", 45, False),
+)
+
+_COURSE_ALTERNATIVE_TIMER_CASES: tuple[tuple[int, str, float, bool], ...] = (
+    *((7, *spec) for spec in _YELLOW_TIMER_SPECS),
+    *((9, *spec) for spec in _ULTRAVIOLET_TIMER_SPECS),
+)
+
+
+@pytest.mark.parametrize(
+    ("stage_number", "name", "duration_minutes", "halfway_bell"), _COURSE_ALTERNATIVE_TIMER_CASES
+)
+@pytest.mark.asyncio
+async def test_course_alternative_timer_preset_seeds(
+    db_session: AsyncSession,
+    stage_number: int,
+    name: str,
+    duration_minutes: float,
+    halfway_bell: bool,
+) -> None:
+    """Each stage-7 / stage-9 course alternative seeds as its chapter's 45-minute timer."""
+    row = await _seed_and_fetch(db_session, name)
+
+    assert row.stage_number == stage_number
+    assert row.mode == "meditation_timer"
+    assert row.description
+    assert row.instructions
+    assert row.default_duration_minutes == duration_minutes
+
+    cfg = MeditationTimerConfig.model_validate(row.mode_config)
+    assert cfg.duration_minutes == duration_minutes
+    assert cfg.halfway_bell is halfway_bell
+    assert cfg.start_bell is True
+    assert cfg.end_bell is True
+
+
+@pytest.mark.parametrize(("stage_number", "chapter"), sorted(_ALTERNATIVES_CHAPTERS.items()))
+def test_seeded_alternatives_are_named_in_their_course_chapter(
+    stage_number: int, chapter: Path
+) -> None:
+    """Every alternative on a stage with an alternatives chapter is one the chapter lists.
+
+    Guards against inventing practice content: a preset name absent from the
+    chapter's text fails here, as does a chapter that has gone missing.
+    """
+    text = chapter.read_text(encoding="utf-8")
+    canonical = set(STAGE_TO_PRESET_NAME.values())
+    alternatives = [
+        p["name"]
+        for p in PRESET_PRACTICES
+        if p["stage_number"] == stage_number and p["name"] not in canonical
+    ]
+    assert alternatives, f"stage {stage_number} seeds no alternatives from {chapter.name}"
+    for name in alternatives:
+        assert f"**{name}" in text or f". {name}" in text, (
+            f"stage {stage_number} alternative {name!r} is not listed in {chapter.name}"
+        )
+
+
+def test_clear_light_offers_no_invented_alternatives() -> None:
+    """Stage 10 has no alternatives chapter, so it seeds only its canonical preset.
+
+    When the course gains a Clear Light alternatives chapter, add it to
+    :data:`_ALTERNATIVES_CHAPTERS` and seed what it lists.
+    """
+    chapters = sorted((_CONTENT_DIR / "10-clearlight").glob("*alternative*"))
+    assert chapters == []
+    assert [p["name"] for p in PRESET_PRACTICES if p["stage_number"] == 10] == [
+        STAGE_TO_PRESET_NAME[10]
+    ]
+
+
 @pytest.mark.asyncio
 async def test_seed_is_idempotent_with_new_presets(db_session: AsyncSession) -> None:
     """Re-running the seeder leaves exactly one row for each alternative preset."""
@@ -678,6 +780,7 @@ async def test_seed_is_idempotent_with_new_presets(db_session: AsyncSession) -> 
         *(name for name, _, _ in _ORANGE_ALTERNATIVE_SPECS),
         *_GREEN_ALTERNATIVE_NAMES,
         *_TEAL_ALTERNATIVE_NAMES,
+        *(name for _, name, _, _ in _COURSE_ALTERNATIVE_TIMER_CASES),
     )
     for name in alternative_names:
         result = await db_session.execute(select(Practice).where(Practice.name == name))
@@ -791,7 +894,7 @@ def test_alternative_presets_never_shadow_the_canonical_pointer() -> None:
 
 #: Full catalog size, hardcoded independent of source so an ADDED preset
 #: (not just a dropped or mutated one) trips this test.
-_TOTAL_PRESET_COUNT = 75
+_TOTAL_PRESET_COUNT = 87
 #: One canonical preset per course stage.
 _CANONICAL_PRESET_COUNT = 10
 
@@ -833,6 +936,8 @@ _ALL_EXPECTED_PRESET_NAMES: frozenset[str] = frozenset(
         *_GREEN_COUNT_UP_NAMES,
         *(name for name, _, _ in _TEAL_TIMER_SPECS),
         *_TEAL_COUNT_UP_NAMES,
+        *(name for name, _, _ in _YELLOW_TIMER_SPECS),
+        *(name for name, _, _ in _ULTRAVIOLET_TIMER_SPECS),
     }
 )
 

@@ -11,7 +11,7 @@ import type {
   ResonanceResponse,
 } from '@/api';
 import { ApiError } from '@/api';
-import { UNREACHABLE_MESSAGE } from '@/api/errorMessages';
+import { UNREACHABLE_MESSAGE, USER_FACING_ERROR_MESSAGES } from '@/api/errorMessages';
 import { useHabitStore } from '@/store/useHabitStore';
 
 const mockList = jest.fn() as jest.MockedFunction<
@@ -139,6 +139,29 @@ describe('useResonance', () => {
     expect(result.current.suggestions.map((item: CompletionSuggestion) => item.id)).toEqual([8]);
     expect(result.current.error).toContain("couldn't create a reflection");
     expect(result.current.error).toContain('still checked it for completed habits');
+  });
+
+  it('tells a vault-bound writer the pass was refused and uncharged, with detection unchecked', async () => {
+    const flush = jest.fn(async () => 42);
+    mockGenerate.mockRejectedValue(new ApiError(503, 'reflection_source_unavailable'));
+    mockDetect.mockResolvedValue({ checked: false, items: [] });
+    const { result } = renderHook(() => useResonance({ routeEntryId: null, flush }));
+
+    let outcome: Awaited<ReturnType<typeof result.current.requestResonance>> | undefined;
+    await act(async () => {
+      outcome = await result.current.requestResonance();
+    });
+
+    expect(outcome).toBe('failed');
+    expect(mockDetect).toHaveBeenCalledWith(42);
+    expect(result.current.suggestions).toEqual([]);
+    expect(result.current.error).toContain(
+      "We couldn't create a reflection or check this entry for completed habits.",
+    );
+    expect(result.current.error).toContain(
+      USER_FACING_ERROR_MESSAGES.reflection_source_unavailable,
+    );
+    expect(result.current.loading).toBe(false);
   });
 
   it('guards against concurrent generates (no double-charge on rapid taps)', async () => {

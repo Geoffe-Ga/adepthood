@@ -2,6 +2,7 @@
 import { StyleSheet } from 'react-native';
 
 import { legalFontSizes } from '../../../../e2e/textCensus';
+import { hyphenate } from '../../../design/hyphenation';
 import { editorialType, INTERACTIVE_TEXT_MIN } from '../../../design/tokens';
 import styles from '../Map.styles';
 import {
@@ -9,12 +10,13 @@ import {
   fitRightLabel,
   fitStageLine,
   fittedTitleFontSize,
-  MAP_ROWS,
   STAGE_DISPLAY,
   STAGE_LINE_LADDER,
   STAGE_PERSONA_LADDER,
 } from '../mapLayout';
 import { stageExpressionsStyles } from '../StageExpressionsSection';
+
+import { GOLDEN_ROWS, GOLDEN_WATERMARKS, goldenStage } from './stageVocabularyGolden';
 
 /**
  * Every size the Map sets sits on the Candle & Ink type ramp (#2960).
@@ -190,7 +192,12 @@ describe('Map text is on the type ramp (#2960)', () => {
 
 /** Every size the grid ring fits at render time for a cell ``width`` wide, with what it sizes. */
 function fittedGridSizes(width: number): Array<readonly [number, string]> {
-  const stages = Object.values(STAGE_DISPLAY).flatMap((display) => [
+  // The words a seeded server serves, beside each stage's static practice line.
+  const copies = Object.values(STAGE_DISPLAY).map((display) => ({
+    ...display,
+    ...goldenStage(display.stageNumber),
+  }));
+  const stages = copies.flatMap((display) => [
     [fitStageLine(display.persona, width, STAGE_PERSONA_LADDER).fontSize, display.persona] as const,
     [
       fitStageLine(display.descriptor, width, STAGE_LINE_LADDER).fontSize,
@@ -202,9 +209,13 @@ function fittedGridSizes(width: number): Array<readonly [number, string]> {
       display.arrowLabel,
     ] as const,
   ]);
-  const labels = MAP_ROWS.map(
+  const labels = GOLDEN_ROWS.map(
     (row) =>
-      [fitRightLabel(row.rightLabel, row.rightLabelLines, width).fontSize, row.rightLabel] as const,
+      [fitRightLabel(row.category, hyphenate(row.category), width).fontSize, row.category] as const,
   );
-  return [...stages, ...labels, [fittedTitleFontSize(width), 'watermark'] as const];
+  return [
+    ...stages,
+    ...labels,
+    [fittedTitleFontSize(width, GOLDEN_WATERMARKS), 'watermark'] as const,
+  ];
 }

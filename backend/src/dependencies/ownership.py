@@ -15,6 +15,7 @@ from bounds import RowIdPath, RowIdQuery
 from database import get_session
 from dependencies.auth import get_current_user_model
 from errors import forbidden, not_found
+from models.agent_grant import AgentGrant
 from models.goal import Goal
 from models.goal_group import GoalGroup
 from models.habit import Habit
@@ -283,6 +284,37 @@ async def resolve_owned_practice_session(
         log_ownership_denied("practice_session", practice_session_id, user_id)
         raise forbidden("forbidden")
     return practice_session
+
+
+async def resolve_owned_agent_grant(
+    session: AsyncSession, grant_id: int, user_id: int
+) -> AgentGrant:
+    """Resolve ``grant_id`` for the account that approved it, and audit a cross-tenant probe.
+
+    An agent grant is the standing approval one person gave one agent (#3534),
+    so only that person may stop it. Another account's grant is collapsed into
+    the same 404 a missing one gets -- status and body identical -- rather than
+    the 403 :func:`resolve_owned_habit` answers: the list a person revokes from
+    is theirs alone, so a foreign id is one nobody could have been shown, and
+    telling the two apart would let anyone learn which grant ids exist. The
+    probe is still audited with ``resource_access_denied``.
+    """
+    grant = await session.get(AgentGrant, grant_id)
+    if grant is None:
+        raise not_found("agent")
+    if grant.user_id != user_id:
+        log_ownership_denied("agent_grant", grant_id, user_id)
+        raise not_found("agent")
+    return grant
+
+
+async def require_owned_agent_grant(
+    agent_id: RowIdPath,
+    current_user: Annotated[int, Depends(get_current_user)],
+    session: Annotated[AsyncSession, Depends(get_session)],
+) -> AgentGrant:
+    """Resolve the path's ``agent_id`` through :func:`resolve_owned_agent_grant`."""
+    return await resolve_owned_agent_grant(session, agent_id, current_user)
 
 
 async def require_visible_goal_group(

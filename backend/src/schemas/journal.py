@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from datetime import date, datetime
-from typing import Self
+from typing import Literal, Self
 
 from pydantic import BaseModel, Field, model_validator
 
@@ -147,3 +147,23 @@ class JournalListResponse(BaseModel):
     items: list[JournalMessageResponse]
     total: int
     has_more: bool
+
+
+class JournalErasureReceipt(BaseModel):
+    """What ``POST /journal/{id}/erase-locally`` did, in closed, content-free terms.
+
+    The page is always gone from Adepthood when this is returned.
+    ``remote_copy`` is ``confirmed_absent`` only when the vault holding the copy
+    confirmed it absent; otherwise it is ``unconfirmed`` and ``copy_location``
+    says, relative to the vault connected now, where a copy may remain --
+    ``unrecorded_vault`` for a copy made before Adepthood recorded which vault
+    received it, which no vault can ever confirm (#3095). There is
+    deliberately no "withdrawn" value: a copy nobody confirmed is not one.
+    """
+
+    entry_id: int
+    remote_copy: Literal["confirmed_absent", "unconfirmed"]
+    copy_location: (
+        Literal["connected_vault", "previous_vault", "disconnected_vault", "unrecorded_vault"]
+        | None
+    )

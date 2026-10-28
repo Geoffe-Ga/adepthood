@@ -41,6 +41,7 @@ from errors import ERROR_KEY, INTERNAL_ERROR, install_exception_handlers
 from main import app, lifespan
 from middleware import CorrelationIdMiddleware
 from observability import TRACE_ID_HEADER
+from telemetry_safety import MESSAGE_WITHHELD
 from tests.helpers.sentry_capture import (
     TEST_DSN,
     CapturedEvent,
@@ -310,7 +311,12 @@ def test_scrub_event_removes_every_default_capture_channel(secret: str) -> None:
 
 
 def test_scrub_event_leaves_a_clean_event_untouched() -> None:
-    """The proven quiet side: a report with nothing private is passed through."""
+    """The proven quiet side: a report already inside the allowlist is passed through.
+
+    "Clean" now includes the message: an event whose exception values already
+    read the withheld marker is the shape every outgoing event is rebuilt into,
+    so rebuilding it again changes nothing.
+    """
     clean: CapturedEvent = {
         "level": "error",
         "environment": "production",
@@ -326,7 +332,7 @@ def test_scrub_event_leaves_a_clean_event_untouched() -> None:
             "values": [
                 {
                     "type": "IntegrityError",
-                    "value": "duplicate key value violates unique constraint",
+                    "value": MESSAGE_WITHHELD,
                     "stacktrace": {"frames": [{"function": "create_entry", "lineno": 42}]},
                 }
             ]
@@ -335,6 +341,21 @@ def test_scrub_event_leaves_a_clean_event_untouched() -> None:
     expected = json.loads(json.dumps(clean))
 
     assert error_monitoring.scrub_event(clean, {}) == expected
+
+
+def _event_with_request_path(path: str) -> CapturedEvent:
+    """An event whose one free-text survivor is the request-path context."""
+    return {
+        "contexts": {error_monitoring.REQUEST_CONTEXT_KEY: {"request_path": path}},
+        "exception": {"values": [{"type": "RuntimeError", "value": f"refused: {path}"}]},
+    }
+
+
+def _reported_request_path(event: CapturedEvent) -> str:
+    """Return the request path an event reports."""
+    return _text(
+        _mapping(_mapping(event, "contexts"), error_monitoring.REQUEST_CONTEXT_KEY), "request_path"
+    )
 
 
 @pytest.mark.parametrize(
@@ -348,27 +369,20 @@ def test_scrub_event_leaves_a_clean_event_untouched() -> None:
 def test_scrub_event_redacts_a_configured_credential_value(
     monkeypatch: pytest.MonkeyPatch, env_var: str, sentinel: str
 ) -> None:
-    """A credential that reached a message by its *value* is redacted too.
+    """A credential that reached a surviving field by its *value* is redacted too.
 
     Pattern matching alone cannot recognise an opaque vault key or a relay
     password, so the scrubber also redacts the literal values of the
-    deployment's own secret environment variables. Every name on that list is
-    a separate promise, so each one is exercised here.
+    deployment's own secret environment variables. The message no longer
+    survives at all, so the second lock is exercised on a field that does.
+    Every name on that list is a separate promise, so each one is exercised.
     """
     monkeypatch.setenv(env_var, sentinel)
-    event: CapturedEvent = {
-        "exception": {
-            "values": [{"type": "RuntimeError", "value": f"upstream refused the call: {sentinel}"}]
-        }
-    }
 
-    scrubbed = error_monitoring.scrub_event(event, {})
+    scrubbed = error_monitoring.scrub_event(_event_with_request_path(f"/k/{sentinel}"), {})
 
-    message = _text(_reported_exception(scrubbed), "value")
-    assert sentinel not in message
-    assert error_monitoring.REDACTED in message
-    # The non-secret part of the message survives, or the report is useless.
-    assert "upstream refused the call" in message
+    assert sentinel not in json.dumps(scrubbed)
+    assert _reported_request_path(scrubbed) == f"/k/{error_monitoring.REDACTED}"
 
 
 def test_scrub_event_ignores_a_blank_secret_environment_variable(
@@ -377,41 +391,40 @@ def test_scrub_event_ignores_a_blank_secret_environment_variable(
     """An unset or too-short secret must not turn the scrubber into a shredder."""
     monkeypatch.setenv("CREEK_VAULT_API_KEY", "")
     monkeypatch.setenv("SECRET_KEY", "x")
-    event: CapturedEvent = {
-        "exception": {"values": [{"type": "RuntimeError", "value": "x marks the spot"}]}
-    }
 
-    scrubbed = error_monitoring.scrub_event(event, {})
+    scrubbed = error_monitoring.scrub_event(_event_with_request_path("/x/marks/the/spot"), {})
 
-    assert _text(_reported_exception(scrubbed), "value") == "x marks the spot"
+    assert _reported_request_path(scrubbed) == "/x/marks/the/spot"
 
 
-def test_scrub_event_truncates_an_over_long_exception_message() -> None:
-    """A message that interpolated something bounded, not shipped whole.
+def test_scrub_event_withholds_an_over_long_exception_message() -> None:
+    """A message long enough to have swallowed an entry body ships none of it.
 
-    Exception messages are the one field configuration cannot close: they are
-    authored at the raise site. The house rule is that they stay static and
-    capability-named; the cap bounds what a message that broke that rule can
-    carry.
+    It used to be truncated to 512 characters, which still shipped the first
+    512 (#3079). Exception messages are authored at the raise site, so no cap
+    can make one safe; the rebuild never copies it.
     """
-    overlong = "x" * (error_monitoring.MAX_EXCEPTION_MESSAGE_CHARS + 500)
+    overlong = "x" * 1012
     event: CapturedEvent = {"exception": {"values": [{"type": "ValueError", "value": overlong}]}}
 
     message = _text(_reported_exception(error_monitoring.scrub_event(event, {})), "value")
 
-    assert message.endswith(error_monitoring.TRUNCATION_MARKER)
-    assert len(message) < len(overlong)
+    assert message == MESSAGE_WITHHELD
 
 
-def test_scrub_event_leaves_a_short_exception_message_whole() -> None:
-    """The quiet side of the cap: a normal message is not mangled."""
+def test_scrub_event_withholds_even_a_short_harmless_looking_message() -> None:
+    """There is no "short enough to be safe": a short message is withheld too.
+
+    A short search term or a single journal sentence is short. The only text an
+    entry may carry is a code its exception class declares.
+    """
     event: CapturedEvent = {
         "exception": {"values": [{"type": "ValueError", "value": "journal_save_failed"}]}
     }
 
     message = _text(_reported_exception(error_monitoring.scrub_event(event, {})), "value")
 
-    assert message == "journal_save_failed"
+    assert message == MESSAGE_WITHHELD
 
 
 def test_init_without_dsn_disables_monitoring_with_one_line(

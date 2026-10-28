@@ -141,7 +141,10 @@ describe('ActiveRitualSession audio wiring', () => {
     expect(spy.dispose).toHaveBeenCalledTimes(1);
   });
 
-  it('never calls the injected engine audio adapter for random_interval_bell (view owns its own bells)', () => {
+  it('plays each random_interval_bell bell once, through the session adapter', () => {
+    // The view plays this mode's bells (the engine schedules none) through the
+    // session's one adapter, so a failure there reaches the session's notice.
+    // Sharing it must not double-strike: each boundary bell sounds once.
     const spy = createAudioSpy();
     const { getByTestId } = renderSession({ config: randomBellConfig, audio: spy });
 
@@ -153,6 +156,10 @@ describe('ActiveRitualSession audio wiring', () => {
       jest.advanceTimersByTime(60_000);
     });
 
-    expect(spy.play).not.toHaveBeenCalled();
+    const kinds = (spy.play as jest.Mock).mock.calls.map(([kind]) => kind);
+    expect(kinds.filter((kind) => kind === 'start_bell')).toHaveLength(1);
+    expect(kinds.filter((kind) => kind === 'end_bell')).toHaveLength(1);
+    expect(kinds).toContain('interval_bell');
+    expect(spy.dispose).not.toHaveBeenCalled();
   });
 });

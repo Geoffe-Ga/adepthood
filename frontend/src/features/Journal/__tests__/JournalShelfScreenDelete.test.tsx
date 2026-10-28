@@ -3,14 +3,30 @@ import { jest, describe, it, expect, beforeEach } from '@jest/globals';
 import { act, fireEvent, render, waitFor } from '@testing-library/react-native';
 import React from 'react';
 
-import type { JournalListResponse, JournalMessage, PromptDetail } from '@/api';
+import { erasureReceiptNotice } from '../deleteEntryCopy';
+
+import type {
+  JournalErasureReceipt,
+  JournalListResponse,
+  JournalMessage,
+  PromptDetail,
+} from '@/api';
+import { setActiveUser } from '@/storage/userScope';
 
 const mockList = jest.fn() as jest.MockedFunction<
   (_p?: { search?: string; limit?: number; offset?: number }) => Promise<JournalListResponse>
 >;
 const mockDelete = jest.fn() as jest.MockedFunction<(_id: number) => Promise<void>>;
+const mockEraseLocally = jest.fn() as jest.MockedFunction<
+  (_id: number) => Promise<JournalErasureReceipt>
+>;
 const mockPromptCurrent = jest.fn() as jest.MockedFunction<() => Promise<PromptDetail>>;
 const mockNavigate = jest.fn();
+
+// The shelf is authenticated: its namespace and decoded credential agree.
+jest.mock('@/context/AuthContext', () => ({
+  useAuth: () => ({ token: 'x.eyJzdWIiOiIxIiwiZXhwIjo0MDAwMDAwMDAwfQ.y', userTimezone: 'UTC' }),
+}));
 
 jest.mock('@/api', () => ({
   // The shelf's primary invitation asks what review is due; answer "none" so
@@ -23,6 +39,8 @@ jest.mock('@/api', () => ({
   journal: {
     list: (...a: unknown[]) => (mockList as unknown as (...x: unknown[]) => unknown)(...a),
     delete: (...a: unknown[]) => (mockDelete as unknown as (...x: unknown[]) => unknown)(...a),
+    eraseLocally: (...a: unknown[]) =>
+      (mockEraseLocally as unknown as (...x: unknown[]) => unknown)(...a),
   },
   prompts: {
     current: (...a: unknown[]) =>
@@ -39,6 +57,13 @@ jest.mock('@react-navigation/native', () => {
     useFocusEffect: (cb: () => undefined | (() => void)) => react.useEffect(cb, []),
   };
 });
+
+// The Notification Center's count reads five sources of its own; it has its
+// own suite, so the shelf's suites pin only the number it shows.
+let mockNotificationCount = 0;
+jest.mock('../useNotificationCount', () => ({
+  useNotificationCount: () => mockNotificationCount,
+}));
 
 jest.mock('../SearchBar', () => {
   const { TextInput, View } = require('react-native');
@@ -94,8 +119,10 @@ function page(items: JournalMessage[]): JournalListResponse {
 }
 
 beforeEach(() => {
+  setActiveUser(1);
   mockList.mockReset();
   mockDelete.mockReset();
+  mockEraseLocally.mockReset();
   mockNavigate.mockReset();
   mockPromptCurrent.mockReset();
   mockList.mockResolvedValue(page([entry(2), entry(1)]));
@@ -128,7 +155,7 @@ describe('deleting one journal entry from the shelf', () => {
     expect(getByTestId('journal-shelf-card-2')).toBeTruthy();
   });
 
-  it('says the page goes from the app and that its corpus copy goes with it', async () => {
+  it('describes requested removal, retained copies and the real pending-deletion lock', async () => {
     const { getByTestId } = await shelfWithDeleteRequested();
 
     const body = getByTestId('journal-delete-dialog-body').props.children as string;
@@ -136,8 +163,11 @@ describe('deleting one journal entry from the shelf', () => {
     expect(body).toMatch(/no way back to it from inside the app/i);
     // The withdrawal from the ontologized corpus is a promise about where the writing goes.
     expect(body).toMatch(/reflections draw on/i);
-    expect(body).toMatch(/connected Creek vault.*removed/i);
-    expect(body).toMatch(/offline.*shelf.*try again/i);
+    expect(body).toMatch(/removal.*Creek vault copies.*requested/i);
+    expect(body).toMatch(/may remain until the vault confirms/i);
+    expect(body).toMatch(/pending.*stays on your shelf.*cannot be edited/i);
+    expect(body).toMatch(/automatically retries.*recorded vault.*reachable/i);
+    expect(body).not.toMatch(/is removed too|so you can try again/i);
     // Never scold somebody for unwriting their own page.
     expect(body).not.toMatch(/permanent|forever|warning|sure\?/i);
   });
@@ -180,7 +210,7 @@ describe('deleting one journal entry from the shelf', () => {
     expect(getByTestId('journal-shelf-card-2')).toBeTruthy();
   });
 
-  it('names the connected-vault recovery path when Creek has not confirmed removal', async () => {
+  it('says the deletion is set and finishes once Creek confirms — not that it failed', async () => {
     mockDelete.mockRejectedValue({ status: 503, detail: 'vault_withdrawal_pending' });
     const { getByTestId, findByTestId } = await shelfWithDeleteRequested();
 
@@ -188,8 +218,214 @@ describe('deleting one journal entry from the shelf', () => {
       fireEvent.press(getByTestId('journal-delete-confirm'));
     });
 
+    // The server recorded the deletion and finishes it itself (#3098), so the
+    // notice may not say it could not delete, nor ask for another delete.
+    const notice = (await findByTestId('journal-delete-error')).props.children as string;
+    expect(notice).toMatch(/set to be deleted/i);
+    expect(notice).toMatch(/cannot be edited/i);
+    expect(notice).toMatch(/removal.*your Creek vault.*not been confirmed/i);
+    expect(notice).toMatch(/Adepthood retries while that vault is reachable/i);
+    expect(notice).not.toMatch(/could not delete|delete this page again|still on your shelf/i);
+    expect(getByTestId('journal-shelf-card-2')).toBeTruthy();
+  });
+
+  it('treats a retried delete the background already finished as done, not refused', async () => {
+    mockDelete.mockRejectedValue({ status: 404, detail: 'journal_entry_not_found' });
+    const { getByTestId, queryByTestId } = await shelfWithDeleteRequested();
+
+    await act(async () => {
+      fireEvent.press(getByTestId('journal-delete-confirm'));
+    });
+
+    await waitFor(() => expect(queryByTestId('journal-shelf-card-2')).toBeNull());
+    expect(queryByTestId('journal-delete-error')).toBeNull();
+    expect(queryByTestId('journal-unreachable-choice')).toBeNull();
+  });
+});
+
+/** Confirm the delete of entry 2 and let the server refuse it with ``detail``. */
+async function refusedWith(detail: string) {
+  mockDelete.mockRejectedValue({ status: 503, detail });
+  const utils = await shelfWithDeleteRequested();
+  await act(async () => {
+    fireEvent.press(utils.getByTestId('journal-delete-confirm'));
+  });
+  await utils.findByTestId('journal-unreachable-choice');
+  return utils;
+}
+
+describe('a page whose vault copy cannot be confirmed gone (#3094)', () => {
+  it('names the previous vault and offers reconnect first, then "I can\'t reach it"', async () => {
+    const { getByTestId } = await refusedWith('vault_withdrawal_previous_vault');
+
+    const notice = getByTestId('journal-delete-error').props.children as string;
+    expect(notice).toMatch(/set to be deleted/i);
+    expect(notice).toMatch(/not been confirmed.*previous Creek vault/i);
+    expect(notice).toMatch(/reconnect that vault in Settings to allow retry/i);
+    expect(notice).toMatch(/cannot be edited/i);
+    expect(notice).not.toMatch(/finishes once you reconnect/i);
+    expect(notice).not.toMatch(/could not delete/i);
+    expect(getByTestId('journal-unreachable-reconnect')).toBeTruthy();
+    expect(getByTestId('journal-unreachable-erase')).toBeTruthy();
+    const explainer = getByTestId('journal-unreachable-explainer').props.children as string;
+    expect(explainer).toMatch(/can't confirm/i);
+    expect(explainer).toMatch(/delete it there yourself/i);
+    expect(getByTestId('journal-shelf-card-2')).toBeTruthy();
+    expect(mockEraseLocally).not.toHaveBeenCalled();
+  });
+
+  it('names the disconnected vault the same way', async () => {
+    const { getByTestId } = await refusedWith('vault_withdrawal_disconnected_vault');
+
+    const notice = getByTestId('journal-delete-error').props.children as string;
+    expect(notice).toMatch(/vault you disconnected/i);
+  });
+
+  it('tells the person a pre-binding copy may remain in an earlier vault (#3095)', async () => {
+    const { getByTestId, queryByTestId } = await refusedWith('vault_withdrawal_unrecorded_vault');
+
+    const notice = getByTestId('journal-delete-error').props.children as string;
+    expect(queryByTestId('journal-unreachable-reconnect')).toBeNull();
+    expect(notice).toMatch(/cannot identify the vault.*older copy/i);
+    expect(notice).toMatch(/removal cannot be confirmed/i);
+    expect(notice).toMatch(/may remain in a vault you connected earlier/i);
+    expect(notice).toMatch(/set to be deleted.*cannot be edited/i);
+    expect(notice).not.toMatch(/reconnect that vault/i);
+    expect(notice).not.toMatch(/withdrawn|is gone/i);
+    expect(getByTestId('journal-unreachable-erase')).toBeTruthy();
+  });
+
+  it('reconnect first opens vault settings and erases nothing', async () => {
+    const { getByTestId, queryByTestId } = await refusedWith('vault_withdrawal_previous_vault');
+
+    await act(async () => {
+      fireEvent.press(getByTestId('journal-unreachable-reconnect'));
+    });
+
+    expect(mockNavigate).toHaveBeenCalledWith('VaultSettings');
+    expect(queryByTestId('journal-unreachable-choice')).toBeNull();
+    expect(mockEraseLocally).not.toHaveBeenCalled();
+    expect(getByTestId('journal-shelf-card-2')).toBeTruthy();
+  });
+
+  it('"I can\'t reach it" deletes here only and says a copy may remain — never "withdrawn"', async () => {
+    mockEraseLocally.mockResolvedValue({
+      entry_id: 2,
+      remote_copy: 'unconfirmed',
+      copy_location: 'previous_vault',
+    });
+    const { getByTestId, queryByTestId, findByTestId } = await refusedWith(
+      'vault_withdrawal_previous_vault',
+    );
+
+    await act(async () => {
+      fireEvent.press(getByTestId('journal-unreachable-erase'));
+    });
+
+    expect(mockEraseLocally).toHaveBeenCalledWith(2);
+    const receipt = (await findByTestId('journal-erasure-receipt')).props.children as string;
+    expect(receipt).toMatch(/deleted from adepthood/i);
+    expect(receipt).toMatch(/copy may still be in the Creek vault you were connected to before/i);
+    expect(receipt).toMatch(/delete it there/i);
+    expect(receipt).not.toMatch(/withdrawn|removed from your vault|is gone/i);
+    await waitFor(() => expect(queryByTestId('journal-shelf-card-2')).toBeNull());
+    expect(queryByTestId('journal-unreachable-choice')).toBeNull();
+    expect(queryByTestId('journal-delete-error')).toBeNull();
+  });
+
+  it('says the vault copy is gone only when the receipt says the vault confirmed it', async () => {
+    mockEraseLocally.mockResolvedValue({
+      entry_id: 2,
+      remote_copy: 'confirmed_absent',
+      copy_location: null,
+    });
+    const { getByTestId, findByTestId } = await refusedWith('vault_withdrawal_pending');
+
+    await act(async () => {
+      fireEvent.press(getByTestId('journal-unreachable-erase'));
+    });
+
+    const receipt = (await findByTestId('journal-erasure-receipt')).props.children as string;
+    expect(receipt).toMatch(/confirmed/i);
+    expect(receipt).not.toMatch(/may still be/i);
+  });
+
+  it('puts the page back if deleting here only is refused too', async () => {
+    mockEraseLocally.mockRejectedValue(new Error('network down'));
+    const { getByTestId, findByTestId, queryByTestId } = await refusedWith(
+      'vault_withdrawal_disconnected_vault',
+    );
+
+    await act(async () => {
+      fireEvent.press(getByTestId('journal-unreachable-erase'));
+    });
+
     const notice = await findByTestId('journal-delete-error');
     expect(notice.props.children).toMatch(/still on your shelf/i);
-    expect(notice.props.children).toMatch(/Creek.*online.*delete .*again/i);
+    expect(getByTestId('journal-shelf-card-2')).toBeTruthy();
+    expect(queryByTestId('journal-erasure-receipt')).toBeNull();
+  });
+
+  it('treats "delete here only" after the background already finished as done', async () => {
+    mockEraseLocally.mockRejectedValue({ status: 404, detail: 'journal_entry_not_found' });
+    const { getByTestId, queryByTestId, findByTestId } = await refusedWith(
+      'vault_withdrawal_previous_vault',
+    );
+
+    await act(async () => {
+      fireEvent.press(getByTestId('journal-unreachable-erase'));
+    });
+
+    await waitFor(() => expect(queryByTestId('journal-shelf-card-2')).toBeNull());
+    expect(queryByTestId('journal-delete-error')).toBeNull();
+    const receipt = (await findByTestId('journal-erasure-receipt')).props.children as string;
+    expect(receipt).toMatch(/already deleted/i);
+    // A 404 cannot say what the vault did, so nothing is claimed about the copy.
+    expect(receipt).not.toMatch(/withdrawn|confirmed|is gone/i);
+  });
+
+  it('offers no choice for an ordinary failure', async () => {
+    mockDelete.mockRejectedValue(new Error('network down'));
+    const { getByTestId, findByTestId, queryByTestId } = await shelfWithDeleteRequested();
+
+    await act(async () => {
+      fireEvent.press(getByTestId('journal-delete-confirm'));
+    });
+
+    await findByTestId('journal-delete-error');
+    expect(queryByTestId('journal-unreachable-choice')).toBeNull();
+  });
+});
+
+describe('the receipt names where a copy may remain (#3094)', () => {
+  it('names the connected vault when that vault itself could not confirm', () => {
+    const notice = erasureReceiptNotice({
+      entry_id: 2,
+      remote_copy: 'unconfirmed',
+      copy_location: 'connected_vault',
+    });
+    expect(notice).toMatch(/copy may still be in your Creek vault/);
+    expect(notice).not.toMatch(/withdrawn|is gone too/);
+  });
+
+  it('says a pre-binding copy may remain in a vault connected before the record began (#3095)', () => {
+    const notice = erasureReceiptNotice({
+      entry_id: 2,
+      remote_copy: 'unconfirmed',
+      copy_location: 'unrecorded_vault',
+    });
+    expect(notice).toMatch(/deleted from adepthood/i);
+    expect(notice).toMatch(/copied to a Creek vault before October 7, 2026/);
+    expect(notice).toMatch(/may still be in a Creek vault you connected earlier/i);
+    expect(notice).not.toMatch(/withdrawn|is gone too/);
+  });
+
+  it('falls back to the connected vault when the server names no location', () => {
+    const notice = erasureReceiptNotice({
+      entry_id: 2,
+      remote_copy: 'unconfirmed',
+      copy_location: null,
+    });
+    expect(notice).toMatch(/copy may still be in your Creek vault/);
   });
 });

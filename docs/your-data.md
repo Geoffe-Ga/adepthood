@@ -61,6 +61,14 @@ The export covers your Adepthood data. Your vault holds its own copy and
 exports from its own side; nothing here reaches into it. An ordinary managed
 Fly vault is provider-managed and operator-readable, not confidential compute:
 Fly and privileged Adepthood or Creek operators can access its stored bytes.
+If the vault's own deployment allows it a cloud model (its
+`CREEK_CLOUD_CONSENT` setting), what it holds of yours also goes to that
+model's provider, under the vault's configuration rather than Adepthood's. The
+[privacy policy](legal/privacy-policy.md) names every party that receives
+anything of yours: Railway, which hosts Adepthood's server and database and
+holds its backups; the language-model provider; your vault, Fly for a managed one, and the vault's
+model provider; Gumroad; Sentry; the email relay (Resend, or the deployment's
+own mail server); and Google or Apple if you sign in with one.
 
 A vault and what your reflections draw on are two separate choices. Each
 reflection reads a few passages of your own writing: from your writing sorted
@@ -83,7 +91,7 @@ deletion receipt, for the same reason.
 Nobody needs this. Adepthood is complete without a vault, and a managed one is
 offered separately. This is for people who already run their own.
 
-**Settings → Where your corpus lives → Advanced: connect a vault you run
+**Settings → Where your writing lives → Advanced: connect a vault you run
 yourself.** It asks for two things: the public web address your vault answers
 on, starting `https://`, and the key your vault issued. Adepthood then sends it
 a copy of each entry when you save or edit it, and of each voice draft if your
@@ -104,11 +112,10 @@ Changing a Public or Personal page to **Intimate** keeps the stricter choice in
 Adepthood first, then withdraws that page's stable journal identity from a
 connected Creek Vault without sending its title or body again. The page's local
 corpus copy is withdrawn too. Adepthood clears the remote reference only after
-Creek confirms that the source page, active fragment, and derived surfaces no
-longer contain it.
+Creek confirms it no longer holds that page anywhere.
 
 If Creek is offline or cannot confirm the removal, Adepthood keeps the page
-Intimate and keeps the remote reference as a retry marker. The editor tells you
+Intimate and remembers to try the vault again. The editor tells you
 the withdrawal is pending: bring the vault online, then choose **Intimate**
 again. Repeating the operation is safe.
 
@@ -123,8 +130,7 @@ delete complete. Creek does not receive the page body during this operation.
 
 If the vault is offline or cannot confirm removal, the page returns to your
 shelf and its remote reference is retained. Bring the vault online and delete
-the page again; the content-free withdrawal is idempotent, so a repeated request
-does not recreate or reveal anything.
+the page again; asking twice is safe — nothing is re-sent or revealed.
 
 There is no restore inside the app. The row is not shredded the instant you
 confirm — it is marked deleted and kept out of every read path, which is how
@@ -140,12 +146,15 @@ Deleting a page does not touch anything else about your account.
 **Settings → Delete account.** You retype the email address you sign in with,
 and the account is erased.
 
-It is **immediate and irreversible**. There is no grace period, no
-deactivation, and no support path to get any of it back. If you want a copy of
-your writing, [take it first](#taking-a-copy-of-your-writing).
+It takes effect on the live service **immediately**, and it **cannot be
+undone**. There is no grace period, no deactivation, and no support path to
+get any of it back. Backups taken before you delete still hold a copy until
+they age out — on our backup schedule, within about 97 days (see "Backups"
+below). If you want a copy of your writing, [take it
+first](#taking-a-copy-of-your-writing).
 
-Your session dies with the account: the token on your device stops working on
-the next request, on every device.
+You are signed out everywhere: the app on every device stops working at its
+next request.
 
 ### What is deleted
 
@@ -186,12 +195,14 @@ Three things, each for a stated reason:
 1. **Practices you contributed to the shared catalogue.** Other people may
    already have them assigned, so the entry stays and stops naming you. The
    same applies to share links you minted: recipients may already hold the URL.
-2. **Purchase receipts.** The row stays, and so does the email address on it.
-   This is the one identifier that deliberately outlives a deletion. It has to:
-   the address is how a token pack you paid for is matched back to you, so
-   erasing it would quietly confiscate something you bought if you ever came
-   back. Retaining a payment record is also the ordinary GDPR Art. 17(3)
-   exemption. Nothing in the row points at an account any more. A course
+2. **Purchase receipts.** The row stays: retaining a payment record is the
+   ordinary GDPR Art. 17(3) exemption. On a purchase linked to your account —
+   a licence bound to it, or a token pack credited to it — the email address
+   is blanked, and so is the sale record as Gumroad sent it. A purchase never
+   linked to any account keeps its email address, because that address is the
+   only way it can still be claimed: a token pack bought under your address
+   and never credited is matched to you by it if you sign up again with that
+   address. Nothing in the row points at an account any more. A course
    licence works differently: the record binding it to your account is erased
    with the account, and the same key can then be redeemed by exactly one new
    account — yours again, or someone you give it to. Access is all that
@@ -202,6 +213,31 @@ Three things, each for a stated reason:
 The wallet ledger for your own account goes with the account. Ledger rows
 recording something you did to *another* account's wallet stay, with you
 cleared off them.
+
+### Backups
+
+Deleting your account does not reach into backups. Our backups are the hosting
+platform's daily backups, which Railway keeps for 6 days. The operator no
+longer makes copies off the platform. A weekly copy off the platform made
+before that stopped in October 2026 could be kept for up to 90 days; if any is
+left, it is deleted by the operator by hand. Until the operator confirms none
+is left, the figure below is the longer one. A backup taken before you deleted
+still holds what your account held then, with your writing encrypted in it as
+it is in the database. No backup is edited to remove one account. On that schedule, the last copy of your data in
+Adepthood's own backups ages out within about 97 days of your deletion. That
+bound is Adepthood's alone: each party the privacy policy names keeps what it
+received under its own retention.
+
+If the operator ever has to restore the database from a backup taken before
+you deleted, that backup still holds your account, so a restore could bring
+your data back. The restore procedure has a step that re-applies deletions
+made since the backup before the service goes back online, but that step is
+still a draft and relies on a record of deletions whose keeping is not yet
+settled. <!-- DRAFT for owner (#3063 AC17): once tombstone custody is decided
+and the "Suppress resurrected deletions" step in DEPLOYMENT.md is ratified,
+replace this paragraph with: "If we ever have to restore from a backup,
+we re-apply deletions made since that backup before the service goes back
+online." -->
 
 ### If you use a Creek Vault
 
@@ -216,6 +252,11 @@ cannot run an account-wide purge. Run `creek purge` against that vault to erase
 everything it holds. An unreachable vault never delays or blocks deletion of
 your Adepthood data; the deletion receipt states whether managed teardown is
 pending, confirmed, or manual action remains.
+
+If a page of yours still had a copy in a vault that had not confirmed it
+deleted, Adepthood keeps a note for each such copy: an opaque vault identifier
+and an entry number, not linked to you, and nothing you wrote. The note is
+deleted when that vault confirms the copy gone, or after 97 days at most.
 
 ## For maintainers
 
@@ -245,6 +286,6 @@ at all rather than erase part of an account and report success.
 The end-to-end test seeds a row into every table the schema allows, deletes one
 of two accounts, and then asserts an invariant stated without reference to the
 policy: afterwards no column pointing at `user` holds the erased id, and the
-address appears nowhere but the purchase receipt. The second account's rows are
-counted before and after, so a sweep that took the whole table fails as loudly
-as one that took nothing.
+address appears nowhere but a purchase receipt never linked to the account.
+The second account's rows are counted before and after, so a sweep that took
+the whole table fails as loudly as one that took nothing.

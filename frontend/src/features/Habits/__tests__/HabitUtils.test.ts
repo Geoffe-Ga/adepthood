@@ -1,5 +1,6 @@
 /* eslint-env jest */
 /* global describe, test, expect, jest */
+import { afterEach, beforeEach } from '@jest/globals';
 import { validate as uuidValidate } from 'uuid';
 
 import { accent, brightenColor, colors, STAGE_COLORS } from '../../../design/tokens';
@@ -14,6 +15,7 @@ import {
   calculateNetEnergy,
   calculateTodaysProgress,
   getProgressBarColor,
+  generateStatsForHabit,
   clampPercentage,
   isGoalAchieved,
   isHabitUnlocked,
@@ -28,6 +30,8 @@ import {
   habitColorAtSlot,
   countCarryover,
   buildPagedHabits,
+  periodOf,
+  unitsInCurrentPeriod,
   STAGE_ORDER,
   STAGE_DURATIONS_DAYS,
 } from '../HabitUtils';
@@ -235,6 +239,81 @@ describe('HabitUtils', () => {
     expect(pos.clear).toBeLessThan(pos.stretch);
   });
 
+  test('getMarkerPositions additive rescales the goals behind progress beyond stretch', () => {
+    const low: Goal = {
+      id: 1,
+      tier: 'low',
+      title: 'low',
+      target: 1,
+      target_unit: 'u',
+      frequency: 1,
+      frequency_unit: 'per_day',
+      is_additive: true,
+    };
+    const clear: Goal = { ...low, id: 2, tier: 'clear', title: 'clear', target: 2 };
+    const stretch: Goal = { ...low, id: 3, tier: 'stretch', title: 'stretch', target: 4 };
+
+    expect(getMarkerPositions(low, clear, stretch, 0)).toEqual({
+      low: 25,
+      clear: 50,
+      stretch: 100,
+    });
+    expect(getMarkerPositions(low, clear, stretch, 4)).toEqual({
+      low: 25,
+      clear: 50,
+      stretch: 100,
+    });
+    expect(getMarkerPositions(low, clear, stretch, 8)).toEqual({
+      low: 12.5,
+      clear: 25,
+      stretch: 50,
+    });
+  });
+
+  test('keeps additive tier controls separated when progress dwarfs every target', () => {
+    const low: Goal = {
+      id: 1,
+      tier: 'low',
+      title: 'low',
+      target: 1,
+      target_unit: 'u',
+      frequency: 1,
+      frequency_unit: 'per_day',
+      is_additive: true,
+    };
+    const clear: Goal = { ...low, id: 2, tier: 'clear', title: 'clear', target: 2 };
+    const stretch: Goal = { ...low, id: 3, tier: 'stretch', title: 'stretch', target: 4 };
+
+    const positions = getMarkerPositions(low, clear, stretch, 100);
+
+    expect(positions).toEqual({ low: 10, clear: 20, stretch: 40 });
+    expect(positions.clear - positions.low).toBeGreaterThanOrEqual(10);
+    expect(positions.stretch - positions.clear).toBeGreaterThanOrEqual(10);
+    expect(targetForMarkerPercent(positions.low, 'low', low, clear, stretch, 100)).toBe(1);
+    expect(targetForMarkerPercent(positions.clear, 'clear', low, clear, stretch, 100)).toBe(2);
+  });
+
+  test('keeps the distinct target reachable when adjacent additive tiers are equal', () => {
+    const low: Goal = {
+      id: 1,
+      tier: 'low',
+      title: 'low',
+      target: 1,
+      target_unit: 'u',
+      frequency: 1,
+      frequency_unit: 'per_day',
+      is_additive: true,
+    };
+    const clear: Goal = { ...low, id: 2, tier: 'clear', title: 'clear' };
+    const stretch: Goal = { ...low, id: 3, tier: 'stretch', title: 'stretch', target: 2 };
+
+    const positions = getMarkerPositions(low, clear, stretch, 100);
+
+    expect(positions).toEqual({ low: 10, clear: 10, stretch: 20 });
+    expect(positions.stretch - positions.clear).toBeGreaterThanOrEqual(10);
+    expect(targetForMarkerPercent(positions.clear, 'clear', low, clear, stretch, 100)).toBe(1);
+  });
+
   test('getMarkerPositions subtractive places all three on a low-anchored scale', () => {
     const low: Goal = {
       id: 1,
@@ -400,6 +479,41 @@ describe('HabitUtils', () => {
     expect((ninth.getTime() - base.getTime()) / day).toBe(168);
     const tenth = calculateHabitStartDate(base, 9);
     expect((tenth.getTime() - base.getTime()) / day).toBe(210);
+  });
+
+  describe('program cadence pin (#3071)', () => {
+    // Literal on purpose, and the same table the backend reveal sweep uses
+    // (backend/tests/services/test_habit_auto_reveal_cadence.py): the habit at
+    // onboarding slot i starts on the day its own ring opens -- eight three-week
+    // windows, then two six-week ones. Deriving either column from
+    // STAGE_DURATIONS_DAYS or STAGE_ORDER would let a schedule change move the
+    // oracle with the code.
+    const LADDER: ReadonlyArray<readonly [string, number]> = [
+      ['Beige', 0],
+      ['Purple', 21],
+      ['Red', 42],
+      ['Blue', 63],
+      ['Orange', 84],
+      ['Green', 105],
+      ['Yellow', 126],
+      ['Teal', 147],
+      ['Ultraviolet', 168],
+      ['Clear Light', 210],
+    ];
+    const DAY_MS = 24 * 60 * 60 * 1000;
+    // 2026-03-08 is a US spring-forward; the UTC-anchored arithmetic must not
+    // lose an hour across it.
+    const base = new Date('2026-03-01T00:00:00Z');
+
+    test.each(LADDER.map(([colour, day], index) => [index, colour, day] as const))(
+      'slot %i is %s and starts on program day %i',
+      (index, colour, day) => {
+        expect(stageAtIndex(index)).toBe(colour);
+        expect((calculateHabitStartDate(base, index).getTime() - base.getTime()) / DAY_MS).toBe(
+          day,
+        );
+      },
+    );
   });
 
   test('logHabitUnits generates valid UUID string IDs for completions', () => {
@@ -721,32 +835,46 @@ describe('getGoalTarget frequency-unit normalization', () => {
     expect(getGoalTarget(goal)).toBe(4);
   });
 
-  test('per_week normalizes to a daily-equivalent target', () => {
+  test('per_session returns the raw target even when frequency is greater than one', () => {
+    const goal: Goal = {
+      id: 1,
+      tier: 'low',
+      title: 'low',
+      target: 4,
+      target_unit: 'u',
+      frequency: 3,
+      frequency_unit: 'per_session',
+      is_additive: true,
+    };
+    expect(getGoalTarget(goal)).toBe(4);
+  });
+
+  test('per_week returns the full period target', () => {
     const goal: Goal = {
       id: 1,
       tier: 'low',
       title: 'low',
       target: 14,
       target_unit: 'u',
-      frequency: 1,
+      frequency: 3,
       frequency_unit: 'per_week',
       is_additive: true,
     };
-    expect(getGoalTarget(goal)).toBe(2);
+    expect(getGoalTarget(goal)).toBe(42);
   });
 
-  test('per_month normalizes to a daily-equivalent target', () => {
+  test('per_month returns the full period target', () => {
     const goal: Goal = {
       id: 1,
       tier: 'low',
       title: 'low',
-      target: 30.437,
+      target: 10,
       target_unit: 'u',
-      frequency: 1,
+      frequency: 3,
       frequency_unit: 'per_month',
       is_additive: true,
     };
-    expect(getGoalTarget(goal)).toBeCloseTo(1, 5);
+    expect(getGoalTarget(goal)).toBe(30);
   });
 
   test('an unrecognized frequency_unit falls back to the raw target', () => {
@@ -1575,9 +1703,17 @@ describe('targetForMarkerPercent', () => {
     expect(targetForMarkerPercent(60, 'clear', low, clear, stretch)).toBe(5);
   });
 
-  test('round-trips a per_week habit in its own raw units, not daily-equivalents', () => {
-    // getGoalTarget normalizes per_week to a daily-equivalent, but goal.target
-    // is raw; dropping on the stretch star must save the stretch star's RAW 4.
+  test('inverts against the expanded scale when progress has passed stretch', () => {
+    const low = goalAt('low', { target: 2 });
+    const clear = goalAt('clear', { target: 6 });
+    const stretch = goalAt('stretch', { target: 8 });
+
+    expect(targetForMarkerPercent(50, 'low', low, clear, stretch, 16)).toBe(8);
+  });
+
+  test('round-trips a per_week habit in its own raw units, not period totals', () => {
+    // getGoalTarget scores per_week as target × frequency, but goal.target is
+    // per occurrence; dropping on the stretch star must save the stretch star's RAW 4.
     const low = weekly(1, 'low');
     const clear = weekly(2, 'clear');
     const stretch = weekly(4, 'stretch');
@@ -1676,5 +1812,257 @@ describe('targetForMarkerPercent', () => {
         );
       }
     }
+  });
+});
+
+describe('cadence-period scoring', () => {
+  const weeklyGoals: Goal[] = [
+    {
+      id: 1,
+      tier: 'low',
+      title: 'low',
+      target: 0.5,
+      target_unit: 'sessions',
+      frequency: 3,
+      frequency_unit: 'per_week',
+      is_additive: true,
+    },
+    {
+      id: 2,
+      tier: 'clear',
+      title: 'clear',
+      target: 0.75,
+      target_unit: 'sessions',
+      frequency: 3,
+      frequency_unit: 'per_week',
+      is_additive: true,
+    },
+    {
+      id: 3,
+      tier: 'stretch',
+      title: 'stretch',
+      target: 1,
+      target_unit: 'sessions',
+      frequency: 3,
+      frequency_unit: 'per_week',
+      is_additive: true,
+    },
+  ];
+
+  const habitWithDays = (days: string[], goals: Goal[] = weeklyGoals): Habit => ({
+    id: 91,
+    name: 'Lift',
+    icon: '🏋️',
+    stage: 'Orange',
+    streak: 0,
+    energy_cost: 2,
+    energy_return: 3,
+    start_date: new Date('2026-03-01T12:00:00Z'),
+    goals,
+    completions: days.map((localDay, index) => ({
+      id: `weekly-${index}`,
+      timestamp: new Date('2000-01-01T00:00:00Z'),
+      local_day: localDay,
+      completed_units: 1,
+    })),
+  });
+
+  beforeEach(() => {
+    jest.useFakeTimers();
+    jest.setSystemTime(new Date('2026-03-13T12:00:00Z')); // Friday
+  });
+
+  afterEach(() => {
+    jest.useRealTimers();
+  });
+
+  test('period keys use calendar days, ISO Monday weeks, and calendar months', () => {
+    const daily = periodOf({ ...weeklyGoals[2]!, frequency_unit: 'per_day' });
+    const perSession = periodOf({ ...weeklyGoals[2]!, frequency_unit: 'per_session' });
+    const weekly = periodOf(weeklyGoals[2]!);
+    const monthly = periodOf({ ...weeklyGoals[2]!, frequency_unit: 'per_month' });
+
+    expect(daily.kind).toBe('day');
+    expect(daily.key('2026-03-13')).toBe('2026-03-13');
+    expect(perSession.kind).toBe('day');
+    expect(perSession.key('2026-03-13')).toBe('2026-03-13');
+    expect(weekly.kind).toBe('week');
+    expect(weekly.key('2026-03-08')).toBe('2026-03-02');
+    expect(weekly.key('2026-03-09')).toBe('2026-03-09');
+    expect(weekly.key('2026-03-15')).toBe('2026-03-09');
+    expect(monthly.kind).toBe('month');
+    expect(monthly.key('2026-03-13')).toBe('2026-03');
+  });
+
+  test('unitsInCurrentPeriod keeps this Monday through the rest of its ISO week', () => {
+    const habit = habitWithDays(['2026-03-08', '2026-03-09']);
+
+    jest.setSystemTime(new Date('2026-03-09T12:00:00Z'));
+    expect(unitsInCurrentPeriod(habit, weeklyGoals[2]!, 'UTC')).toBe(1);
+    jest.setSystemTime(new Date('2026-03-10T12:00:00Z'));
+    expect(unitsInCurrentPeriod(habit, weeklyGoals[2]!, 'UTC')).toBe(1);
+    jest.setSystemTime(new Date('2026-03-15T12:00:00Z'));
+    expect(unitsInCurrentPeriod(habit, weeklyGoals[2]!, 'UTC')).toBe(1);
+    jest.setSystemTime(new Date('2026-03-16T12:00:00Z'));
+    expect(unitsInCurrentPeriod(habit, weeklyGoals[2]!, 'UTC')).toBe(0);
+  });
+
+  test('legacy timestamps stay in the correct ISO week across the DST shoulder', () => {
+    jest.setSystemTime(new Date('2026-03-11T12:00:00Z'));
+    const habit: Habit = {
+      ...habitWithDays([]),
+      completions: [
+        {
+          id: 'before-week',
+          timestamp: new Date('2026-03-09T06:30:00Z'), // Sunday 23:30 PDT
+          completed_units: 99,
+        },
+        {
+          id: 'in-week',
+          timestamp: new Date('2026-03-09T07:30:00Z'), // Monday 00:30 PDT
+          completed_units: 2,
+        },
+      ],
+    };
+
+    expect(unitsInCurrentPeriod(habit, weeklyGoals[2]!, 'America/Los_Angeles')).toBe(2);
+  });
+
+  test('calendar-month scoring follows the user timezone at a UTC month boundary', () => {
+    jest.setSystemTime(new Date('2026-03-01T01:00:00Z')); // February 28 in Los Angeles
+    const monthlyGoal = { ...weeklyGoals[2]!, frequency_unit: 'per_month' };
+    const habit: Habit = {
+      ...habitWithDays([], [monthlyGoal]),
+      completions: [
+        {
+          id: 'local-february',
+          timestamp: new Date('2026-03-01T00:30:00Z'),
+          completed_units: 1,
+        },
+        {
+          id: 'local-march',
+          timestamp: new Date('2026-03-01T08:30:00Z'),
+          completed_units: 99,
+        },
+      ],
+    };
+
+    expect(unitsInCurrentPeriod(habit, monthlyGoal, 'America/Los_Angeles')).toBe(1);
+  });
+
+  test('period totals floor oversized signed corrections at zero', () => {
+    const habit: Habit = {
+      ...habitWithDays([]),
+      completions: [
+        {
+          id: 'positive',
+          timestamp: new Date('2000-01-01T00:00:00Z'),
+          local_day: '2026-03-09',
+          completed_units: 2,
+        },
+        {
+          id: 'correction',
+          timestamp: new Date('2000-01-01T00:00:00Z'),
+          local_day: '2026-03-11',
+          completed_units: -5,
+        },
+      ],
+    };
+
+    expect(unitsInCurrentPeriod(habit, weeklyGoals[2]!, 'UTC')).toBe(0);
+  });
+
+  test('Monday progress remains visible through Friday and the previous week is excluded', () => {
+    const habit = habitWithDays(['2026-03-08', '2026-03-09']);
+    const { currentGoal, completedAllGoals } = getGoalTier(habit, 'UTC');
+
+    expect(currentGoal.tier).toBe('low');
+    expect(completedAllGoals).toBe(false);
+    expect(getProgressPercentage(habit, currentGoal, 'UTC')).toBeCloseTo(33.33, 1);
+    expect(isGoalAchieved(weeklyGoals[0]!, habit, 'UTC')).toBe(false);
+    expect(getProgressBarColor(habit, 'UTC')).toBe(STAGE_COLORS.Orange);
+  });
+
+  test('marker positions use the same weekly period targets as the progress bar', () => {
+    expect(getMarkerPositions(weeklyGoals[0], weeklyGoals[1], weeklyGoals[2])).toEqual({
+      low: 50,
+      clear: 75,
+      stretch: 100,
+    });
+  });
+
+  test('Wednesday progress reaches two thirds without resetting at local midnight', () => {
+    const habit = habitWithDays(['2026-03-09', '2026-03-11']);
+    const { currentGoal } = getGoalTier(habit, 'UTC');
+
+    expect(currentGoal.tier).toBe('low');
+    expect(getProgressPercentage(habit, currentGoal, 'UTC')).toBeCloseTo(66.67, 1);
+    expect(isGoalAchieved(weeklyGoals[0]!, habit, 'UTC')).toBe(true);
+    expect(isGoalAchieved(weeklyGoals[1]!, habit, 'UTC')).toBe(false);
+  });
+
+  test('Friday progress fills the weekly stretch tier', () => {
+    const habit = habitWithDays(['2026-03-09', '2026-03-11', '2026-03-13']);
+    const { currentGoal, completedAllGoals } = getGoalTier(habit, 'UTC');
+
+    expect(currentGoal.tier).toBe('stretch');
+    expect(completedAllGoals).toBe(true);
+    expect(getProgressPercentage(habit, currentGoal, 'UTC')).toBe(100);
+    expect(getProgressBarColor(habit, 'UTC')).toBe(brightenColor(STAGE_COLORS.Orange!));
+  });
+
+  test('weekly subtractive scoring uses only the current ISO week', () => {
+    const subtractiveGoals = weeklyGoals.map((goal, index) => ({
+      ...goal,
+      target: [5, 3, 1][index]!,
+      frequency: 2,
+      is_additive: false,
+    }));
+    const habit = habitWithDays(
+      [
+        '2026-03-08',
+        '2026-03-08',
+        '2026-03-08',
+        '2026-03-08',
+        '2026-03-09',
+        '2026-03-11',
+        '2026-03-12',
+        '2026-03-13',
+      ],
+      subtractiveGoals,
+    );
+    const { currentGoal, completedAllGoals } = getGoalTier(habit, 'UTC');
+
+    expect(currentGoal.tier).toBe('clear');
+    expect(completedAllGoals).toBe(false);
+    expect(getProgressPercentage(habit, currentGoal, 'UTC')).toBe(75);
+    expect(getProgressBarColor(habit, 'UTC')).toBe(STAGE_COLORS.Orange);
+  });
+
+  test('a weekly subtractive streak counts the open week while it stays within the limit', () => {
+    const subtractiveGoals = weeklyGoals.map((goal, index) => ({
+      ...goal,
+      target: [14, 7, 3.5][index]!,
+      frequency: 1,
+      is_additive: false,
+    }));
+    const habit: Habit = {
+      ...habitWithDays([], subtractiveGoals),
+      start_date: new Date('2026-03-13T12:00:00Z'),
+      completions: [
+        {
+          id: 'today-over-daily-clear-limit',
+          timestamp: new Date('2000-01-01T00:00:00Z'),
+          local_day: '2026-03-13',
+          completed_units: 2,
+        },
+      ],
+    };
+
+    // 2 of a 7-per-week clear limit: the open week is met (#2819), where the
+    // old day walk scored the same log against a 1/day limit and broke it.
+    const stats = generateStatsForHabit(habit, 'UTC');
+    expect(stats.currentStreak).toBe(1);
+    expect(stats.longestStreak).toBe(1);
   });
 });

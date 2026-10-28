@@ -29,7 +29,7 @@ describe('TalliedGroundingView', () => {
         controls={fakeControls()}
       />,
     );
-    expect(getByTestId('tallied-grounding-badge').props.children).toBe('3 × 3');
+    expect(getByTestId('tallied-grounding-badge').props.children).toBe('3 kinds × 3 rounds');
   });
 
   it('renders "Round 1 of 3" on the initial state', () => {

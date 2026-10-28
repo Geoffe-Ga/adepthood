@@ -9,17 +9,23 @@ import type {
   FrequencyResponse,
   PracticeCreatePayload,
   PracticeItem,
-  PracticeStatsResponse,
+  PracticeStoryResponse,
   UserPractice,
 } from '../../../api';
+import { installSessionTokenGetter } from '../../../api/sessionToken';
 import { motion } from '../../../design/tokens';
+import type { Habit } from '../../../features/Habits/Habits.types';
+import { habitManager } from '../../../features/Habits/services/habitManager';
 import * as reducedMotion from '../../../hooks/useReducedMotion';
 import { TAB_CROSSFADE_LIFETIME_MS } from '../../../hooks/useTabCrossFade';
 import { FADE_COVER_LIFETIME_MS } from '../../../hooks/useThresholdFade';
 import { tabParamsFromPath } from '../../../navigation/__tests__/deepLinkTestKit';
 import { recordRecentPractice } from '../../../storage/recentPracticesStorage';
+import { getActiveUser, setActiveUser } from '../../../storage/userScope';
+import { useHabitStore } from '../../../store/useHabitStore';
 import { useProgramStore } from '../../../store/useProgramStore';
 import * as accessibilityFocus from '../../../utils/accessibilityFocus';
+import { storyFixture } from '../testSupport/practiceStoryFixture';
 
 // PracticeScreen reads useSafeAreaInsets; stub it with non-zero insets (no
 // SafeAreaProvider in tests) so the safe-area padding is observable.
@@ -69,6 +75,8 @@ const sampleFrequency: FrequencyResponse = {
 const mockPracticesList = (jest.fn() as any).mockResolvedValue([samplePractice()]);
 const mockUserPracticesList = (jest.fn() as any).mockResolvedValue([]);
 const mockUserPracticesCreate = (jest.fn() as any).mockResolvedValue(sampleUserPractice());
+let mockHabitToken: string | undefined;
+const mockUserPracticesLinkHabit = jest.fn() as any;
 const mockUserPracticesCustomize = (jest.fn() as any).mockResolvedValue(sampleUserPractice());
 const mockPracticeSessionsCreate = (jest.fn() as any).mockResolvedValue({
   id: 100,
@@ -88,11 +96,12 @@ const mockFrequency = (jest.fn() as any).mockResolvedValue(sampleFrequency);
 // caller's lifetime totals for it; both are typed so a wrong shape fails tsc.
 const mockPracticesGet = jest.fn<(id: number) => Promise<PracticeItem>>();
 const mockPracticesCreate = jest.fn<(payload: PracticeCreatePayload) => Promise<PracticeItem>>();
-const mockPracticeSessionsStats =
-  jest.fn<(userPracticeId: number) => Promise<PracticeStatsResponse>>();
+const mockPracticeSessionsStory =
+  jest.fn<(userPracticeId: number) => Promise<PracticeStoryResponse>>();
 const mockPopToTop = jest.fn<() => void>();
 
 jest.mock('../../../api', () => ({
+  captureSessionToken: () => mockHabitToken,
   practices: {
     listAll: (...args: unknown[]) => mockPracticesList(...args),
     get: (...args: [number]) => mockPracticesGet(...args),
@@ -102,12 +111,13 @@ jest.mock('../../../api', () => ({
     create: (...args: unknown[]) => mockUserPracticesCreate(...args),
     list: (...args: unknown[]) => mockUserPracticesList(...args),
     customize: (...args: unknown[]) => mockUserPracticesCustomize(...args),
+    linkHabit: (...args: unknown[]) => mockUserPracticesLinkHabit(...args),
   },
   practiceSessions: {
     create: (...args: unknown[]) => mockPracticeSessionsCreate(...args),
     weekCount: (...args: unknown[]) => mockWeekCount(...args),
     insights: (...args: unknown[]) => mockInsights(...args),
-    stats: (...args: [number]) => mockPracticeSessionsStats(...args),
+    story: (...args: [number]) => mockPracticeSessionsStory(...args),
   },
   frequency: {
     current: (...args: unknown[]) => mockFrequency(...args),
@@ -120,9 +130,19 @@ jest.mock('../../../api/practiceShare', () => ({
   practiceShare: { list: () => Promise.resolve([]) },
 }));
 
-jest.mock('../../../context/AuthContext', () => ({
-  useAuth: () => ({ token: 'test-token', userTimezone: 'UTC' }),
-}));
+jest.mock('../../../context/AuthContext', () => {
+  const credential = jest.requireActual<{ captureSessionToken: () => string | undefined }>(
+    '../../../api/sessionToken',
+  );
+  return {
+    useAuth: () => ({
+      token: credential.captureSessionToken() ?? null,
+      authStatus: 'authenticated',
+      userTimezone: 'UTC',
+      userTimezoneReady: true,
+    }),
+  };
+});
 
 const mockNavigate = jest.fn();
 const mockRootNavigate = jest.fn();
@@ -207,10 +227,30 @@ jest.mock('expo-haptics', () => ({
   ImpactFeedbackStyle: { Light: 'light', Medium: 'medium', Heavy: 'heavy' },
 }));
 
-// eslint-disable-next-line import/order
-const { render, waitFor, fireEvent, act, within } = require('@testing-library/react-native');
+const {
+  render,
+  waitFor,
+  fireEvent,
+  act,
+  within,
+  cleanup,
+} = require('@testing-library/react-native');
+
 const { LOG_WINDOW_REFUSED_COPY } = require('../components/LogPracticeSessionSheet');
 const PracticeScreen = require('../PracticeScreen').default;
+const testToken = (owner: number) =>
+  `eyJhbGciOiJIUzI1NiJ9.${Buffer.from(JSON.stringify({ sub: String(owner), exp: 4102444800 })).toString('base64url')}.test`;
+beforeEach(() => {
+  setActiveUser(1);
+  installSessionTokenGetter(() => {
+    const owner = getActiveUser();
+    return owner === null ? null : testToken(owner);
+  });
+});
+afterEach(() => {
+  installSessionTokenGetter(null);
+  setActiveUser(null);
+});
 
 /** The glyph fronting the dark empty state (PracticeScreen's ``EMPTY_GLYPH``). */
 const EMPTY_GLYPH_TEXT = '🧘';
@@ -222,12 +262,12 @@ const subscribeHeaderLeft = (onChange: () => void): (() => void) => {
 
 // Renders the screen's headerLeft toggle in the same tree as the screen, so the
 // drawer opens in-tree and its rows are pressable.
-const PracticeScreenWithHeader = (): ReactElement => {
+const PracticeScreenWithHeader = ({ habitBindings }: { habitBindings?: any }): ReactElement => {
   const headerLeft = useSyncExternalStore(subscribeHeaderLeft, () => headerLeftStore.current);
   return (
     <>
       {headerLeft === undefined ? null : headerLeft()}
-      <PracticeScreen />
+      <PracticeScreen habitBindings={habitBindings} />
     </>
   );
 };
@@ -1274,8 +1314,10 @@ describe('PracticeScreen embedded catalog detail overlay', () => {
     mockPracticesGet.mockReset();
     mockPracticesGet.mockResolvedValue(samplePractice());
     mockPracticesCreate.mockReset();
-    mockPracticeSessionsStats.mockReset();
-    mockPracticeSessionsStats.mockResolvedValue({ total_sessions: 3, total_minutes: 30 });
+    mockPracticeSessionsStory.mockReset();
+    mockPracticeSessionsStory.mockResolvedValue(
+      storyFixture({ total_sessions: 3, total_minutes: 30 }),
+    );
   });
 
   afterEach(async () => {
@@ -1402,7 +1444,7 @@ describe('PracticeScreen embedded catalog detail overlay', () => {
     await openOverlayOnRow(view, 1);
     // The overlay's own totals read the user's practices once; the snapshot is
     // taken after that settles, so the +1 below is the flip's refresh alone.
-    await waitFor(() => expect(mockPracticeSessionsStats).toHaveBeenCalledWith(10));
+    await waitFor(() => expect(mockPracticeSessionsStory).toHaveBeenCalledWith(10, testToken(1)));
     const listCalls = mockUserPracticesList.mock.calls.length;
 
     await act(async () => {
@@ -1621,7 +1663,7 @@ describe('PracticeScreen embedded catalog detail overlay', () => {
       fireEvent.press(view.getByTestId('practice-detail-overlay-close'));
     });
     await openOverlayOnRow(view, 2);
-    await waitFor(() => expect(mockPracticeSessionsStats).toHaveBeenCalled());
+    await waitFor(() => expect(mockPracticeSessionsStory).toHaveBeenCalled());
     const listCalls = mockUserPracticesList.mock.calls.length;
 
     await act(async () => {
@@ -1651,7 +1693,7 @@ describe('PracticeScreen embedded catalog detail overlay', () => {
       fireEvent.press(view.getByTestId('practice-detail-overlay-close'));
     });
     await openOverlayOnRow(view, 2);
-    await waitFor(() => expect(mockPracticeSessionsStats).toHaveBeenCalled());
+    await waitFor(() => expect(mockPracticeSessionsStory).toHaveBeenCalled());
     const listCalls = mockUserPracticesList.mock.calls.length;
 
     await act(async () => {
@@ -1731,8 +1773,10 @@ describe('PracticeScreen in-place tab cross-fade', () => {
     mockUserPracticesCreate.mockResolvedValue(sampleUserPractice());
     mockPracticesGet.mockReset();
     mockPracticesGet.mockResolvedValue(samplePractice());
-    mockPracticeSessionsStats.mockReset();
-    mockPracticeSessionsStats.mockResolvedValue({ total_sessions: 3, total_minutes: 30 });
+    mockPracticeSessionsStory.mockReset();
+    mockPracticeSessionsStory.mockResolvedValue(
+      storyFixture({ total_sessions: 3, total_minutes: 30 }),
+    );
     jest.spyOn(reducedMotion, 'useReducedMotion').mockReturnValue(false);
   });
 
@@ -2081,7 +2125,8 @@ describe('PracticeScreen header drawer', () => {
 });
 
 describe('PracticeScreen manual log', () => {
-  beforeEach(() => {
+  beforeEach(async () => {
+    await AsyncStorage.clear();
     jest.clearAllMocks();
     headerLeftStore.current = undefined;
     headerLeftStore.listeners.clear();
@@ -2130,6 +2175,767 @@ describe('PracticeScreen manual log', () => {
     });
     await waitFor(() => expect(getByTestId('log-session-save')).toBeTruthy());
   };
+
+  function habitBindings() {
+    const confirmed = { streak: 1, milestones: [], reason_code: 'completed', day_units: 10 };
+    const ctx = {
+      operationId: 'confirmed-practice-operation',
+      habitId: 25,
+      amount: 10,
+      serverGoalId: 30,
+      isDemoSeed: false,
+    };
+    const options: any[] = [
+      {
+        habit: {
+          id: 25,
+          name: 'Breath habit',
+          stage: 'beige',
+          icon: 'activity',
+          streak: 0,
+          energy_cost: 1,
+          energy_return: 1,
+          start_date: new Date('2026-04-12T00:00:00Z'),
+          revealed: true,
+          goals: [
+            { id: 29, title: 'A short sitting', tier: 'low', target: 1 },
+            { id: 30, title: 'A sitting', tier: 'clear', target: 10 },
+            { id: 31, title: 'A longer sitting', tier: 'stretch', target: 25 },
+          ].map((goal) => ({
+            ...goal,
+            target_unit: 'minutes',
+            frequency: 1,
+            frequency_unit: 'day',
+            is_additive: true,
+            goal_group_id: 8,
+          })),
+        },
+        unit: 'minutes',
+      },
+    ];
+    let current: any[] = options;
+    return {
+      options,
+      /** The eligible habits the store holds once the next refresh lands. */
+      serve(next: any[]) {
+        current = next;
+      },
+      refresh: jest.fn(async () => true),
+      currentOptions: jest.fn(() => current),
+      manager: {
+        prepareLogUnit: jest.fn(() => ctx),
+        reserveLogUnitContext: jest.fn(),
+        discardLogUnitContext: jest.fn(),
+        reconcileReservedLogUnitContext: jest.fn(),
+        commitLogUnitContext: jest.fn(async (_ctx: unknown, options: any) => {
+          options.onCommitted(confirmed);
+          return confirmed;
+        }),
+      },
+      onNewHabit: jest.fn(),
+    };
+  }
+
+  function authenticateHabitOwner() {
+    setActiveUser(1);
+    mockHabitToken = `eyJhbGciOiJIUzI1NiJ9.${Buffer.from(JSON.stringify({ sub: '1', exp: 4102444800 })).toString('base64url')}.signature`;
+  }
+
+  afterEach(() => {
+    // Unmount scope subscribers before changing the owner or restoring hook mocks.
+    cleanup();
+    mockHabitToken = undefined;
+    setActiveUser(null);
+    jest.useRealTimers();
+  });
+
+  it('canonical habit binding exposes the current eligible linked habit without injection', async () => {
+    authenticateHabitOwner();
+    const row = habitBindings().options[0]!.habit as Habit;
+    row.goals.forEach((goal) => {
+      goal.frequency_unit = 'per_day';
+    });
+    useHabitStore.getState().setHabits([row]);
+    const load = jest.spyOn(habitManager, 'loadHabits').mockResolvedValue(undefined);
+    mockUserPracticesList.mockResolvedValue([sampleUserPractice({ habit_id: row.id })]);
+    const view = render(<PracticeScreenWithHeader />);
+    await waitFor(() =>
+      expect(view.getByTestId('practice-linked-habit')).toHaveTextContent('Linked to Breath habit'),
+    );
+    expect(load).toHaveBeenCalledWith('UTC');
+    view.unmount();
+    load.mockRestore();
+  });
+
+  it('canonical habit binding opens the shared goal editor with session defaults after a saved sitting', async () => {
+    authenticateHabitOwner();
+    useHabitStore.getState().setHabits([]);
+    const load = jest.spyOn(habitManager, 'loadHabits').mockResolvedValue(undefined);
+    const view = render(<PracticeScreenWithHeader />);
+    await openLogSheet(view.getByTestId, view.getByLabelText);
+    await act(async () => {
+      fireEvent.press(view.getByTestId('log-session-save'));
+    });
+    await waitFor(() => expect(view.getByTestId('practice-habit-offer')).toBeTruthy());
+    fireEvent.press(view.getByTestId('practice-habit-offer-link'));
+    fireEvent.press(view.getByTestId('practice-habit-new'));
+    expect(view.getByTestId('writing-habit-goals')).toBeTruthy();
+    view.unmount();
+    load.mockRestore();
+  });
+
+  for (const outcome of [
+    'confirmed',
+    'refused link',
+    'account ABA',
+    'missing credential',
+  ] as const) {
+    it(`canonical habit binding creates one atomic session ladder with ${outcome}`, async () => {
+      authenticateHabitOwner();
+      useHabitStore.getState().setHabits([]);
+      const load = jest.spyOn(habitManager, 'loadHabits').mockResolvedValue(undefined);
+      const row = habitBindings().options[0]!.habit as Habit;
+      row.name = 'Breath Awareness';
+      row.goals.forEach((goal) => {
+        goal.target = 1;
+        goal.target_unit = 'sessions';
+        goal.frequency = 4;
+        goal.frequency_unit = 'per_week';
+      });
+      let confirm!: (_result: { kept: boolean; habitId: number }) => void;
+      const insert = jest.spyOn(habitManager, 'insertHabitAtWithId').mockImplementation(
+        () =>
+          new Promise((resolve) => {
+            confirm = resolve;
+          }),
+      );
+      mockUserPracticesLinkHabit.mockResolvedValue(sampleUserPractice({ habit_id: row.id }));
+      if (outcome === 'refused link')
+        mockUserPracticesLinkHabit.mockRejectedValueOnce(new Error('offline'));
+      const view = render(<PracticeScreenWithHeader />);
+      await openLogSheet(view.getByTestId, view.getByLabelText);
+      await act(async () => {
+        fireEvent.press(view.getByTestId('log-session-save'));
+      });
+      await waitFor(() => expect(view.getByTestId('practice-habit-offer')).toBeTruthy());
+      fireEvent.press(view.getByTestId('practice-habit-offer-link'));
+      fireEvent.press(view.getByTestId('practice-habit-new'));
+      await act(async () => {
+        fireEvent.press(view.getByTestId('writing-habit-goals-save'));
+        fireEvent.press(view.getByTestId('writing-habit-goals-save'));
+      });
+      expect(insert).toHaveBeenCalledTimes(1);
+      expect(insert).toHaveBeenCalledWith(
+        {
+          name: 'Breath Awareness',
+          icon: '🧘',
+          revealed: true,
+          goals: {
+            target_unit: 'sessions',
+            frequency: 4,
+            frequency_unit: 'per_week',
+            low: 1,
+            clear: 1,
+            stretch: 1,
+          },
+        },
+        0,
+        'UTC',
+      );
+      if (outcome === 'account ABA') {
+        setActiveUser(2);
+        setActiveUser(1);
+      }
+      if (outcome === 'missing credential') mockHabitToken = undefined;
+      await act(async () => {
+        useHabitStore.getState().setHabits([row]);
+        confirm({ kept: true, habitId: row.id });
+      });
+      if (outcome === 'account ABA' || outcome === 'missing credential') {
+        expect(mockUserPracticesLinkHabit).not.toHaveBeenCalled();
+        expect(view.queryByTestId('writing-habit-goals')).toBeNull();
+      } else if (outcome === 'refused link') {
+        await waitFor(() => expect(view.getByTestId('practice-habit-retry-link')).toBeTruthy());
+        let finishRetry!: (_row: UserPractice) => void;
+        mockUserPracticesLinkHabit.mockImplementationOnce(
+          () =>
+            new Promise((resolve) => {
+              finishRetry = resolve;
+            }),
+        );
+        await act(async () => {
+          fireEvent.press(view.getByTestId('practice-habit-retry-link'));
+          fireEvent.press(view.getByTestId('practice-habit-retry-link'));
+        });
+        expect(view.getByTestId('practice-habit-retry-link')).toBeDisabled();
+        expect(
+          view.queryByText(
+            'Habit saved. We could not confirm its practice link. Try linking it again.',
+          ),
+        ).toBeNull();
+        expect(insert).toHaveBeenCalledTimes(1);
+        expect(mockUserPracticesLinkHabit).toHaveBeenCalledTimes(2);
+        await act(async () => {
+          finishRetry(sampleUserPractice({ habit_id: row.id }));
+        });
+        expect(view.queryByTestId('practice-habit-retry-link')).toBeNull();
+      } else
+        await waitFor(() =>
+          expect(mockUserPracticesLinkHabit).toHaveBeenCalledWith(10, row.id, mockHabitToken),
+        );
+      view.unmount();
+      insert.mockRestore();
+      load.mockRestore();
+    });
+  }
+
+  it('mounted habit controller logs only after the manual sitting is persisted', async () => {
+    authenticateHabitOwner();
+    mockUserPracticesList.mockResolvedValue([sampleUserPractice({ habit_id: 25 })]);
+    let confirm!: (_value: unknown) => void;
+    mockPracticeSessionsCreate.mockReturnValueOnce(
+      new Promise((resolve) => {
+        confirm = resolve;
+      }),
+    );
+    const bindings = habitBindings();
+    const view = render(<PracticeScreenWithHeader habitBindings={bindings} />);
+    await openLogSheet(view.getByTestId, view.getByLabelText);
+    await act(async () => {
+      fireEvent.press(view.getByTestId('log-session-save'));
+    });
+    expect(bindings.manager.commitLogUnitContext).not.toHaveBeenCalled();
+    const saved = { id: 101, user_practice_id: 10, completed: true };
+    await act(async () => {
+      confirm(saved);
+    });
+    await waitFor(() => expect(bindings.manager.commitLogUnitContext).toHaveBeenCalledTimes(1));
+    expect(bindings.manager.prepareLogUnit).toHaveBeenCalledWith(25, 10, 'UTC', expect.any(Date));
+    expect(bindings.manager.commitLogUnitContext).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ viaTimer: false }),
+    );
+    expect(view.getByText('Logged 10 minutes to Breath habit')).toBeTruthy();
+    expect(view.queryByTestId('log-session-save')).toBeNull();
+    expect(view.getByTestId('ritual-start')).toBeTruthy();
+  });
+
+  const asUnit = (option: any, unit: 'minutes' | 'sessions') => ({
+    unit,
+    habit: {
+      ...option.habit,
+      goals: option.habit.goals.map((goal: any) => ({ ...goal, target_unit: unit })),
+    },
+  });
+
+  async function saveLinkedSitting(bindings: ReturnType<typeof habitBindings>) {
+    authenticateHabitOwner();
+    mockUserPracticesList.mockResolvedValue([sampleUserPractice({ habit_id: 25 })]);
+    const view = render(<PracticeScreenWithHeader habitBindings={bindings as any} />);
+    await openLogSheet(view.getByTestId, view.getByLabelText);
+    await act(async () => {
+      fireEvent.press(view.getByTestId('log-session-save'));
+    });
+    return view;
+  }
+
+  describe('current habit unit before a sitting is logged (#3384)', () => {
+    it('refreshes the habit before preparing the log', async () => {
+      const bindings = habitBindings();
+      const order: string[] = [];
+      bindings.refresh.mockImplementation(async () => {
+        order.push('refresh');
+        return true;
+      });
+      bindings.manager.prepareLogUnit.mockImplementation((() => {
+        order.push('prepare');
+        return { operationId: 'op', habitId: 25, amount: 10, serverGoalId: 30, isDemoSeed: false };
+      }) as any);
+      const view = await saveLinkedSitting(bindings);
+      await waitFor(() => expect(bindings.manager.commitLogUnitContext).toHaveBeenCalledTimes(1));
+      expect(order).toEqual(['refresh', 'prepare']);
+      expect(view.getByText('Logged 10 minutes to Breath habit')).toBeTruthy();
+    });
+
+    it('logs to a linked habit whose first load had not finished when the sitting was saved', async () => {
+      const bindings = habitBindings();
+      const loaded = bindings.options[0];
+      bindings.options.length = 0;
+      bindings.serve([loaded]);
+      const view = await saveLinkedSitting(bindings);
+      await waitFor(() => expect(bindings.manager.commitLogUnitContext).toHaveBeenCalledTimes(1));
+      expect(bindings.manager.prepareLogUnit).toHaveBeenCalledWith(25, 10, 'UTC', expect.any(Date));
+      expect(view.getByText('Logged 10 minutes to Breath habit')).toBeTruthy();
+    });
+
+    it('posts one session, never 10 sessions, after another device changes minutes to sessions', async () => {
+      const bindings = habitBindings();
+      bindings.serve([asUnit(bindings.options[0], 'sessions')]);
+      const view = await saveLinkedSitting(bindings);
+      await waitFor(() => expect(bindings.manager.commitLogUnitContext).toHaveBeenCalledTimes(1));
+      expect(bindings.manager.prepareLogUnit).toHaveBeenCalledTimes(1);
+      expect(bindings.manager.prepareLogUnit).toHaveBeenCalledWith(25, 1, 'UTC', expect.any(Date));
+      expect(view.getByText('Logged a session to Breath habit')).toBeTruthy();
+    });
+
+    it('posts the measured minutes after another device changes sessions to minutes', async () => {
+      const bindings = habitBindings();
+      bindings.options[0] = asUnit(bindings.options[0], 'sessions');
+      bindings.serve([asUnit(bindings.options[0], 'minutes')]);
+      const view = await saveLinkedSitting(bindings);
+      await waitFor(() => expect(bindings.manager.commitLogUnitContext).toHaveBeenCalledTimes(1));
+      expect(bindings.manager.prepareLogUnit).toHaveBeenCalledTimes(1);
+      expect(bindings.manager.prepareLogUnit).toHaveBeenCalledWith(25, 10, 'UTC', expect.any(Date));
+      expect(view.getByText('Logged 10 minutes to Breath habit')).toBeTruthy();
+    });
+
+    it('does not log to a habit that was deleted or no longer counts minutes or sessions', async () => {
+      const bindings = habitBindings();
+      bindings.serve([]);
+      const view = await saveLinkedSitting(bindings);
+      await waitFor(() =>
+        expect(
+          view.getByText(
+            "This sitting wasn't logged to Breath habit: it is no longer a habit that counts minutes or sessions. Your practice is saved.",
+          ),
+        ).toBeTruthy(),
+      );
+      expect(bindings.manager.prepareLogUnit).not.toHaveBeenCalled();
+      expect(bindings.manager.commitLogUnitContext).not.toHaveBeenCalled();
+      expect(view.queryByTestId('practice-habit-retry-log')).toBeNull();
+      expect(mockPracticeSessionsCreate).toHaveBeenCalledTimes(1);
+    });
+
+    it('says so when the habit cannot be read, then logs once on a current-owner retry', async () => {
+      const bindings = habitBindings();
+      bindings.refresh.mockResolvedValueOnce(false);
+      const view = await saveLinkedSitting(bindings);
+      await waitFor(() =>
+        expect(
+          view.getByText(
+            "Couldn't confirm the current goal for Breath habit, so this sitting isn't logged there yet. Your practice is saved.",
+          ),
+        ).toBeTruthy(),
+      );
+      expect(bindings.manager.prepareLogUnit).not.toHaveBeenCalled();
+      expect(view.queryByText(/Logged/)).toBeNull();
+      bindings.serve([asUnit(bindings.options[0], 'sessions')]);
+      await act(async () => {
+        fireEvent.press(view.getByTestId('practice-habit-retry-log'));
+      });
+      await waitFor(() => expect(bindings.manager.commitLogUnitContext).toHaveBeenCalledTimes(1));
+      expect(bindings.manager.prepareLogUnit).toHaveBeenCalledWith(25, 1, 'UTC', expect.any(Date));
+      expect(view.getByText('Logged a session to Breath habit')).toBeTruthy();
+      expect(view.queryByTestId('practice-habit-retry-log')).toBeNull();
+      expect(mockPracticeSessionsCreate).toHaveBeenCalledTimes(1);
+    });
+
+    it('treats a rejected refresh as unreadable rather than dropping the log silently', async () => {
+      const bindings = habitBindings();
+      bindings.refresh.mockRejectedValueOnce(new Error('offline'));
+      const view = await saveLinkedSitting(bindings);
+      await waitFor(() => expect(view.getByTestId('practice-habit-retry-log')).toBeTruthy());
+      expect(bindings.manager.prepareLogUnit).not.toHaveBeenCalled();
+    });
+
+    it('retries a failed habit write under its original operation identity', async () => {
+      const bindings = habitBindings();
+      jest.spyOn(console, 'warn').mockImplementation(() => {});
+      bindings.manager.commitLogUnitContext.mockRejectedValueOnce(new Error('offline'));
+      const view = await saveLinkedSitting(bindings);
+      await waitFor(() => expect(view.getByTestId('practice-habit-retry-log')).toBeTruthy());
+      expect(view.getByText("Couldn't log to Breath habit")).toBeTruthy();
+      const firstCtx = bindings.manager.commitLogUnitContext.mock.calls[0]![0];
+      await act(async () => {
+        fireEvent.press(view.getByTestId('practice-habit-retry-log'));
+      });
+      await waitFor(() => expect(bindings.manager.commitLogUnitContext).toHaveBeenCalledTimes(2));
+      expect(bindings.refresh).toHaveBeenCalledTimes(2);
+      expect(bindings.manager.prepareLogUnit).toHaveBeenCalledTimes(1);
+      expect(bindings.manager.commitLogUnitContext.mock.calls[1]![0]).toBe(firstCtx);
+      expect(view.getByText('Logged 10 minutes to Breath habit')).toBeTruthy();
+    });
+
+    it('does not resend a failed write whose habit unit has since changed', async () => {
+      const bindings = habitBindings();
+      jest.spyOn(console, 'warn').mockImplementation(() => {});
+      bindings.manager.commitLogUnitContext.mockRejectedValueOnce(new Error('offline'));
+      const view = await saveLinkedSitting(bindings);
+      await waitFor(() => expect(view.getByTestId('practice-habit-retry-log')).toBeTruthy());
+      bindings.serve([asUnit(bindings.options[0], 'sessions')]);
+      await act(async () => {
+        fireEvent.press(view.getByTestId('practice-habit-retry-log'));
+      });
+      await waitFor(() =>
+        expect(
+          view.getByText(
+            "This sitting wasn't logged to Breath habit: its goal unit changed after the first try. Your practice is saved.",
+          ),
+        ).toBeTruthy(),
+      );
+      expect(bindings.manager.commitLogUnitContext).toHaveBeenCalledTimes(1);
+      expect(bindings.manager.prepareLogUnit).toHaveBeenCalledTimes(1);
+    });
+
+    it('drops held work and notices when the account switches during the refresh', async () => {
+      const bindings = habitBindings();
+      let answer!: (_fresh: boolean) => void;
+      bindings.refresh.mockImplementationOnce(
+        () =>
+          new Promise<boolean>((resolve) => {
+            answer = resolve;
+          }),
+      );
+      const view = await saveLinkedSitting(bindings);
+      await waitFor(() => expect(bindings.refresh).toHaveBeenCalledTimes(1));
+      setActiveUser(2);
+      setActiveUser(1);
+      await act(async () => {
+        answer(true);
+      });
+      expect(bindings.manager.prepareLogUnit).not.toHaveBeenCalled();
+      expect(bindings.manager.commitLogUnitContext).not.toHaveBeenCalled();
+      expect(view.queryByText(/Logged|Couldn't|wasn't logged/)).toBeNull();
+    });
+
+    it('refuses a retry once the account has switched away and back', async () => {
+      const bindings = habitBindings();
+      bindings.refresh.mockResolvedValueOnce(false);
+      const view = await saveLinkedSitting(bindings);
+      await waitFor(() => expect(view.getByTestId('practice-habit-retry-log')).toBeTruthy());
+      const retry = view.getByTestId('practice-habit-retry-log');
+      setActiveUser(2);
+      setActiveUser(1);
+      await act(async () => {
+        fireEvent.press(retry);
+      });
+      expect(bindings.refresh).toHaveBeenCalledTimes(1);
+      expect(bindings.manager.prepareLogUnit).not.toHaveBeenCalled();
+    });
+  });
+
+  it('canonical habit binding posts the current server unit after a remote minutes to sessions change', async () => {
+    authenticateHabitOwner();
+    const row = habitBindings().options[0]!.habit as Habit;
+    row.goals.forEach((goal) => {
+      goal.frequency_unit = 'per_day';
+    });
+    useHabitStore.getState().setHabits([row]);
+    const load = jest.spyOn(habitManager, 'loadHabits').mockResolvedValue(undefined);
+    const refresh = jest.spyOn(habitManager, 'refreshHabits').mockImplementation(async () => {
+      useHabitStore
+        .getState()
+        .setHabits([
+          { ...row, goals: row.goals.map((goal) => ({ ...goal, target_unit: 'sessions' })) },
+        ]);
+      return true;
+    });
+    const prepare = jest.spyOn(habitManager, 'prepareLogUnit').mockReturnValue(null);
+    mockUserPracticesList.mockResolvedValue([sampleUserPractice({ habit_id: row.id })]);
+    const view = render(<PracticeScreenWithHeader />);
+    await openLogSheet(view.getByTestId, view.getByLabelText);
+    await act(async () => {
+      fireEvent.press(view.getByTestId('log-session-save'));
+    });
+    await waitFor(() => expect(prepare).toHaveBeenCalledTimes(1));
+    expect(refresh).toHaveBeenCalledWith('UTC');
+    expect(prepare).toHaveBeenCalledWith(row.id, 1, 'UTC', expect.any(Date));
+    view.unmount();
+    for (const spy of [load, refresh, prepare]) spy.mockRestore();
+  });
+
+  it('mounted habit controller offers an unlinked saved sitting and confirms the chosen link', async () => {
+    authenticateHabitOwner();
+    const bindings = habitBindings();
+    const view = render(<PracticeScreenWithHeader habitBindings={bindings} />);
+    await openLogSheet(view.getByTestId, view.getByLabelText);
+    expect(view.queryByTestId('practice-habit-offer')).toBeNull();
+    await act(async () => {
+      fireEvent.press(view.getByTestId('log-session-save'));
+    });
+    await waitFor(() => expect(view.getByTestId('practice-habit-offer')).toBeTruthy());
+    fireEvent.press(view.getByTestId('practice-habit-offer-link'));
+    expect(view.getByTestId('practice-habit-picker')).toBeTruthy();
+    let link!: (_value: UserPractice) => void;
+    mockUserPracticesLinkHabit.mockReturnValueOnce(
+      new Promise((resolve) => {
+        link = resolve;
+      }),
+    );
+    fireEvent.press(view.getByTestId('practice-habit-choose-25'));
+    expect(mockUserPracticesLinkHabit).toHaveBeenCalledWith(10, 25, mockHabitToken);
+    expect(view.queryByTestId('practice-linked-habit')).toBeNull();
+    await act(async () => {
+      link(sampleUserPractice({ habit_id: 25 }));
+    });
+    expect(view.getByTestId('practice-linked-habit')).toHaveTextContent('Linked to Breath habit');
+    expect(view.queryByTestId('practice-habit-picker')).toBeNull();
+    expect(bindings.manager.commitLogUnitContext).not.toHaveBeenCalled();
+  });
+
+  it('mounted habit controller logs a real completed timer without replacing its save', async () => {
+    authenticateHabitOwner();
+    jest.useFakeTimers();
+    mockUserPracticesList.mockResolvedValue([sampleUserPractice({ habit_id: 25 })]);
+    const bindings = habitBindings();
+    const view = render(<PracticeScreen habitBindings={bindings} />);
+    await waitFor(() => expect(view.getByTestId('ritual-start')).toBeTruthy());
+    fireEvent.press(view.getByTestId('ritual-start'));
+    await act(async () => {
+      jest.advanceTimersByTime(11 * 60 * 1000);
+    });
+    await waitFor(() => expect(view.getByTestId('insight-skip')).toBeTruthy());
+    expect(bindings.manager.commitLogUnitContext).not.toHaveBeenCalled();
+    await act(async () => {
+      fireEvent.press(view.getByTestId('insight-skip'));
+    });
+    await waitFor(() => expect(bindings.manager.commitLogUnitContext).toHaveBeenCalledTimes(1));
+    expect(mockPracticeSessionsCreate).toHaveBeenCalledTimes(1);
+    expect(bindings.manager.prepareLogUnit).toHaveBeenCalledWith(25, 10, 'UTC', expect.any(Date));
+    expect(view.getByTestId('ritual-start')).toBeTruthy();
+  });
+
+  it('mounted habit controller ignores a held outgoing practice confirmation after direct account ABA', async () => {
+    authenticateHabitOwner();
+    mockUserPracticesList.mockResolvedValue([sampleUserPractice({ habit_id: 25 })]);
+    let confirm!: (_value: unknown) => void;
+    mockPracticeSessionsCreate.mockReturnValueOnce(
+      new Promise((resolve) => {
+        confirm = resolve;
+      }),
+    );
+    const bindings = habitBindings();
+    const view = render(<PracticeScreenWithHeader habitBindings={bindings} />);
+    await openLogSheet(view.getByTestId, view.getByLabelText);
+    await act(async () => {
+      fireEvent.press(view.getByTestId('log-session-save'));
+    });
+    setActiveUser(2);
+    setActiveUser(1);
+    await act(async () => {
+      confirm({ id: 102, user_practice_id: 10, completed: true });
+    });
+    expect(bindings.manager.reserveLogUnitContext).not.toHaveBeenCalled();
+    expect(bindings.manager.commitLogUnitContext).not.toHaveBeenCalled();
+    expect(view.queryByTestId('practice-habit-offer')).toBeNull();
+  });
+
+  it('mounted habit controller clears a link during held habit work without a stale success notice', async () => {
+    authenticateHabitOwner();
+    mockUserPracticesList.mockResolvedValue([sampleUserPractice({ habit_id: 25 })]);
+    const bindings = habitBindings();
+    let release!: (_result: any) => void;
+    bindings.manager.commitLogUnitContext.mockImplementationOnce(
+      async (_ctx: unknown, options: any) => {
+        const result = await new Promise<any>((resolve) => {
+          release = resolve;
+        });
+        options.onCommitted(result);
+        return result;
+      },
+    );
+    const view = render(<PracticeScreenWithHeader habitBindings={bindings} />);
+    await openLogSheet(view.getByTestId, view.getByLabelText);
+    await act(async () => {
+      fireEvent.press(view.getByTestId('log-session-save'));
+    });
+    await waitFor(() => expect(bindings.manager.commitLogUnitContext).toHaveBeenCalledTimes(1));
+    mockUserPracticesLinkHabit.mockResolvedValueOnce(sampleUserPractice({ habit_id: null }));
+    fireEvent.press(view.getByTestId('practice-habit-change'));
+    await act(async () => {
+      fireEvent.press(view.getByTestId('practice-habit-clear'));
+    });
+    expect(view.queryByTestId('practice-linked-habit')).toBeNull();
+    const result = { streak: 1, milestones: [], reason_code: 'completed', day_units: 10 };
+    await act(async () => {
+      release(result);
+    });
+    expect(bindings.manager.reconcileReservedLogUnitContext).toHaveBeenCalledTimes(1);
+    expect(bindings.manager.discardLogUnitContext).toHaveBeenCalledTimes(1);
+    expect(view.queryByText('Logged 10 minutes to Breath habit')).toBeNull();
+    expect(view.queryByTestId('practice-habit-offer')).toBeNull();
+    expect(view.getByTestId('ritual-start')).toBeTruthy();
+  });
+
+  it('mounted habit controller hands new creation the practice name and fences its retained confirmation', async () => {
+    authenticateHabitOwner();
+    const bindings = habitBindings();
+    const view = render(<PracticeScreenWithHeader habitBindings={bindings} />);
+    await waitFor(() => expect(view.getByTestId('ritual-start')).toBeTruthy());
+    fireEvent.press(view.getByLabelText('Open Practice menu'));
+    fireEvent.press(view.getByTestId('practice-drawer-link-habit'));
+    expect(view.getByTestId('practice-habit-picker')).toBeTruthy();
+    fireEvent.press(view.getByTestId('practice-habit-new'));
+    expect(bindings.onNewHabit).toHaveBeenCalledWith('Breath Awareness', expect.any(Function));
+    expect(view.queryByTestId('practice-habit-picker')).toBeNull();
+    expect(view.getByTestId('ritual-start')).toBeTruthy();
+    const confirmCreated = (
+      bindings.onNewHabit.mock.calls[0] as unknown as [
+        string,
+        (option: unknown) => Promise<boolean>,
+      ]
+    )[1];
+    setActiveUser(2);
+    setActiveUser(1);
+    await act(async () => {
+      expect(await confirmCreated(bindings.options[0])).toBe(false);
+    });
+    expect(mockUserPracticesLinkHabit).not.toHaveBeenCalled();
+  });
+
+  describe('habit picker dismissal while a link change is pending (#3382)', () => {
+    type LinkGate = { resolve: (_row: UserPractice) => void; reject: (_err: Error) => void };
+    function holdLink(): LinkGate {
+      const gate = {} as LinkGate;
+      mockUserPracticesLinkHabit.mockReturnValueOnce(
+        new Promise<UserPractice>((resolve, reject) => {
+          gate.resolve = resolve;
+          gate.reject = reject;
+        }),
+      );
+      return gate;
+    }
+    async function openPicker(linkedHabit: number | null) {
+      authenticateHabitOwner();
+      mockUserPracticesList.mockResolvedValue([sampleUserPractice({ habit_id: linkedHabit })]);
+      const view = render(<PracticeScreenWithHeader habitBindings={habitBindings()} />);
+      await waitFor(() => expect(view.getByTestId('ritual-start')).toBeTruthy());
+      fireEvent.press(view.getByLabelText('Open Practice menu'));
+      fireEvent.press(view.getByTestId('practice-drawer-link-habit'));
+      expect(view.getByTestId('practice-habit-picker')).toBeTruthy();
+      return view;
+    }
+    function tryEveryDismissal(view: ReturnType<typeof render>) {
+      expect(view.getByTestId('practice-habit-cancel')).toBeDisabled();
+      fireEvent.press(view.getByTestId('practice-habit-cancel'));
+      act(() => {
+        view.getByTestId('practice-habit-picker-modal').props.onRequestClose();
+      });
+      expect(view.getByTestId('practice-habit-picker')).toBeTruthy();
+    }
+
+    for (const write of ['choose', 'clear'] as const) {
+      it(`keeps the picker open through Cancel and system back until a pending ${write} lands`, async () => {
+        const view = await openPicker(write === 'clear' ? 25 : null);
+        const gate = holdLink();
+        fireEvent.press(
+          view.getByTestId(write === 'clear' ? 'practice-habit-clear' : 'practice-habit-choose-25'),
+        );
+        expect(mockUserPracticesLinkHabit).toHaveBeenCalledWith(
+          10,
+          write === 'clear' ? null : 25,
+          mockHabitToken,
+        );
+        tryEveryDismissal(view);
+        await act(async () => {
+          gate.resolve(sampleUserPractice({ habit_id: write === 'clear' ? null : 25 }));
+        });
+        expect(view.queryByTestId('practice-habit-picker')).toBeNull();
+        if (write === 'clear') expect(view.queryByTestId('practice-linked-habit')).toBeNull();
+        else {
+          expect(view.getByTestId('practice-linked-habit')).toHaveTextContent(
+            'Linked to Breath habit',
+          );
+        }
+      });
+    }
+
+    it('reopens both ways out after a pending link fails, then a retry links for the current owner', async () => {
+      const view = await openPicker(null);
+      const gate = holdLink();
+      fireEvent.press(view.getByTestId('practice-habit-choose-25'));
+      tryEveryDismissal(view);
+      await act(async () => {
+        gate.reject(new Error('offline'));
+      });
+      expect(view.getByTestId('practice-habit-picker')).toBeTruthy();
+      expect(view.getByTestId('practice-habit-cancel')).toBeEnabled();
+      expect(view.queryByTestId('practice-linked-habit')).toBeNull();
+      const retry = holdLink();
+      fireEvent.press(view.getByTestId('practice-habit-choose-25'));
+      tryEveryDismissal(view);
+      await act(async () => {
+        retry.resolve(sampleUserPractice({ habit_id: 25 }));
+      });
+      expect(mockUserPracticesLinkHabit).toHaveBeenCalledTimes(2);
+      expect(view.queryByTestId('practice-habit-picker')).toBeNull();
+      expect(view.getByTestId('practice-linked-habit')).toHaveTextContent('Linked to Breath habit');
+    });
+
+    it('closes the picker on an account switch and never applies the outgoing pending link', async () => {
+      const view = await openPicker(null);
+      const gate = holdLink();
+      fireEvent.press(view.getByTestId('practice-habit-choose-25'));
+      tryEveryDismissal(view);
+      act(() => {
+        setActiveUser(2);
+      });
+      expect(view.queryByTestId('practice-habit-picker')).toBeNull();
+      act(() => {
+        setActiveUser(1);
+      });
+      await act(async () => {
+        gate.resolve(sampleUserPractice({ habit_id: 25 }));
+      });
+      expect(view.queryByTestId('practice-habit-picker')).toBeNull();
+      expect(view.queryByTestId('practice-linked-habit')).toBeNull();
+    });
+  });
+
+  for (const admission of ['mismatched', 'missing'] as const) {
+    it(`mounted habit controller hides private link facts under ${admission} credentials`, async () => {
+      authenticateHabitOwner();
+      if (admission === 'mismatched') setActiveUser(2);
+      else mockHabitToken = undefined;
+      mockUserPracticesList.mockResolvedValue([sampleUserPractice({ habit_id: 25 })]);
+      const bindings = habitBindings();
+      const view = render(<PracticeScreenWithHeader habitBindings={bindings} />);
+      await waitFor(() => expect(view.getByTestId('ritual-start')).toBeTruthy());
+      expect(view.queryByTestId('practice-linked-habit')).toBeNull();
+      expect(view.queryByText('Linked to Breath habit')).toBeNull();
+      fireEvent.press(view.getByLabelText('Open Practice menu'));
+      expect(view.queryByTestId('practice-drawer-link-habit')).toBeNull();
+      expect(bindings.manager.prepareLogUnit).not.toHaveBeenCalled();
+      expect(mockUserPracticesLinkHabit).not.toHaveBeenCalled();
+    });
+  }
+
+  for (const nextOwner of ['same owner', 'account ABA'] as const) {
+    it(`mounted habit controller reconciles an already committed result after unmount only for ${nextOwner}`, async () => {
+      authenticateHabitOwner();
+      mockUserPracticesList.mockResolvedValue([sampleUserPractice({ habit_id: 25 })]);
+      const bindings = habitBindings();
+      let release!: (_result: any) => void;
+      bindings.manager.commitLogUnitContext.mockImplementationOnce(
+        async (_ctx: unknown, options: any) => {
+          const result = await new Promise<any>((resolve) => {
+            release = resolve;
+          });
+          options.onCommitted(result);
+          return result;
+        },
+      );
+      const view = render(<PracticeScreenWithHeader habitBindings={bindings} />);
+      await openLogSheet(view.getByTestId, view.getByLabelText);
+      await act(async () => {
+        fireEvent.press(view.getByTestId('log-session-save'));
+      });
+      await waitFor(() => expect(bindings.manager.commitLogUnitContext).toHaveBeenCalledTimes(1));
+      view.unmount();
+      if (nextOwner === 'account ABA') {
+        setActiveUser(2);
+        setActiveUser(1);
+      }
+      await act(async () => {
+        release({ streak: 1, milestones: [], reason_code: 'completed', day_units: 10 });
+      });
+      expect(bindings.manager.reconcileReservedLogUnitContext).toHaveBeenCalledTimes(
+        nextOwner === 'same owner' ? 1 : 0,
+      );
+      expect(bindings.manager.discardLogUnitContext).toHaveBeenCalledTimes(1);
+      expect(mockPracticeSessionsCreate).toHaveBeenCalledTimes(1);
+    });
+  }
 
   it('logs a past sitting from the drawer and reconciles the weekly count', async () => {
     mockInsights.mockResolvedValueOnce(weeklyBuckets(2)).mockResolvedValueOnce(weeklyBuckets(3));

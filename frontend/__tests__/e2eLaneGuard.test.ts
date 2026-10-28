@@ -44,6 +44,8 @@ const BROWSER_E2E_SCRIPT = 'test:e2e:web';
 const AUTH_OVERFLOW_JOURNEY = 'auth-overflow.browser.e2e.test.ts';
 const BROWSER_JOURNEY = 'course-passage.browser.e2e.test.ts';
 const HABITS_VIEWPORT_JOURNEY = 'habits-viewport.browser.e2e.test.ts';
+/** The one browser journey that boots its own, demo-configured frontend (#2491). */
+const DEMO_TILE_JOURNEY = 'habits-demo-tile.browser.e2e.test.ts';
 const SHARED_BROWSER_SUPPORT = 'journalHabitsBrowserSupport.ts';
 /**
  * Sorted, because `e2eFiles` is a bare `readdirSync` filter and directory order
@@ -51,39 +53,76 @@ const SHARED_BROWSER_SUPPORT = 'journalHabitsBrowserSupport.ts';
  * flake waiting for the first checkout that reads them the other way round.
  */
 const EXPECTED_BROWSER_JOURNEYS = [
+  'account-decline-choices.browser.e2e.test.ts',
+  'invitation-decline.browser.e2e.test.ts',
+  'invitation-reason-copy.browser.e2e.test.ts',
   'action-rows.browser.e2e.test.ts',
   'api-key-remove.browser.e2e.test.ts',
   AUTH_OVERFLOW_JOURNEY,
+  'client-diagnostics.browser.e2e.test.ts',
   'corpus-vault-first.browser.e2e.test.ts',
   BROWSER_JOURNEY,
+  'course-reading-position.browser.e2e.test.ts',
+  'course-start-here-account-switch.browser.e2e.test.ts',
+  'course-start-here-failure.browser.e2e.test.ts',
+  'course-start-here.browser.e2e.test.ts',
   HABITS_VIEWPORT_JOURNEY,
   'course-reflect-return.browser.e2e.test.ts',
+  'csp-enforced.browser.e2e.test.ts',
+  'date-picker-day-change.browser.e2e.test.ts',
+  'date-picker-reflow.browser.e2e.test.ts',
+  'empty-state-map-copy.browser.e2e.test.ts',
   'feedback-composer.browser.e2e.test.ts',
   'feedback-resilience.browser.e2e.test.ts',
+  'habit-add-cadence.browser.e2e.test.ts',
+  'habit-energy-cold-handoff.browser.e2e.test.ts',
+  'habit-linked-units.browser.e2e.test.ts',
+  'habit-onboarding-long-name.browser.e2e.test.ts',
+  'habit-owner-switch.browser.e2e.test.ts',
   'habit-reorder.browser.e2e.test.ts',
+  'habit-reveal-without-course.browser.e2e.test.ts',
+  'habit-same-owner-reauth.browser.e2e.test.ts',
+  'habit-story.browser.e2e.test.ts',
   'habit-subtractive-streak.browser.e2e.test.ts',
+  DEMO_TILE_JOURNEY,
+  'habits-day-rollover.browser.e2e.test.ts',
+  'habits-offline-replay.browser.e2e.test.ts',
+  'habits-recovery.browser.e2e.test.ts',
+  'habits-resumed-session.browser.e2e.test.ts',
   'journal-care-support.browser.e2e.test.ts',
+  'privacy-choices.browser.e2e.test.ts',
+  'prompts-history.browser.e2e.test.ts',
+  'prompts-recovery.browser.e2e.test.ts',
   'journal-close-save.browser.e2e.test.ts',
   'journal-corpus-drawer.browser.e2e.test.ts',
   'journal-entry-controls.browser.e2e.test.ts',
   'journal-failed-checkoff.browser.e2e.test.ts',
+  'journal-finished-task-toggle.browser.e2e.test.ts',
   'journal-fold-selected-promoted-quotes.browser.e2e.test.ts',
+  'journal-idle-timer-obstruction.browser.e2e.test.ts',
+  'journal-letter-care-escalation.browser.e2e.test.ts',
   'journal-list-indent.browser.e2e.test.ts',
   'journal-live-edit-anchors.browser.e2e.test.ts',
   'journal-live-markdown.browser.e2e.test.ts',
   'journal-lost-answer.browser.e2e.test.ts',
   'journal-margin-alignment.browser.e2e.test.ts',
+  'journal-margin-note-source.browser.e2e.test.ts',
   'journal-markdown.browser.e2e.test.ts',
   'journal-past-cycle-review-sources.browser.e2e.test.ts',
+  'journal-payment-token-renewal.browser.e2e.test.ts',
   'journal-morning-page-title.browser.e2e.test.ts',
   'journal-morning-pages-dismiss.browser.e2e.test.ts',
   'journal-morning-pages-never-offer.browser.e2e.test.ts',
+  'journal-notification-center.browser.e2e.test.ts',
+  'journal-only.browser.e2e.test.ts',
   'journal-promote-explainer.browser.e2e.test.ts',
   'journal-promote-quote-long-entry.browser.e2e.test.ts',
   'journal-promote-quote.browser.e2e.test.ts',
   'journal-promoted-quote-reflection.browser.e2e.test.ts',
   'journal-promoted-quotes-screen.browser.e2e.test.ts',
+  'journal-reflection-dismissal-owner.browser.e2e.test.ts',
   'journal-reconnect-load.browser.e2e.test.ts',
+  'journal-refinish-edited-entry.browser.e2e.test.ts',
   'journal-resonance-refill.browser.e2e.test.ts',
   'journal-return-offer.browser.e2e.test.ts',
   'journal-review-from-shelf.browser.e2e.test.ts',
@@ -91,21 +130,40 @@ const EXPECTED_BROWSER_JOURNEYS = [
   'journal-section-course-review.browser.e2e.test.ts',
   'journal-short-habit-offer.browser.e2e.test.ts',
   'journal-sources-panel.browser.e2e.test.ts',
+  'journal-stat-tiles-wrap.browser.e2e.test.ts',
   'journal-title-single-line.browser.e2e.test.ts',
+  'journal-title-wrap.browser.e2e.test.ts',
   'journal-unlinked-timer-nudge.browser.e2e.test.ts',
+  'journal-writing-timer.browser.e2e.test.ts',
+  'managed-vault-own-key.browser.e2e.test.ts',
   'map-continue-course.browser.e2e.test.ts',
   'map-legibility.browser.e2e.test.ts',
+  'map-stage-persona.browser.e2e.test.ts',
+  'map-wavelength-phases.browser.e2e.test.ts',
   'practice-catalog-details.browser.e2e.test.ts',
   'practice-deep-link.browser.e2e.test.ts',
+  'practice-habit-link.browser.e2e.test.ts',
+  'practice-paused-sitting.browser.e2e.test.ts',
+  'practice-repertoire.browser.e2e.test.ts',
+  'practice-quick-launch-green.browser.e2e.test.ts',
   'practice-stats.browser.e2e.test.ts',
   'practice-unconfirmed-stage.browser.e2e.test.ts',
   'practice-weekly-count.browser.e2e.test.ts',
+  'reauth-sheet-survives-anonymous-401.browser.e2e.test.ts',
   'resonance-credit-exhausted.browser.e2e.test.ts',
   'resonance-explainer.browser.e2e.test.ts',
+  'revoked-entitlement-core-access.browser.e2e.test.ts',
+  'money-copy.browser.e2e.test.ts',
+  'return-letgo-token-renewal.browser.e2e.test.ts',
   'return-recover-habit.browser.e2e.test.ts',
   'screen-title-heading.browser.e2e.test.ts',
+  'settings-corpus-sharing.browser.e2e.test.ts',
+  'settings-gain-copy.browser.e2e.test.ts',
   'text-order.browser.e2e.test.ts',
+  'welcome.browser.e2e.test.ts',
   'writing-timer-habit-link.browser.e2e.test.ts',
+  'writing-timer-presets-fit.browser.e2e.test.ts',
+  'zero-payment-core-access.browser.e2e.test.ts',
 ].sort();
 const LICENSE_STUB = 'verify_aptitude_license';
 const EXPECTED_JOURNEYS = [
@@ -115,6 +173,8 @@ const EXPECTED_JOURNEYS = [
   'corpus-consent.e2e.test.ts',
   'corpus-import.e2e.test.ts',
   'corpus-invitation.e2e.test.ts',
+  'corpus-sweep.e2e.test.ts',
+  'course-read-next.e2e.test.ts',
   'course.e2e.test.ts',
   'data-export.e2e.test.ts',
   'depth.e2e.test.ts',
@@ -122,9 +182,11 @@ const EXPECTED_JOURNEYS = [
   'habit-delete.e2e.test.ts',
   'habits-empty.e2e.test.ts',
   'habits.e2e.test.ts',
+  'journal-byok-classification.e2e.test.ts',
   'journal-delete.e2e.test.ts',
   'journal-essay-economy.e2e.test.ts',
   'journal-habit-offer.e2e.test.ts',
+  'journal-intimate-withdrawal.e2e.test.ts',
   'journal-practice-offer.e2e.test.ts',
   'journal-vault-withdrawal.e2e.test.ts',
   'journal.e2e.test.ts',
@@ -141,7 +203,14 @@ const EXPECTED_JOURNEYS = [
   'session-lifetime.e2e.test.ts',
   'stage-copy.e2e.test.ts',
   'vault-activation.e2e.test.ts',
+  'vault-agent-activity.e2e.test.ts',
+  'vault-agent-chatgpt.e2e.test.ts',
+  'vault-agent-claude-code.e2e.test.ts',
+  'vault-agent-consent-subset.e2e.test.ts',
+  'vault-agent-consent.e2e.test.ts',
+  'vault-agent-openclaw.e2e.test.ts',
   'vault-connection.e2e.test.ts',
+  'vault-rejected-key-classification.e2e.test.ts',
   'voice-drafts-shelf.e2e.test.ts',
   'voice-readiness.e2e.test.ts',
 ];
@@ -431,6 +500,28 @@ describe('the real-browser journey is wired as a separate mandatory lane', () =>
     expect(spec).toContain('element.scrollTop = element.scrollHeight');
   });
 
+  it('keeps the default browser lane non-demo and confines the demo build to one spec', () => {
+    // `EXPO_PUBLIC_HABIT_DEMO_MODE` is inlined into the bundle at build time, so
+    // a server started with it changes the app for every spec that runs there.
+    // Keyed on what STARTS a server with it -- the demo env constant and the
+    // launcher -- rather than on the flag's name, which a spec may mention in
+    // prose (habits-viewport explains why it does not use it).
+    for (const [path, why] of [
+      [join(E2E_DIR, 'browserGlobalSetup.ts'), 'The browser lane boot is missing.'],
+      [BROWSER_E2E_CONFIG, 'The browser journey needs a Playwright config.'],
+      [WORKFLOW, 'The e2e lane only runs once a workflow invokes it.'],
+    ] as const) {
+      const text = read(path, why);
+      expect(text).not.toContain('HABIT_DEMO_ENV');
+      expect(text).not.toContain('EXPO_PUBLIC_HABIT_DEMO_MODE');
+    }
+    const demoServers = EXPECTED_BROWSER_JOURNEYS.filter((name) => {
+      const spec = read(join(E2E_DIR, name), `The browser journey spec ${name} is missing.`);
+      return spec.includes('HABIT_DEMO_ENV') || spec.includes('launchFrontend(');
+    });
+    expect(demoServers).toEqual([DEMO_TILE_JOURNEY]);
+  });
+
   it('keeps Playwright specs out of the Jest API journey lane', () => {
     const config = read(E2E_CONFIG, 'The API journey needs a Jest config.');
 
@@ -552,24 +643,53 @@ describe('the external Creek Vault boundary stays protocol-shaped and narrowly a
     expect(setup).not.toContain('dependency_overrides');
   });
 
-  it('advertises only the five capabilities the two vault journeys exercise', () => {
+  it('keeps eight default capabilities and makes classification explicitly opt-in', () => {
     // The sharpest constraint on this boundary: every added word is a new class
     // of production traffic. The deployment owner is reserved for the upload
     // and withdrawal specs, while all other accounts stay on local fallback.
+    // `reflections` and `letters` are the deliberate additions (#3061, #3203):
+    // the owner is vault-bound, so the withdrawal journey's margin note and its
+    // letter can only come from this vault -- the app provider is never asked.
+    // `agent-activity` (#3535) is a content-free read of the audit log the
+    // recent-activity journey fills itself; it carries no writing either way.
     const fake = read(FAKE_VAULT, 'The seed journey needs a contract-shaped vault to reach.');
 
-    expect(fake).toContain("  'capabilities',\n  'upload',\n  'journal-upsert',");
-    expect(fake).toContain("  'journal-withdraw',\n  'voice-drafts',");
-    expect(fake).not.toContain("'reflections'");
+    expect(fake).toContain(
+      "  'capabilities',\n  'upload',\n  'journal-upsert',\n  'journal-withdraw',\n  'voice-drafts',\n  'reflections',\n  'letters',\n  'agent-activity',\n];",
+    );
     expect(fake).not.toContain("'wheel'");
-    expect(fake).not.toContain("'pipeline'");
+    expect(fake).toContain('let pipelineAdvertised = false;');
+    expect(fake).toContain(".concat(pipelineAdvertised ? ['pipeline'] : [])");
+    expect(fake).toContain("pathname === '/__lane/enable-pipeline'");
+    expect(fake).toContain("pathname === '/__lane/disable-pipeline'");
+    expect(fake).not.toContain("'classify'");
+  });
+
+  it('serves reflections on the published request shape and an admitted ceiling only', () => {
+    const fake = read(FAKE_VAULT, 'The withdrawal journey needs a vault that reflects.');
+
+    expect(fake).toContain("const REFLECTION_REQUEST_FIELDS = ['content', 'max_notes']");
+    expect(fake).toContain('ADMITTED_TIERS.includes(ceiling)');
+  });
+
+  it('writes letters on the published request shape and holds no writer prose', () => {
+    const fake = read(FAKE_VAULT, 'The withdrawal journeys need a vault that writes letters.');
+
+    expect(fake).toContain("const LETTER_REQUEST_FIELDS = ['content', 'note', 'tier']");
+    expect(fake).toContain("const LETTER_NOTE_FIELDS = ['anchor_text', 'kind', 'note']");
+    // The stored draft is the lane's own sentinel letter, never the entry.
+    expect(fake).toContain("store('voice-draft', externalId, digestOf(LANE_LETTER))");
   });
 
   it('requires the contract version on capability routes and admits no third tier', () => {
     const fake = read(FAKE_VAULT, 'The seed journey needs a contract-shaped vault to reach.');
 
     expect(fake).toContain("const CONTRACT_HEADER = 'x-creek-contract-version'");
-    expect(fake).toContain("const CONTRACT_VERSION = '0.16.0'");
+    expect(fake).toContain("const CONTRACT_VERSION = '0.22.0'");
+    // Since contract 0.18 (Creek-Vault ADR-0015): a self-connected vault lists no key vendor.
+    expect(fake).toContain(
+      'request_key_providers: requestKeysAdvertised ? REQUEST_KEY_PROVIDERS : []',
+    );
     expect(fake).toContain('incompatible_version');
     expect(fake).toContain("const ADMITTED_TIERS = ['open', 'personal']");
     // Declared *and* enforced: a constant nothing consults would leave the

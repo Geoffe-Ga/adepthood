@@ -14,6 +14,17 @@ is the exactly-once guard a wallet credit takes before moving any money, and
 claim every refund, dispute, cancellation, and subscription-ended event
 competes for, so a purchase is unwound exactly once no matter how many
 reversal pings Gumroad delivers.
+
+A membership's life after the purchase is tracked apart from that claim
+(#3259). ``subscription_cancelled_at`` is the audit stamp of the first
+``cancellation`` ping, which changes no access. ``subscription_ended_at`` and
+``subscription_restarted_at`` each hold the latest event time of their kind,
+so :func:`subscription_has_ended` answers "which came last?" whatever order
+Gumroad delivered them in, and a replay of either is a no-op.
+
+``anonymised_at`` records when account deletion blanked the buyer's identifiers
+on a sale linked to the deleted account (#3063 AC15). It starts the receipt's
+ratified retention clock; a sale never linked to an account is never stamped.
 """
 
 from datetime import UTC, datetime
@@ -25,6 +36,11 @@ from sqlmodel import Field, SQLModel
 # carries an entitlement or wallet side effect. Public so the router and the
 # token-pack sweep filter on one spelling.
 SALE_RESOURCE_NAME = "sale"
+
+
+def _timestamp_column() -> Column[datetime]:
+    """A nullable, timezone-aware timestamp column (one fresh object per field)."""
+    return Column(DateTime(timezone=True), nullable=True)
 
 
 class GumroadSale(SQLModel, table=True):
@@ -76,3 +92,38 @@ class GumroadSale(SQLModel, table=True):
         default=None,
         sa_column=Column(DateTime(timezone=True), nullable=True),
     )
+    # When account deletion blanked ``email`` and ``raw_payload`` on this sale,
+    # because it was linked to the deleted account (a licence binding or a
+    # token-pack credit). NULL means never anonymised: the sale was never
+    # linked, or no linked account has been deleted. The receipt's ratified
+    # retention counts from here (domain.retention, ``gumroadsale``).
+    anonymised_at: datetime | None = Field(
+        default=None,
+        sa_column=Column(DateTime(timezone=True), nullable=True),
+    )
+    # The membership's audit and state stamps (#3259), see the module
+    # docstring. None of them is a reversal claim: a cancelled or ended
+    # membership keeps ``revocation_processed_at`` unspent, so a later refund
+    # or dispute still applies in full.
+    subscription_cancelled_at: datetime | None = Field(default=None, sa_column=_timestamp_column())
+    subscription_ended_at: datetime | None = Field(default=None, sa_column=_timestamp_column())
+    subscription_restarted_at: datetime | None = Field(default=None, sa_column=_timestamp_column())
+
+
+def subscription_has_ended(sale: GumroadSale) -> bool:
+    """Whether the latest membership event recorded on ``sale`` is its ending.
+
+    Ordered by Gumroad's own event times, not by arrival, so a restart that
+    was delivered before the ending it followed still wins. A tie reads as
+    live, the user-protective side.
+    """
+    ended_at = sale.subscription_ended_at
+    if ended_at is None:
+        return False
+    restarted_at = sale.subscription_restarted_at
+    return restarted_at is None or _as_utc(ended_at) > _as_utc(restarted_at)
+
+
+def _as_utc(moment: datetime) -> datetime:
+    """Read a stored stamp as aware UTC (SQLite hands timestamps back naive)."""
+    return moment if moment.tzinfo is not None else moment.replace(tzinfo=UTC)

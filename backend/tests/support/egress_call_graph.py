@@ -124,7 +124,8 @@ EGRESS_FUNCTIONS: Final[frozenset[tuple[str, str]]] = frozenset(
 #: rest are ``domain.creek_vault.CreekVaultClient``'s *transmitting* verbs.
 #: ``handshake``, ``wheel``, ``is_available`` and ``supports`` are deliberately
 #: absent: they send nothing of the account's, which is the same reason
-#: ``GET /stages/wheel`` and ``GET /invitations`` are excluded from the barrier.
+#: ``GET /stages/wheel`` is excluded from the barrier; invitations now also
+#: transmit source excerpts through the protected recommendation operation.
 #:
 #: The two withdrawal verbs -- ``withdraw_journal_entry`` and
 #: ``delete_voice_draft`` -- are present although they only ever *reduce* what
@@ -144,6 +145,7 @@ VAULT_EGRESS_METHODS: Final[frozenset[str]] = frozenset(
         "classify_corpus",
         "link_corpus",
         "reflect",
+        "recommend_reading",
         "pipeline_job",
     }
 )

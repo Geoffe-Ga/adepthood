@@ -44,6 +44,7 @@ import { CaptureClassificationControl } from './CaptureClassificationControl';
 import { CapturePagesStrip } from './CapturePagesStrip';
 import { MAX_PAGES_PER_SESSION, canAddPages, captureSessionReducer } from './captureSession';
 import type { CapturePage, CaptureSessionAction } from './captureSession';
+import { appendModeTier, withinFloor } from './captureTier';
 import type { CreateKey } from './createKey';
 import styles from './JournalPhotograph.styles';
 import { captureJournalPhoto, pickJournalPhotos } from './pickJournalPhoto';
@@ -54,7 +55,7 @@ import type { SentPage } from './replayReconcile';
 import { saveFinishedEntry } from './saveFinishedEntry';
 import { TranscriptionPreview } from './TranscriptionPreview';
 import { useTranscriptionRun } from './useTranscriptionRun';
-import type { TranscriptionRunModel } from './useTranscriptionRun';
+import type { TranscriptionRunModel, UseTranscriptionRunArgs } from './useTranscriptionRun';
 
 import { Button } from '@/components/Button';
 import DatePicker, { toISODate } from '@/components/DatePicker';
@@ -118,6 +119,9 @@ interface CaptureModel {
   classification: PrivacyTier;
   /** True when the transcript is destined for a page already open, not a new entry. */
   appendMode: boolean;
+  /** False in append mode for an Intimate (or unknown-tier) entry: the revert
+   *  would widen the capture past the page it joins (#3059 AC15). */
+  canKeepPersonal: boolean;
   saving: boolean;
   saveFailed: boolean;
   onChangeEntryDate: (_date: string) => void;
@@ -617,15 +621,13 @@ function useReorderPages(
 /** Wire the progressive run to the session, its two page-swapping offramps, and the
  *  per-page transient-file release fired once a page has been read. */
 function useCaptureRun(
-  pages: CapturePage[],
-  started: boolean,
+  run: Pick<UseTranscriptionRunArgs, 'pages' | 'started' | 'classification'>,
   retakePage: (_id: string) => void,
   removePage: (_id: string) => void,
   releasePageById: (_id: string) => void,
 ): TranscriptionRunModel {
   return useTranscriptionRun({
-    pages,
-    started,
+    ...run,
     onRetake: retakePage,
     onRemove: removePage,
     onPageTranscribed: releasePageById,
@@ -634,17 +636,30 @@ function useCaptureRun(
 
 /** The privacy tier the writer chooses before transcription, plus a live ref for
  *  the transcribe gate and the "Keep as Personal" revert. ``intimate`` gates the
- *  cloud transcription off entirely (see {@link useTranscribeGate}). */
-function useCaptureClassification(): {
+ *  cloud transcription off entirely (see {@link useTranscribeGate}).
+ *
+ *  In append mode ``floor`` is the open entry's own tier (#3059 AC15): the
+ *  capture starts there and may only narrow toward ``intimate`` -- no choice,
+ *  nor the revert, can widen it -- so a page bound for an Intimate entry is
+ *  never read. */
+function useCaptureClassification(floor: PrivacyTier | null): {
   classification: PrivacyTier;
   classificationRef: React.MutableRefObject<PrivacyTier>;
   setClassification: (_tier: PrivacyTier) => void;
   keepPersonal: () => void;
 } {
-  const [classification, setClassification] = useState<PrivacyTier>(DEFAULT_TIER);
+  const [chosen, setChosen] = useState<PrivacyTier>(floor ?? DEFAULT_TIER);
+  // Re-checked at render, not only on a choice: the floor wins whatever state holds.
+  const classification = withinFloor(floor, chosen) ? chosen : (floor ?? chosen);
   const classificationRef = useRef<PrivacyTier>(classification);
   classificationRef.current = classification;
-  const keepPersonal = useCallback(() => setClassification('personal'), []);
+  const setClassification = useCallback(
+    (tier: PrivacyTier) => {
+      if (withinFloor(floor, tier)) setChosen(tier);
+    },
+    [floor],
+  );
+  const keepPersonal = useCallback(() => setClassification('personal'), [setClassification]);
   return { classification, classificationRef, setClassification, keepPersonal };
 }
 
@@ -711,7 +726,8 @@ function useCaptureEngine(args: CaptureEngineArgs): CaptureEngine {
   const retakePage = useRetakePage({ dispatch, pagesRef, counterRef, releasePageById });
   const { started, transcribe, disarm } = useTranscribeGate(pagesRef, setPhase, classificationRef);
   useEmptyReviewGuard(phase.step, pages.length, disarm, setPhase);
-  const run = useCaptureRun(pages, started, retakePage, removePage, releasePageById);
+  const capture = { pages, started, classification };
+  const run = useCaptureRun(capture, retakePage, removePage, releasePageById);
   const { save, saving, saveFailed } = useConfirmGesture({
     navigation,
     appendTo,
@@ -752,12 +768,14 @@ function useCaptureEngine(args: CaptureEngineArgs): CaptureEngine {
 function usePhotographCapture(
   navigation: PhotographNavigation,
   appendTo: string | undefined,
+  appendTier: string | undefined,
 ): CaptureModel {
+  const tierFloor = appendModeTier(appendTo, appendTier);
   const [phase, setPhase] = useState<Phase>({ step: 'preparing' });
   const [pages, dispatch] = useReducer(captureSessionReducer, []);
   const [entryDate, setEntryDate] = useState(() => toISODate(new Date()));
   const { classification, classificationRef, setClassification, keepPersonal } =
-    useCaptureClassification();
+    useCaptureClassification(tierFloor);
   const engine = useCaptureEngine({
     navigation,
     phase,
@@ -778,6 +796,7 @@ function usePhotographCapture(
     entryDate,
     classification,
     appendMode: appendTo != null,
+    canKeepPersonal: withinFloor(tierFloor, 'personal'),
     saving: engine.saving,
     saveFailed: engine.saveFailed,
     onChangeEntryDate: setEntryDate,
@@ -970,6 +989,7 @@ function CollectView({ model }: { model: CaptureModel }): React.JSX.Element {
         onChange={model.onChangeClassification}
         onTypeInstead={model.typeInstead}
         onKeepPersonal={model.keepPersonal}
+        canKeepPersonal={model.canKeepPersonal}
       />
       <CapturePagesStrip
         pages={model.pages}
@@ -1119,7 +1139,7 @@ export default function JournalPhotographScreen({
   navigation,
   route,
 }: NativeStackScreenProps<RootStackParamList, 'JournalPhotograph'>): React.JSX.Element {
-  const model = usePhotographCapture(navigation, route.params?.appendTo);
+  const model = usePhotographCapture(navigation, route.params?.appendTo, route.params?.appendTier);
   return (
     <ScreenScaffold testID="journal-photograph">
       <CaptureBody model={model} />

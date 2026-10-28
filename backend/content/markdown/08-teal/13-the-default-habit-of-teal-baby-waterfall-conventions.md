@@ -27,9 +27,9 @@ These are *conventions*—practices you build into your daily rhythm. They're no
 
 The habit is to establish *at least three* Baby Waterfall Conventions and practice them daily. Pick moments in your routine where you're usually zoned out and turn them into doorways back to presence.
 
-Why is this Teal's habit? Because Teal is about integrating the Witness into ordinary life. It's not about peak experiences. It's about waking up in the middle of the mundane. And Baby Waterfalls are how you do that.
+Why is this Teal's habit? Because Teal is about keeping the line to your True Self open in ordinary life. It's not about peak experiences. It's about waking up in the middle of the mundane. And Baby Waterfalls are how you do that.
 
-Each pause is a reminder: You are not your thoughts. You are not your to-do list. You are the awareness that holds it all. And that awareness is always here. You just forget to notice.
+Each pause is a reminder: you are more than your thoughts and your to-do list. There's a wiser you underneath that chose this life and is still paying attention. It's always here. You just forget to check in.
 
 Baby Waterfalls help you remember.
 

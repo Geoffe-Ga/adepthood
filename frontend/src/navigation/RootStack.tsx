@@ -6,6 +6,7 @@ import AdminFeedbackScreen from '../features/AdminFeedback/AdminFeedbackScreen';
 import FeedbackComposerScreen from '../features/Feedback/FeedbackComposerScreen';
 import JournalEntryScreen from '../features/Journal/JournalEntryScreen';
 import JournalPhotographScreen from '../features/Journal/JournalPhotographScreen';
+import NotificationCenterScreen from '../features/Journal/NotificationCenterScreen';
 import PromotedQuotesScreen from '../features/Journal/PromotedQuotesScreen';
 import VoiceDraftsShelfScreen from '../features/Journal/VoiceDraftsShelfScreen';
 import { CreatePracticeWizard } from '../features/Practice/screens/CreatePracticeWizard';
@@ -15,6 +16,7 @@ import SharePreviewScreen from '../features/Practice/screens/SharePreviewScreen'
 import SeedCorpusScreen from '../features/Seed/SeedCorpusScreen';
 import ApiKeySettingsScreen from '../features/Settings/ApiKeySettingsScreen';
 import CorpusConsentScreen from '../features/Settings/CorpusConsentScreen';
+import CorpusSweepScreen from '../features/Settings/CorpusSweepScreen';
 import DeleteAccountScreen from '../features/Settings/DeleteAccountScreen';
 import ExportDataScreen from '../features/Settings/ExportDataScreen';
 import PrivateVaultActivationScreen from '../features/Settings/PrivateVaultActivationScreen';
@@ -50,6 +52,7 @@ export type RootStackParamList = {
   Settings: { focus?: SettingsFocus } | undefined;
   SeedCorpus: undefined;
   CorpusConsent: undefined;
+  CorpusSweep: undefined;
   ApiKeySettings: undefined;
   TimezoneSettings: undefined;
   DeleteAccount: undefined;
@@ -81,6 +84,11 @@ export type RootStackParamList = {
    * the screen offers no fold-in, only "Write a review with N quotes".
    */
   PromotedQuotes: { injectInto?: string } | undefined;
+  /**
+   * The Notification Center (#3142): the stat tiles, Return, invitations, the
+   * stage's prompts and the voice band in one quiet inbox. A place, no params.
+   */
+  JournalNotifications: undefined;
   /** The operator's beta feedback inbox (#2900). Server-gated; no params. */
   AdminFeedback: undefined;
   JournalPhotograph:
@@ -93,6 +101,13 @@ export type RootStackParamList = {
          * — never the transcribed prose, and never any page image.
          */
         appendTo?: string;
+        /**
+         * Append mode only: the open entry's privacy tier when the camera was
+         * pressed. The capture declares it on every page read and locks its
+         * chooser to it (#3059 AC15); absent or unrecognised, the capture fails
+         * closed to ``intimate`` and reads nothing.
+         */
+        appendTier?: string;
       }
     | undefined;
   JournalEntry:
@@ -198,6 +213,11 @@ const JournalScreens = (): React.JSX.Element => (
       component={PromotedQuotesScreen}
       options={{ title: 'Promoted quotes' }}
     />
+    <Stack.Screen
+      name="JournalNotifications"
+      component={NotificationCenterScreen}
+      options={{ title: 'Prompts' }}
+    />
   </>
 );
 
@@ -209,12 +229,17 @@ const SettingsScreens = (): React.JSX.Element => (
     <Stack.Screen
       name="SeedCorpus"
       component={SeedCorpusScreen}
-      options={{ title: 'Your corpus' }}
+      options={{ title: 'Your writing' }}
     />
     <Stack.Screen
       name="CorpusConsent"
       component={CorpusConsentScreen}
       options={{ title: 'What reflections draw on' }}
+    />
+    <Stack.Screen
+      name="CorpusSweep"
+      component={CorpusSweepScreen}
+      options={{ title: 'Sort the rest of your writing' }}
     />
     <Stack.Screen
       name="ApiKeySettings"
@@ -251,7 +276,7 @@ const RootStack = (): React.JSX.Element => (
     <Stack.Screen
       name="VaultSettings"
       component={VaultSettingsScreen}
-      options={{ title: 'Where your corpus lives' }}
+      options={{ title: 'Where your writing lives' }}
     />
     <Stack.Screen
       name="VaultActivation"

@@ -1,12 +1,27 @@
 /* eslint-env jest */
 /* global describe, test, expect, beforeEach, afterEach, jest */
-import { journal, TranscriptionError, TRANSCRIBE_TIMEOUT_MS, LLM_API_KEY_HEADER } from '../index';
+import {
+  journal,
+  TranscriptionError,
+  TRANSCRIBE_TIMEOUT_MS,
+  LLM_API_KEY_HEADER,
+  setLlmApiKeyGetter,
+} from '../index';
 import { transcribePageSchema } from '../schemas';
 
 const mockFetch = jest.fn() as jest.Mock;
 global.fetch = mockFetch;
 
-jest.mock('@/config', () => ({ API_BASE_URL: 'http://test' }));
+// A development build may send a keyless page to its local server, whose stub
+// test seam can answer it; a production build cannot. Most cases here drive the
+// server path, so it is on unless a test switches it off.
+let mockKeylessReachesServer = true;
+jest.mock('@/config', () => ({
+  API_BASE_URL: 'http://test',
+  get KEYLESS_PAGE_READ_REACHES_SERVER() {
+    return mockKeylessReachesServer;
+  },
+}));
 
 // Distinctive fixture so a leak into logs or error messages is unmistakable.
 const SENTINEL_PAYLOAD = 'ZZZZ_SENTINEL_PAYLOAD_ZZZZ';
@@ -32,34 +47,278 @@ beforeEach(() => {
 describe('journal.transcribePage request shape', () => {
   test('POSTs the transcribe endpoint with a snake_case body and bearer auth', async () => {
     mockFetch.mockReturnValueOnce(jsonResponse({ text: 'Today I felt...' }));
-    await journal.transcribePage({ imageBase64: 'abc123', mediaType: 'image/png' }, 'tok');
+    await journal.transcribePage(
+      { imageBase64: 'abc123', mediaType: 'image/png', classification: 'personal' },
+      'tok',
+    );
 
     const [url, init] = mockFetch.mock.calls[0];
     expect(url).toBe('http://test/journal/transcribe-page');
     expect(init.method).toBe('POST');
-    expect(JSON.parse(init.body)).toEqual({ image_base64: 'abc123', media_type: 'image/png' });
+    expect(JSON.parse(init.body)).toEqual({
+      image_base64: 'abc123',
+      media_type: 'image/png',
+      classification: 'personal',
+    });
     expect(init.headers.Authorization).toBe('Bearer tok');
   });
 
   test('resolves with the transcribed text on a 200', async () => {
     mockFetch.mockReturnValueOnce(jsonResponse({ text: 'Today I felt...' }));
     const result = await journal.transcribePage(
-      { imageBase64: 'abc123', mediaType: 'image/png' },
+      { imageBase64: 'abc123', mediaType: 'image/png', classification: 'personal' },
       'tok',
     );
     expect(result).toEqual({ text: 'Today I felt...' });
   });
 });
 
-describe('journal.transcribePage BYOK header', () => {
-  test('attaches the header only when an api key is supplied', async () => {
-    mockFetch.mockReturnValueOnce(jsonResponse({ text: 'x' }));
-    await journal.transcribePage({ imageBase64: 'abc', mediaType: 'image/png' }, 'tok', 'sk-byok');
-    expect(mockFetch.mock.calls[0][1].headers[LLM_API_KEY_HEADER]).toBe('sk-byok');
+const OPENAI_KEY = 'sk-device-openai-0123456789abcdef'; // pragma: allowlist secret
+const ANTHROPIC_KEY = 'sk-ant-device-anthropic-0123456789'; // pragma: allowlist secret
+const ADMISSION_URL = 'http://test/journal/transcribe-page/direct-admission';
+const PAGE_URL = 'http://test/journal/transcribe-page';
 
+function admitted() {
+  return Promise.resolve({ ok: true, status: 204, json: () => Promise.resolve(null) });
+}
+
+function openaiReply(text: string) {
+  return jsonResponse({ choices: [{ message: { content: text } }] });
+}
+
+/** Every request this test sent to Adepthood's own API, as the wire saw it. */
+function requestsToAdepthood(): string[] {
+  return mockFetch.mock.calls
+    .filter(([url]) => String(url).startsWith('http://test/'))
+    .map(([url, init]) => JSON.stringify({ url, init }));
+}
+
+describe("journal.transcribePage with the writer's own key (ADR 0009 phase (a), #3067)", () => {
+  afterEach(() => {
+    setLlmApiKeyGetter(null);
+  });
+
+  test.each([
+    ['an explicit key', OPENAI_KEY, 'https://api.openai.com/v1/chat/completions'],
+    ['an Anthropic key', ANTHROPIC_KEY, 'https://api.anthropic.com/v1/messages'],
+  ])(
+    '%s: asks admission, then sends the page from the device to the vendor',
+    async (_n, key, vendorUrl) => {
+      mockFetch.mockReturnValueOnce(admitted());
+      mockFetch.mockReturnValueOnce(
+        key === ANTHROPIC_KEY
+          ? jsonResponse({ content: [{ type: 'text', text: 'Dear diary' }] })
+          : openaiReply('Dear diary'),
+      );
+
+      const result = await journal.transcribePage(
+        { imageBase64: SENTINEL_PAYLOAD, mediaType: 'image/png', classification: 'personal' },
+        'tok',
+        key,
+      );
+
+      expect(result).toEqual({ text: 'Dear diary' });
+      expect(mockFetch).toHaveBeenCalledTimes(2);
+      const [admissionUrl, admissionInit] = mockFetch.mock.calls[0];
+      expect(admissionUrl).toBe(ADMISSION_URL);
+      expect(admissionInit.method).toBe('POST');
+      // The admission carries the page's declared tier and nothing else (#3059 AC15).
+      expect(JSON.parse(admissionInit.body)).toEqual({ classification: 'personal' });
+      expect(admissionInit.headers.Authorization).toBe('Bearer tok');
+      expect(mockFetch.mock.calls[1][0]).toBe(vendorUrl);
+      expect(mockFetch.mock.calls[1][1].body).toContain(SENTINEL_PAYLOAD);
+    },
+  );
+
+  test('the key registered by the BYOK provider is used when none is passed', async () => {
+    setLlmApiKeyGetter(() => OPENAI_KEY);
+    mockFetch.mockReturnValueOnce(admitted());
+    mockFetch.mockReturnValueOnce(openaiReply('page'));
+
+    await journal.transcribePage(
+      { imageBase64: 'abc', mediaType: 'image/png', classification: 'personal' },
+      'tok',
+    );
+
+    expect(mockFetch.mock.calls[0][0]).toBe(ADMISSION_URL);
+    expect(mockFetch.mock.calls[1][1].headers.Authorization).toBe(`Bearer ${OPENAI_KEY}`);
+  });
+
+  test('nothing sent to Adepthood carries the key, its header, or the page', async () => {
+    mockFetch.mockReturnValueOnce(admitted());
+    mockFetch.mockReturnValueOnce(openaiReply('page'));
+
+    await journal.transcribePage(
+      { imageBase64: SENTINEL_PAYLOAD, mediaType: 'image/png', classification: 'personal' },
+      'tok',
+      OPENAI_KEY,
+    );
+
+    const sent = requestsToAdepthood();
+    expect(sent).toHaveLength(1);
+    for (const request of sent) {
+      expect(request).not.toContain(OPENAI_KEY);
+      expect(request).not.toContain(SENTINEL_PAYLOAD);
+      expect(request.toLowerCase()).not.toContain(LLM_API_KEY_HEADER.toLowerCase());
+    }
+    expect(mockFetch.mock.calls.some(([url]) => url === PAGE_URL)).toBe(false);
+  });
+
+  test('a suspended deployment stops the page before it leaves the device', async () => {
+    mockFetch.mockReturnValueOnce(jsonResponse({ detail: 'ai_suspended' }, 503));
+
+    const err = (await captureError(
+      journal.transcribePage(
+        { imageBase64: 'abc', mediaType: 'image/png', classification: 'personal' },
+        'tok',
+        OPENAI_KEY,
+      ),
+    )) as TranscriptionErrorInstance;
+
+    expect(err).toBeInstanceOf(TranscriptionError);
+    expect(err.kind).toBe('unknown');
+    expect(err.status).toBe(503);
+    expect(mockFetch).toHaveBeenCalledTimes(1);
+  });
+
+  test('a tier the server will not admit stops the page before it leaves the device', async () => {
+    // Defence in depth behind the capture screen's own Intimate gate (#1882):
+    // the server refuses the declared tier, and the vendor is never dialled.
+    mockFetch.mockReturnValueOnce(jsonResponse({ detail: 'tier_refused' }, 403));
+
+    const err = (await captureError(
+      journal.transcribePage(
+        { imageBase64: SENTINEL_PAYLOAD, mediaType: 'image/png', classification: 'intimate' },
+        'tok',
+        OPENAI_KEY,
+      ),
+    )) as TranscriptionErrorInstance;
+
+    expect(err).toBeInstanceOf(TranscriptionError);
+    expect(err.kind).toBe('tier_refused');
+    expect(err.status).toBe(403);
+    expect(mockFetch).toHaveBeenCalledTimes(1);
+    expect(JSON.parse(mockFetch.mock.calls[0][1].body)).toEqual({ classification: 'intimate' });
+  });
+
+  test('revoked admission is terminal before a device-direct vendor request', async () => {
+    mockFetch.mockReturnValueOnce(jsonResponse({ detail: 'ai_access_revoked' }, 403));
+    const err = (await captureError(
+      journal.transcribePage(
+        { imageBase64: SENTINEL_PAYLOAD, mediaType: 'image/png', classification: 'personal' },
+        'tok',
+        OPENAI_KEY,
+      ),
+    )) as TranscriptionErrorInstance;
+    expect(err.kind).toBe('ai_access_revoked');
+    expect(err.status).toBe(403);
+    expect(mockFetch).toHaveBeenCalledTimes(1);
+    expect(mockFetch.mock.calls[0][0]).toBe(ADMISSION_URL);
+  });
+
+  test('an unreachable admission stops the page too: it fails closed', async () => {
+    mockFetch.mockRejectedValueOnce(new TypeError('Network request failed'));
+
+    const err = (await captureError(
+      journal.transcribePage(
+        { imageBase64: 'abc', mediaType: 'image/png', classification: 'personal' },
+        'tok',
+        OPENAI_KEY,
+      ),
+    )) as TranscriptionErrorInstance;
+
+    expect(err.kind).toBe('network');
+    expect(mockFetch).toHaveBeenCalledTimes(1);
+  });
+
+  test.each([
+    ['[no text found]', 'no_text_found'],
+    ["I'm unable to transcribe this image.", 'transcription_refused'],
+  ])('a reply of %j is the %s kind, never the page text', async (reply, kind) => {
+    mockFetch.mockReturnValueOnce(admitted());
+    mockFetch.mockReturnValueOnce(openaiReply(reply));
+
+    const err = (await captureError(
+      journal.transcribePage(
+        { imageBase64: 'abc', mediaType: 'image/png', classification: 'personal' },
+        'tok',
+        OPENAI_KEY,
+      ),
+    )) as TranscriptionErrorInstance;
+
+    expect(err).toBeInstanceOf(TranscriptionError);
+    expect(err.kind).toBe(kind);
+  });
+
+  test.each([
+    [{ error: { code: 'insufficient_quota' } }, 429, 'credit_exhausted'],
+    [{ error: { code: 'rate_limit_exceeded' } }, 429, 'rate_limited'],
+    [{ error: { message: 'invalid api key' } }, 401, 'provider_error'],
+  ])('a vendor refusal %j (%i) is %s', async (body, status, kind) => {
+    mockFetch.mockReturnValueOnce(admitted());
+    mockFetch.mockReturnValueOnce(jsonResponse(body, status));
+
+    const err = (await captureError(
+      journal.transcribePage(
+        { imageBase64: 'abc', mediaType: 'image/png', classification: 'personal' },
+        'tok',
+        OPENAI_KEY,
+      ),
+    )) as TranscriptionErrorInstance;
+
+    expect(err.kind).toBe(kind);
+    expect(err.status).toBe(status);
+  });
+
+  test('a stored key that names no vendor is never sent anywhere', async () => {
+    mockFetch.mockReturnValueOnce(admitted());
+
+    const err = (await captureError(
+      journal.transcribePage(
+        { imageBase64: 'abc', mediaType: 'image/png', classification: 'personal' },
+        'tok',
+        'garbage',
+      ),
+    )) as TranscriptionErrorInstance;
+
+    expect(err.kind).toBe('unknown');
+    expect(mockFetch).toHaveBeenCalledTimes(1);
+    expect(mockFetch.mock.calls[0][0]).toBe(ADMISSION_URL);
+  });
+});
+
+describe('journal.transcribePage without a key, outside a development build', () => {
+  afterEach(() => {
+    mockKeylessReachesServer = true;
+  });
+
+  test('refuses key_required on the device and sends nothing anywhere', async () => {
+    mockKeylessReachesServer = false;
+
+    const err = (await captureError(
+      journal.transcribePage(
+        { imageBase64: SENTINEL_PAYLOAD, mediaType: 'image/png', classification: 'personal' },
+        'tok',
+      ),
+    )) as TranscriptionErrorInstance;
+
+    expect(err).toBeInstanceOf(TranscriptionError);
+    expect(err.kind).toBe('key_required');
+    expect(err.status).toBeNull();
+    expect(mockFetch).not.toHaveBeenCalled();
+  });
+});
+
+describe('journal.transcribePage without a key', () => {
+  test('goes to the server with no key header at all', async () => {
     mockFetch.mockReturnValueOnce(jsonResponse({ text: 'x' }));
-    await journal.transcribePage({ imageBase64: 'abc', mediaType: 'image/png' }, 'tok');
-    expect(mockFetch.mock.calls[1][1].headers[LLM_API_KEY_HEADER]).toBeUndefined();
+    await journal.transcribePage(
+      { imageBase64: 'abc', mediaType: 'image/png', classification: 'personal' },
+      'tok',
+    );
+
+    expect(mockFetch.mock.calls[0][0]).toBe(PAGE_URL);
+    expect(mockFetch.mock.calls[0][1].headers[LLM_API_KEY_HEADER]).toBeUndefined();
   });
 });
 
@@ -85,7 +344,10 @@ describe('journal.transcribePage timeout', () => {
         }),
     );
 
-    const promise = journal.transcribePage({ imageBase64: 'abc', mediaType: 'image/png' }, 'tok');
+    const promise = journal.transcribePage(
+      { imageBase64: 'abc', mediaType: 'image/png', classification: 'personal' },
+      'tok',
+    );
     promise.catch(() => {});
 
     await jest.advanceTimersByTimeAsync(30_000);
@@ -103,6 +365,18 @@ describe('journal.transcribePage timeout', () => {
 describe('journal.transcribePage error mapping', () => {
   const cases: Array<{ name: string; status: number; body: unknown; kind: string }> = [
     {
+      name: '403 ai_access_revoked is terminal',
+      status: 403,
+      body: { detail: 'ai_access_revoked' },
+      kind: 'ai_access_revoked',
+    },
+    {
+      name: 'another status with revoked detail is not the terminal contract',
+      status: 400,
+      body: { detail: 'ai_access_revoked' },
+      kind: 'unknown',
+    },
+    {
       name: '422 invalid_image',
       status: 422,
       body: { detail: 'invalid_image' },
@@ -113,12 +387,6 @@ describe('journal.transcribePage error mapping', () => {
       status: 422,
       body: { detail: 'image_too_large' },
       kind: 'image_too_large',
-    },
-    {
-      name: '422 model_lacks_vision',
-      status: 422,
-      body: { detail: 'model_lacks_vision' },
-      kind: 'model_lacks_vision',
     },
     {
       name: '422 no_text_found is its own kind, not invalid_image',
@@ -139,16 +407,28 @@ describe('journal.transcribePage error mapping', () => {
       kind: 'invalid_image',
     },
     {
+      name: '403 tier_refused is its own kind: the declared tier may not be read (#3059)',
+      status: 403,
+      body: { detail: 'tier_refused' },
+      kind: 'tier_refused',
+    },
+    {
+      name: '403 with any other detail is not mistaken for a tier refusal',
+      status: 403,
+      body: { detail: 'forbidden' },
+      kind: 'unknown',
+    },
+    {
       name: '402 insufficient_offerings maps to wallet_exhausted',
       status: 402,
       body: { detail: 'insufficient_offerings' },
       kind: 'wallet_exhausted',
     },
     {
-      name: '402 llm_key_required is NOT wallet exhaustion',
+      name: '402 llm_key_required asks for a key, and is NOT wallet exhaustion',
       status: 402,
       body: { detail: 'llm_key_required' },
-      kind: 'unknown',
+      kind: 'key_required',
     },
     {
       name: '429 slowapi error key maps to rate_limited',
@@ -173,7 +453,10 @@ describe('journal.transcribePage error mapping', () => {
   test.each(cases)('$name', async ({ status, body, kind }) => {
     mockFetch.mockReturnValueOnce(jsonResponse(body, status));
     const err = await captureError(
-      journal.transcribePage({ imageBase64: 'abc', mediaType: 'image/png' }, 'tok'),
+      journal.transcribePage(
+        { imageBase64: 'abc', mediaType: 'image/png', classification: 'personal' },
+        'tok',
+      ),
     );
     expect(err).toBeInstanceOf(TranscriptionError);
     const transcriptionErr = err as TranscriptionErrorInstance;
@@ -185,7 +468,10 @@ describe('journal.transcribePage error mapping', () => {
   test('does not retry a 502 (POST is non-idempotent)', async () => {
     mockFetch.mockReturnValueOnce(jsonResponse({ detail: 'llm_provider_error' }, 502));
     await captureError(
-      journal.transcribePage({ imageBase64: 'abc', mediaType: 'image/png' }, 'tok'),
+      journal.transcribePage(
+        { imageBase64: 'abc', mediaType: 'image/png', classification: 'personal' },
+        'tok',
+      ),
     );
     expect(mockFetch).toHaveBeenCalledTimes(1);
   });
@@ -195,7 +481,10 @@ describe('journal.transcribePage error mapping', () => {
       jsonResponse({ error: 'Rate limit exceeded: 20 per 1 minute' }, 429),
     );
     await captureError(
-      journal.transcribePage({ imageBase64: 'abc', mediaType: 'image/png' }, 'tok'),
+      journal.transcribePage(
+        { imageBase64: 'abc', mediaType: 'image/png', classification: 'personal' },
+        'tok',
+      ),
     );
     expect(mockFetch).toHaveBeenCalledTimes(1);
   });
@@ -203,7 +492,10 @@ describe('journal.transcribePage error mapping', () => {
   test('maps a network failure to kind network with a null status', async () => {
     mockFetch.mockRejectedValueOnce(new TypeError('Network request failed'));
     const err = await captureError(
-      journal.transcribePage({ imageBase64: 'abc', mediaType: 'image/png' }, 'tok'),
+      journal.transcribePage(
+        { imageBase64: 'abc', mediaType: 'image/png', classification: 'personal' },
+        'tok',
+      ),
     );
     expect(err).toBeInstanceOf(TranscriptionError);
     const transcriptionErr = err as TranscriptionErrorInstance;
@@ -228,7 +520,10 @@ describe('transcribePageSchema', () => {
   test('a 200 response that drifts from the schema rejects as kind unknown', async () => {
     mockFetch.mockReturnValueOnce(jsonResponse({ notText: 1 }));
     const err = await captureError(
-      journal.transcribePage({ imageBase64: 'abc', mediaType: 'image/png' }, 'tok'),
+      journal.transcribePage(
+        { imageBase64: 'abc', mediaType: 'image/png', classification: 'personal' },
+        'tok',
+      ),
     );
     expect(err).toBeInstanceOf(TranscriptionError);
     expect((err as TranscriptionErrorInstance).kind).toBe('unknown');
@@ -255,18 +550,30 @@ describe('journal.transcribePage privacy', () => {
   function assertNoSecretLeak(spy: jest.SpyInstance): void {
     for (const call of spy.mock.calls) {
       expect(JSON.stringify(call)).not.toContain(SENTINEL_PAYLOAD);
+      for (const arg of call) {
+        expect(arg).not.toBeInstanceOf(Error);
+        expect(String(arg)).not.toContain(SENTINEL_PAYLOAD);
+      }
     }
   }
 
   test('a failed (502) call never logs the image payload or leaks it into the message', async () => {
     mockFetch.mockReturnValueOnce(jsonResponse({ detail: 'llm_provider_error' }, 502));
     const err = await captureError(
-      journal.transcribePage({ imageBase64: SENTINEL_PAYLOAD, mediaType: 'image/png' }, 'tok'),
+      journal.transcribePage(
+        { imageBase64: SENTINEL_PAYLOAD, mediaType: 'image/png', classification: 'personal' },
+        'tok',
+      ),
     );
-    // A mapped transport error emits no console output at all, so the leak scan
-    // would pass vacuously; assert silence explicitly to lock that in.
+    // The failure records only bounded transport metadata; the payload remains private.
+    expect(warnSpy).toHaveBeenCalledWith('api_server_error', {
+      route: 'unknown_route',
+      status: 502,
+    });
+    assertNoSecretLeak(logSpy);
+    assertNoSecretLeak(warnSpy);
+    assertNoSecretLeak(errorSpy);
     expect(logSpy).not.toHaveBeenCalled();
-    expect(warnSpy).not.toHaveBeenCalled();
     expect(errorSpy).not.toHaveBeenCalled();
     expect((err as TranscriptionErrorInstance).message).not.toContain(SENTINEL_PAYLOAD);
   });
@@ -274,7 +581,10 @@ describe('journal.transcribePage privacy', () => {
   test('a schema-drift (200) call never logs the image payload or leaks it into the message', async () => {
     mockFetch.mockReturnValueOnce(jsonResponse({ notText: 1 }));
     const err = await captureError(
-      journal.transcribePage({ imageBase64: SENTINEL_PAYLOAD, mediaType: 'image/png' }, 'tok'),
+      journal.transcribePage(
+        { imageBase64: SENTINEL_PAYLOAD, mediaType: 'image/png', classification: 'personal' },
+        'tok',
+      ),
     );
     assertNoSecretLeak(logSpy);
     assertNoSecretLeak(warnSpy);
@@ -292,7 +602,10 @@ describe('journal.transcribePage exhausted-balance classification', () => {
   test("a caller's spent key is not the monthly free allotment", async () => {
     mockFetch.mockReturnValueOnce(jsonResponse({ detail: 'llm_credit_exhausted' }, 402));
     const err = (await captureError(
-      journal.transcribePage({ imageBase64: 'abc', mediaType: 'image/png' }, 'tok', 'sk-byok'),
+      journal.transcribePage(
+        { imageBase64: 'abc', mediaType: 'image/png', classification: 'personal' },
+        'tok',
+      ),
     )) as TranscriptionErrorInstance;
 
     expect(err).toBeInstanceOf(TranscriptionError);
@@ -300,15 +613,20 @@ describe('journal.transcribePage exhausted-balance classification', () => {
     expect(err.kind).toBe('credit_exhausted');
   });
 
-  test('our own spent key gets its own kind, not the catch-all', async () => {
+  test('no 503 is a provider-balance story any more: the server key is retired', async () => {
+    // The server's own key never pays for a page (ADR 0009 phase (a), #3067), so
+    // the 503 it once answered for a spent server balance is gone, and with it
+    // the kind that told the writer "restoring it is ours".
     mockFetch.mockReturnValueOnce(jsonResponse({ detail: 'llm_service_credit_exhausted' }, 503));
     const err = (await captureError(
-      journal.transcribePage({ imageBase64: 'abc', mediaType: 'image/png' }, 'tok'),
+      journal.transcribePage(
+        { imageBase64: 'abc', mediaType: 'image/png', classification: 'personal' },
+        'tok',
+      ),
     )) as TranscriptionErrorInstance;
 
     expect(err).toBeInstanceOf(TranscriptionError);
-    expect(err.kind).not.toBe('unknown');
-    expect(err.kind).toBe('service_credit_exhausted');
+    expect(err.kind).toBe('unknown');
   });
 
   test('a genuine spent wallet still classifies as wallet_exhausted', async () => {
@@ -316,18 +634,28 @@ describe('journal.transcribePage exhausted-balance classification', () => {
     // common 402 and its copy must not be repointed at the provider story.
     mockFetch.mockReturnValueOnce(jsonResponse({ detail: 'insufficient_offerings' }, 402));
     const err = (await captureError(
-      journal.transcribePage({ imageBase64: 'abc', mediaType: 'image/png' }, 'tok'),
+      journal.transcribePage(
+        { imageBase64: 'abc', mediaType: 'image/png', classification: 'personal' },
+        'tok',
+      ),
     )) as TranscriptionErrorInstance;
 
     expect(err.kind).toBe('wallet_exhausted');
   });
 
-  test('a keyless BYOK 402 still classifies as unknown', async () => {
+  test('a keyless 402 is its own actionable kind, not the catch-all (#3096)', async () => {
+    // A server with nothing credits could buy refuses every keyless page with
+    // `llm_key_required`. That is a remedy the writer can act on -- add a key --
+    // so it must not collapse into `unknown`, whose copy only says "try again".
     mockFetch.mockReturnValueOnce(jsonResponse({ detail: 'llm_key_required' }, 402));
     const err = (await captureError(
-      journal.transcribePage({ imageBase64: 'abc', mediaType: 'image/png' }, 'tok'),
+      journal.transcribePage(
+        { imageBase64: 'abc', mediaType: 'image/png', classification: 'personal' },
+        'tok',
+      ),
     )) as TranscriptionErrorInstance;
 
-    expect(err.kind).toBe('unknown');
+    expect(err.kind).not.toBe('unknown');
+    expect(err.kind).toBe('key_required');
   });
 });

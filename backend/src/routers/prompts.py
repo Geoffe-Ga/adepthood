@@ -17,6 +17,7 @@ from bounds import PromptOrdinalPath, StageNumberPath, WeekNumberPath
 from database import get_session
 from dependencies.timezone import current_user_timezone
 from domain.program_calendar import calendar_week, resolve_program_anchor
+from domain.prompt_history import past_prompt_weeks
 from domain.stage_progress import get_user_progress
 from domain.weekly_prompts import (
     TOTAL_WEEKS,
@@ -208,6 +209,7 @@ class _HistoryFilters:
     limit: int = Query(default=50, ge=1, le=200)
     offset: int = Query(default=0, ge=0, le=TOTAL_WEEKS)
     include_total: bool = Query(default=True)
+    include_unanswered: bool = Query(default=False)
 
 
 async def _maybe_total(
@@ -223,13 +225,59 @@ async def _maybe_total(
     return int((await session.execute(count_query)).scalar() or 0)
 
 
+def _unanswered_past_details(
+    last_week: int, dismissed: DismissedPrompts
+) -> dict[int, PromptDetail]:
+    """Read past questions from the live curriculum, without inventing retired ones."""
+    details = {}
+    for week in range(1, last_week + 1):
+        if (resolved := resolve_week_prompt(week)) is not None:
+            details[week] = _unanswered_detail(resolved, dismissed)
+    return details
+
+
+async def _history_with_unanswered(
+    session: AsyncSession, user_id: int, tz: str, filters: _HistoryFilters
+) -> PromptListResponse:
+    """Fill skipped calendar weeks without manufacturing answers or opening future weeks.
+
+    At most 36 weeks exist, so merge the bounded curriculum and this owner's
+    responses before slicing. Saved answers win (including a chosen ordinal
+    or retired question), and remain readable even in the current week.
+    """
+    now = datetime.now(UTC)
+    progress = await get_user_progress(session, user_id)
+    last_past_week = past_prompt_weeks(progress, now, tz)
+    responses = (
+        (await session.execute(select(PromptResponse).where(PromptResponse.user_id == user_id)))
+        .scalars()
+        .all()
+    )
+    dismissed = await _dismissed_prompts(session, user_id)
+    by_week = _unanswered_past_details(last_past_week, dismissed)
+    by_week.update((row.week_number, _answered_detail(row, dismissed)) for row in responses)
+    items = sorted(by_week.values(), key=lambda item: item.week_number, reverse=True)
+    return PromptListResponse(
+        items=items[filters.offset : filters.offset + filters.limit],
+        total=len(items) if filters.include_total else None,
+        has_more=page_has_more(filters.offset, filters.limit, len(items)),
+    )
+
+
 @router.get("/history", response_model=PromptListResponse)
 async def list_prompt_history(
     current_user: Annotated[int, Depends(get_current_user)],
     session: Annotated[AsyncSession, Depends(get_session)],
+    user_tz: Annotated[str, Depends(current_user_timezone)],
     filters: Annotated[_HistoryFilters, Depends()],
 ) -> PromptListResponse:
-    """List all past prompts and responses for the user, paginated.
+    """List saved responses, optionally including unanswered past weekly prompts.
+
+    ``include_unanswered`` adds questions from completed weeks across recorded
+    program cycles, counted in the caller's timezone. Past questions survive
+    begin-again; missing historical calendars are never guessed. The default
+    remains answered-only for clients that use history to determine which
+    prompts have been written to.
 
     With ``include_total=true`` (default) the count subquery runs and
     ``has_more`` is ``offset + limit < total``.  With
@@ -239,6 +287,8 @@ async def list_prompt_history(
     materialised -- so cursor pagination stays accurate for mid-
     curriculum users without paying for ``COUNT(*)``.
     """
+    if filters.include_unanswered:
+        return await _history_with_unanswered(session, current_user, user_tz, filters)
     # ``week_number`` alone is a partial order -- a user answers many prompts
     # in a week -- and OFFSET/LIMIT over a partial order may repeat or drop
     # rows inside a tie group (issue #2718).  ``id DESC`` makes it total and

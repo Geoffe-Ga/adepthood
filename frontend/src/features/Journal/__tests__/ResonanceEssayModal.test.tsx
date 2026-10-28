@@ -2,15 +2,20 @@
 import { jest, describe, it, expect, beforeEach } from '@jest/globals';
 import { act, fireEvent, render, waitFor } from '@testing-library/react-native';
 import React from 'react';
+import { Text, TouchableOpacity, View } from 'react-native';
 
 import type { Marginalia } from '@/api';
 import { ApiError } from '@/api';
 import type { BotmasonUsageT as UsageResponse } from '@/api/schemas';
+import { setActiveUser } from '@/storage/userScope';
 
 const mockEssay = jest.fn() as jest.MockedFunction<
-  (_id: number, _options?: { priceAcknowledged?: boolean }) => Promise<Marginalia>
+  (
+    _id: number,
+    _options?: { priceAcknowledged?: boolean; disclosedRoute?: string },
+  ) => Promise<Marginalia>
 >;
-const mockUsage = jest.fn() as jest.MockedFunction<() => Promise<UsageResponse>>;
+const mockUsage = jest.fn() as jest.MockedFunction<(_token?: string) => Promise<UsageResponse>>;
 
 jest.mock('@/api', () => {
   const actual = jest.requireActual('@/api') as Record<string, unknown>;
@@ -20,10 +25,16 @@ jest.mock('@/api', () => {
       essay: (...a: unknown[]) => (mockEssay as unknown as (...x: unknown[]) => unknown)(...a),
     },
     botmasonUsage: {
-      get: () => mockUsage(),
+      get: (token?: string) => mockUsage(token),
     },
   };
 });
+
+const mockAuthState = {
+  token: 'test.eyJzdWIiOiIxIiwiZXhwIjo0MTAyNDQ0ODAwfQ.test',
+  authStatus: 'authenticated',
+};
+jest.mock('@/context/AuthContext', () => ({ useAuth: () => mockAuthState }));
 
 const ResonanceEssayModal = require('../ResonanceEssayModal').default;
 
@@ -53,6 +64,7 @@ function usage(cap: number, remaining: number, offerings = 0): UsageResponse {
     monthly_cap: cap,
     monthly_reset_date: '2026-10-01T00:00:00Z',
     offering_balance: offerings,
+    resonance_route: 'app_provider',
   };
 }
 
@@ -64,10 +76,78 @@ async function askForTheLetter(findByTestId: (_id: string) => Promise<unknown>):
   });
 }
 
+interface NativeHostNode {
+  type: string;
+  children: NativeHostTree[] | null;
+}
+type NativeHostTree = NativeHostNode | string | number | null | NativeHostTree[];
+
+/** RNTL's host permits raw text that the native renderer rejects outside Text. */
+function unwrappedNativeText(tree: NativeHostTree, parent = ''): string[] {
+  if (tree === null) return [];
+  if (Array.isArray(tree)) return tree.flatMap((child) => unwrappedNativeText(child, parent));
+  if (typeof tree === 'string' || typeof tree === 'number') {
+    return parent === 'Text' ? [] : [`${parent}: ${JSON.stringify(tree)}`];
+  }
+  return unwrappedNativeText(tree.children, tree.type);
+}
+
 beforeEach(() => {
+  setActiveUser(1);
+  mockAuthState.token = 'test.eyJzdWIiOiIxIiwiZXhwIjo0MTAyNDQ0ODAwfQ.test';
+  mockAuthState.authStatus = 'authenticated';
   mockEssay.mockReset();
   mockUsage.mockReset();
-  mockUsage.mockRejectedValue(new Error('usage unavailable in this test'));
+  mockUsage.mockResolvedValue(usage(20, 12));
+});
+
+describe('first-letter offers respect native text parents', () => {
+  it('accepts nested Text and rejects whitespace and numeric children of a View', () => {
+    const legal = render(
+      <View>
+        <Text>
+          A letter <Text>with nested text</Text> {0}
+        </Text>
+      </View>,
+    );
+    expect(unwrappedNativeText(legal.toJSON())).toEqual([]);
+    const illegal = render(<View> {0}</View>);
+    expect(unwrappedNativeText(illegal.toJSON())).toEqual(['View: " "', 'View: "0"']);
+  });
+
+  it.each(['paid', 'key-required', 'blocked'] as const)(
+    'renders a %s offer without text outside a native Text host',
+    async (state) => {
+      if (state === 'blocked') mockUsage.mockRejectedValue(new Error('usage unavailable'));
+      else {
+        mockUsage.mockResolvedValue({
+          ...usage(20, 12),
+          resonance_route: state === 'paid' ? 'vault_bound' : 'app_provider',
+        });
+      }
+      const view = render(
+        <ResonanceEssayModal
+          note={note()}
+          onClose={jest.fn()}
+          hasOwnKey={false}
+          onOpenSettings={jest.fn()}
+        />,
+      );
+      const copy = {
+        paid: /This letter spends one/u,
+        'key-required': /This needs your own API key/u,
+        blocked: /couldn't check/u,
+      };
+      await waitFor(() =>
+        expect(view.getByTestId('essay-ask-cost')).toHaveTextContent(copy[state]),
+      );
+      expect(view.getByTestId('essay-not-now')).toBeTruthy();
+      expect(view.queryByTestId('essay-ask') !== null).toBe(state === 'paid');
+      expect(view.queryByTestId('essay-open-settings') !== null).toBe(state === 'key-required');
+      expect(mockEssay).not.toHaveBeenCalled();
+      expect(unwrappedNativeText(view.toJSON())).toEqual([]);
+    },
+  );
 });
 
 describe('ResonanceEssayModal', () => {
@@ -75,19 +155,33 @@ describe('ResonanceEssayModal', () => {
     mockEssay.mockResolvedValue(note({ id: 4, essay: 'A warm letter about bending.' }));
     const onEssayLoaded = jest.fn();
     const { findByTestId } = render(
-      <ResonanceEssayModal note={note()} onClose={jest.fn()} onEssayLoaded={onEssayLoaded} />,
+      <ResonanceEssayModal
+        note={note()}
+        onClose={jest.fn()}
+        onEssayLoaded={onEssayLoaded}
+        hasOwnKey
+        onOpenSettings={jest.fn()}
+      />,
     );
     await askForTheLetter(findByTestId);
     const text = await findByTestId('essay-text');
     expect(text.props.children).toBe('A warm letter about bending.');
     expect(mockEssay).toHaveBeenCalledTimes(1);
-    expect(mockEssay).toHaveBeenCalledWith(4, { priceAcknowledged: true });
+    expect(mockEssay).toHaveBeenCalledWith(4, {
+      priceAcknowledged: true,
+      disclosedRoute: 'app_provider',
+    });
     expect(onEssayLoaded).toHaveBeenCalledTimes(1);
   });
 
   it('renders a cached essay without calling the API', async () => {
     const { getByTestId } = render(
-      <ResonanceEssayModal note={note({ essay: 'Already here.' })} onClose={jest.fn()} />,
+      <ResonanceEssayModal
+        note={note({ essay: 'Already here.' })}
+        onClose={jest.fn()}
+        hasOwnKey
+        onOpenSettings={jest.fn()}
+      />,
     );
     await waitFor(() => expect(getByTestId('essay-text').props.children).toBe('Already here.'));
     expect(mockEssay).not.toHaveBeenCalled();
@@ -99,6 +193,8 @@ describe('ResonanceEssayModal', () => {
       <ResonanceEssayModal
         note={note({ essay: 'x', anchor_text: 'the willow' })}
         onClose={jest.fn()}
+        hasOwnKey
+        onOpenSettings={jest.fn()}
       />,
     );
     expect(getByTestId('essay-quote').props.children.join('')).toContain('the willow');
@@ -107,7 +203,12 @@ describe('ResonanceEssayModal', () => {
   it('dismisses via the scrim and the close control', () => {
     const onClose = jest.fn();
     const { getByTestId } = render(
-      <ResonanceEssayModal note={note({ essay: 'x' })} onClose={onClose} />,
+      <ResonanceEssayModal
+        note={note({ essay: 'x' })}
+        onClose={onClose}
+        hasOwnKey
+        onOpenSettings={jest.fn()}
+      />,
     );
     fireEvent.press(getByTestId('essay-scrim'));
     fireEvent.press(getByTestId('essay-close'));
@@ -118,7 +219,13 @@ describe('ResonanceEssayModal', () => {
     mockEssay.mockResolvedValue(note({ id: 4, essay: '' }));
     const onEssayLoaded = jest.fn();
     const { findByTestId, queryByTestId } = render(
-      <ResonanceEssayModal note={note()} onClose={jest.fn()} onEssayLoaded={onEssayLoaded} />,
+      <ResonanceEssayModal
+        note={note()}
+        onClose={jest.fn()}
+        onEssayLoaded={onEssayLoaded}
+        hasOwnKey
+        onOpenSettings={jest.fn()}
+      />,
     );
     await askForTheLetter(findByTestId);
     await findByTestId('essay-retry');
@@ -145,7 +252,13 @@ describe('ResonanceEssayModal', () => {
     );
     const onEssayLoaded = jest.fn();
     const { getByTestId, findByTestId, rerender } = render(
-      <ResonanceEssayModal note={note()} onClose={jest.fn()} onEssayLoaded={onEssayLoaded} />,
+      <ResonanceEssayModal
+        note={note()}
+        onClose={jest.fn()}
+        onEssayLoaded={onEssayLoaded}
+        hasOwnKey
+        onOpenSettings={jest.fn()}
+      />,
     );
     await askForTheLetter(findByTestId);
     // The ask really is in flight against an open modal, so the drop below is
@@ -153,7 +266,15 @@ describe('ResonanceEssayModal', () => {
     expect(mockEssay).toHaveBeenCalledTimes(1);
     expect(getByTestId('essay-loading')).toBeTruthy();
 
-    rerender(<ResonanceEssayModal note={null} onClose={jest.fn()} onEssayLoaded={onEssayLoaded} />);
+    rerender(
+      <ResonanceEssayModal
+        note={null}
+        onClose={jest.fn()}
+        onEssayLoaded={onEssayLoaded}
+        hasOwnKey
+        onOpenSettings={jest.fn()}
+      />,
+    );
     await act(async () => {
       answer(note({ id: 4, essay: 'A letter that arrived too late.' }));
     });
@@ -168,7 +289,13 @@ describe('ResonanceEssayModal', () => {
       .mockRejectedValueOnce(new Error('boom'))
       .mockResolvedValueOnce(note({ id: 4, essay: 'Recovered essay.' }));
     const { findByTestId } = render(
-      <ResonanceEssayModal note={note()} onClose={jest.fn()} onEssayLoaded={jest.fn()} />,
+      <ResonanceEssayModal
+        note={note()}
+        onClose={jest.fn()}
+        onEssayLoaded={jest.fn()}
+        hasOwnKey
+        onOpenSettings={jest.fn()}
+      />,
     );
     await askForTheLetter(findByTestId);
     const retry = await findByTestId('essay-retry');
@@ -209,8 +336,24 @@ describe('ResonanceEssayModal reopened after a letter that never arrived', () =>
     rerender: (_ui: React.ReactElement) => void,
     reopened: Marginalia,
   ): Promise<void> {
-    rerender(<ResonanceEssayModal note={null} onClose={jest.fn()} onEssayLoaded={jest.fn()} />);
-    rerender(<ResonanceEssayModal note={reopened} onClose={jest.fn()} onEssayLoaded={jest.fn()} />);
+    rerender(
+      <ResonanceEssayModal
+        note={null}
+        onClose={jest.fn()}
+        onEssayLoaded={jest.fn()}
+        hasOwnKey
+        onOpenSettings={jest.fn()}
+      />,
+    );
+    rerender(
+      <ResonanceEssayModal
+        note={reopened}
+        onClose={jest.fn()}
+        onEssayLoaded={jest.fn()}
+        hasOwnKey
+        onOpenSettings={jest.fn()}
+      />,
+    );
     // Flush any effect-scheduled promise, so a re-ask would be counted below.
     await act(async () => {});
   }
@@ -218,7 +361,13 @@ describe('ResonanceEssayModal reopened after a letter that never arrived', () =>
   it('does not re-ask for a note whose letter came back blank, and still says so', async () => {
     mockEssay.mockResolvedValue(note({ id: 4, essay: '' }));
     const { findByTestId, getByTestId, getByText, queryByTestId, rerender } = render(
-      <ResonanceEssayModal note={note()} onClose={jest.fn()} onEssayLoaded={jest.fn()} />,
+      <ResonanceEssayModal
+        note={note()}
+        onClose={jest.fn()}
+        onEssayLoaded={jest.fn()}
+        hasOwnKey
+        onOpenSettings={jest.fn()}
+      />,
     );
     await askForTheLetter(findByTestId);
     await findByTestId('essay-retry');
@@ -238,7 +387,13 @@ describe('ResonanceEssayModal reopened after a letter that never arrived', () =>
   it('does not re-ask for a note whose request failed, and still shows the error', async () => {
     mockEssay.mockRejectedValue(new Error(FAILURE_COPY));
     const { findByTestId, getByTestId, getByText, queryByTestId, rerender } = render(
-      <ResonanceEssayModal note={note()} onClose={jest.fn()} onEssayLoaded={jest.fn()} />,
+      <ResonanceEssayModal
+        note={note()}
+        onClose={jest.fn()}
+        onEssayLoaded={jest.fn()}
+        hasOwnKey
+        onOpenSettings={jest.fn()}
+      />,
     );
     await askForTheLetter(findByTestId);
     await findByTestId('essay-retry');
@@ -257,7 +412,13 @@ describe('ResonanceEssayModal reopened after a letter that never arrived', () =>
       .mockResolvedValueOnce(note({ id: 4, essay: '' }))
       .mockResolvedValueOnce(note({ id: 4, essay: 'The letter, on the second ask.' }));
     const { findByTestId, rerender } = render(
-      <ResonanceEssayModal note={note()} onClose={jest.fn()} onEssayLoaded={jest.fn()} />,
+      <ResonanceEssayModal
+        note={note()}
+        onClose={jest.fn()}
+        onEssayLoaded={jest.fn()}
+        hasOwnKey
+        onOpenSettings={jest.fn()}
+      />,
     );
     await askForTheLetter(findByTestId);
     await findByTestId('essay-retry');
@@ -279,7 +440,13 @@ describe('ResonanceEssayModal reopened after a letter that never arrived', () =>
       .mockResolvedValueOnce(note({ id: 4, essay: '' }))
       .mockResolvedValueOnce(note({ id: 9, essay: 'A letter for the other note.' }));
     const { findByTestId, rerender } = render(
-      <ResonanceEssayModal note={note()} onClose={jest.fn()} onEssayLoaded={jest.fn()} />,
+      <ResonanceEssayModal
+        note={note()}
+        onClose={jest.fn()}
+        onEssayLoaded={jest.fn()}
+        hasOwnKey
+        onOpenSettings={jest.fn()}
+      />,
     );
     await askForTheLetter(findByTestId);
     await findByTestId('essay-retry');
@@ -289,7 +456,10 @@ describe('ResonanceEssayModal reopened after a letter that never arrived', () =>
     await askForTheLetter(findByTestId);
 
     expect(mockEssay).toHaveBeenCalledTimes(2);
-    expect(mockEssay).toHaveBeenLastCalledWith(9, { priceAcknowledged: true });
+    expect(mockEssay).toHaveBeenLastCalledWith(9, {
+      priceAcknowledged: true,
+      disclosedRoute: 'app_provider',
+    });
     expect((await findByTestId('essay-text')).props.children).toBe('A letter for the other note.');
   });
 
@@ -301,20 +471,40 @@ describe('ResonanceEssayModal reopened after a letter that never arrived', () =>
       }),
     );
     const { findByTestId, getByTestId, getByText, queryByTestId, rerender } = render(
-      <ResonanceEssayModal note={note()} onClose={jest.fn()} onEssayLoaded={jest.fn()} />,
+      <ResonanceEssayModal
+        note={note()}
+        onClose={jest.fn()}
+        onEssayLoaded={jest.fn()}
+        hasOwnKey
+        onOpenSettings={jest.fn()}
+      />,
     );
     await askForTheLetter(findByTestId);
     expect(getByTestId('essay-loading')).toBeTruthy();
 
     // The writer closes the modal before the answer arrives; the ask still
     // lands, and produces no letter.
-    rerender(<ResonanceEssayModal note={null} onClose={jest.fn()} onEssayLoaded={jest.fn()} />);
+    rerender(
+      <ResonanceEssayModal
+        note={null}
+        onClose={jest.fn()}
+        onEssayLoaded={jest.fn()}
+        hasOwnKey
+        onOpenSettings={jest.fn()}
+      />,
+    );
     await act(async () => {
       answer(note({ id: 4, essay: '' }));
     });
 
     rerender(
-      <ResonanceEssayModal note={note({ id: 4 })} onClose={jest.fn()} onEssayLoaded={jest.fn()} />,
+      <ResonanceEssayModal
+        note={note({ id: 4 })}
+        onClose={jest.fn()}
+        onEssayLoaded={jest.fn()}
+        hasOwnKey
+        onOpenSettings={jest.fn()}
+      />,
     );
     await act(async () => {});
 
@@ -330,6 +520,8 @@ describe('ResonanceEssayModal reopened after a letter that never arrived', () =>
         note={note({ id: 4, essay: '' })}
         onClose={jest.fn()}
         onEssayLoaded={jest.fn()}
+        hasOwnKey
+        onOpenSettings={jest.fn()}
       />,
     );
     await askForTheLetter(findByTestId);
@@ -341,14 +533,26 @@ describe('ResonanceEssayModal reopened after a letter that never arrived', () =>
   it('offers again on a fresh mount, because a refusal is transient', async () => {
     mockEssay.mockResolvedValue(note({ id: 4, essay: '' }));
     const first = render(
-      <ResonanceEssayModal note={note()} onClose={jest.fn()} onEssayLoaded={jest.fn()} />,
+      <ResonanceEssayModal
+        note={note()}
+        onClose={jest.fn()}
+        onEssayLoaded={jest.fn()}
+        hasOwnKey
+        onOpenSettings={jest.fn()}
+      />,
     );
     await askForTheLetter(first.findByTestId);
     await first.findByTestId('essay-retry');
     first.unmount();
 
     const second = render(
-      <ResonanceEssayModal note={note()} onClose={jest.fn()} onEssayLoaded={jest.fn()} />,
+      <ResonanceEssayModal
+        note={note()}
+        onClose={jest.fn()}
+        onEssayLoaded={jest.fn()}
+        hasOwnKey
+        onOpenSettings={jest.fn()}
+      />,
     );
     await askForTheLetter(second.findByTestId);
     await second.findByTestId('essay-retry');
@@ -367,9 +571,16 @@ describe('ResonanceEssayModal reopened after a letter that never arrived', () =>
 describe('ResonanceEssayModal offers a first letter at its price', () => {
   it('opens a cached letter from a mounted-but-closed modal with no offer and no wallet read', async () => {
     const { getByTestId, queryByTestId, rerender } = render(
-      <ResonanceEssayModal note={null} onClose={jest.fn()} />,
+      <ResonanceEssayModal note={null} onClose={jest.fn()} hasOwnKey onOpenSettings={jest.fn()} />,
     );
-    rerender(<ResonanceEssayModal note={note({ essay: 'Kept.' })} onClose={jest.fn()} />);
+    rerender(
+      <ResonanceEssayModal
+        note={note({ essay: 'Kept.' })}
+        onClose={jest.fn()}
+        hasOwnKey
+        onOpenSettings={jest.fn()}
+      />,
+    );
     expect(queryByTestId('essay-offer')).toBeNull();
     await act(async () => {});
     expect(getByTestId('essay-text').props.children).toBe('Kept.');
@@ -379,48 +590,75 @@ describe('ResonanceEssayModal offers a first letter at its price', () => {
 
   it('does not call resonance.essay on open', async () => {
     const { findByTestId } = render(
-      <ResonanceEssayModal note={note()} onClose={jest.fn()} onEssayLoaded={jest.fn()} />,
+      <ResonanceEssayModal
+        note={note()}
+        onClose={jest.fn()}
+        onEssayLoaded={jest.fn()}
+        hasOwnKey
+        onOpenSettings={jest.fn()}
+      />,
     );
     await findByTestId('essay-offer');
     await act(async () => {});
     expect(mockEssay).not.toHaveBeenCalled();
   });
 
-  it('names the monthly allowance when the wallet pays', async () => {
+  it('requires a key even when monthly credits remain', async () => {
     mockUsage.mockResolvedValue(usage(20, 12));
-    const { findByTestId } = render(<ResonanceEssayModal note={note()} onClose={jest.fn()} />);
-    await waitFor(async () =>
-      expect((await findByTestId('essay-ask-cost')).props.children).toBe(
-        'This letter spends one of your 20 BotMason messages for the month. Add your own API key in Settings to bill that key instead.',
-      ),
-    );
-  });
-
-  it('names an offering once the month is spent', async () => {
-    mockUsage.mockResolvedValue(usage(20, 0, 3));
-    const { findByTestId } = render(<ResonanceEssayModal note={note()} onClose={jest.fn()} />);
-    await waitFor(async () =>
-      expect((await findByTestId('essay-ask-cost')).props.children).toBe(
-        'This letter spends one BotMason offering. Add your own API key in Settings to bill that key instead.',
-      ),
-    );
-  });
-
-  it('says the writer’s own key pays, without reading the wallet', async () => {
     const { findByTestId } = render(
-      <ResonanceEssayModal note={note()} onClose={jest.fn()} hasOwnKey />,
+      <ResonanceEssayModal
+        note={note()}
+        onClose={jest.fn()}
+        hasOwnKey={false}
+        onOpenSettings={jest.fn()}
+      />,
+    );
+    await waitFor(async () =>
+      expect((await findByTestId('essay-ask-cost')).props.children).toBe(
+        'This needs your own API key. Add one in Settings to ask for this letter.',
+      ),
+    );
+  });
+
+  it('requires a key even when offerings remain', async () => {
+    mockUsage.mockResolvedValue(usage(20, 0, 3));
+    const { findByTestId } = render(
+      <ResonanceEssayModal
+        note={note()}
+        onClose={jest.fn()}
+        hasOwnKey={false}
+        onOpenSettings={jest.fn()}
+      />,
+    );
+    await waitFor(async () =>
+      expect((await findByTestId('essay-ask-cost')).props.children).toBe(
+        'This needs your own API key. Add one in Settings to ask for this letter.',
+      ),
+    );
+  });
+
+  it('says the writer’s own key pays after checking the app-provider route', async () => {
+    const { findByTestId } = render(
+      <ResonanceEssayModal
+        note={note()}
+        onClose={jest.fn()}
+        hasOwnKey
+        onOpenSettings={jest.fn()}
+      />,
     );
     await waitFor(async () =>
       expect((await findByTestId('essay-ask-cost')).props.children).toBe(
         'Your own API key pays for this letter. Nothing is drawn from your BotMason messages.',
       ),
     );
-    expect(mockUsage).not.toHaveBeenCalled();
+    expect(mockUsage).toHaveBeenCalledTimes(1);
   });
 
   it('closes on "Not now" without asking', async () => {
     const onClose = jest.fn();
-    const { findByTestId } = render(<ResonanceEssayModal note={note()} onClose={onClose} />);
+    const { findByTestId } = render(
+      <ResonanceEssayModal note={note()} onClose={onClose} hasOwnKey onOpenSettings={jest.fn()} />,
+    );
     await act(async () => {
       fireEvent.press(await findByTestId('essay-not-now'));
     });
@@ -429,7 +667,14 @@ describe('ResonanceEssayModal offers a first letter at its price', () => {
   });
 
   it('gives both arms a button role and a spoken label', async () => {
-    const { findByTestId } = render(<ResonanceEssayModal note={note()} onClose={jest.fn()} />);
+    const { findByTestId } = render(
+      <ResonanceEssayModal
+        note={note()}
+        onClose={jest.fn()}
+        hasOwnKey
+        onOpenSettings={jest.fn()}
+      />,
+    );
     const ask = await findByTestId('essay-ask');
     const notNow = await findByTestId('essay-not-now');
     expect(ask.props.accessibilityRole).toBe('button');
@@ -451,6 +696,8 @@ describe('ResonanceEssayModal offers a first letter at its price', () => {
           note={note()}
           onClose={jest.fn()}
           onFundingRequired={onFundingRequired}
+          hasOwnKey
+          onOpenSettings={jest.fn()}
         />,
       );
       await askForTheLetter(findByTestId);
@@ -473,7 +720,7 @@ describe('ResonanceEssayModal under a generation guardrail', () => {
   const BUSY_COPY =
     'BotMason is already writing for you, and nothing was charged for this request. Ask again once that finishes.';
   const DAILY_COPY =
-    "You've reached today's limit for new readings and letters, and nothing was charged for this request. It resets at midnight UTC.";
+    "You've hit today's limit for new readings and letters, and nothing was charged. A fresh day's worth opens at midnight UTC — that's evening in the Americas.";
 
   it('announces the in-progress refusal and still lets the writer ask again', async () => {
     mockEssay.mockRejectedValue(new ApiError(429, 'generation_in_progress'));
@@ -483,6 +730,8 @@ describe('ResonanceEssayModal under a generation guardrail', () => {
         note={note()}
         onClose={jest.fn()}
         onFundingRequired={onFundingRequired}
+        hasOwnKey
+        onOpenSettings={jest.fn()}
       />,
     );
     await askForTheLetter(findByTestId);
@@ -503,6 +752,8 @@ describe('ResonanceEssayModal under a generation guardrail', () => {
         note={note()}
         onClose={jest.fn()}
         onFundingRequired={onFundingRequired}
+        hasOwnKey
+        onOpenSettings={jest.fn()}
       />,
     );
     await askForTheLetter(findByTestId);
@@ -517,19 +768,419 @@ describe('ResonanceEssayModal under a generation guardrail', () => {
     expect(onFundingRequired).not.toHaveBeenCalled();
   });
 
+  it('says a revoked entitlement plainly and offers no retry that cannot succeed', async () => {
+    mockEssay.mockRejectedValue(new ApiError(403, 'ai_access_revoked'));
+    const onFundingRequired = jest.fn();
+    const { findByTestId, queryByTestId } = render(
+      <ResonanceEssayModal
+        note={note()}
+        onClose={jest.fn()}
+        onFundingRequired={onFundingRequired}
+        hasOwnKey
+        onOpenSettings={jest.fn()}
+      />,
+    );
+    await askForTheLetter(findByTestId);
+
+    const message = await findByTestId('essay-error');
+    expect(message.props.children).toMatch(/APTITUDE membership is no longer active/u);
+    expect(message.props.children).toMatch(/Nothing was charged/u);
+    expect(queryByTestId('essay-retry')).toBeNull();
+    expect(onFundingRequired).not.toHaveBeenCalled();
+  });
+
   it('keeps the daily refusal without a retry when the note is reopened', async () => {
     mockEssay.mockRejectedValue(new ApiError(429, 'daily_generation_limit_reached'));
     const { findByTestId, getByTestId, queryByTestId, rerender } = render(
-      <ResonanceEssayModal note={note()} onClose={jest.fn()} />,
+      <ResonanceEssayModal
+        note={note()}
+        onClose={jest.fn()}
+        hasOwnKey
+        onOpenSettings={jest.fn()}
+      />,
     );
     await askForTheLetter(findByTestId);
     await findByTestId('essay-error');
 
-    rerender(<ResonanceEssayModal note={null} onClose={jest.fn()} />);
-    rerender(<ResonanceEssayModal note={note({ id: 4 })} onClose={jest.fn()} />);
+    rerender(
+      <ResonanceEssayModal note={null} onClose={jest.fn()} hasOwnKey onOpenSettings={jest.fn()} />,
+    );
+    rerender(
+      <ResonanceEssayModal
+        note={note({ id: 4 })}
+        onClose={jest.fn()}
+        hasOwnKey
+        onOpenSettings={jest.fn()}
+      />,
+    );
 
     expect(getByTestId('essay-error').props.children).toBe(DAILY_COPY);
     expect(queryByTestId('essay-retry')).toBeNull();
     expect(mockEssay).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('ResonanceEssayModal letter source (#3062)', () => {
+  it('labels a freshly written letter with the source the server recorded', async () => {
+    mockEssay.mockResolvedValue(
+      note({ id: 4, essay: 'A provider letter.', essay_source: 'app_provider' }),
+    );
+    const { findByTestId } = render(
+      <ResonanceEssayModal
+        note={note()}
+        onClose={jest.fn()}
+        hasOwnKey
+        onOpenSettings={jest.fn()}
+      />,
+    );
+    await askForTheLetter(findByTestId);
+
+    expect((await findByTestId('essay-source')).props.children).toBe("From the app's AI provider");
+  });
+
+  it('labels a cached demo letter as a demo', async () => {
+    const { findByTestId } = render(
+      <ResonanceEssayModal
+        note={note({ essay: 'Canned.', essay_source: 'demo' })}
+        onClose={jest.fn()}
+        hasOwnKey
+        onOpenSettings={jest.fn()}
+      />,
+    );
+
+    expect((await findByTestId('essay-source')).props.children).toMatch(/^Demo/);
+  });
+
+  it('uses the letter source even when the original note has a different provider and model', async () => {
+    const { findByTestId, queryByText } = render(
+      <ResonanceEssayModal
+        note={note({
+          source: 'app_provider',
+          source_provider: 'openai',
+          source_model: 'note-only-model',
+          receipt_version: 1,
+          essay: 'The letter.',
+          essay_source: 'creek_vault',
+        })}
+        onClose={jest.fn()}
+        hasOwnKey
+        onOpenSettings={jest.fn()}
+      />,
+    );
+    expect((await findByTestId('essay-source')).props.children).toBe('From your Creek vault');
+    expect(queryByText('Reported model: note-only-model')).toBeNull();
+  });
+
+  it('says the source was not recorded for a letter written before receipts', async () => {
+    const { findByTestId } = render(
+      <ResonanceEssayModal
+        note={note({ essay: 'Older letter.' })}
+        onClose={jest.fn()}
+        hasOwnKey
+        onOpenSettings={jest.fn()}
+      />,
+    );
+
+    expect((await findByTestId('essay-source')).props.children).toBe('Source not recorded');
+  });
+});
+
+describe('keyless letter remedy (#3262)', () => {
+  it('offers Settings directly instead of a credit price or a chargeable ask', async () => {
+    const onOpenSettings = jest.fn();
+    const { getByTestId, getByRole, queryByTestId } = render(
+      <ResonanceEssayModal
+        note={note()}
+        onClose={jest.fn()}
+        hasOwnKey={false}
+        onOpenSettings={onOpenSettings}
+      />,
+    );
+    await waitFor(() =>
+      expect(getByTestId('essay-ask-cost')).toHaveTextContent(/^This needs your own API key/u),
+    );
+    expect(queryByTestId('essay-ask')).toBeNull();
+    fireEvent.press(getByRole('button', { name: 'Open Settings to add your own API key' }));
+    expect(onOpenSettings).toHaveBeenCalledTimes(1);
+    expect(mockEssay).not.toHaveBeenCalled();
+    expect(mockUsage).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('vault-bound first letters use the actual server boundary (#3262/#3346)', () => {
+  it.each([false, true])(
+    'requires an explicit wallet-priced ask even with an own key, key=%s',
+    async (hasOwnKey) => {
+      mockUsage.mockResolvedValue({ ...usage(20, 12), resonance_route: 'vault_bound' });
+      mockEssay.mockResolvedValue(note({ essay: 'A letter written by the vault.' }));
+      const onOpenSettings = jest.fn();
+      const { findByTestId, queryByTestId } = render(
+        <ResonanceEssayModal
+          note={note()}
+          onClose={jest.fn()}
+          hasOwnKey={hasOwnKey}
+          onOpenSettings={onOpenSettings}
+        />,
+      );
+      await waitFor(async () =>
+        expect((await findByTestId('essay-ask-cost')).props.children).toBe(
+          'This letter spends one of your 20 BotMason messages for the month.',
+        ),
+      );
+      expect(queryByTestId('essay-open-settings')).toBeNull();
+      expect(mockEssay).not.toHaveBeenCalled();
+      await askForTheLetter(findByTestId);
+      expect((await findByTestId('essay-text')).props.children).toBe(
+        'A letter written by the vault.',
+      );
+      expect(mockEssay).toHaveBeenCalledTimes(1);
+      expect(mockEssay).toHaveBeenCalledWith(4, {
+        priceAcknowledged: true,
+        disclosedRoute: 'vault_bound',
+      });
+      expect(onOpenSettings).not.toHaveBeenCalled();
+    },
+  );
+});
+
+describe('a letter is asked for on the route its price was disclosed for (#3385)', () => {
+  it('offers the new price again, charging nothing, when the route changed before the ask', async () => {
+    mockUsage
+      .mockResolvedValueOnce(usage(20, 12))
+      .mockResolvedValueOnce({ ...usage(20, 12), resonance_route: 'vault_bound' });
+    mockEssay
+      .mockRejectedValueOnce(new ApiError(409, 'essay_price_unacknowledged'))
+      .mockResolvedValueOnce(note({ id: 4, essay: 'A letter written by the vault.' }));
+    const onFundingRequired = jest.fn();
+    const view = render(
+      <ResonanceEssayModal
+        note={note()}
+        onClose={jest.fn()}
+        hasOwnKey
+        onOpenSettings={jest.fn()}
+        onFundingRequired={onFundingRequired}
+      />,
+    );
+    await waitFor(() =>
+      expect(view.getByTestId('essay-ask-cost')).toHaveTextContent(/Your own API key pays/u),
+    );
+    expect(view.queryByTestId('essay-payer-changed')).toBeNull();
+
+    await askForTheLetter(view.findByTestId);
+
+    expect(await view.findByTestId('essay-payer-changed')).toBeTruthy();
+    await waitFor(() =>
+      expect(view.getByTestId('essay-ask-cost')).toHaveTextContent(/This letter spends one/u),
+    );
+    expect(view.queryByTestId('essay-error')).toBeNull();
+    expect(onFundingRequired).not.toHaveBeenCalled();
+    expect(mockEssay).toHaveBeenCalledTimes(1);
+    expect(mockEssay).toHaveBeenLastCalledWith(4, {
+      priceAcknowledged: true,
+      disclosedRoute: 'app_provider',
+    });
+
+    await askForTheLetter(view.findByTestId);
+
+    expect((await view.findByTestId('essay-text')).props.children).toBe(
+      'A letter written by the vault.',
+    );
+    expect(mockEssay).toHaveBeenCalledTimes(2);
+    expect(mockEssay).toHaveBeenLastCalledWith(4, {
+      priceAcknowledged: true,
+      disclosedRoute: 'vault_bound',
+    });
+  });
+});
+
+describe('letter payment scope follows the authenticated owner (#3262)', () => {
+  it('does not publish A route under B while B route is still pending', async () => {
+    let release = (_value: UsageResponse): void => undefined;
+    mockUsage
+      .mockReturnValueOnce(
+        new Promise((resolve) => {
+          release = resolve;
+        }),
+      )
+      .mockReturnValue(new Promise(() => undefined));
+    const currentNote = note();
+    const view = render(
+      <ResonanceEssayModal
+        note={currentNote}
+        onClose={jest.fn()}
+        hasOwnKey
+        onOpenSettings={jest.fn()}
+      />,
+    );
+    setActiveUser(2);
+    mockAuthState.token = 'test.eyJzdWIiOiIyIiwiZXhwIjo0MTAyNDQ0ODAwfQ.test';
+    view.rerender(
+      <ResonanceEssayModal
+        note={currentNote}
+        onClose={jest.fn()}
+        hasOwnKey
+        onOpenSettings={jest.fn()}
+      />,
+    );
+    await act(async () => {
+      release(usage(20, 12));
+    });
+    expect(mockUsage).toHaveBeenCalledTimes(2);
+    expect(view.queryByTestId('essay-ask')).toBeNull();
+    expect(view.queryByTestId('essay-open-settings')).toBeNull();
+    expect(view.getByTestId('essay-ask-cost')).not.toHaveTextContent(/own API key pays/u);
+    expect(mockEssay).not.toHaveBeenCalled();
+  });
+  it('rejects a captured A Ask handler after B replaces the mounted session', async () => {
+    const currentNote = note();
+    const view = render(
+      <ResonanceEssayModal
+        note={currentNote}
+        onClose={jest.fn()}
+        hasOwnKey
+        onOpenSettings={jest.fn()}
+      />,
+    );
+    await view.findByTestId('essay-ask');
+    const staleAsk = view
+      .UNSAFE_getAllByType(TouchableOpacity)
+      .find((button) => button.props.testID === 'essay-ask')?.props.onPress as () => void;
+    expect(typeof staleAsk).toBe('function');
+    setActiveUser(2);
+    mockAuthState.token = 'test.eyJzdWIiOiIyIiwiZXhwIjo0MTAyNDQ0ODAwfQ.test';
+    view.rerender(
+      <ResonanceEssayModal
+        note={currentNote}
+        onClose={jest.fn()}
+        hasOwnKey
+        onOpenSettings={jest.fn()}
+      />,
+    );
+    await act(async () => {
+      staleAsk();
+    });
+    expect(mockEssay).not.toHaveBeenCalled();
+  });
+});
+
+describe('letter price reads belong to the admitted credential', () => {
+  it('does not read a price while namespace and rendered credential disagree', async () => {
+    setActiveUser(2);
+    render(
+      <ResonanceEssayModal
+        note={note()}
+        onClose={jest.fn()}
+        hasOwnKey
+        onOpenSettings={jest.fn()}
+      />,
+    );
+    await act(async () => undefined);
+    expect(mockUsage).not.toHaveBeenCalled();
+  });
+  it('passes the admitted credential explicitly to the usage request', async () => {
+    render(
+      <ResonanceEssayModal
+        note={note()}
+        onClose={jest.fn()}
+        hasOwnKey
+        onOpenSettings={jest.fn()}
+      />,
+    );
+    await act(async () => undefined);
+    expect(mockUsage).toHaveBeenCalledWith('test.eyJzdWIiOiIxIiwiZXhwIjo0MTAyNDQ0ODAwfQ.test');
+  });
+});
+
+describe("a vault care escalation answers the ask with the server's reviewed care (#3380)", () => {
+  /** The care surface exactly as the server sends it; the modal must author none of it. */
+  const CARE = {
+    title: 'Server care title',
+    message: 'Server care message, reviewed and sent as-is.',
+    resources: [
+      {
+        kind: 'hotline' as const,
+        name: 'Server hotline name',
+        contact: 'Server hotline contact',
+        what_it_is: 'Server hotline description.',
+      },
+      {
+        kind: 'human' as const,
+        name: 'Server human name',
+        contact: 'Server human contact',
+        what_it_is: 'Server human description.',
+      },
+    ],
+  };
+  const BLANK_COPY = "This note's essay isn't ready yet.";
+
+  function escalated(): Promise<Marginalia> {
+    return Promise.resolve({ ...note({ id: 4 }), care: CARE } as Marginalia);
+  }
+
+  function modal(onEssayLoaded = jest.fn()) {
+    return (
+      <ResonanceEssayModal
+        note={note()}
+        onClose={jest.fn()}
+        onEssayLoaded={onEssayLoaded}
+        hasOwnKey
+        onOpenSettings={jest.fn()}
+      />
+    );
+  }
+
+  it('shows the care card with every server field instead of a blank-letter error', async () => {
+    mockEssay.mockImplementation(escalated);
+    const onEssayLoaded = jest.fn();
+    const { findByTestId, getByText, queryByTestId, queryByText } = render(modal(onEssayLoaded));
+
+    await askForTheLetter(findByTestId);
+
+    await findByTestId('care-support-card');
+    expect(getByText(CARE.title)).toBeTruthy();
+    expect(getByText(CARE.message)).toBeTruthy();
+    for (const resource of CARE.resources) {
+      expect(getByText(new RegExp(resource.name, 'u'))).toBeTruthy();
+    }
+    expect(queryByText(BLANK_COPY)).toBeNull();
+    expect(queryByTestId('essay-error')).toBeNull();
+    expect(queryByTestId('essay-retry')).toBeNull();
+    expect(queryByTestId('essay-text')).toBeNull();
+    expect(onEssayLoaded).not.toHaveBeenCalled();
+    expect(mockEssay).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps showing the care on a reopen, without asking again', async () => {
+    mockEssay.mockImplementation(escalated);
+    const { findByTestId, getByTestId, rerender } = render(modal());
+    await askForTheLetter(findByTestId);
+    await findByTestId('care-support-card');
+
+    rerender(
+      <ResonanceEssayModal note={null} onClose={jest.fn()} hasOwnKey onOpenSettings={jest.fn()} />,
+    );
+    rerender(
+      <ResonanceEssayModal
+        note={note({ id: 4 })}
+        onClose={jest.fn()}
+        hasOwnKey
+        onOpenSettings={jest.fn()}
+      />,
+    );
+    await act(async () => {});
+
+    expect(getByTestId('care-support-card')).toBeTruthy();
+    expect(mockEssay).toHaveBeenCalledTimes(1);
+  });
+
+  it('still treats a blank answer with no care as the retryable blank-letter state', async () => {
+    mockEssay.mockResolvedValue({ ...note({ id: 4, essay: '' }), care: null } as Marginalia);
+    const { findByTestId, getByText, queryByTestId } = render(modal());
+
+    await askForTheLetter(findByTestId);
+
+    await findByTestId('essay-retry');
+    expect(getByText(BLANK_COPY)).toBeTruthy();
+    expect(queryByTestId('care-support-card')).toBeNull();
   });
 });

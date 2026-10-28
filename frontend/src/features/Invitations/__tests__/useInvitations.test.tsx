@@ -3,6 +3,10 @@ import { jest, describe, it, expect, beforeEach } from '@jest/globals';
 import { act, renderHook, waitFor } from '@testing-library/react-native';
 
 import type { Invitation } from '@/api';
+import { setActiveUser } from '@/storage/userScope';
+
+let mockToken = 'account-a';
+jest.mock('@/context/AuthContext', () => ({ useAuth: () => ({ token: mockToken }) }));
 
 type RealUseState = (_initial: unknown) => [unknown, (_next: unknown) => void];
 
@@ -59,6 +63,8 @@ function invitation(overrides: Partial<Invitation> = {}): Invitation {
 }
 
 beforeEach(() => {
+  mockToken = 'account-a';
+  setActiveUser(1);
   mockList.mockReset();
   mockDismiss.mockReset();
   mockList.mockResolvedValue([]);
@@ -98,7 +104,7 @@ describe('useInvitations', () => {
     });
 
     expect(result.current.invitations.map((i: Invitation) => i.id)).toEqual([3]);
-    expect(mockDismiss).toHaveBeenCalledWith(2);
+    expect(mockDismiss).toHaveBeenCalledWith(2, 'account-a');
     expect(mockDismiss).toHaveBeenCalledTimes(1);
 
     await act(async () => {
@@ -136,7 +142,7 @@ describe('useInvitations', () => {
       void result.current.dismiss(6);
     });
 
-    expect(mockDismiss).toHaveBeenCalledWith(6);
+    expect(mockDismiss).toHaveBeenCalledWith(6, 'account-a');
     expect(mockDismiss).toHaveBeenCalledTimes(1);
 
     await act(async () => {
@@ -166,5 +172,196 @@ describe('useInvitations', () => {
 
     expect(mockPostUnmountDispatches).toHaveLength(0);
     expect(result.current.invitations).toHaveLength(0);
+  });
+});
+
+function pendingDismissal() {
+  let resolve!: () => void;
+  let reject!: (_reason: Error) => void;
+  const promise = new Promise<void>((done, fail) => {
+    resolve = done;
+    reject = fail;
+  });
+  return { promise, resolve, reject };
+}
+
+describe('independent invitation declines', () => {
+  it.each([true, false])(
+    'restores only the failed row (success first: %s)',
+    async (successFirst) => {
+      mockList.mockResolvedValue([
+        invitation({ id: 1 }),
+        invitation({ id: 2 }),
+        invitation({ id: 3 }),
+      ]);
+      const failed = pendingDismissal();
+      const succeeded = pendingDismissal();
+      mockDismiss.mockImplementation((id) => (id === 1 ? failed.promise : succeeded.promise));
+      const { result } = renderHook(() => useInvitations());
+      await waitFor(() => expect(result.current.invitations).toHaveLength(3));
+      let first!: Promise<void>;
+      let second!: Promise<void>;
+      act(() => {
+        first = result.current.dismiss(1).catch(() => undefined);
+        second = result.current.dismiss(2);
+      });
+      await act(async () => {
+        if (successFirst) {
+          succeeded.resolve();
+          await second;
+        }
+        failed.reject(new Error('offline'));
+        await first;
+      });
+      expect(result.current.invitations.map((item: Invitation) => item.id)).toEqual([1, 3]);
+      if (!successFirst)
+        await act(async () => {
+          succeeded.resolve();
+          await second;
+        });
+      expect(result.current.invitations.map((item: Invitation) => item.id)).toEqual([1, 3]);
+    },
+  );
+
+  it('does not restore a failed old-account decline into the new account', async () => {
+    mockList.mockResolvedValueOnce([invitation({ id: 1 })]);
+    const pending = pendingDismissal();
+    mockDismiss.mockReturnValueOnce(pending.promise);
+    const { result, rerender } = renderHook(() => useInvitations());
+    await waitFor(() => expect(result.current.invitations).toHaveLength(1));
+    let dismissal!: Promise<void>;
+    act(() => {
+      dismissal = result.current.dismiss(1).catch(() => undefined);
+    });
+    mockList.mockResolvedValueOnce([invitation({ id: 9 })]);
+    setActiveUser(2);
+    mockToken = 'account-b';
+    rerender({});
+    await waitFor(() => expect(mockList).toHaveBeenCalledTimes(2));
+    await act(async () => {
+      pending.reject(new Error('old account offline'));
+      await dismissal;
+    });
+    expect(result.current.invitations.map((item: Invitation) => item.id)).toEqual([9]);
+  });
+});
+
+it('restores two failed declines in original order even when failures arrive backwards', async () => {
+  mockList.mockResolvedValue([invitation({ id: 1 }), invitation({ id: 2 }), invitation({ id: 3 })]);
+  const one = pendingDismissal();
+  const two = pendingDismissal();
+  mockDismiss.mockImplementation((id) => (id === 1 ? one.promise : two.promise));
+  const { result } = renderHook(() => useInvitations());
+  await waitFor(() => expect(result.current.invitations).toHaveLength(3));
+  let first!: Promise<void>;
+  let second!: Promise<void>;
+  act(() => {
+    first = result.current.dismiss(1).catch(() => undefined);
+    second = result.current.dismiss(2).catch(() => undefined);
+  });
+  await act(async () => {
+    two.reject(new Error('offline'));
+    await second;
+  });
+  expect(result.current.invitations.map((item: Invitation) => item.id)).toEqual([2, 3]);
+  await act(async () => {
+    one.reject(new Error('offline'));
+    await first;
+  });
+  expect(result.current.invitations.map((item: Invitation) => item.id)).toEqual([1, 2, 3]);
+});
+
+it('ignores a late list from the previous account', async () => {
+  let resolve!: (_value: Invitation[]) => void;
+  mockList.mockReturnValueOnce(
+    new Promise<Invitation[]>((done) => {
+      resolve = done;
+    }),
+  );
+  const { result, rerender } = renderHook(() => useInvitations());
+  mockList.mockResolvedValueOnce([invitation({ id: 9 })]);
+  setActiveUser(2);
+  mockToken = 'account-b';
+  rerender({});
+  await waitFor(() => expect(result.current.invitations[0]?.id).toBe(9));
+  await act(async () => {
+    resolve([invitation({ id: 1 })]);
+  });
+  expect(result.current.invitations.map((item: Invitation) => item.id)).toEqual([9]);
+});
+
+it('keeps a pending decline absent across same-account token rotation', async () => {
+  mockList.mockResolvedValue([invitation({ id: 1 })]);
+  const pending = pendingDismissal();
+  mockDismiss.mockReturnValueOnce(pending.promise);
+  const { result, rerender } = renderHook(() => useInvitations());
+  await waitFor(() => expect(result.current.invitations).toHaveLength(1));
+  let work!: Promise<void>;
+  act(() => {
+    work = result.current.dismiss(1);
+  });
+  mockToken = 'account-a-refreshed';
+  rerender({});
+  await act(async () => {
+    pending.resolve();
+    await work;
+  });
+  expect(mockList).toHaveBeenCalledTimes(1);
+  expect(result.current.invitations).toEqual([]);
+});
+
+it('old-account cleanup cannot unlock the new account pending guard for a reused id', async () => {
+  mockList.mockResolvedValue([invitation({ id: 1 })]);
+  const oldAnswer = pendingDismissal();
+  const newAnswer = pendingDismissal();
+  mockDismiss.mockReturnValueOnce(oldAnswer.promise).mockReturnValueOnce(newAnswer.promise);
+  const { result, rerender } = renderHook(() => useInvitations());
+  await waitFor(() => expect(result.current.invitations).toHaveLength(1));
+  let oldWork!: Promise<void>;
+  act(() => {
+    oldWork = result.current.dismiss(1);
+  });
+  setActiveUser(2);
+  mockToken = 'account-b';
+  rerender({});
+  await waitFor(() => expect(result.current.invitations).toHaveLength(1));
+  let newWork!: Promise<void>;
+  act(() => {
+    newWork = result.current.dismiss(1);
+  });
+  await act(async () => {
+    oldAnswer.resolve();
+    await oldWork;
+  });
+  await act(async () => {
+    await result.current.dismiss(1);
+  });
+  expect(mockDismiss).toHaveBeenCalledTimes(2);
+  expect(result.current.invitations).toEqual([]);
+  await act(async () => {
+    newAnswer.resolve();
+    await newWork;
+  });
+});
+
+describe('useInvitations refresh (#3142)', () => {
+  it('re-reads the list when its refresh key moves, and not otherwise', async () => {
+    mockList.mockResolvedValue([invitation({ id: 1 }), invitation({ id: 2 })]);
+    const { result, rerender } = renderHook(({ key }: { key: number }) => useInvitations(key), {
+      initialProps: { key: 0 },
+    });
+    await waitFor(() => expect(result.current.invitations).toHaveLength(2));
+    expect(mockList).toHaveBeenCalledTimes(1);
+
+    rerender({ key: 0 });
+    expect(mockList).toHaveBeenCalledTimes(1);
+
+    // Dismissed elsewhere (the Notification Center): the next read omits it.
+    mockList.mockResolvedValue([invitation({ id: 2 })]);
+    rerender({ key: 1 });
+    await waitFor(() =>
+      expect(result.current.invitations.map((i: Invitation) => i.id)).toEqual([2]),
+    );
+    expect(mockList).toHaveBeenCalledTimes(2);
   });
 });

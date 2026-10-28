@@ -8,17 +8,43 @@ describe('useModalCoordinator', () => {
     const { result } = renderHook(() => useModalCoordinator());
 
     expect(result.current.goal).toBe(false);
-    expect(result.current.stats).toBe(false);
+    expect(result.current.story).toBe(false);
     expect(result.current.settings).toBe(false);
     expect(result.current.reorder).toBe(false);
-    expect(result.current.missedDays).toBe(false);
     expect(result.current.onboarding).toBe(false);
     expect(result.current.addHabit).toBe(false);
     expect(result.current.emojiPicker).toBe(false);
   });
 
+  it('tracks exactly the modals the Habits screen can open', () => {
+    const { result } = renderHook(() => useModalCoordinator());
+    const flags = Object.entries(result.current).filter(([, v]) => typeof v === 'boolean');
+    expect(flags.map(([k]) => k).sort()).toEqual([
+      'addHabit',
+      'emojiPicker',
+      'goal',
+      'onboarding',
+      'reorder',
+      'settings',
+      'story',
+    ]);
+    expect(flags.every(([, v]) => v === false)).toBe(true);
+    expect(Object.keys(result.current).sort()).toEqual([
+      'addHabit',
+      'close',
+      'closeAll',
+      'emojiPicker',
+      'goal',
+      'onboarding',
+      'open',
+      'reorder',
+      'settings',
+      'story',
+    ]);
+  });
+
   it('BUG-FE-HABIT-008: open() preserves prior modal flags', () => {
-    // Before the fix, ``open('stats')`` would close ``goal``.  Stacking
+    // Before the fix, ``open('story')`` would close ``goal``.  Stacking
     // a count-warning toast inside the onboarding flow then dismissed
     // onboarding itself.  ``open`` now ORs the requested flag onto
     // existing state; callers that need exclusivity ``closeAll()`` first.
@@ -26,10 +52,10 @@ describe('useModalCoordinator', () => {
 
     act(() => result.current.open('goal'));
     expect(result.current.goal).toBe(true);
-    expect(result.current.stats).toBe(false);
+    expect(result.current.story).toBe(false);
 
-    act(() => result.current.open('stats'));
-    expect(result.current.stats).toBe(true);
+    act(() => result.current.open('story'));
+    expect(result.current.story).toBe(true);
     expect(result.current.goal).toBe(true);
   });
 
@@ -41,10 +67,9 @@ describe('useModalCoordinator', () => {
 
     act(() => result.current.closeAll());
     expect(result.current.goal).toBe(false);
-    expect(result.current.stats).toBe(false);
+    expect(result.current.story).toBe(false);
     expect(result.current.settings).toBe(false);
     expect(result.current.reorder).toBe(false);
-    expect(result.current.missedDays).toBe(false);
     expect(result.current.onboarding).toBe(false);
     expect(result.current.addHabit).toBe(false);
     expect(result.current.emojiPicker).toBe(false);

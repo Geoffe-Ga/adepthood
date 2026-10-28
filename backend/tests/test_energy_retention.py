@@ -14,7 +14,7 @@ from models.energy_plan import EnergyPlan as EnergyPlanRecord
 from services.energy import ENERGY_PLAN_RETENTION_DAYS, delete_expired_energy_plans
 
 _OLD_DAYS = ENERGY_PLAN_RETENTION_DAYS + 10
-_RECENT_DAYS = ENERGY_PLAN_RETENTION_DAYS - 10
+_RECENT_DAYS = ENERGY_PLAN_RETENTION_DAYS - 1
 
 
 async def _signup(client: AsyncClient) -> int:

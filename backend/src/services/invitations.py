@@ -13,6 +13,16 @@ boundary. A ``begin_nested`` SAVEPOINT plus an ``IntegrityError`` re-read makes
 the insert safe against a concurrent generation pass racing over the
 partial-unique indexes, mirroring ``ensure_user_progress`` and
 ``ensure_depth_preferences``.
+
+Declined depths are honoured at both ends (#3073). Generation takes the
+caller's enabled rings and drops every candidate pointing into a declined ring
+*before* the dedup/insert, so nothing is stored for a ring the user turned off;
+with the course ring off the vault wheel is never even dialled. Listing goes
+through :func:`list_pending_invitations`, the single chokepoint that reads the
+rings once and selects only pending rows whose target type belongs to an
+enabled ring. A row stored while its ring was on is kept, hidden while the ring
+is off and shown again when it is turned back on; a dismissed row stays
+dismissed either way.
 """
 
 from __future__ import annotations
@@ -26,6 +36,7 @@ from sqlmodel import col, select
 
 from domain.creek_vault import CreekVaultClient
 from domain.dates import now_in_tz, to_user_date_bucket
+from domain.depth_preferences import DepthRing, load_enabled_rings
 from domain.invitations import (
     ENGAGEMENT_WINDOW_DAYS,
     SUSTAINED_PRACTICE_WEEKS,
@@ -35,6 +46,8 @@ from domain.invitations import (
     PracticeSignal,
     ReadinessAggregates,
     compute_invitation_candidates,
+    filter_candidates_by_depth,
+    target_types_for_rings,
 )
 from domain.practice_insights import build_insights
 from models.goal_completion import GoalCompletion
@@ -286,22 +299,61 @@ async def generate_invitation_signals(
     user_id: int,
     user_timezone: str = "UTC",
     vault_client: CreekVaultClient | None = None,
+    *,
+    enabled: frozenset[DepthRing],
 ) -> list[InvitationSignal]:
     """Detect readiness, persist the newly-warranted invitations, and return them.
 
     Gathers the user's engagement with a constant number of batched queries,
-    computes candidates via the pure domain function, drops any candidate that
-    already exists as a signal (dismissed rows included), and inserts only the
-    survivors. Returns the rows created by this call — ``[]`` when nothing new
-    is warranted, making repeat calls idempotent.
+    computes candidates via the pure domain function, drops every candidate
+    whose ring is not in ``enabled`` and any that already exists as a signal
+    (dismissed rows included), and inserts only the survivors. Returns the rows
+    created by this call — ``[]`` when nothing new is warranted, making repeat
+    calls idempotent.
 
     An optional ``vault_client`` adds the corpus-theme source: a connected,
     capable vault's Wheel-of-Wholeness reading can warrant a course invitation.
-    A missing or degraded vault leaves the pass behavioral-only.
+    A missing or degraded vault leaves the pass behavioral-only, and so does a
+    declined course ring: the client is then never handed to the gather, so the
+    wheel is never read for an invitation the user could not receive.
     """
-    aggregates = await _gather_aggregates(session, user_id, user_timezone, vault_client)
-    candidates = compute_invitation_candidates(aggregates)
+    theme_client = vault_client if DepthRing.COURSE in enabled else None
+    aggregates = await _gather_aggregates(session, user_id, user_timezone, theme_client)
+    candidates = filter_candidates_by_depth(compute_invitation_candidates(aggregates), enabled)
     if not candidates:
         return []
     existing = await _existing_signal_keys(session, user_id)
     return await _insert_new_signals(session, user_id, candidates, existing)
+
+
+async def list_pending_invitations(
+    session: AsyncSession,
+    user_id: int,
+    user_timezone: str,
+    vault_client: CreekVaultClient | None,
+) -> list[InvitationSignal]:
+    """Generate, then return the caller's pending invitations into enabled rings only.
+
+    The one listing chokepoint: the enabled rings are read once, read-only
+    (never provisioning a preferences row on a polled GET), before generation so
+    the read lands ahead of the pre-vault commit. The SELECT is an allow-list
+    over the enabled rings' target types, so it fails closed. With every ring
+    declined there is nothing to offer: neither generation nor the listing
+    query runs.
+    """
+    enabled = await load_enabled_rings(session, user_id)
+    if not enabled:
+        return []
+    await generate_invitation_signals(
+        session, user_id, user_timezone, vault_client=vault_client, enabled=enabled
+    )
+    result = await session.execute(
+        select(InvitationSignal)
+        .where(
+            col(InvitationSignal.user_id) == user_id,
+            col(InvitationSignal.dismissed_at).is_(None),
+            col(InvitationSignal.target_type).in_(sorted(target_types_for_rings(enabled))),
+        )
+        .order_by(col(InvitationSignal.created_at))
+    )
+    return list(result.scalars().all())

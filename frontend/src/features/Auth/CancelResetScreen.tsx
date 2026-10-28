@@ -58,11 +58,11 @@ const STATUS_COPY: Record<Exclude<CancelStatus, 'pending'>, { title: string; bod
   invalid_token: {
     title: 'Cancel Link Invalid',
     body:
-      'That cancel link is missing or malformed. If you did not request a reset, you can ignore ' +
-      'the original email — nothing happens until the link is clicked.',
+      'That cancel link looks broken or incomplete. If you didn’t ask for a reset, you can just ' +
+      'ignore the original email — nothing changes unless someone taps its link.',
   },
   error: {
-    title: 'Could Not Reach Server',
+    title: 'We couldn’t connect',
     body:
       'We could not confirm the cancellation. Check your connection and tap the link again, or ' +
       'ignore the original email — the link expires in 30 minutes either way.',
@@ -70,8 +70,8 @@ const STATUS_COPY: Record<Exclude<CancelStatus, 'pending'>, { title: string; bod
   success: {
     title: 'Reset Cancelled',
     body:
-      'The reset link has been invalidated. Your password has not changed. If you did not request ' +
-      'a reset, no further action is needed.',
+      'That reset link won’t work anymore, and your password hasn’t changed. If this wasn’t you, ' +
+      'there’s nothing else you need to do.',
   },
 };
 

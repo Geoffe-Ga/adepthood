@@ -22,8 +22,8 @@ import type { ApiHabitWithGoals } from '@/api';
  *   - that `GET /habits/` then returns the rows in the order those numbers
  *     name, so a cold rehydrate reads back the order the writer arranged
  *     rather than insertion order;
- *   - that a habit created from this offer arrives LOCKED, so the writer opens
- *     it deliberately instead of finding it already running.
+ *   - that the chosen timer habit arrives open with explicit minute goals, so
+ *     the next timer can log the amount it measured.
  *
  * The stage names are written out rather than derived from
  * `features/Habits/services/habitOrdering`: that module reaches
@@ -106,13 +106,22 @@ describe('a timed writing session kept as a habit, against a live server', () =>
     const created = await habits.create({
       ...habitAt(PLACED[0] ?? '', PLACED_STAGES[0] ?? '', 0),
       icon: JOURNALING_ICON,
-      revealed: false,
+      revealed: true,
+      goals: {
+        target_unit: 'minutes',
+        frequency: 1,
+        frequency_unit: 'per_day',
+        low: 10,
+        clear: 20,
+        stretch: 45,
+      },
     });
 
     expect(created.stage).toBe('Beige');
     expect(created.sort_order).toBe(0);
-    // Created locked, like every other new habit.
-    expect(created.revealed).toBe(false);
+    expect(created.revealed).toBe(true);
+    const confirmed = (await habits.listAll()).find((habit) => habit.id === created.id);
+    expect(confirmed?.goals.map((goal) => goal.target)).toEqual([10, 20, 45]);
 
     // One fan-out, as the write itself does it: every displaced row carries both
     // its new place and the stage that place names.
@@ -134,26 +143,8 @@ describe('a timed writing session kept as a habit, against a live server', () =>
     expect(listed.map((habit) => habit.sort_order)).toEqual([0, 1, 2]);
   });
 
-  /**
-   * What actually happens to the lock, which is NOT what the issue assumed.
-   *
-   * The row is created locked — asserted on the POST response above, and by the
-   * Jest specs on `buildAddedHabit`. It does not STAY locked, and this lane is
-   * the only place that could have said so: `reconcile_habit_auto_reveals`
-   * (`backend/src/services/habit_auto_reveal.py`) opens any non-carryover habit
-   * whose start date has arrived OR whose stage the writer has already reached,
-   * once, on the next `GET /habits/`. Placing at Beige is stage 1, which every
-   * account has reached, so the invitation arrives immediately.
-   *
-   * That is the program's own invitation rather than anything this offer asks
-   * for — the same reconciliation the `habits.calendar-auto-reveal-once`
-   * journey covers, applied identically to every habit added at a stage the
-   * writer is already past. Nothing is checked in on their behalf.
-   *
-   * The second habit here is what keeps that claim from being vacuous: a stage
-   * the writer has not reached, dated ahead, is left locked by the same pass.
-   */
-  it('opens it because Beige is a stage the writer has reached, not because the offer asked', async () => {
+  // Explicit timer availability does not reveal another ordinary future habit.
+  it('keeps the timer habit open while an unreached future habit stays locked', async () => {
     const ahead = new Date();
     ahead.setUTCDate(ahead.getUTCDate() + DAYS_AHEAD);
     const unreached = await habits.create({

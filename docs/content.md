@@ -42,8 +42,10 @@ valid):
   `release_day`, `order`, and `path` (the Markdown file).
 * `site_resources[]` — free evergreen pages (philosophy, about, …),
   each with `slug`, `title`, `description`, `path`, and an optional
-  `media[]` (asset paths, added in `schema_version 1.2.0`). Served
-  authenticated but never stage-gated.
+  `media[]` (asset paths, added in `schema_version 1.2.0`) and a
+  required 1-based `order` (added in `schema_version 1.3.0`), the Start
+  Here reading order the API serves them in. Served authenticated but
+  never stage-gated.
 * `stage_intros[]` — optional per-stage course introductions, each with
   `stage`, `id`, `slug`, `title`, `path`, and optional `summary`. Unlike
   chapters, intros are **ungated and not seeded** into the database — the
@@ -102,8 +104,8 @@ the `CourseStage` table (e.g. a failed `seed_stages` run) blanked
 one, and surfaced in production as "0 of 0 read" / "No Content Yet"
 across the whole Course screen. The regression test suite had no case
 covering "one manifest stage is unmapped, do the mapped stages still
-seed?"; that gap is now pinned by a test asserting Stage 1 serves its
-17 chapters even when stages 4–10 have no `CourseStage` row.
+seed?"; that gap is now pinned by a test asserting Stage 1 serves all its
+chapters even when stages 4–10 have no `CourseStage` row.
 
 Seeding is also **multi-worker safe**. The production image boots
 uvicorn with `--workers 2`, so every seeder runs once per worker,
@@ -128,9 +130,17 @@ indexes reject their insert, logging `inserted=0`.
   client renders it natively. Locked, unreleased, or unknown content
   is indistinguishable from missing (`404 content_not_found`).
 * `GET /course/site-resources` lists the manifest's `site_resources[]`
-  (auth required, no stage gating);
+  sorted by `order` (auth required, no stage gating), each with the
+  caller's `is_read` mark;
   `GET /course/site-resources/{slug}/body` serves a resource body the
   same way chapters are served.
+* Start Here read marks live in `ResourceCompletion`, keyed by slug
+  because resources are not database rows.
+  `POST /course/site-resources/{slug}/mark-read` is idempotent and 404s
+  on a slug the pin does not ship; `GET /course/start-here/progress`
+  answers `{total_items, read_items, progress_percent, next_unlock_day:
+  null}` over the slugs the current pin ships, so a mark left on a
+  resource a later re-pin drops stops counting.
 * A manifest-listed file missing from disk is a server bug and returns
   `502 content_unavailable` — there is no auth failure mode because
   local files need no credentials.
@@ -144,6 +154,11 @@ the vendored tree's digest against `CONTENT_VERSION` **and** re-validates
 `backend/content/` fails CI; re-run the sync to fix. The bootstrap state
 (nothing vendored yet) passes — the gate arms itself with the first pin.
 Run it locally with `make sync-content-check`.
+The same job then runs `build_stage_correspondence --check` and
+`content_completeness --check` (#3070) on the verified tree: a re-pin that
+leaves a chapter thin, skips a chapter number, or adds a broken, `http` or
+`google.com/url` link fails there until it is fixed upstream (or, for a thin
+chapter or numbering gap only, recorded). See `docs/curriculum.md`.
 
 ## Deploying on Railway
 

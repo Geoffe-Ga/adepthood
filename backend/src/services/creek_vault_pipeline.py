@@ -31,9 +31,11 @@ successor stages continue.
 **Long work has a durable handle.** Contract 0.14 answers LLM classification and
 embedding preparation with a consumer-bound job id. The id is committed before
 polling, status failures retry with capped exponential backoff, and startup
-resumes every still-attempted row. Startup takes an atomic, heartbeated database
-lease first, so two backend workers cannot both retry-admit the same durable job;
-a dead worker's timestamp expires and makes the row recoverable. A timeout is
+resumes every still-attempted row. Startup and normal continuations acquire an
+atomic, heartbeated run/account lease first, so exactly one worker polls and
+climbs a chain. A foreground request may admit classification for that owner,
+but never borrows its lease. A dead worker's timestamp expires under the same
+bounded recovery policy and makes the row recoverable. A timeout is
 therefore ambiguity, never proof that Creek failed. New admissions are also
 retried off-request, at most three times; exhausting them records ``ambiguous``
 rather than inventing a failure.
@@ -56,13 +58,13 @@ import enum
 import logging
 import time
 from collections.abc import AsyncIterator, Awaitable, Callable, Mapping
-from contextlib import AbstractAsyncContextManager, asynccontextmanager, nullcontext
+from contextlib import AbstractAsyncContextManager, asynccontextmanager, nullcontext, suppress
 from contextvars import ContextVar
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
 from functools import partial
 from typing import Final, cast
-from uuid import UUID, uuid4
+from uuid import uuid4
 
 from sqlalchemy import case, delete, func, or_, text, update
 from sqlalchemy.dialects.postgresql import insert as postgresql_insert
@@ -86,14 +88,41 @@ from domain.creek_vault import (
     VaultLinkPass,
     VaultLinkStage,
     VaultPipelineJob,
-    VaultPipelineJobState,
     VaultPipelineStage,
+    VaultSendSuspendedError,
 )
 from domain.dates import ensure_aware
 from models.vault_pipeline_follow_up import VaultPipelineFollowUp
 from models.vault_pipeline_run import VaultPipelineOutcome, VaultPipelineRun
+from services import creek_vault_pipeline_lease as pipeline_lease
 from services.account_egress_barrier import account_is_live, hold_account
 from services.advisory_lock_namespaces import CLASSIFICATION_SCHEDULER_LOCK_NAMESPACE
+from services.creek_vault_pipeline_lease import ContinuationLease as _ContinuationLease
+from services.creek_vault_pipeline_lease import (
+    ContinuationOwnershipLostError as _ContinuationOwnershipLostError,
+)
+from services.creek_vault_pipeline_lease import ensure_owned_run as _ensure_owned_run
+from services.creek_vault_pipeline_lease import refresh_owned_run as _refresh_owned_run
+from services.creek_vault_pipeline_lease import track_owned_run as _track_owned_run
+from services.creek_vault_pipeline_lease import (
+    verify_continuation_lease as _verify_continuation_lease,
+)
+from services.creek_vault_pipeline_results import StageCounts as _StageCounts
+from services.creek_vault_pipeline_results import (
+    classification_allows_progress as _classification_allows_progress,
+)
+from services.creek_vault_pipeline_results import counts_from_result as _counts_from_result
+from services.creek_vault_pipeline_results import failed_job as _failed_job
+from services.creek_vault_pipeline_results import job_from_run as _job_from_run
+from services.creek_vault_pipeline_results import (
+    pending_admission_event as _pending_admission_event,
+)
+from services.creek_vault_pipeline_results import pending_job as _pending_job
+from services.creek_vault_pipeline_results import persisted_counts as _persisted_counts
+from services.creek_vault_pipeline_results import (
+    poll_needs_reconciliation as _poll_needs_reconciliation,
+)
+from services.creek_vault_relay import has_forwarded_provider_key, keyless_context
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -131,6 +160,29 @@ _DETACHED_DIAL: ContextVar[Callable[[], AbstractAsyncContextManager[None]] | Non
 )
 
 
+async def _settle_despite_cancellation(read: Awaitable[bool]) -> bool:
+    """Let one database round trip finish even when the caller's clock expires.
+
+    Cancelling a read mid-flight does not abort it cleanly: when the
+    ``CancelledError`` lands between SQLAlchemy's aiosqlite ``execute`` and its
+    ``fetchall``, the statement is left stepped and never finalized on the
+    pooled connection. That is a SQLite SHARED lock the pool's
+    reset-on-return rollback does not release, and every later commit on the
+    file then waits out its whole busy timeout and fails ``database is locked``
+    (#3216). Shielded, the read runs to its own end -- it is one bounded query --
+    and the cancellation is re-raised only once it has, so the caller's clock
+    still expires exactly as it would have.
+    """
+    task = asyncio.ensure_future(read)
+    try:
+        return await asyncio.shield(task)
+    except asyncio.CancelledError:
+        while not task.done():
+            with suppress(asyncio.CancelledError):
+                await asyncio.wait([task])
+        raise
+
+
 @asynccontextmanager
 async def _order_one_detached_dial(
     factory: async_sessionmaker[AsyncSession], user_id: int
@@ -153,10 +205,15 @@ async def _order_one_detached_dial(
     either wins the barrier before a dial, and the liveness read below stands the
     climb down before it transmits, or after one, and that dial preceded the
     receipt.
+
+    The liveness read runs under :func:`_settle_despite_cancellation`, because
+    every dial this orders sits inside a clock -- a stage budget or the polling
+    ceiling -- that may expire while the read is still in flight.
     """
     async with factory() as gate_session, hold_account(gate_session, user_id):
-        if not await account_is_live(gate_session, user_id):
+        if not await _settle_despite_cancellation(account_is_live(gate_session, user_id)):
             raise _AccountErasedMidClimbError
+        await _settle_despite_cancellation(_verify_continuation_lease(gate_session))
         yield
 
 
@@ -208,6 +265,11 @@ LINK_STAGE_BY_PIPELINE_STAGE: Mapping[VaultPipelineStage, VaultLinkStage] = {
 _JOB_ADMITTING_STAGES: frozenset[VaultPipelineStage] = frozenset(
     {VaultPipelineStage.CLASSIFY, VaultPipelineStage.EMBEDDINGS}
 )
+
+# A keyed request admitting an existing queue waits only for submission and the
+# durable handle commit. Polling belongs to the keyless continuation. As with
+# every job admission, the adapter's own deadline still bounds the submit.
+_ADMISSION_ONLY_BUDGET_SECONDS: Final = 0.0
 
 
 class VaultPipelineTrigger(enum.StrEnum):
@@ -425,41 +487,6 @@ def _due(stage: VaultPipelineStage, stamps: Mapping[str, datetime], now: datetim
     return last is None or now - last >= _STAGE_INTERVAL[stage]
 
 
-def _classification_outcome(result: VaultClassificationPass) -> VaultPipelineOutcome:
-    """Read a classification pass as the outcome it is.
-
-    ``complete: false`` is not a failure. The pass is resumable and short-circuits
-    on what it already stamped, so an incomplete run means the honest next step is
-    to call again — and the labels it did write are real, which is why the stages
-    that read them are still allowed to run in the same pass.
-    """
-    return VaultPipelineOutcome.COMPLETED if result.complete else VaultPipelineOutcome.INCOMPLETE
-
-
-@dataclass(frozen=True)
-class _StageCounts:
-    """What one rung reached, in the one vocabulary both routes are read through.
-
-    Creek answers a classification pass and a linker stage in different fields,
-    and the scheduler that records them does not care which route answered: what
-    it needs is how much was looked at, how much was acted on, and how much was
-    lost. Defaulting all three to zero is what lets a failed attempt be recorded
-    with the same call as a successful one -- a stage that did not land reached
-    nothing, and saying so is more honest than leaving the row's counts to a
-    sentinel.
-
-    Attributes:
-        seen: Fragments the stage loaded or visited.
-        touched: Fragments it rewrote, or links it emitted.
-        lost: Fragments it dropped to noise. Only a clustering stage can lose
-            any; the classification pass loses nothing.
-    """
-
-    seen: int = 0
-    touched: int = 0
-    lost: int = 0
-
-
 _NOTHING_REACHED = _StageCounts()
 
 
@@ -561,62 +588,24 @@ async def _consume_follow_up(session: AsyncSession, user_id: int) -> None:
     )
 
 
-def _note_link_loss(stage: VaultLinkStage, result: VaultLinkPass) -> None:
-    """Log real partial data loss, in enum values and integers alone.
-
-    Fragments dropped to noise carry no link at all, and Creek publishes the
-    count rather than folding it away precisely so a caller cannot read a lossy
-    pass as a clean one. The record is content-free by construction: a stage
-    name from a closed set of our own, and two numbers.
-    """
-    if result.oversized_discarded:
-        _LOGGER.warning(
-            "creek vault link stage dropped fragments to noise",
-            extra={
-                "stage": stage.value,
-                "fragments_lost": result.oversized_discarded,
-                "fragments_seen": result.fragment_count,
-            },
-        )
-
-
-def _counts_from_result(
-    result: VaultClassificationPass | VaultLinkPass,
-) -> tuple[VaultPipelineOutcome, _StageCounts]:
-    """Read either published counts-only result into the persisted vocabulary."""
-    if isinstance(result, VaultClassificationPass):
-        return _classification_outcome(result), _StageCounts(
-            seen=result.total,
-            touched=result.classified,
-        )
-    _note_link_loss(result.stage, result)
-    return VaultPipelineOutcome.COMPLETED, _StageCounts(
-        seen=result.fragment_count,
-        touched=result.link_count,
-        lost=result.oversized_discarded,
-    )
-
-
 async def _perform(
     client: CreekVaultPipelineClient, stage: VaultPipelineStage
 ) -> tuple[VaultPipelineOutcome, _StageCounts] | VaultPipelineJob:
     """Run one rung against the vault and read its answer into the row vocabulary.
 
-    The only place either pipeline call is made. It reports rather than records:
-    persisting is :func:`_run_stage`'s job, because the row has to exist before
-    this runs and be amended after it.
+    The caller holds the account ordering through both this send and durable
+    publication of its answer. Keeping this helper bare avoids taking the
+    non-reentrant account barrier twice during a guarded retry.
     """
     if stage is VaultPipelineStage.CLASSIFY:
-        async with _ordered_dial():
-            classification_result = await client.classify_corpus()
+        classification_result = await client.classify_corpus()
         return (
             classification_result
             if isinstance(classification_result, VaultPipelineJob)
             else _counts_from_result(classification_result)
         )
     wire_stage = LINK_STAGE_BY_PIPELINE_STAGE[stage]
-    async with _ordered_dial():
-        link_result = await client.link_corpus(wire_stage)
+    link_result = await client.link_corpus(wire_stage)
     return (
         link_result
         if isinstance(link_result, VaultPipelineJob)
@@ -629,10 +618,7 @@ async def _await_job(
     job: VaultPipelineJob,
 ) -> tuple[VaultPipelineOutcome, _StageCounts]:
     """Translate the shared status-polling result under the caller's clock."""
-    result = await _poll_statuses(client, job)
-    if isinstance(result, VaultPipelineJob):
-        return VaultPipelineOutcome.FAILED, _NOTHING_REACHED
-    return _counts_from_result(result)
+    return _counts_from_result(await _poll_statuses(client, job))
 
 
 @dataclass(frozen=True)
@@ -660,12 +646,15 @@ def _finish_run(
     run.fragments_seen = counts.seen
     run.fragments_touched = counts.touched
     run.fragments_lost = counts.lost
+    run.failure_code = counts.stored_failure_code
     session.add(run)
 
 
 async def _classification_completion_target(
     session: AsyncSession,
     run: VaultPipelineRun,
+    *,
+    admitted: bool = False,
 ) -> tuple[VaultPipelineRun, VaultPipelineFollowUp | None] | None:
     """Lock and refresh one classification row plus its independent intent."""
     await _lock_classification_scheduler(session, run.user_id)
@@ -676,6 +665,8 @@ async def _classification_completion_target(
         .execution_options(populate_existing=True)
     )
     locked = result.scalars().one()
+    if not admitted:
+        _ensure_owned_run(locked)
     if locked.outcome != VaultPipelineOutcome.ATTEMPTED.value:
         await session.commit()
         return None
@@ -686,10 +677,15 @@ async def _classification_completion_target(
 async def _completion_target(
     session: AsyncSession,
     run: VaultPipelineRun,
+    *,
+    admitted: bool = False,
 ) -> tuple[VaultPipelineRun, VaultPipelineFollowUp | None] | None:
     """Return the row and marker a terminal result is allowed to mutate."""
     if run.stage == VaultPipelineStage.CLASSIFY.value:
-        return await _classification_completion_target(session, run)
+        return await _classification_completion_target(session, run, admitted=admitted)
+    await session.refresh(run, with_for_update=True)
+    if not admitted:
+        _ensure_owned_run(run)
     return run, None
 
 
@@ -734,6 +730,8 @@ async def _commit_finished_run(
     run: VaultPipelineRun,
     outcome: VaultPipelineOutcome,
     counts: _StageCounts,
+    *,
+    admitted: bool = False,
 ) -> None:
     """Land a terminal result and atomically queue any joined-write follow-up.
 
@@ -747,8 +745,11 @@ async def _commit_finished_run(
     changes share one commit: a killed process therefore leaves either the old
     recoverable attempt or the new recoverable queued row, never a silent gap.
     """
-    target = await _completion_target(session, run)
+    target = await _completion_target(session, run, admitted=admitted)
     if target is None:
+        # Keep this helper's return contract clean on every path, including
+        # a classification another worker already terminalized.
+        await session.commit()
         return
     locked, pending = target
     _finish_run(session, locked, outcome, counts)
@@ -767,6 +768,78 @@ async def _submit(
         return await _perform(client, stage)
     async with asyncio.timeout(budget):
         return await _perform(client, stage)
+
+
+@dataclass(frozen=True)
+class _Admission:
+    """The non-secret stage clock and uncertainty at one send boundary."""
+
+    stage: VaultPipelineStage
+    budget: float
+    ambiguous: bool = False
+
+
+def _refused_admission_outcome(admission: _Admission, exc: Exception) -> VaultPipelineOutcome:
+    """A suspension refuses this send but cannot settle an earlier lost answer."""
+    return (
+        VaultPipelineOutcome.AMBIGUOUS
+        if admission.ambiguous and isinstance(exc, VaultSendSuspendedError)
+        else VaultPipelineOutcome.FAILED
+    )
+
+
+async def _submit_and_record(
+    session: AsyncSession,
+    client: CreekVaultPipelineClient,
+    run: VaultPipelineRun,
+    admission: _Admission,
+) -> tuple[VaultPipelineOutcome, _StageCounts] | VaultPipelineJob:
+    """Submit under the caller's account fence and publish before releasing it."""
+    try:
+        if not client.supports(CreekCapability.PIPELINE):
+            await client.handshake()
+        result = await _submit(client, admission.stage, admission.budget)
+    except _DEFINITIVE_REFUSALS as exc:
+        _LOGGER.info(_refusal_event(exc), extra={"stage": admission.stage.value})
+        outcome = _refused_admission_outcome(admission, exc)
+        await _commit_finished_run(session, run, outcome, _NOTHING_REACHED, admitted=True)
+        return outcome, _NOTHING_REACHED
+    if isinstance(result, VaultPipelineJob):
+        run.job_id = str(result.job_id)
+        session.add(run)
+        await session.commit()
+    else:
+        # An accepted synchronous answer is durable even if a stale-lease
+        # takeover happened during the send. The new owner waits for this
+        # account fence, then observes it; this sender may not climb afterward.
+        await _commit_finished_run(session, run, *result, admitted=True)
+    return result
+
+
+async def _admit_or_reuse(
+    session: AsyncSession,
+    client: CreekVaultPipelineClient,
+    run: VaultPipelineRun,
+    stage: VaultPipelineStage,
+    budget: float,
+) -> tuple[VaultPipelineOutcome, _StageCounts] | VaultPipelineJob:
+    """Inspect committed truth, then publish one admission under the account fence."""
+    async with _ordered_dial():
+        # A detached worker may have waited behind the keyed request that now
+        # owns this same row. Inspect committed truth before deciding to send.
+        await _refresh_owned_run(session, run)
+        if run.outcome != VaultPipelineOutcome.ATTEMPTED.value:
+            terminal = _persisted_counts(run)
+            await session.commit()
+            return terminal
+        job = _job_from_run(run, stage)
+        if job is None and run.attempt_count > 1:
+            # A recovery worker has already moved beyond this initial owner.
+            # It owns the bounded retries; this stale submit must not add one.
+            await session.commit()
+            raise TimeoutError
+        await session.commit()
+        return job or await _submit_and_record(session, client, run, _Admission(stage, budget))
 
 
 async def _perform_within_budget(
@@ -796,18 +869,39 @@ async def _perform_within_budget(
     polling it here.
     """
     deadline = time.monotonic() + budget
-    result = await _submit(client, stage, budget)
+    result = await _admit_or_reuse(session, client, run, stage, budget)
     if not isinstance(result, VaultPipelineJob):
         return result
 
-    run.job_id = str(result.job_id)
-    session.add(run)
-    await session.commit()
     remaining = deadline - time.monotonic()
     if remaining <= 0:
         raise TimeoutError
     async with asyncio.timeout(remaining):
         return await _await_job(client, result)
+
+
+async def _record_committed_stage(
+    session: AsyncSession, context: _StageContext
+) -> VaultPipelineRun:
+    """Prepare one owned stage with account-before-scheduler lock ordering."""
+    async with _ordered_dial():
+        if context.stage is VaultPipelineStage.CLASSIFY:
+            await _lock_classification_scheduler(session, context.user_id)
+            pending = await _pending_follow_up(session, context.user_id, for_update=True)
+            if pending is not None:
+                context = _StageContext(
+                    user_id=context.user_id,
+                    stage=context.stage,
+                    trigger=_strongest_trigger(context.trigger.value, pending.trigger),
+                    resume_claim_id=context.resume_claim_id,
+                )
+                await _consume_follow_up(session, context.user_id)
+        run = _record(session, context, VaultPipelineOutcome.ATTEMPTED)
+        await session.commit()
+        if run.id is None:
+            raise RuntimeError("persisted vault pipeline run has no id")
+        _track_owned_run(run)
+        return run
 
 
 async def _run_stage(
@@ -843,22 +937,29 @@ async def _run_stage(
     may have accepted before answering; the adapter's whole-request deadline
     bounds that one call instead (see :func:`_perform_within_budget`).
     """
-    if context.stage is VaultPipelineStage.CLASSIFY:
-        await _lock_classification_scheduler(session, context.user_id)
-        pending = await _pending_follow_up(session, context.user_id, for_update=True)
-        if pending is not None:
-            context = _StageContext(
-                user_id=context.user_id,
-                stage=context.stage,
-                trigger=_strongest_trigger(context.trigger.value, pending.trigger),
-                resume_claim_id=context.resume_claim_id,
-            )
-            await _consume_follow_up(session, context.user_id)
-    run = _record(session, context, VaultPipelineOutcome.ATTEMPTED)
-    await session.commit()
-    if run.id is None:
-        raise RuntimeError("persisted vault pipeline run has no id")
+    run = await _record_committed_stage(session, context)
     return await _attempt_committed_run(session, client, run, context.stage, budget)
+
+
+#: Failures that are a definitive answer, recorded FAILED on the first attempt
+#: rather than retried. :class:`VaultSendSuspendedError` is listed first because
+#: it subclasses the transient :class:`CreekVaultUnavailableError`: the operator's
+#: vault-send switch refused it before the request was built (#3075), so it
+#: provably never left the process and "ambiguous" would be false.
+_DEFINITIVE_REFUSALS: tuple[type[Exception], ...] = (
+    VaultSendSuspendedError,
+    CreekCapabilityUnsupportedError,
+    CreekVaultAuthError,
+    CreekVaultContractError,
+    CreekVaultPayloadError,
+)
+
+
+def _refusal_event(exc: Exception) -> str:
+    """The log event for a definitive refusal, naming an operator suspension apart."""
+    if isinstance(exc, VaultSendSuspendedError):
+        return "creek vault pipeline stage suspended by operator"
+    return "creek vault pipeline stage was refused"
 
 
 async def _attempt_committed_run(
@@ -873,16 +974,8 @@ async def _attempt_committed_run(
         raise RuntimeError("persisted vault pipeline run has no id")
     try:
         outcome, counts = await _perform_within_budget(session, client, run, stage, budget)
-    except (
-        CreekCapabilityUnsupportedError,
-        CreekVaultAuthError,
-        CreekVaultContractError,
-        CreekVaultPayloadError,
-    ):
-        _LOGGER.info(
-            "creek vault pipeline stage was refused",
-            extra={"stage": stage.value},
-        )
+    except _DEFINITIVE_REFUSALS as exc:
+        _LOGGER.info(_refusal_event(exc), extra={"stage": stage.value})
         await _commit_finished_run(
             session,
             run,
@@ -892,11 +985,11 @@ async def _attempt_committed_run(
         return _RunResult(run_id=run.id, outcome=VaultPipelineOutcome.FAILED)
     except (CreekVaultError, TimeoutError):
         _LOGGER.info(
-            "creek vault pipeline stage did not land",
+            _pending_admission_event(run, stage),
             extra={"stage": stage.value},
         )
         return _RunResult(run_id=run.id, outcome=VaultPipelineOutcome.ATTEMPTED)
-    if outcome is VaultPipelineOutcome.FAILED:
+    if _poll_needs_reconciliation(run, outcome, counts):
         return _RunResult(run_id=run.id, outcome=VaultPipelineOutcome.ATTEMPTED)
     await _commit_finished_run(session, run, outcome, counts)
     return _RunResult(run_id=run.id, outcome=outcome)
@@ -917,12 +1010,16 @@ async def _start_queued_run(
     client: CreekVaultPipelineClient,
     run: VaultPipelineRun,
     stage: VaultPipelineStage,
+    *,
+    budget: float | None = None,
 ) -> _RunResult | None:
     """Atomically own one queued promise before opening its first socket.
 
     A rolling restart can briefly leave two recovery continuations holding ORM
     snapshots of the same queued row.  The compare-and-swap makes exactly one
     of them the admitting worker; the loser returns without touching Creek.
+    ``budget=None`` keeps background polling's ordinary budget; a request can
+    pass an admission-only budget to persist the handle and detach its polling.
     """
     if run.id is None:
         raise RuntimeError("persisted vault pipeline run has no id")
@@ -953,31 +1050,7 @@ async def _start_queued_run(
         client,
         claimed,
         stage,
-        _BACKGROUND_STAGE_BUDGET_SECONDS,
-    )
-
-
-def _job_from_run(run: VaultPipelineRun, stage: VaultPipelineStage) -> VaultPipelineJob | None:
-    """Rebuild a validated opaque handle from one persisted in-flight row."""
-    if run.job_id is None:
-        return None
-    try:
-        job_id = UUID(run.job_id)
-    except ValueError:
-        return None
-    return VaultPipelineJob(
-        job_id=job_id,
-        stage=stage,
-        state=VaultPipelineJobState.QUEUED,
-    )
-
-
-def _failed_job(job: VaultPipelineJob) -> VaultPipelineJob:
-    """Return the content-free terminal handle used for definitive status faults."""
-    return VaultPipelineJob(
-        job_id=job.job_id,
-        stage=job.stage,
-        state=VaultPipelineJobState.FAILED,
+        _BACKGROUND_STAGE_BUDGET_SECONDS if budget is None else budget,
     )
 
 
@@ -1000,15 +1073,6 @@ async def _poll_job_once(
         async with _ordered_dial():
             await client.handshake()
         return None
-
-
-def _pending_job(
-    result: VaultClassificationPass | VaultLinkPass | VaultPipelineJob,
-) -> VaultPipelineJob | None:
-    """Return the next pending handle, or ``None`` for a terminal answer."""
-    if isinstance(result, VaultPipelineJob) and (result.state is not VaultPipelineJobState.FAILED):
-        return result
-    return None
 
 
 async def _poll_statuses(
@@ -1045,34 +1109,62 @@ async def _poll_until_terminal(
         return None
 
 
+async def _back_off(run: VaultPipelineRun) -> None:
+    """Leave the account available during retry delay, skipping exhausted work."""
+    delay = min(
+        _RETRY_INITIAL_SECONDS * (2 ** (run.attempt_count - 1)),
+        _RETRY_MAX_SECONDS,
+    )
+    if run.attempt_count < _MAX_STAGE_ATTEMPTS:
+        await asyncio.sleep(delay)
+
+
 async def _retry_once(
     session: AsyncSession,
     client: CreekVaultPipelineClient,
     run: VaultPipelineRun,
     stage: VaultPipelineStage,
-) -> tuple[VaultPipelineOutcome, _StageCounts] | VaultPipelineJob | None:
-    """Back off, persist the attempt number, and try one fresh admission."""
-    delay = min(
-        _RETRY_INITIAL_SECONDS * (2 ** (run.attempt_count - 1)),
-        _RETRY_MAX_SECONDS,
-    )
-    await asyncio.sleep(delay)
-    run.attempt_count += 1
-    run.job_id = None
-    session.add(run)
-    await session.commit()
-    try:
-        if not client.supports(CreekCapability.PIPELINE):
-            await client.handshake()
-        return await _perform(client, stage)
-    except (CreekVaultUnavailableError, TimeoutError):
-        return None
+    *,
+    ambiguous: bool,
+) -> tuple[VaultPipelineOutcome, _StageCounts] | VaultPipelineJob | VaultPipelineOutcome | None:
+    """Back off, then recheck and publish one admission under the account fence.
+
+    A stale continuation can reach this point while a foreground request is
+    admitting the same queued row. No retry metadata may change before that
+    request releases its barrier with the handle durably published.
+    """
+    await _back_off(run)
+    async with _ordered_dial():
+        await _refresh_owned_run(session, run)
+        if run.outcome != VaultPipelineOutcome.ATTEMPTED.value:
+            outcome = VaultPipelineOutcome(run.outcome)
+            await session.commit()
+            return outcome
+        job = _job_from_run(run, stage)
+        if job is not None:
+            await session.commit()
+            return job
+        if run.attempt_count >= _MAX_STAGE_ATTEMPTS:
+            return await _finish_exhausted_run(session, run, ambiguous=ambiguous)
+        run.attempt_count += 1
+        run.job_id = None
+        session.add(run)
+        await session.commit()
+        try:
+            return await _submit_and_record(
+                session, client, run, _Admission(stage, _BACKGROUND_STAGE_BUDGET_SECONDS, ambiguous)
+            )
+        except (CreekVaultUnavailableError, TimeoutError):
+            return None
 
 
 async def _land_result(
     session: AsyncSession,
     run: VaultPipelineRun,
-    result: VaultClassificationPass | VaultLinkPass | tuple[VaultPipelineOutcome, _StageCounts],
+    result: VaultClassificationPass
+    | VaultLinkPass
+    | VaultPipelineJob
+    | tuple[VaultPipelineOutcome, _StageCounts],
 ) -> VaultPipelineOutcome:
     """Persist a synchronous or job-produced terminal result and its real counts."""
     outcome, counts = result if isinstance(result, tuple) else _counts_from_result(result)
@@ -1090,9 +1182,11 @@ class _Reconciliation:
 
 async def _clear_job(session: AsyncSession, run: VaultPipelineRun) -> None:
     """Forget a terminal or lost handle before considering fresh admission."""
-    run.job_id = None
-    session.add(run)
-    await session.commit()
+    async with _ordered_dial():
+        await _refresh_owned_run(session, run)
+        run.job_id = None
+        session.add(run)
+        await session.commit()
 
 
 async def _finish_exhausted_run(
@@ -1107,45 +1201,16 @@ async def _finish_exhausted_run(
     return outcome
 
 
-async def _retry_for_reconciliation(
-    session: AsyncSession,
-    client: CreekVaultPipelineClient,
-    run: VaultPipelineRun,
-    stage: VaultPipelineStage,
-) -> tuple[VaultPipelineOutcome, _StageCounts] | VaultPipelineJob | VaultPipelineOutcome | None:
-    """Try fresh admission, turning a definitive refusal into a final outcome."""
-    try:
-        return await _retry_once(session, client, run, stage)
-    except (
-        CreekCapabilityUnsupportedError,
-        CreekVaultAuthError,
-        CreekVaultContractError,
-        CreekVaultPayloadError,
-    ):
-        await _commit_finished_run(
-            session,
-            run,
-            VaultPipelineOutcome.FAILED,
-            _NOTHING_REACHED,
-        )
-        return VaultPipelineOutcome.FAILED
-
-
-async def _continue_after_retry(
-    session: AsyncSession,
-    run: VaultPipelineRun,
+def _continue_after_retry(
     retried: tuple[VaultPipelineOutcome, _StageCounts] | VaultPipelineJob | None,
     state: _Reconciliation,
 ) -> VaultPipelineOutcome | _Reconciliation:
-    """Persist a fresh handle or terminal result and advance reconciliation."""
+    """Advance after the retry already published its handle or terminal answer."""
     if retried is None:
         return _Reconciliation(job=None, ambiguous=True)
     if isinstance(retried, VaultPipelineJob):
-        run.job_id = str(retried.job_id)
-        session.add(run)
-        await session.commit()
         return _Reconciliation(job=retried, ambiguous=state.ambiguous)
-    return await _land_result(session, run, retried)
+    return retried[0]
 
 
 async def _reconcile_existing_job(
@@ -1165,7 +1230,8 @@ async def _reconcile_existing_job(
     polled = await _poll_until_terminal(client, job)
     if polled is None:
         return await _finish_exhausted_run(session, run, ambiguous=True)
-    if not isinstance(polled, VaultPipelineJob):
+    # A failed job that names its reason (a refused writer key) is final too.
+    if not isinstance(polled, VaultPipelineJob) or polled.failure_code is not None:
         return await _land_result(session, run, polled)
     await _clear_job(session, run)
     return None
@@ -1183,12 +1249,23 @@ async def _reconciliation_step(
         outcome = await _reconcile_existing_job(session, client, run, state.job)
         if outcome is not None:
             return outcome
-    if run.attempt_count >= _MAX_STAGE_ATTEMPTS:
-        return await _finish_exhausted_run(session, run, ambiguous=state.ambiguous)
-    retried = await _retry_for_reconciliation(session, client, run, stage)
+    retried = await _retry_once(session, client, run, stage, ambiguous=state.ambiguous)
     if isinstance(retried, VaultPipelineOutcome):
         return retried
-    return await _continue_after_retry(session, run, retried, state)
+    return _continue_after_retry(retried, state)
+
+
+async def _owned_after_lost_admission(
+    session: AsyncSession, run: VaultPipelineRun
+) -> VaultPipelineRun | VaultPipelineOutcome | None:
+    """A real lease owner follows the request that won its queued admission CAS."""
+    if pipeline_lease.current_continuation_lease() is None:
+        return None
+    await _refresh_owned_run(session, run)
+    await session.commit()
+    if run.outcome != VaultPipelineOutcome.ATTEMPTED.value:
+        return VaultPipelineOutcome(run.outcome)
+    return run
 
 
 async def _prepare_reconciliation(
@@ -1202,7 +1279,7 @@ async def _prepare_reconciliation(
         return run
     started = await _start_queued_run(session, client, run, stage)
     if started is None:
-        return None
+        return await _owned_after_lost_admission(session, run)
     if started.outcome is not VaultPipelineOutcome.ATTEMPTED:
         return started.outcome
     return run
@@ -1218,6 +1295,7 @@ async def _reconcile_run(
     run = await session.get(VaultPipelineRun, run_id)
     if run is None:
         return VaultPipelineOutcome.AMBIGUOUS
+    _ensure_owned_run(run)
     prepared = await _prepare_reconciliation(session, client, run, stage)
     if prepared is None:
         return None
@@ -1504,17 +1582,6 @@ class _ClimbContext:
     deadline: float
 
 
-def _classification_allows_progress(
-    stage: VaultPipelineStage,
-    outcome: VaultPipelineOutcome,
-) -> bool:
-    """Whether this outcome leaves classification's downstream labels usable."""
-    return stage is not VaultPipelineStage.CLASSIFY or outcome in {
-        VaultPipelineOutcome.COMPLETED,
-        VaultPipelineOutcome.INCOMPLETE,
-    }
-
-
 async def _continuation_scope(
     session: AsyncSession,
     continuation: _Continuation,
@@ -1550,8 +1617,24 @@ def _continuation_from_active_run(
         pending=_RunResult(run_id=run.id, outcome=VaultPipelineOutcome(run.outcome)),
         stage=VaultPipelineStage.CLASSIFY,
         remaining=tuple(stage for stage in LADDER[1:] if stage in permitted),
-        resume_claim_id=run.resume_claim_id,
+        # Reading another worker's row is not an ownership grant.
+        resume_claim_id=None,
     )
+
+
+async def _follow_up_for_owner(session: AsyncSession, continuation: _Continuation) -> _Continuation:
+    """Adopt one successor under the same owned token, or stop at a foreign owner."""
+    owned = pipeline_lease.current_continuation_lease()
+    if owned is None:
+        return continuation
+    await _verify_continuation_lease(session)
+    claimed = await _claim_continuation_run(
+        session, continuation.pending.run_id, continuation.user_id, owned.claim_id
+    )
+    if not claimed:
+        raise _ContinuationOwnershipLostError
+    pipeline_lease.move_owned_anchor(continuation.pending.run_id)
+    return replace(continuation, resume_claim_id=owned.claim_id)
 
 
 async def _follow_up_continuation(
@@ -1566,12 +1649,15 @@ async def _follow_up_continuation(
     await session.commit()
     if run is None:
         return None
-    return _continuation_from_active_run(
+    continuation = _continuation_from_active_run(
         run,
         factory=factory,
         client=client,
         user_id=user_id,
     )
+    if continuation is None:
+        return None
+    return await _follow_up_for_owner(session, continuation)
 
 
 async def _continue_stage(
@@ -1597,10 +1683,20 @@ async def _continue_stage(
 
 async def _continue_ladder(continuation: _Continuation) -> None:
     """Finish an in-flight rung and every permitted successor off-request."""
-    claim_id = continuation.resume_claim_id
-    if claim_id is None:
-        await _continue_ladder_body(continuation)
+    owned = await _own_continuation(continuation)
+    if owned is None:
         return
+    claim_id = owned.resume_claim_id
+    if claim_id is None:
+        raise RuntimeError("owned vault continuation has no claim")
+    with pipeline_lease.owning_continuation(
+        _ContinuationLease(owned.user_id, owned.pending.run_id, claim_id)
+    ):
+        await _continue_owned_ladder(owned, claim_id)
+
+
+async def _continue_owned_ladder(continuation: _Continuation, claim_id: str) -> None:
+    """Heartbeat and release exactly the token this chain acquired."""
     heartbeat = asyncio.create_task(_heartbeat_resume_claim(continuation.factory, claim_id))
     try:
         await _continue_ladder_body(continuation)
@@ -1610,19 +1706,29 @@ async def _continue_ladder(continuation: _Continuation) -> None:
         await _release_resume_claim(continuation.factory, claim_id)
 
 
+async def _reconcile_pending(
+    session: AsyncSession, continuation: _Continuation
+) -> VaultPipelineOutcome | None:
+    """Skip re-admission of a terminal answer already settled in the request."""
+    await _verify_continuation_lease(session)
+    if continuation.pending.outcome not in {
+        VaultPipelineOutcome.QUEUED,
+        VaultPipelineOutcome.ATTEMPTED,
+    }:
+        return continuation.pending.outcome
+    return await _reconcile_run(
+        session, continuation.client, continuation.pending.run_id, continuation.stage
+    )
+
+
 async def _reconcile_classification_chain(
     session: AsyncSession,
     continuation: _Continuation,
 ) -> tuple[_Continuation, VaultPipelineOutcome] | None:
-    """Reconcile serial classification snapshots until no follow-up remains."""
+    """Reconcile serial snapshots, without readmitting counts already settled in the request."""
     current = continuation
     while True:
-        outcome = await _reconcile_run(
-            session,
-            current.client,
-            current.pending.run_id,
-            current.stage,
-        )
+        outcome = await _reconcile_pending(session, current)
         if outcome is None:
             return None
         if current.stage is not VaultPipelineStage.CLASSIFY:
@@ -1690,6 +1796,9 @@ async def _climb_or_stand_down(session: AsyncSession, continuation: _Continuatio
     """
     try:
         await _climb_detached(session, continuation)
+    except _ContinuationOwnershipLostError:
+        await session.rollback()
+        _LOGGER.info("creek vault pipeline stood down: another continuation owns the pass")
     except _AccountErasedMidClimbError:
         _LOGGER.info(_STOOD_DOWN_FOR_A_GONE_ACCOUNT)
     except SQLAlchemyError:
@@ -1749,98 +1858,65 @@ def _schedule_continuation(continuation: _Continuation) -> bool:
     active = _BACKGROUND_TASKS.get(key)
     if active is not None and not active.done():
         return False
-    task = asyncio.create_task(_continue_ladder(continuation))
+    # Off the request's context: a writer's relayed key ends with the reply (#3437).
+    task = asyncio.create_task(_continue_ladder(continuation), context=keyless_context())
     _BACKGROUND_TASKS[key] = task
-    task.add_done_callback(lambda completed: _forget_background_task(key, completed))
+    task.add_done_callback(
+        lambda completed: _forget_background_task(key, completed), context=keyless_context()
+    )
     return True
 
 
-async def _release_resume_claim(
-    factory: async_sessionmaker[AsyncSession],
-    claim_id: str,
-) -> None:
-    """Best-effort release of every row in one owned recovery chain."""
-    try:
-        async with factory() as session:
-            await session.execute(
-                update(VaultPipelineRun)
-                .where(col(VaultPipelineRun.resume_claim_id) == claim_id)
-                .values(resume_claim_id=None, resume_claimed_at=None)
-            )
-            await session.commit()
-    except SQLAlchemyError:
-        _LOGGER.warning("creek vault pipeline could not release its startup claim")
+async def _release_resume_claim(factory: async_sessionmaker[AsyncSession], claim_id: str) -> None:
+    """Release only rows owned by this continuation's actual token."""
+    await pipeline_lease.release_resume_claim(factory, claim_id)
 
 
-async def _heartbeat_resume_claim(
-    factory: async_sessionmaker[AsyncSession],
-    claim_id: str,
-) -> None:
-    """Keep every row in a live recovery chain newer than the stale horizon."""
-    while True:
-        await asyncio.sleep(_RESUME_CLAIM_HEARTBEAT_SECONDS)
-        try:
-            async with factory() as session:
-                await session.execute(
-                    update(VaultPipelineRun)
-                    .where(col(VaultPipelineRun.resume_claim_id) == claim_id)
-                    .values(resume_claimed_at=datetime.now(UTC))
-                )
-                await session.commit()
-        except SQLAlchemyError:
-            _LOGGER.warning("creek vault pipeline could not renew its startup claim")
+async def _heartbeat_resume_claim(factory: async_sessionmaker[AsyncSession], claim_id: str) -> None:
+    """Keep policy resolution at the orchestrator's existing caller seam."""
+    await pipeline_lease.heartbeat_resume_claim(factory, claim_id, _RESUME_CLAIM_HEARTBEAT_SECONDS)
+
+
+async def _claim_continuation_run(
+    session: AsyncSession, run_id: int, user_id: int, claim_id: str
+) -> bool:
+    """Apply the same caller-visible stale policy to one exact run/account pair."""
+    return await pipeline_lease.claim_continuation_run(
+        session, pipeline_lease.LeaseTarget(user_id, run_id), claim_id, _RESUME_CLAIM_STALE_AFTER
+    )
+
+
+async def _continuation_lease_present(session: AsyncSession, continuation: _Continuation) -> bool:
+    """Validate an owned token without deriving authority from the stored row."""
+    return await pipeline_lease.continuation_lease_present(
+        session,
+        pipeline_lease.LeaseTarget(continuation.user_id, continuation.pending.run_id),
+        continuation.resume_claim_id,
+    )
 
 
 async def _claim_one_resumable_run(session: AsyncSession) -> VaultPipelineRun | None:
-    """Atomically lease the oldest unowned or stale persisted run."""
-    now = datetime.now(UTC)
-    stale_before = now - _RESUME_CLAIM_STALE_AFTER
-    claim_id = str(uuid4())
-    candidate = (
-        select(col(VaultPipelineRun.id))
-        .where(*_resumable_run_conditions(stale_before))
-        .order_by(col(VaultPipelineRun.id))
-        .limit(1)
-        .scalar_subquery()
-    )
-    result = await session.execute(
-        update(VaultPipelineRun)
-        .where(col(VaultPipelineRun.id) == candidate)
-        .where(*_resumable_run_conditions(stale_before))
-        .values(resume_claim_id=claim_id, resume_claimed_at=now)
-        .returning(VaultPipelineRun)
-    )
-    run = result.scalars().one_or_none()
-    await session.commit()
-    return run
-
-
-def _resumable_run_conditions(stale_before: datetime) -> tuple[ColumnElement[bool], ...]:
-    """Return the eligibility predicate shared by the candidate read and CAS."""
-    return (
-        col(VaultPipelineRun.outcome).in_(
-            (
-                VaultPipelineOutcome.QUEUED.value,
-                VaultPipelineOutcome.ATTEMPTED.value,
-            )
-        ),
-        col(VaultPipelineRun.trigger).is_not(None),
-        or_(
-            col(VaultPipelineRun.resume_claimed_at).is_(None),
-            col(VaultPipelineRun.resume_claimed_at) <= stale_before,
-        ),
-    )
+    """Preserve the startup CAS seam and its caller-visible stale policy."""
+    return await pipeline_lease.claim_one_resumable_run(session, _RESUME_CLAIM_STALE_AFTER)
 
 
 async def _resumable_run_exists(session: AsyncSession) -> bool:
-    """Distinguish an empty queue from losing one compare-and-swap race."""
-    stale_before = datetime.now(UTC) - _RESUME_CLAIM_STALE_AFTER
-    result = await session.execute(
-        select(col(VaultPipelineRun.id)).where(*_resumable_run_conditions(stale_before)).limit(1)
-    )
-    exists = result.scalar_one_or_none() is not None
-    await session.commit()
-    return exists
+    """Use the same stale horizon when deciding whether a CAS race has more work."""
+    return await pipeline_lease.resumable_run_exists(session, _RESUME_CLAIM_STALE_AFTER)
+
+
+async def _own_continuation(continuation: _Continuation) -> _Continuation | None:
+    """Choose one actual poller/climber across workers, never borrowing a row's token."""
+    async with continuation.factory() as session:
+        if continuation.resume_claim_id is not None:
+            return (
+                continuation if await _continuation_lease_present(session, continuation) else None
+            )
+        claim_id = str(uuid4())
+        claimed = await _claim_continuation_run(
+            session, continuation.pending.run_id, continuation.user_id, claim_id
+        )
+    return replace(continuation, resume_claim_id=claim_id) if claimed else None
 
 
 async def _claim_resumable_runs(session: AsyncSession) -> list[VaultPipelineRun]:
@@ -1984,6 +2060,44 @@ class _ClimbProgress:
     index: int = 0
 
 
+def _request_can_admit(continuation: _Continuation) -> bool:
+    """Only an unstarted classification can use the current request's candidate key."""
+    return (
+        has_forwarded_provider_key()
+        and continuation.stage is VaultPipelineStage.CLASSIFY
+        and continuation.pending.outcome is VaultPipelineOutcome.QUEUED
+    )
+
+
+async def _handoff_queued_classification(
+    session: AsyncSession, continuation: _Continuation | None
+) -> None:
+    """Admit a queued pass while this request can relay its key; detach only counts/handles.
+
+    The existing scheduler lock and queued-to-attempted compare-and-swap still
+    choose one submitter. An already admitted pass is never submitted again.
+    No key enters the continuation: all polling and later retries use the
+    existing keyless context, including work resumed after process death.
+    """
+    if continuation is None:
+        return
+    if _request_can_admit(continuation):
+        run = await session.get(VaultPipelineRun, continuation.pending.run_id)
+        if run is None:
+            return
+        started = await _start_queued_run(
+            session,
+            continuation.client,
+            run,
+            continuation.stage,
+            budget=_ADMISSION_ONLY_BUDGET_SECONDS,
+        )
+        if started is None:
+            return
+        continuation = replace(continuation, pending=started)
+    _schedule_continuation(continuation)
+
+
 async def _handoff_foreground_run(
     session: AsyncSession,
     client: CreekVaultPipelineClient,
@@ -2017,7 +2131,7 @@ async def _handoff_foreground_run(
     )
     if follow_up is None:
         return False
-    _schedule_continuation(follow_up)
+    await _handoff_queued_classification(session, follow_up)
     return True
 
 
@@ -2055,13 +2169,14 @@ async def _climb_once(
     """Run one foreground rung, scheduling durable continuation when needed."""
     stage = progress.stages[progress.index]
     remaining_budget = context.deadline - time.monotonic()
-    if remaining_budget < _LEAST_WORTH_STARTING_SECONDS:
+    keyed_admission = stage is VaultPipelineStage.CLASSIFY and has_forwarded_provider_key()
+    if remaining_budget < _LEAST_WORTH_STARTING_SECONDS and not keyed_admission:
         return None
     result = await _run_stage(
         session,
         client,
         _StageContext(context.user_id, stage, progress.trigger),
-        remaining_budget,
+        max(remaining_budget, _ADMISSION_ONLY_BUDGET_SECONDS),
     )
     if await _handoff_foreground_run(
         session,
@@ -2097,7 +2212,10 @@ async def _climb(
     ``deadline`` is a monotonic instant. Each stage runs under whatever is left
     of it, so the pass is bounded in elapsed time rather than merely gated at its
     start, and a stage is not begun at all with less than
-    :data:`_LEAST_WORTH_STARTING_SECONDS` remaining.
+    :data:`_LEAST_WORTH_STARTING_SECONDS` remaining. A due classification with
+    the writer's request key is the exception: admit it before that key ends,
+    within the adapter's bounded deadline, persist its handle and let keyless
+    continuation do the polling. Every other rung keeps the foreground floor.
     """
     progress: _ClimbProgress | None = _ClimbProgress(context.trigger, context.stages)
     while progress is not None and progress.index < len(progress.stages):
@@ -2217,19 +2335,26 @@ async def _recover_scheduler_conflict(
         return joined.queued
 
 
-def _schedule_queued_follow_up(
+async def _schedule_queued_follow_up(
     session: AsyncSession,
     client: CreekVaultPipelineClient,
     run: VaultPipelineRun,
 ) -> None:
-    """Start a queue entry this request materialized; startup remains fallback."""
+    """Admit recovered work while keyed, or degrade to keyless recovery safely."""
     continuation = _continuation_from_active_run(
         run,
         factory=_session_factory_for(session),
         client=client,
         user_id=run.user_id,
     )
-    if continuation is not None:
+    if continuation is None:
+        return
+    try:
+        await _handoff_queued_classification(session, continuation)
+    except SQLAlchemyError:
+        # Copy the content-free continuation before rollback expires the ORM
+        # row. A second DB fault must not turn a committed journal save into500.
+        await session.rollback()
         _schedule_continuation(continuation)
 
 
@@ -2242,7 +2367,15 @@ async def _execute_pipeline_plan(
 ) -> None:
     """Start either the durable queue or the foreground stages in ``plan``."""
     if plan.queued is not None:
-        _schedule_queued_follow_up(session, client, plan.queued)
+        await _handoff_queued_classification(
+            session,
+            _continuation_from_active_run(
+                plan.queued,
+                factory=_session_factory_for(session),
+                client=client,
+                user_id=user_id,
+            ),
+        )
         return
     if not plan.stages:
         return
@@ -2300,4 +2433,4 @@ async def drive_vault_pipeline(
         # rolls the other session back, and only the winner reaches Creek.
         queued = await _recover_scheduler_conflict(session, user_id, trigger)
         if queued is not None:
-            _schedule_queued_follow_up(session, pipeline_client, queued)
+            await _schedule_queued_follow_up(session, pipeline_client, queued)

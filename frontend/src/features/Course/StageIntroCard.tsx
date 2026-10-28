@@ -5,6 +5,8 @@ import { course as courseApi, type StageIntro } from '../../api';
 
 import styles from './Course.styles';
 
+import { reportDiagnostic } from '@/observability/diagnostics';
+
 interface StageIntroCardProps {
   stageNumber: number;
   onOpen: (_stageNumber: number) => void;
@@ -14,7 +16,7 @@ interface StageIntroCardProps {
  * "Start here" card for a stage's course introduction, shown above the chapter
  * list. Loads its own intro and refetches on stage change. A missing intro
  * (404 — no intro authored, or the stage is locked) is a NORMAL state, not an
- * error: the card simply renders nothing, mirroring ``SiteResourcesPanel``.
+ * error: a missing introduction simply renders no card.
  * Tapping opens the intro in the native ``ChapterReader`` via ``onOpen``.
  */
 const StageIntroCard = ({ stageNumber, onOpen }: StageIntroCardProps): React.JSX.Element | null => {
@@ -30,9 +32,9 @@ const StageIntroCard = ({ stageNumber, onOpen }: StageIntroCardProps): React.JSX
       .then((result) => {
         if (active) setIntro(result);
       })
-      .catch((err: unknown) => {
+      .catch(() => {
         // No intro / locked stage is expected — keep the card hidden, no banner.
-        console.warn('No stage introduction:', err);
+        reportDiagnostic('course_load_failed');
       });
     return () => {
       active = false;

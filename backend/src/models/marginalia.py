@@ -9,7 +9,7 @@ import enum
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
-from sqlalchemy import CheckConstraint, Column, DateTime, Index
+from sqlalchemy import CheckConstraint, Column, DateTime, Index, SmallInteger
 from sqlmodel import Field, Relationship, SQLModel
 
 from services.journal_encryption import EncryptedString
@@ -26,6 +26,16 @@ if TYPE_CHECKING:
 MARGINALIA_ANCHOR_TEXT_MAX = 280
 MARGINALIA_NOTE_MAX = 600
 MARGINALIA_ESSAY_MAX = 10_000
+
+#: The shape version of the provenance stamped on a row (#3062). A row with
+#: ``receipt_version IS NULL`` predates receipts: its source was never recorded.
+RECEIPT_VERSION = 1
+#: Cap on the self-reported model string a receipt keeps. A model id is a short
+#: identifier; anything longer is truncated rather than refused, because the
+#: note itself is what the writer asked for.
+SOURCE_MODEL_MAX = 64
+# Width of the closed-vocabulary provenance columns.
+_SOURCE_COLUMN_MAX = 20
 
 
 class MarginaliaKind(enum.StrEnum):
@@ -45,6 +55,43 @@ class MarginaliaStatus(enum.StrEnum):
 
     ACTIVE = "active"
     STALE = "stale"
+
+
+class MarginaliaSource(enum.StrEnum):
+    """Which side answered a note or its letter, as the server observed it (#3062).
+
+    ``creek_vault`` -- the caller's own vault answered. ``app_provider`` -- the
+    app's model provider answered. ``demo`` -- the stub provider answered with
+    canned text: a demo, never a reflection, and never charged. A ``NULL``
+    column means the source was not recorded (a row older than receipts); it is
+    never inferred from the account's current vault connection.
+    """
+
+    CREEK_VAULT = "creek_vault"
+    APP_PROVIDER = "app_provider"
+    DEMO = "demo"
+
+
+class InferenceProvider(enum.StrEnum):
+    """Who the answering side reported itself as, in a closed vocabulary.
+
+    ``creek`` is the vault; the rest are the app provider's own names, with
+    ``stub`` for the demo provider. An unrecognized name is recorded as
+    ``NULL`` rather than widened into one of these.
+    """
+
+    ANTHROPIC = "anthropic"
+    OPENAI = "openai"
+    STUB = "stub"
+    CREEK = "creek"
+
+
+def _nullable_vocabulary_check(column: str, vocabulary: type[enum.StrEnum]) -> CheckConstraint:
+    """CHECK that ``column`` is NULL or one of ``vocabulary``'s values, derived from the enum."""
+    quoted = ", ".join(f"'{member.value}'" for member in vocabulary)
+    return CheckConstraint(
+        f"{column} IS NULL OR {column} IN ({quoted})", name=f"ck_marginalia_{column}_valid"
+    )
 
 
 def _kind_check() -> CheckConstraint:
@@ -97,6 +144,9 @@ class Marginalia(SQLModel, table=True):
             "(essay IS NULL) = (essay_generated_at IS NULL)",
             name="ck_marginalia_essay_timestamp_paired",
         ),
+        _nullable_vocabulary_check("source", MarginaliaSource),
+        _nullable_vocabulary_check("source_provider", InferenceProvider),
+        _nullable_vocabulary_check("essay_source", MarginaliaSource),
     )
 
     id: int | None = Field(default=None, primary_key=True)
@@ -131,6 +181,21 @@ class Marginalia(SQLModel, table=True):
             nullable=False,
             onupdate=lambda: datetime.now(UTC),
         ),
+    )
+
+    # Provenance (#3062): which side answered the note, and separately the
+    # letter. Server-observed, closed-vocabulary operational metadata -- never
+    # anything a person wrote -- so plaintext. All nullable with no backfill:
+    # NULL means "source not recorded", and is what every row written before
+    # receipts existed carries. ``source_model`` is the answering side's own
+    # report of its model, shown as reported and never as attested; a vault
+    # reports none, so it is NULL for a vault note.
+    source: str | None = Field(default=None, max_length=_SOURCE_COLUMN_MAX)
+    source_provider: str | None = Field(default=None, max_length=_SOURCE_COLUMN_MAX)
+    source_model: str | None = Field(default=None, max_length=SOURCE_MODEL_MAX)
+    essay_source: str | None = Field(default=None, max_length=_SOURCE_COLUMN_MAX)
+    receipt_version: int | None = Field(
+        default=None, sa_column=Column(SmallInteger(), nullable=True)
     )
 
     entry: "JournalEntry" = Relationship(back_populates="marginalia")

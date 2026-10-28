@@ -20,7 +20,7 @@ import {
   uiType,
 } from '../../design/tokens';
 
-const STAGE_PILL_SIZE = 40;
+const STAGE_PILL_SIZE = touchTarget.minimum;
 const PROGRESS_BAR_HEIGHT = 6;
 const STAGE_COVER_ARC = 4;
 const CHAPTER_NAV_DISABLED_OPACITY = 0.5;
@@ -68,6 +68,35 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     borderWidth: 2,
     borderColor: 'transparent',
+  },
+  startHerePill: {
+    width: 'auto',
+    height: 'auto',
+    minWidth: touchTarget.minimum,
+    minHeight: touchTarget.minimum,
+    paddingHorizontal: SPACING.md,
+    paddingVertical: SPACING.sm,
+  },
+  startHereHeader: {
+    paddingBottom: SPACING.md,
+  },
+  // A failed Start Here read: the truthful line, then its retry, hung from the
+  // cover's left edge like the progress label it stands in for (#3344).
+  startHereError: {
+    marginTop: SPACING.sm,
+    alignItems: 'flex-start',
+  },
+  resourceActionButton: {
+    minHeight: touchTarget.minimum,
+    justifyContent: 'center',
+  },
+  resourceAction: {
+    minHeight: touchTarget.minimum,
+    marginHorizontal: rhythm.screenPaddingH,
+    marginBottom: SPACING.md,
+    paddingHorizontal: SPACING.lg,
+    paddingVertical: SPACING.sm,
+    justifyContent: 'center',
   },
   // The selected stage reads as the "current chapter": accent ring + lift.
   stagePillActive: {
@@ -130,6 +159,12 @@ const styles = StyleSheet.create({
   // the intro card beneath it hang from the same edge as the rest of the page.
   introBand: {
     paddingHorizontal: rhythm.screenPaddingH,
+  },
+
+  // "Read next" sits in the gutter just above the "Chapters" band (#3147).
+  readNextBand: {
+    paddingHorizontal: rhythm.screenPaddingH,
+    marginTop: SPACING.md,
   },
 
   // The "Chapters" band: the landing's one small-caps list spine.
@@ -476,40 +511,13 @@ const styles = StyleSheet.create({
   },
   retryButton: {
     marginTop: SPACING.md,
+    minHeight: touchTarget.minimum,
+    justifyContent: 'center',
     paddingVertical: SPACING.sm,
     paddingHorizontal: SPACING.lg,
     borderRadius: radius.md,
     backgroundColor: accent.primary,
     alignItems: 'center',
-  },
-
-  // Site resources panel
-  resourcesPanel: {
-    paddingHorizontal: rhythm.screenPaddingH,
-    paddingTop: SPACING.md,
-    paddingBottom: SPACING.sm,
-    backgroundColor: surface.canvas,
-  },
-  resourcesHeading: {
-    ...editorialType.caption,
-    color: ink.muted,
-    marginBottom: SPACING.sm,
-  },
-  resourcesRow: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: SPACING.sm,
-  },
-  resourceChip: {
-    paddingVertical: SPACING.xs,
-    paddingHorizontal: SPACING.md,
-    borderRadius: radius.md,
-    backgroundColor: surface.sunken,
-  },
-  // A chip is tapped, so its label sits at the interactive floor.
-  resourceChipText: {
-    ...uiType.button,
-    color: ink.primary,
   },
 });
 

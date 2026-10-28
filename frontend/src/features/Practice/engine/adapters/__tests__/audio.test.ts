@@ -71,7 +71,7 @@ describe('createExpoAudioAdapter', () => {
     await new Promise((resolve) => setImmediate(resolve));
 
     expect(warnSpy).toHaveBeenCalledTimes(1);
-    expect(warnSpy.mock.calls[0]?.[0]).toContain('metronome_tick');
+    expect(warnSpy.mock.calls[0]?.[0]).toBe('audio_cue_unavailable');
 
     await adapter.play('metronome_tick');
     await adapter.play('metronome_tick');
@@ -316,9 +316,9 @@ describe('createExpoAudioAdapter', () => {
     const adapter = freshAudio.createExpoAudioAdapter();
     await new Promise((resolve) => setImmediate(resolve));
 
-    const silentWarn = warnSpy.mock.calls.find((call) => call[1] instanceof SilentRenderError);
+    const silentWarn = warnSpy.mock.calls.find((call) => call[0] === 'audio_cue_unavailable');
     expect(silentWarn).toBeDefined();
-    expect(String(silentWarn?.[0])).toContain('falling back to silent');
+    expect(silentWarn?.[0]).toBe('audio_cue_unavailable');
     // No player is built on a source that never became audible -- a degraded
     // source handed to createAudioPlayer would be the silent failure all over again.
     expect(freshExpoAudio.createAudioPlayer).not.toHaveBeenCalled();
@@ -336,7 +336,7 @@ describe('createExpoAudioAdapter', () => {
     const freshExpoAudio = require('expo-audio') as {
       setAudioModeAsync: jest.MockedFunction<typeof setAudioModeAsync>;
     };
-    freshExpoAudio.setAudioModeAsync.mockRejectedValueOnce(new Error('no audio session'));
+    freshExpoAudio.setAudioModeAsync.mockRejectedValueOnce(new Error('PRIVATE_AUDIO_CANARY'));
     const freshAudio = require('../audio') as {
       createExpoAudioAdapter: typeof createExpoAudioAdapter;
     };
@@ -346,7 +346,13 @@ describe('createExpoAudioAdapter', () => {
 
     // A bare `void` on a rejecting promise is an unhandled rejection, which RN
     // surfaces as a redbox in dev -- over an optional convenience.
-    expect(warnSpy.mock.calls.some((call) => String(call[0]).includes('audio session'))).toBe(true);
+    expect(warnSpy).toHaveBeenCalledWith('audio_session_failed');
+    for (const call of warnSpy.mock.calls) {
+      for (const arg of call) {
+        expect(arg).not.toBeInstanceOf(Error);
+        expect(String(arg)).not.toContain('PRIVATE_AUDIO_CANARY');
+      }
+    }
   });
 
   it('marks a cue as failed if replayAsync rejects, suppressing further warns', async () => {
@@ -362,5 +368,21 @@ describe('createExpoAudioAdapter', () => {
     await adapter.play('start_bell');
     // Subsequent plays are silenced — total warn count unchanged.
     expect(warnSpy).toHaveBeenCalledTimes(2);
+  });
+
+  it('reports a play that throws to onUnavailable exactly once', async () => {
+    // A native player can reject its seek or throw from play(); that failure
+    // lands in playCue's catch and must reach the session's notice.
+    const onUnavailable = jest.fn<() => void>();
+    seekMock.mockRejectedValue(new Error('decoder gone'));
+    const adapter = createExpoAudioAdapter(onUnavailable);
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(onUnavailable).not.toHaveBeenCalled();
+
+    await adapter.play('start_bell');
+    await adapter.play('halfway_bell');
+    await new Promise((resolve) => setImmediate(resolve));
+
+    expect(onUnavailable).toHaveBeenCalledTimes(1);
   });
 });

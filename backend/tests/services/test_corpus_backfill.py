@@ -46,6 +46,7 @@ import json
 import time
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
+from typing import TYPE_CHECKING, cast
 
 import pytest
 import pytest_asyncio
@@ -58,12 +59,21 @@ from models.corpus_consent import CorpusConsentEvent
 from models.corpus_fragment import CorpusFragment, CorpusSource
 from models.corpus_sweep import CorpusSweep
 from models.journal_entry import JournalClassification, JournalEntry
+from models.journal_withdrawal_obligation import (
+    JournalWithdrawalObligation,
+    JournalWithdrawalState,
+)
 from models.user import User
 from services import corpus_backfill as cb
 from services import frequency_classification as fc
 from services.botmason import LLMCreditExhaustedError, LLMProviderError
 from services.corpus_backfill import backfill_after_consent
 from services.corpus_consent import ConsentChange, ConsentState, set_consent
+from services.privacy_suspension import EXTERNAL_AI_SUSPEND_ENV_VAR
+from services.reflection_boundary import ReflectionBoundary
+
+if TYPE_CHECKING:
+    from collections.abc import Awaitable, Callable
 
 _OWNER = 1
 
@@ -161,7 +171,9 @@ async def _decide(
 ) -> cb.BackfillOutcome:
     """Record one decision and run whatever that decision reaches."""
     change = await set_consent(session, user_id=_OWNER, source=source, granted=granted)
-    outcome = await backfill_after_consent(session, user_id=_OWNER, change=change)
+    outcome = await backfill_after_consent(
+        session, user_id=_OWNER, change=change, boundary=ReflectionBoundary.APP_PROVIDER
+    )
     await session.commit()
     return outcome
 
@@ -189,6 +201,36 @@ async def test_saying_yes_ontologizes_the_writing_that_was_already_there(
 
     assert outcome.fragments_added == 2
     assert sorted(await _stored(db_session)) == sorted([_FIRST, _SECOND])
+
+
+@pytest.mark.asyncio
+async def test_a_page_whose_deletion_is_in_progress_is_not_swept_up(
+    db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A DELETE that met a vault outage left the page live with a pending_delete obligation.
+
+    The sweep must not load it, send it to a provider, or store a fragment for
+    it: the background withdrawal sweep is about to finish that deletion, and a
+    fragment written now would outlive it as grounding (#3098 review).
+    """
+    calls = _patch_provider(monkeypatch)
+    await _entry(db_session, body=_FIRST)
+    going = await _entry(db_session, body=_DISCARDED)
+    db_session.add(
+        JournalWithdrawalObligation(
+            user_id=_OWNER,
+            journal_entry_id=going,
+            state=JournalWithdrawalState.PENDING_DELETE.value,
+        )
+    )
+    await db_session.flush()
+
+    outcome = await _decide(db_session, granted=True)
+
+    assert outcome.fragments_added == 1
+    assert await _stored(db_session) == [_FIRST]
+    assert len(calls) == 1
+    assert all(_DISCARDED not in json.dumps(call, default=str) for call in calls)
 
 
 @pytest.mark.asyncio
@@ -568,6 +610,38 @@ async def test_a_refusal_that_never_reached_a_provider_does_not_mark_the_entry_a
 
 
 @pytest.mark.asyncio
+async def test_an_operator_ai_suspension_stops_the_sweep_without_marking(
+    db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A suspension is a refusal no provider saw, so it must not spend the queue (#3075).
+
+    ``PRIVACY_SUSPEND_EXTERNAL_AI`` refuses every classification before a client
+    is built. Left to the classifier, that refusal degrades to "unclassified"
+    and the sweep would stamp, and so demote, every entry in the batch in one
+    pass that reached nobody. It stops instead, exactly as a spent balance does.
+    """
+    real = cast("Callable[..., Awaitable[object]]", fc.generate_response)
+    calls: list[str] = []
+
+    async def counting(*args: object, **kwargs: object) -> object:
+        calls.append("dial")
+        return await real(*args, **kwargs)
+
+    monkeypatch.setattr(fc, "generate_response", counting)
+    monkeypatch.setenv(EXTERNAL_AI_SUSPEND_ENV_VAR, "true")
+    first = await _entry(db_session, body=_FIRST)
+    second = await _entry(db_session, body=_SECOND)
+    third = await _entry(db_session, body=_THIRD)
+
+    outcome = await _decide(db_session, granted=True)
+
+    assert [await _offered_at(db_session, i) for i in (first, second, third)] == [None, None, None]
+    assert outcome.entries_considered == 0
+    assert outcome.entries_remaining == 3
+    assert calls == []
+
+
+@pytest.mark.asyncio
 async def test_the_batch_a_refusal_stopped_is_the_batch_the_next_grant_gets(
     db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -837,7 +911,9 @@ async def test_a_grant_with_no_decision_behind_it_sweeps_nothing(
         event=None,
     )
 
-    outcome = await backfill_after_consent(db_session, user_id=_OWNER, change=unattributable)
+    outcome = await backfill_after_consent(
+        db_session, user_id=_OWNER, change=unattributable, boundary=ReflectionBoundary.APP_PROVIDER
+    )
     await db_session.commit()
 
     assert (outcome.entries_considered, outcome.fragments_added, outcome.entries_remaining) == (
@@ -967,7 +1043,9 @@ async def test_a_decision_belonging_to_somebody_else_authorises_nothing(
         db_session, user_id=_OWNER, source=CorpusSource.JOURNAL, granted=True
     )
 
-    outcome = await backfill_after_consent(db_session, user_id=stranger, change=change)
+    outcome = await backfill_after_consent(
+        db_session, user_id=stranger, change=change, boundary=ReflectionBoundary.APP_PROVIDER
+    )
     await db_session.commit()
 
     assert outcome.entries_considered == 0
@@ -1082,7 +1160,9 @@ async def test_what_the_sweep_reached_survives_the_request_being_abandoned(
         db_session, user_id=_OWNER, source=CorpusSource.JOURNAL, granted=True
     )
 
-    await backfill_after_consent(db_session, user_id=_OWNER, change=change)
+    await backfill_after_consent(
+        db_session, user_id=_OWNER, change=change, boundary=ReflectionBoundary.APP_PROVIDER
+    )
     await db_session.rollback()
 
     assert sorted(await _stored(db_session)) == sorted([_FIRST, _SECOND, _THIRD])
@@ -1131,7 +1211,9 @@ async def test_an_abandoned_sweep_keeps_its_fragments_and_loses_its_receipt(
         db_session, user_id=_OWNER, source=CorpusSource.JOURNAL, granted=True
     )
 
-    await backfill_after_consent(db_session, user_id=_OWNER, change=change)
+    await backfill_after_consent(
+        db_session, user_id=_OWNER, change=change, boundary=ReflectionBoundary.APP_PROVIDER
+    )
     await db_session.rollback()
 
     assert sorted(await _stored(db_session)) == sorted([_FIRST, _SECOND])

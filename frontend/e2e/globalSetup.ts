@@ -151,8 +151,9 @@ interface CreekFixture {
  * happen. These are what make it happen without weakening anything: the SDKs'
  * own base-URL variables point at this process, the keys decide which refusal
  * it answers with (an exhausted balance is a property of an account, not of a
- * request), and the probe token is the only way a request paid for by the
- * *server's* key can reach a provider on a stub-configured deployment.
+ * request), and the retired probe token -- with the server's own key -- is
+ * armed to prove a keyless page no longer reaches a provider (ADR 0009 phase
+ * (a), #3067).
  */
 interface ProviderFixture {
   pid: number;
@@ -455,9 +456,9 @@ function serverEnvironment(
     EMAIL_CAPTURE_FILE: mail.captureFile,
     APP_BASE_URL: mail.webBaseUrl,
     // `BOTMASON_PROVIDER` stays unset, so every journey keeps the stub: no key,
-    // no network, no third party. The four settings below matter only to a
-    // request that reaches a provider at all, which on this server means one
-    // carrying a BYOK key or the probe token -- one journey, deliberately.
+    // no network, no third party. The settings below matter only to a request
+    // that reaches a provider at all, which on this server means one carrying a
+    // BYOK key -- one journey, deliberately.
     //
     // The base URLs are the SDKs' own variables, so nothing here is patched:
     // the OpenAI and Anthropic clients the production code builds address this
@@ -465,11 +466,19 @@ function serverEnvironment(
     // they raise are ones they constructed from its response bodies. That is
     // the whole point -- injecting the typed error would prove the routing and
     // assume the classification.
+    //
+    // The stub answers only as an armed test seam (#3096): without this, a
+    // keyless request on a stub server is refused 402 `llm_key_required`, as it
+    // is on every real deployment. The server refuses a production boot with it.
+    BOTMASON_STUB_SEAM: 'true',
     OPENAI_BASE_URL: `http://127.0.0.1:${provider.port}/v1`,
     ANTHROPIC_BASE_URL: `http://127.0.0.1:${provider.port}`,
-    // Whose key the server itself spends, pointed at the account the fake
-    // treats as having no credit -- which is what the 503 half of the split
-    // ("ours to restore, not yours") is about.
+    // Neither is read by the server any more (ADR 0009 phase (a), #3067): the
+    // server's own key never pays for a writer's page, and the provider probe
+    // that once sent a marked keyless page to a provider on it is retired. Both
+    // stay set -- the key pointed at the account the fake treats as spent -- so
+    // the credit-exhausted journey can prove a marked keyless page still
+    // reaches no provider on a server holding both.
     LLM_API_KEY: provider.spentAnthropicKey,
     BOTMASON_PROVIDER_PROBE_TOKEN: provider.probeToken,
     // The deployment-wide vault, and the single account it belongs to. Both are

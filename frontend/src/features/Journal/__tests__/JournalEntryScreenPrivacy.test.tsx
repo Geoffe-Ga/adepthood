@@ -31,6 +31,7 @@ const mockRespond = jest.fn() as jest.MockedFunction<(_w: number, _b: string) =>
 jest.mock('@/context/AuthContext', () => require('./authContextTestKit'));
 
 jest.mock('@/api', () => ({
+  ...require('./journalUiFlagsTestKit'),
   journal: {
     get: (...a: unknown[]) => (mockGet as unknown as (...x: unknown[]) => unknown)(...a),
     create: (...a: unknown[]) => (mockCreate as unknown as (...x: unknown[]) => unknown)(...a),
@@ -316,7 +317,7 @@ describe('JournalEntryScreen — tier change PATCH failure', () => {
         true,
       );
       expect(getByTestId('journal-save-hint').props.children).toMatch(
-        /Intimate here.*Creek.*choose Intimate again/i,
+        /Intimate here.*vault.*not.*confirmed.*retry/i,
       );
 
       fireEvent.press(page.getByTestId('privacy-tier-intimate'));
@@ -329,6 +330,55 @@ describe('JournalEntryScreen — tier change PATCH failure', () => {
     } finally {
       jest.useRealTimers();
     }
+  });
+
+  it.each(['vault_withdrawal_previous_vault', 'vault_withdrawal_disconnected_vault'])(
+    'keeps Intimate selected when the copy is in a vault no longer connected (%s, #3094)',
+    async (detail) => {
+      jest.useFakeTimers();
+      try {
+        mockGet.mockResolvedValue(entry({ id: 7, classification: 'personal' }));
+        const { getByTestId } = renderScreen({ entryId: 7 }, { autosaveDelayMs: 100 });
+        await waitFor(() => {
+          expect(getByTestId('journal-body-input').props.value).toBeTruthy();
+        });
+        mockUpdate.mockClear();
+        mockUpdate.mockRejectedValueOnce({ status: 503, detail });
+
+        const page = within(getByTestId('journal-page'));
+        fireEvent.press(page.getByTestId('privacy-tier-intimate'));
+        await act(async () => {
+          await Promise.resolve();
+        });
+
+        // The server stored Intimate before it asked any vault; reverting the
+        // control would show a less private tier than the one on record.
+        expect(page.getByTestId('privacy-tier-intimate').props.accessibilityState.selected).toBe(
+          true,
+        );
+      } finally {
+        jest.useRealTimers();
+      }
+    },
+  );
+
+  it('keeps Intimate editable without inventing a reconnect target for an unrecorded vault', async () => {
+    mockGet.mockResolvedValue(entry({ id: 7, classification: 'personal' }));
+    const { getByTestId } = renderScreen({ entryId: 7 }, { autosaveDelayMs: 100 });
+    await waitFor(() => expect(getByTestId('journal-body-input').props.value).toBeTruthy());
+    mockUpdate.mockClear();
+    mockUpdate.mockRejectedValueOnce({ status: 503, detail: 'vault_withdrawal_unrecorded_vault' });
+    fireEvent.press(within(getByTestId('journal-page')).getByTestId('privacy-tier-intimate'));
+    await waitFor(() => {
+      const hint = String(getByTestId('journal-save-hint').props.children);
+      expect(hint).toMatch(/Intimate here.*cannot identify.*vault/i);
+      expect(hint).not.toMatch(/reconnect that vault|set to be deleted|can't be edited/i);
+    });
+    expect(getByTestId('journal-body-input').props.editable).not.toBe(false);
+    expect(
+      within(getByTestId('journal-page')).getByTestId('privacy-tier-intimate').props
+        .accessibilityState.selected,
+    ).toBe(true);
   });
 
   it('surfaces the save-error hint and reverts to the persisted tier when the PATCH rejects', async () => {

@@ -27,7 +27,7 @@ The key is that you're *actively* facilitating recovery. You're not collapsing o
 
 Green is the stage where you learn that pushing harder is not always the answer. Sometimes, the answer is *softening*. Slowing down. Letting the body do what it knows how to do when you stop forcing it to perform.
 
-APTITUDE recommends **at least 4x per week**. And if you're doing intense exercise (which you should still be doing), Active Recovery is not optional. It's how you sustain the work without burning out.
+APTITUDE suggests **at least 4x per week**. And if you've kept Orange's exercise habit going, Active Recovery is the other half of it: the part that lets you keep training without burning out.
 
 This is the balance: Yang (exercise, achievement, doing) and Yin (recovery, integration, being). Green teaches you that both are necessary. That you can't rise without descending. That you can't heal what you haven't slowed down enough to feel.
 

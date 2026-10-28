@@ -9,6 +9,7 @@
 import { describe, expect, it, jest, beforeEach } from '@jest/globals';
 import { renderHook, act } from '@testing-library/react-native';
 
+import type * as HabitStorageModule from '../../../storage/habitStorage';
 import type { Goal, Habit } from '../Habits.types';
 import { useHabits } from '../hooks/useHabits';
 import { useModalCoordinator } from '../hooks/useModalCoordinator';
@@ -54,6 +55,10 @@ jest.mock('../../../api', () => ({
 }));
 
 jest.mock('../../../storage/habitStorage', () => ({
+  capturePendingCheckInScope: jest.requireActual<typeof HabitStorageModule>(
+    '../../../storage/habitStorage',
+  ).capturePendingCheckInScope,
+  removePendingCheckIns: jest.fn(() => Promise.resolve(undefined)),
   saveHabits: jest.fn(() => Promise.resolve(undefined)),
   loadHabits: jest.fn(() => Promise.resolve(null)),
   savePendingCheckIn: jest.fn(() => Promise.resolve(undefined)),
@@ -148,7 +153,7 @@ describe('Habits integration flows', () => {
     // Open goal modal
     act(() => modalsResult.current.open('goal'));
     expect(modalsResult.current.goal).toBe(true);
-    expect(modalsResult.current.stats).toBe(false);
+    expect(modalsResult.current.story).toBe(false);
 
     // Close all modals
     act(() => modalsResult.current.closeAll());
@@ -236,13 +241,13 @@ describe('Habits integration flows', () => {
     expect(result.current.habits[0]!.name).toBe('Keep');
   });
 
-  it('mode transitions: normal → stats → edit → normal', () => {
+  it('mode transitions: normal → quick log → edit → normal', () => {
     const { result } = renderHook(() => useHabits());
 
     expect(result.current.mode).toBe('normal');
 
-    act(() => result.current.setMode('stats'));
-    expect(result.current.mode).toBe('stats');
+    act(() => result.current.setMode('quickLog'));
+    expect(result.current.mode).toBe('quickLog');
 
     act(() => result.current.setMode('edit'));
     expect(result.current.mode).toBe('edit');

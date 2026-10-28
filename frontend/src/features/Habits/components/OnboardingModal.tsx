@@ -163,15 +163,17 @@ const ReorderItem = ({ item, index, drag, isActive, onEditIcon }: ReorderItemPro
           <View accessibilityLabel={`Reorder ${item.name}`} style={styles.dragHandle}>
             <Text style={styles.dragHandleText}>≡</Text>
           </View>
-          <Text style={styles.habitListItemDate}>
-            {new Date(item.start_date).toLocaleDateString('en-US', {
-              month: 'short',
-              day: 'numeric',
-            })}
-          </Text>
-          <Text style={styles.habitListItemText}>
-            {item.icon} {item.name}
-          </Text>
+          <View style={styles.habitDragText}>
+            <Text style={styles.habitListItemDate}>
+              {new Date(item.start_date).toLocaleDateString('en-US', {
+                month: 'short',
+                day: 'numeric',
+              })}
+            </Text>
+            <Text style={styles.habitListItemText}>
+              {item.icon} {item.name}
+            </Text>
+          </View>
           <TouchableOpacity style={styles.iconEditButton} onPress={() => onEditIcon(index)}>
             <Text style={styles.iconEditButtonText}>📝</Text>
           </TouchableOpacity>
@@ -629,8 +631,8 @@ const TemplateStep = ({
     <ScrollView ref={scrollRef}>
       <Text style={styles.onboardingTitle}>Goal Templates</Text>
       <Text style={styles.onboardingSubtitle}>
-        Optionally assign a goal group template to each habit. Templates pre-fill low, clear, and
-        stretch goal tiers.
+        If you like, pick a ready-made set of goals for each habit. Each set fills in a low, clear,
+        and stretch goal you can change later.
       </Text>
       {habits.map((habit, index) => (
         <TemplatePickerTile

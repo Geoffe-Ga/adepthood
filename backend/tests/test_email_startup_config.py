@@ -59,6 +59,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from conftest import test_engine
 from main import app, lifespan, validate_app_base_url_config, validate_email_config
 from services import app_links, email, journal_encryption
+from services.botmason import STUB_SEAM_ENV_VAR
 from tests.helpers.resend_env import RESEND_ENV_VALUES
 from tests.helpers.smtp_env import SMTP_ENV_VALUES
 
@@ -652,6 +653,8 @@ async def test_boot_completes_under_a_production_https_configuration(
     _set_https_delivery_env(monkeypatch)
     monkeypatch.delenv("GUMROAD_API_TOKEN", raising=False)
     monkeypatch.delenv("GUMROAD_WEBHOOK_SECRET", raising=False)
+    # A real production process: the suite's stub test seam is never armed there.
+    monkeypatch.delenv(STUB_SEAM_ENV_VAR, raising=False)
 
     async with _isolated_factory_patch(), lifespan(app):
         assert email.configured_backend() == email.BACKEND_RESEND

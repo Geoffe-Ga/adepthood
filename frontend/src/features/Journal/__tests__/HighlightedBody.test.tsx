@@ -5,9 +5,10 @@ import React from 'react';
 import { StyleSheet } from 'react-native';
 
 import HighlightedBody from '../HighlightedBody';
+import { JOURNAL_ORDINAL_PAD, JOURNAL_TASK_GLYPHS } from '../ReadOnlyMarkdownText';
 
 import type { Marginalia, PromotedQuote } from '@/api';
-import { colors } from '@/design/tokens';
+import { SPACING, colors, editorialType } from '@/design/tokens';
 
 const BODY = 'I walked by the river and the willow bent.';
 
@@ -283,6 +284,188 @@ describe('HighlightedBody -- lightweight Markdown', () => {
     expect(queryByTestId('journal-markdown-underline-4')).toBeNull();
     expect(queryByTestId('journal-markdown-underline-2')).toBeNull();
     expect(renderedText(getByTestId('journal-body-read'))).toBe('a ==und== b');
+  });
+});
+
+/** Render under ``Platform.OS === 'web'``, restoring the platform afterwards. */
+function onWeb<T>(run: () => T): T {
+  const Platform = require('react-native').Platform as { OS: string };
+  const original = Platform.OS;
+  Platform.OS = 'web';
+  try {
+    return run();
+  } finally {
+    Platform.OS = original;
+  }
+}
+
+describe('HighlightedBody -- headings, ordered items, tasks and rules (#3251)', () => {
+  const TUESDAY = '## Tuesday\n1. walked\n2. wrote\n- [x] called Sam\n- [ ] book the room\n---';
+
+  it.each([
+    ['# One', editorialType.title.fontSize, editorialType.title.fontWeight],
+    ['## Two', editorialType.heading.fontSize, editorialType.heading.fontWeight],
+    ['### Three', editorialType.body.fontSize, '700'],
+    ['###### Six', editorialType.body.fontSize, '700'],
+  ])('draws %j at its rung of the type ramp, in ink, markers hidden', (body, size, weight) => {
+    const { getByTestId } = render(<HighlightedBody body={body} notes={[]} onOpen={jest.fn()} />);
+    const heading = getByTestId('journal-markdown-heading-0');
+    const style = StyleSheet.flatten(heading.props.style);
+    expect(style.fontSize).toBe(size);
+    expect(style.fontWeight).toBe(weight);
+    expect(style.color).toBe(colors.paper.ink);
+    expect(renderedText(heading)).toBe(body.replace(/^#+ /u, ''));
+  });
+
+  it('announces a heading as a header on native', () => {
+    const { getByTestId } = render(
+      <HighlightedBody body="## Tuesday" notes={[]} onOpen={jest.fn()} />,
+    );
+    expect(getByTestId('journal-markdown-heading-0').props.accessibilityRole).toBe('header');
+  });
+
+  it('gives a heading role="heading" and its aria-level on web', () => {
+    const heading = onWeb(() =>
+      render(<HighlightedBody body={'x\n### Tuesday'} notes={[]} onOpen={jest.fn()} />).getByTestId(
+        'journal-markdown-heading-2',
+      ),
+    );
+    expect(heading.props.role).toBe('heading');
+    expect(heading.props['aria-level']).toBe(3);
+  });
+
+  it('draws each ordered marker as typed, soft ink, padded to a two-digit column', () => {
+    const { getByTestId } = render(
+      <HighlightedBody body={'9. nine\n10. ten\n3) three'} notes={[]} onOpen={jest.fn()} />,
+    );
+    const block = getByTestId('journal-markdown-ordered-0');
+    expect(block.props.accessibilityLabel).toBe('List');
+    expect(renderedText(getByTestId('journal-markdown-ordinal-0'))).toBe(
+      `${JOURNAL_ORDINAL_PAD}9. `,
+    );
+    expect(renderedText(getByTestId('journal-markdown-ordinal-8'))).toBe('10. ');
+    expect(renderedText(getByTestId('journal-markdown-ordinal-16'))).toBe(
+      `${JOURNAL_ORDINAL_PAD}3) `,
+    );
+    const style = StyleSheet.flatten(getByTestId('journal-markdown-ordinal-0').props.style);
+    expect(style.color).toBe(colors.paper.inkSoft);
+    expect(style.fontVariant).toEqual(['tabular-nums']);
+    expect(renderedText(block)).toBe(
+      `${JOURNAL_ORDINAL_PAD}9. nine\n10. ten\n${JOURNAL_ORDINAL_PAD}3) three`,
+    );
+  });
+
+  it('draws a checkbox glyph for each task and dims, never strikes, a checked one', () => {
+    const { getByTestId, queryByTestId } = render(
+      <HighlightedBody body={'- [x] called Sam\n  - [ ] book'} notes={[]} onOpen={jest.fn()} />,
+    );
+    const block = getByTestId('journal-markdown-task-0');
+    expect(renderedText(block)).toBe(
+      `${JOURNAL_TASK_GLYPHS.done} called Sam\n  ${JOURNAL_TASK_GLYPHS.open} book`,
+    );
+    expect(renderedText(getByTestId('journal-markdown-checkbox-0'))).toBe(
+      `${JOURNAL_TASK_GLYPHS.done} `,
+    );
+    const done = StyleSheet.flatten(getByTestId('journal-markdown-task-done-0').props.style);
+    expect(done.color).toBe(colors.paper.inkSoft);
+    expect(done.textDecorationLine).toBeUndefined();
+    expect(queryByTestId('journal-markdown-task-done-17')).toBeNull();
+  });
+
+  it('makes finished-entry task glyphs accessible and pressable without opening an anchor', () => {
+    const body = '- [ ] *buy milk*';
+    const anchored = note({
+      id: 86,
+      anchor_start: 0,
+      anchor_end: Array.from(body).length,
+      anchor_text: body,
+    });
+    const onOpen = jest.fn();
+    const onTaskPress = jest.fn();
+    const { getByTestId } = render(
+      <HighlightedBody body={body} notes={[anchored]} onOpen={onOpen} onTaskPress={onTaskPress} />,
+    );
+
+    const checkbox = getByTestId('journal-markdown-checkbox-0');
+    expect(checkbox.props.accessibilityRole).toBe('checkbox');
+    expect(checkbox.props.accessibilityState).toEqual({ checked: false });
+    expect(checkbox.props.accessibilityLabel).toContain('buy milk');
+    const target = StyleSheet.flatten(checkbox.props.style);
+    expect(target.paddingHorizontal * 2 + editorialType.body.fontSize).toBeGreaterThanOrEqual(44);
+    expect(target.paddingVertical * 2 + editorialType.body.lineHeight).toBeGreaterThanOrEqual(44);
+    expect(target.marginHorizontal).toBe(-target.paddingHorizontal);
+    expect(target.marginVertical).toBe(-target.paddingVertical);
+
+    fireEvent.press(checkbox);
+
+    expect(onTaskPress).toHaveBeenCalledWith(0);
+    expect(onOpen).not.toHaveBeenCalled();
+
+    const keyEvent = {
+      key: ' ',
+      preventDefault: jest.fn(),
+      stopPropagation: jest.fn(),
+    };
+    checkbox.props.onKeyDown(keyEvent);
+
+    expect(keyEvent.preventDefault).toHaveBeenCalled();
+    expect(keyEvent.stopPropagation).toHaveBeenCalled();
+    expect(onTaskPress).toHaveBeenLastCalledWith(0);
+    expect(onTaskPress).toHaveBeenCalledTimes(2);
+    expect(onOpen).not.toHaveBeenCalled();
+  });
+
+  it('draws a rule as a hairline with its characters hidden', () => {
+    const { getByTestId } = render(
+      <HighlightedBody body={'above\n---\nbelow'} notes={[]} onOpen={jest.fn()} />,
+    );
+    const rule = getByTestId('journal-markdown-rule-6');
+    const style = StyleSheet.flatten(rule.props.style);
+    expect(style.height).toBe(StyleSheet.hairlineWidth);
+    expect(style.backgroundColor).toBe(colors.paper.hairline);
+    expect(style.marginVertical).toBe(SPACING.sm);
+    expect(renderedText(getByTestId('journal-body-read'))).toBe('abovebelow');
+  });
+
+  it('renders the issue example: heading, as-typed numbers, checkboxes and a rule', () => {
+    const { getByTestId, queryByText } = render(
+      <HighlightedBody body={TUESDAY} notes={[]} onOpen={jest.fn()} />,
+    );
+    expect(renderedText(getByTestId('journal-markdown-heading-0'))).toBe('Tuesday');
+    expect(getByTestId('journal-markdown-ordered-11')).toBeTruthy();
+    expect(getByTestId('journal-markdown-task-30')).toBeTruthy();
+    expect(getByTestId(`journal-markdown-rule-${Array.from(TUESDAY).length - 3}`)).toBeTruthy();
+    expect(queryByText(/##|\[x\]|---/u)).toBeNull();
+  });
+
+  it('keeps an anchor across a hidden ## and - [x] prefix whole and pressable', () => {
+    const body = '## Tuesday\n- [x] called Sam';
+    const chars = Array.from(body);
+    const anchored = note({
+      id: 84,
+      anchor_start: chars.indexOf('d'),
+      anchor_end: chars.indexOf('S') - 1,
+      anchor_text: 'day\n- [x] called',
+    });
+    const onOpen = jest.fn();
+    const { getByTestId } = render(
+      <HighlightedBody body={body} notes={[anchored]} onOpen={onOpen} />,
+    );
+    expect(renderedText(getByTestId('highlight-84'))).toBe('day');
+    expect(renderedText(getByTestId('highlight-84-continuation'))).toBe('called');
+    fireEvent.press(getByTestId('highlight-84-continuation'));
+    expect(onOpen).toHaveBeenCalledWith(anchored);
+  });
+
+  it('keeps a note anchored only on a rule visible and actionable', () => {
+    const anchored = note({ id: 85, anchor_start: 2, anchor_end: 5, anchor_text: '---' });
+    const onOpen = jest.fn();
+    const { getByTestId } = render(
+      <HighlightedBody body={'a\n---'} notes={[anchored]} onOpen={onOpen} />,
+    );
+    expect(getByTestId('highlight-85').props.children).toEqual(['---']);
+    fireEvent.press(getByTestId('highlight-85'));
+    expect(onOpen).toHaveBeenCalledWith(anchored);
   });
 });
 

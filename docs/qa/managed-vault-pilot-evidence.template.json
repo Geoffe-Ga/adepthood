@@ -1,5 +1,5 @@
 {
-  "schema_version": 2,
+  "schema_version": 3,
   "status": "pending",
   "executed_at": null,
   "revisions": {
@@ -13,7 +13,9 @@
     "creek_routing_deployment": null,
     "creek_fleet_schedule_revision": null,
     "provisioning_contract": null,
-    "vault_contract": null
+    "vault_contract": null,
+    "backend_served_release": null,
+    "frontend_served_release": null
   },
   "claims": {
     "custody_mode": "provider_managed",
@@ -182,6 +184,20 @@
         "creek_product_gates_green": null,
         "deployment_verification_green": null,
         "unexplained_product_skips": null
+      }
+    },
+    "serving_receipts": {
+      "outcome": "pending",
+      "evidence_refs": [],
+      "facts": {
+        "backend_receipt_present": null,
+        "frontend_receipt_present": null,
+        "mixed_release_responses": null,
+        "legacy_receipt_responses": null,
+        "egress_barrier_state": null,
+        "managed_vault_rollout_state": null,
+        "attested_confidential_reported": null,
+        "local_model_claim": null
       }
     }
   }

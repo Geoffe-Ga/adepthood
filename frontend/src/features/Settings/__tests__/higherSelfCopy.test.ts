@@ -35,10 +35,10 @@ function groundingLimit(): number {
 describe('higherSelfCopy — the gain, verbatim', () => {
   it('HIGHER_SELF_GAIN frames the gain as the sorting decision and bounds it', () => {
     expect(HIGHER_SELF_GAIN).toBe(
-      'Say yes to sorting, and everything you write here, apart from Intimate entries and ' +
-        'including what you have already written, is sorted by Aspect. Each reflection from ' +
-        'your Higher Self can then draw on a few of those passages, leaning toward where you ' +
-        'stand in the course, rather than only on your last few entries.',
+      'With sorting on, a reflection from your Higher Self can reach beyond your last few ' +
+        'entries into what you have already written. When it draws from sorted writing, it uses ' +
+        'a few passages at a time and can lean toward where you stand in the course, never using ' +
+        'an Intimate one. Everything else you write here is sorted by Aspect.',
     );
   });
 
@@ -51,21 +51,31 @@ describe('higherSelfCopy — says what it gives', () => {
   it('names the Higher Self and the Aspects, and contrasts with recent entries', () => {
     expect(HIGHER_SELF_GAIN).toMatch(/Higher Self/u);
     expect(HIGHER_SELF_GAIN).toMatch(/by Aspect/u);
-    expect(HIGHER_SELF_GAIN).toMatch(/rather than only on your last few entries/u);
+    expect(HIGHER_SELF_GAIN).toMatch(/beyond your last few entries/u);
   });
 
   it('is the corpus decision, not a consequence of anything else', () => {
-    expect(HIGHER_SELF_GAIN).toMatch(/^Say yes to sorting/u);
+    expect(HIGHER_SELF_GAIN).toMatch(/^With sorting on/u);
     expect(HIGHER_SELF_GAIN).not.toMatch(/vault/iu);
   });
 
   it('names the Intimate exclusion, because it speaks of everything you write', () => {
-    expect(HIGHER_SELF_GAIN).toMatch(/everything you write/u);
-    expect(HIGHER_SELF_GAIN).toMatch(/apart from Intimate entries/u);
+    expect(HIGHER_SELF_GAIN).toMatch(/never using an Intimate one/u);
   });
 
   it('says a few passages, because the grounding reads a bounded handful', () => {
-    expect(HIGHER_SELF_GAIN).toMatch(/a few of those passages/u);
+    expect(HIGHER_SELF_GAIN).toMatch(/a few passages at a time/u);
+  });
+
+  it('conditions corpus grounding and course bias because both have ordinary fallback states', () => {
+    expect(HIGHER_SELF_GAIN).toMatch(/When it draws from sorted writing/iu);
+    expect(HIGHER_SELF_GAIN).toMatch(/can lean toward where you stand in the course/iu);
+    expect(HIGHER_SELF_GAIN).not.toMatch(/(?:It|reflection) draws .*leaning toward/iu);
+
+    const grounding = readBackendSource('src', 'services', 'higher_self_grounding.py');
+    expect(grounding).toMatch(/if progress is None:\n\s+return None/u);
+    expect(grounding).toMatch(/if fragments:\n\s+return await _corpus_grounding/u);
+    expect(grounding).toMatch(/return await _window_grounding/u);
   });
 });
 

@@ -6,11 +6,11 @@ import logging
 from collections.abc import Callable
 from typing import Annotated
 
-from fastapi import Depends, Request, status
+from fastapi import Depends, Path, Request, status
 from sqlalchemy import func, or_
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlmodel import col, select
+from sqlmodel import SQLModel, col, select
 
 from bounds import RowIdPath, StageNumberPath
 from content_config import CONTENT_REF_SCHEME, content_ref
@@ -27,10 +27,12 @@ from domain.course import (
 from domain.program_calendar import calendar_day_in_stage, resolve_program_anchor
 from domain.stage_authority import record_stage_entry
 from domain.stage_progress import ensure_user_progress, get_user_progress, is_stage_unlocked
+from domain.ui_flags import advance_course_reading_stage
 from error_responses import build_router
 from errors import bad_gateway, forbidden, not_found
 from models.content_completion import ContentCompletion
 from models.course_stage import CourseStage
+from models.resource_completion import RESOURCE_SLUG_MAX_LENGTH, ResourceCompletion
 from models.stage_content import StageContent
 from rate_limit import limiter
 from routers.auth import get_current_user
@@ -40,6 +42,8 @@ from schemas.course import (
     ContentCompletionResponse,
     ContentItemResponse,
     CourseProgressResponse,
+    NextUnreadResponse,
+    ResourceCompletionResponse,
     SiteResourceResponse,
     StageIntroResponse,
 )
@@ -47,6 +51,7 @@ from services.content_repository import (
     ContentBody,
     ContentNotFoundError,
     ContentRepositoryError,
+    SiteResourceMeta,
     get_content_repository,
 )
 
@@ -60,6 +65,14 @@ logger = logging.getLogger(__name__)
 router = build_router(
     prefix="/course", tags=["course"], extra_statuses=(status.HTTP_502_BAD_GATEWAY,)
 )
+
+#: A site resource's slug as a path segment, bounded like the column a read
+#: mark stores it in so an overlong slug is a 422, never a database error.
+ResourceSlugPath = Annotated[str, Path(min_length=1, max_length=RESOURCE_SLUG_MAX_LENGTH)]
+
+#: Whole-number scale and display precision of ``progress_percent``.
+_PERCENT_SCALE = 100
+_PERCENT_DECIMALS = 2
 
 
 def _stage_duration_days(stage_number: int) -> int:
@@ -251,6 +264,36 @@ async def _listing_unlocked_count(
     )
 
 
+async def _stage_items_in_release_order(
+    session: AsyncSession, stage: CourseStage
+) -> list[StageContent]:
+    """A stage's content rows in release order: ``release_day``, then ``id``."""
+    result = await session.execute(
+        select(StageContent)
+        .where(StageContent.course_stage_id == stage.id)
+        .order_by(col(StageContent.release_day).asc(), col(StageContent.id).asc())
+    )
+    return list(result.scalars().all())
+
+
+async def _gated_stage_listing(
+    session: AsyncSession, user_id: int, stage: CourseStage, tz: str
+) -> list[ContentItemResponse]:
+    """The stage's chapters with drip-lock and read status applied for ``user_id``.
+
+    The single gating path behind both the per-stage listing and the
+    cross-stage "Read next" lookup, so the two can never disagree about
+    which chapters are open.
+    """
+    items = await _stage_items_in_release_order(session, stage)
+    unlocked = await _listing_unlocked_count(session, user_id, stage, len(items), tz)
+    read_ids = await _read_ids_for_user(session, user_id, _content_ids_from_items(items))
+    filtered = filter_content_for_user(
+        _items_to_raw_dicts(items), unlocked_count=unlocked, read_content_ids=read_ids
+    )
+    return [ContentItemResponse(**chapter) for chapter in filtered]
+
+
 @router.get("/stages/{stage_number}/content", response_model=None)
 async def list_stage_content(
     stage_number: StageNumberPath,
@@ -280,26 +323,89 @@ async def list_stage_content(
     # confused with a real one; stages 1..10 are public knowledge, and the
     # listing itself is open (titles-only when locked) so there's no oracle.
     stage = await _get_stage_by_number(session, stage_number)
-
-    result = await session.execute(
-        select(StageContent)
-        .where(StageContent.course_stage_id == stage.id)
-        .order_by(col(StageContent.release_day).asc(), col(StageContent.id).asc())
-    )
-    items = list(result.scalars().all())
-
-    unlocked = await _listing_unlocked_count(session, current_user, stage, len(items), user_tz)
-    content_ids = [item.id for item in items if item.id is not None]
-    read_ids = await _read_ids_for_user(session, current_user, content_ids)
-
-    raw = _items_to_raw_dicts(items)
-    filtered = filter_content_for_user(raw, unlocked_count=unlocked, read_content_ids=read_ids)
-    responses = [ContentItemResponse(**f) for f in filtered]
+    responses = await _gated_stage_listing(session, current_user, stage, user_tz)
 
     if pagination.paginate:
         sliced = responses[pagination.offset : pagination.offset + pagination.limit]
         return build_page(sliced, len(responses), pagination)
     return responses
+
+
+async def _first_unread_in_stage(
+    session: AsyncSession, user_id: int, stage: CourseStage, tz: str
+) -> NextUnreadResponse | None:
+    """The stage's earliest open chapter ``user_id`` has not read, if any.
+
+    A locked stage is skipped outright rather than listed: its titles-only
+    table of contents has no open chapter to offer, and skipping it keeps
+    the drip clock from being touched for a stage the reader cannot enter.
+    """
+    if not await _is_stage_unlocked_for_user(session, user_id, stage.stage_number, tz):
+        return None
+    listing = await _gated_stage_listing(session, user_id, stage, tz)
+    for chapter in listing:
+        if not chapter.is_locked and not chapter.is_read:
+            return NextUnreadResponse(
+                kind="chapter",
+                slug=None,
+                content_id=chapter.id,
+                stage_number=stage.stage_number,
+                title=chapter.title,
+            )
+    return None
+
+
+async def _first_unread_resource(session: AsyncSession, user_id: int) -> NextUnreadResponse | None:
+    """The lowest-``order`` Start Here resource ``user_id`` has not read, if any.
+
+    Walks the pin's own resources in reading order, so a read mark left on
+    a slug the pin no longer ships can neither be returned nor stand in for
+    a resource that is still unread.
+    """
+    resources = _manifest_resources()
+    read = await _read_resource_slugs(session, user_id, [r.slug for r in resources])
+    for resource in resources:
+        if resource.slug not in read:
+            return NextUnreadResponse(
+                kind="resource",
+                slug=resource.slug,
+                content_id=None,
+                stage_number=None,
+                title=resource.title,
+            )
+    return None
+
+
+@router.get("/next-unread", response_model=NextUnreadResponse | None)
+async def get_next_unread(
+    current_user: Annotated[int, Depends(get_current_user)],
+    session: Annotated[AsyncSession, Depends(get_session)],
+    user_tz: Annotated[str, Depends(current_user_timezone)],
+) -> NextUnreadResponse | None:
+    """The reader's next unread page -- Start Here first, then chapters -- or ``null``.
+
+    While any Start Here resource the current pin ships is unread, the
+    answer is the lowest-``order`` one (issue #3234).  Otherwise it is the
+    earliest unlocked, unread chapter across every open stage, ordered by
+    stage, then ``release_day``, then ``id`` -- the release order the
+    per-stage listing already uses -- so "Read next" always lands on the
+    chapter a reader would reach by walking the stages in order. Drip lock
+    semantics come from the same :func:`filter_content_for_user` path as the
+    listing; nothing is re-derived here. ``null`` (not 404) means "caught
+    up": the endpoint is the reader's position, and it always exists.
+
+    The request carries no id at all -- the answer is scoped to the JWT
+    subject -- so there is no foreign id to authorize.
+    """
+    resource = await _first_unread_resource(session, current_user)
+    if resource is not None:
+        return resource
+    result = await session.execute(select(CourseStage).order_by(col(CourseStage.stage_number)))
+    for stage in result.scalars().all():
+        found = await _first_unread_in_stage(session, current_user, stage, user_tz)
+        if found is not None:
+            return found
+    return None
 
 
 @router.get("/content/{content_id}", response_model=ContentItemResponse)
@@ -363,20 +469,39 @@ async def _resolve_unlocked_content(
     user_id: int,
     content_id: int,
     tz: str,
-) -> StageContent:
-    """Fetch ``content_id`` and gate on the parent stage being unlocked.
+) -> tuple[StageContent, CourseStage]:
+    """Fetch ``content_id`` and its stage, gating on the stage being unlocked.
 
     Locked stages mask as 404 (BUG-COURSE-004) — content_id is an
     enumeration oracle, so a 403 would let an attacker tell "exists but
     locked" apart from "does not exist".  Mirrors :func:`get_content_item`.
     Split out of :func:`mark_content_read` so the route stays at xenon
     rank A and the resolution / authorisation steps are independently
-    testable.
+    testable.  Returns the already-loaded stage alongside the item so the
+    caller need not fetch it again (issue #3195).
     """
     item, stage = await _load_content_with_stage(session, content_id)
     if not await _is_stage_unlocked_for_user(session, user_id, stage.stage_number, tz):
         raise not_found("content")
-    return item
+    return item, stage
+
+
+async def _insert_once(session: AsyncSession, row: SQLModel) -> IntegrityError | None:
+    """Insert and commit ``row``, or return the unique-constraint error that refused it.
+
+    ``begin_nested`` opens a SAVEPOINT so the ``IntegrityError`` rolls back
+    only the failed insert; the outer transaction stays healthy enough for
+    the caller's follow-up SELECT of the winner's row.  Shared by both
+    mark-read routes so chapter and Start Here read marks race the same way.
+    """
+    try:
+        async with session.begin_nested():
+            session.add(row)
+        await session.commit()
+        await session.refresh(row)
+    except IntegrityError as exc:
+        return exc
+    return None
 
 
 async def _insert_or_resolve_completion(
@@ -386,29 +511,22 @@ async def _insert_or_resolve_completion(
 ) -> ContentCompletion:
     """Insert a new completion or return the winner's row on race.
 
-    ``begin_nested`` opens a SAVEPOINT so the unique-constraint
-    ``IntegrityError`` rolls back only the failed insert; the outer
-    transaction stays healthy enough for the follow-up SELECT.
     Defensively raises if the constraint fired but the winner's row is
     missing — that would mean the database invariant is broken and a
     silent re-insert would compound the corruption.
     """
     completion = ContentCompletion(user_id=user_id, content_id=content_id)
-    try:
-        async with session.begin_nested():
-            session.add(completion)
-        await session.commit()
-        await session.refresh(completion)
-    except IntegrityError as exc:
-        existing = await _existing_content_completion(session, user_id, content_id)
-        if existing is None:
-            # Preserve the chain: the constraint name + driver-level
-            # error reach Sentry / logs so we can debug a corrupt-DB
-            # scenario rather than silently re-inserting.
-            msg = "ContentCompletion lost the race but the winner's row is missing"
-            raise RuntimeError(msg) from exc
-        return existing
-    return completion
+    conflict = await _insert_once(session, completion)
+    if conflict is None:
+        return completion
+    existing = await _existing_content_completion(session, user_id, content_id)
+    if existing is None:
+        # Preserve the chain: the constraint name + driver-level
+        # error reach Sentry / logs so we can debug a corrupt-DB
+        # scenario rather than silently re-inserting.
+        msg = "ContentCompletion lost the race but the winner's row is missing"
+        raise RuntimeError(msg) from conflict
+    return existing
 
 
 @router.post("/content/{content_id}/mark-read", response_model=ContentCompletionResponse)
@@ -426,13 +544,14 @@ async def mark_content_read(
     loser via ``IntegrityError`` and the existing row is returned —
     closes the BUG-COURSE-002 TOCTOU.
     """
-    await _resolve_unlocked_content(session, current_user, content_id, user_tz)
-
+    _, stage = await _resolve_unlocked_content(session, current_user, content_id, user_tz)
     existing = await _existing_content_completion(session, current_user, content_id)
     if existing is not None:
+        await advance_course_reading_stage(session, current_user, stage.stage_number)
         return _completion_response(existing)
 
     completion = await _insert_or_resolve_completion(session, current_user, content_id)
+    await advance_course_reading_stage(session, current_user, stage.stage_number)
     logger.info("content_marked_read", extra={"user_id": current_user, "content_id": content_id})
     return _completion_response(completion)
 
@@ -442,6 +561,11 @@ def _empty_progress() -> CourseProgressResponse:
     return CourseProgressResponse(
         total_items=0, read_items=0, progress_percent=0.0, next_unlock_day=None
     )
+
+
+def _progress_percent(read: int, total: int) -> float:
+    """``read`` of a non-empty ``total`` as a percentage to two decimals."""
+    return round((read / total) * _PERCENT_SCALE, _PERCENT_DECIMALS)
 
 
 def _content_ids_from_items(items: list[StageContent]) -> list[int]:
@@ -468,7 +592,7 @@ async def get_course_progress(
         return _empty_progress()
 
     read_ids = await _read_ids_for_user(session, current_user, _content_ids_from_items(items))
-    progress_pct = round((len(read_ids) / len(items)) * 100, 2)
+    progress_pct = _progress_percent(len(read_ids), len(items))
     day = await _day_in_stage_for_user(session, current_user, stage_number, user_tz)
 
     # ``total_items`` stays the whole-stage count (not the unlocked count)
@@ -586,34 +710,153 @@ async def get_content_body(
     return _read_local_body(lambda: get_content_repository().read_body(chapter_id), chapter_id)
 
 
+def _manifest_resources() -> list[SiteResourceMeta]:
+    """The pin's site resources in reading order; empty without a usable manifest.
+
+    The bootstrap state before the first content pin has no manifest, and
+    serves no resources rather than failing.
+    """
+    try:
+        return get_content_repository().list_resources()
+    except ContentRepositoryError as exc:
+        logger.warning("No usable content manifest; no site resources: %s", exc)
+        return []
+
+
+async def _read_resource_slugs(session: AsyncSession, user_id: int, slugs: list[str]) -> set[str]:
+    """Which of ``slugs`` ``user_id`` has marked read.
+
+    Restricted to ``slugs`` — the ones the current pin ships — so a read mark
+    left behind by a resource that has since left the manifest never counts.
+    """
+    if not slugs:
+        return set()
+    result = await session.execute(
+        select(ResourceCompletion.slug).where(
+            ResourceCompletion.user_id == user_id,
+            col(ResourceCompletion.slug).in_(slugs),
+        )
+    )
+    return set(result.scalars().all())
+
+
 @router.get("/site-resources", response_model=list[SiteResourceResponse])
 async def list_site_resources(
-    _current_user: Annotated[int, Depends(get_current_user)],
+    current_user: Annotated[int, Depends(get_current_user)],
+    session: Annotated[AsyncSession, Depends(get_session)],
 ) -> list[SiteResourceResponse]:
-    """Return the site-wide resource links from the content manifest.
+    """Return the Start Here resources in reading order with the caller's read marks.
 
     These pages (philosophy, about, …) are not stage-gated, but we still
     require authentication so the list is not crawlable by anyone with
     the URL.  The manifest's ``site_resources[]`` is the source of truth
-    (issue #395); without a usable manifest — the bootstrap state before
-    the first content pin — the list is simply empty.  ``url`` is kept
+    (issue #395) and its ``order`` the reading order (issue #3148);
+    without a usable manifest the list is simply empty.  ``url`` is kept
     for response-surface stability and carries the local content
     reference, not a fetchable address.
     """
-    try:
-        resources = get_content_repository().list_resources()
-    except ContentRepositoryError as exc:
-        logger.warning("No usable content manifest; no site resources: %s", exc)
-        return []
+    resources = _manifest_resources()
+    read = await _read_resource_slugs(session, current_user, [r.slug for r in resources])
     return [
         SiteResourceResponse(
             slug=resource.slug,
             title=resource.title,
             description=resource.description,
             url=content_ref(resource.slug),
+            order=resource.order,
+            is_read=resource.slug in read,
         )
         for resource in resources
     ]
+
+
+async def _existing_resource_completion(
+    session: AsyncSession, user_id: int, slug: str
+) -> ResourceCompletion | None:
+    """Return the user's existing read mark on resource ``slug`` if any."""
+    result = await session.execute(
+        select(ResourceCompletion).where(
+            ResourceCompletion.user_id == user_id,
+            ResourceCompletion.slug == slug,
+        )
+    )
+    return result.scalars().first()
+
+
+async def _insert_or_resolve_resource_completion(
+    session: AsyncSession, user_id: int, slug: str
+) -> ResourceCompletion:
+    """Insert a Start Here read mark or return the winner's row on race.
+
+    Mirrors :func:`_insert_or_resolve_completion`, including the defensive
+    raise when the constraint fired but no winner can be found.
+    """
+    completion = ResourceCompletion(user_id=user_id, slug=slug)
+    conflict = await _insert_once(session, completion)
+    if conflict is None:
+        return completion
+    existing = await _existing_resource_completion(session, user_id, slug)
+    if existing is None:
+        msg = "ResourceCompletion lost the race but the winner's row is missing"
+        raise RuntimeError(msg) from conflict
+    return existing
+
+
+def _resource_completion_response(completion: ResourceCompletion) -> ResourceCompletionResponse:
+    return ResourceCompletionResponse(
+        id=completion.id,
+        slug=completion.slug,
+        completed_at=completion.completed_at,
+    )
+
+
+@router.post("/site-resources/{slug}/mark-read", response_model=ResourceCompletionResponse)
+async def mark_site_resource_read(
+    slug: ResourceSlugPath,
+    current_user: Annotated[int, Depends(get_current_user)],
+    session: Annotated[AsyncSession, Depends(get_session)],
+) -> ResourceCompletionResponse:
+    """Mark a Start Here resource as read. Idempotent — a repeat returns the existing mark.
+
+    The manifest is the gate on which slugs exist: an unknown slug is a
+    plain ``content_not_found`` and writes nothing.  Mirrors
+    :func:`mark_content_read`: the pre-check is the fast path, and two
+    concurrent calls that both pass it are collapsed onto one row by the
+    ``uq_resourcecompletion_user_slug`` constraint inside a savepoint.
+    Start Here is ungated, so there is no stage or drip check.
+    """
+    if slug not in {resource.slug for resource in _manifest_resources()}:
+        raise not_found("content")
+    existing = await _existing_resource_completion(session, current_user, slug)
+    if existing is not None:
+        return _resource_completion_response(existing)
+
+    completion = await _insert_or_resolve_resource_completion(session, current_user, slug)
+    logger.info("resource_marked_read", extra={"user_id": current_user, "slug": slug})
+    return _resource_completion_response(completion)
+
+
+@router.get("/start-here/progress", response_model=CourseProgressResponse)
+async def get_start_here_progress(
+    current_user: Annotated[int, Depends(get_current_user)],
+    session: Annotated[AsyncSession, Depends(get_session)],
+) -> CourseProgressResponse:
+    """Read-progress across the Start Here resources, shaped like a stage's.
+
+    ``total_items`` is every resource the current pin ships and
+    ``read_items`` how many of those the caller has marked read.  Start
+    Here is never drip-fed, so ``next_unlock_day`` is always ``None``.
+    """
+    slugs = [resource.slug for resource in _manifest_resources()]
+    if not slugs:
+        return _empty_progress()
+    read = await _read_resource_slugs(session, current_user, slugs)
+    return CourseProgressResponse(
+        total_items=len(slugs),
+        read_items=len(read),
+        progress_percent=_progress_percent(len(read), len(slugs)),
+        next_unlock_day=None,
+    )
 
 
 @router.get("/site-resources/{slug}/body", response_model=ContentBodyResponse)

@@ -16,11 +16,11 @@ import {
  * never built from the module's own constants: a test that read the same
  * constant the screen renders would prove only that a string equals itself.
  */
-const ADD_KEY = 'Add your own API key in Settings to bill that key instead.';
 
 /** A price line's arguments: payer, cap, then the optional wallet snapshot. */
-type CostArgs = [boolean, number | null, (number | null)?, (number | null)?];
+type CostArgs = [boolean, number | null, (number | null)?, (number | null)?, string?, boolean?];
 type CostCase = [string, CostArgs, string];
+type EssayCostCase = [string, [boolean, number | null, (number | null)?, (number | null)?], string];
 
 describe('resonanceExplainerCost keeps the reading’s shipped wording', () => {
   it.each<CostCase>([
@@ -31,31 +31,31 @@ describe('resonanceExplainerCost keeps the reading’s shipped wording', () => {
     ],
     [
       'an empty wallet',
-      [false, 20, 0, 0],
-      `You have no BotMason monthly messages or offerings available for this reading. ${ADD_KEY}`,
+      [false, 20, 0, 0, 'reading', true],
+      `You have no BotMason monthly messages or offerings available for this reading.`,
     ],
     [
       'a spent month with offerings left',
-      [false, 20, 0, 3],
-      `This reading spends one BotMason offering. ${ADD_KEY}`,
+      [false, 20, 0, 3, 'reading', true],
+      `This reading spends one BotMason offering.`,
     ],
     [
       'the monthly allowance',
-      [false, 20, 12, 0],
-      `This reading spends one of your 20 BotMason messages for the month. ${ADD_KEY}`,
+      [false, 20, 12, 0, 'reading', true],
+      `This reading spends one of your 20 BotMason messages for the month.`,
     ],
     [
       'an unknown allowance',
-      [false, null],
-      `This reading spends one BotMason message from your account. ${ADD_KEY}`,
+      [false, null, null, null, 'reading', true],
+      `This reading spends one BotMason message from your account.`,
     ],
   ])('for %s', (_case, args, expected) => {
     expect(resonanceExplainerCost(...args)).toBe(expected);
   });
 });
 
-describe('essayExplainerCost prices a letter from the same wallet', () => {
-  it.each<CostCase>([
+describe('essayExplainerCost requires an own key for eligible app-provider letters', () => {
+  it.each<EssayCostCase>([
     [
       'the caller’s own key',
       [true, null],
@@ -64,22 +64,22 @@ describe('essayExplainerCost prices a letter from the same wallet', () => {
     [
       'an empty wallet',
       [false, 20, 0, 0],
-      `You have no BotMason monthly messages or offerings available for this letter. ${ADD_KEY}`,
+      'This needs your own API key. Add one in Settings to ask for this letter.',
     ],
     [
       'a spent month with offerings left',
       [false, 20, 0, 3],
-      `This letter spends one BotMason offering. ${ADD_KEY}`,
+      'This needs your own API key. Add one in Settings to ask for this letter.',
     ],
     [
       'the monthly allowance',
       [false, 20, 12, 0],
-      `This letter spends one of your 20 BotMason messages for the month. ${ADD_KEY}`,
+      'This needs your own API key. Add one in Settings to ask for this letter.',
     ],
     [
       'an unknown allowance',
       [false, null],
-      `This letter spends one BotMason message from your account. ${ADD_KEY}`,
+      'This needs your own API key. Add one in Settings to ask for this letter.',
     ],
   ])('for %s', (_case, args, expected) => {
     expect(essayExplainerCost(...args)).toBe(expected);
@@ -98,8 +98,9 @@ describe('ESSAY_ASK_WHAT names everything a letter sends to the model', () => {
 });
 
 describe('RESONANCE_EXPLAINER_WHAT names everything a reading sends to the model', () => {
-  // A pass sends the most when a vault degrades to the cloud, so the copy
-  // states that maximum (#2998). The reflection prompt (`build_prompt`)
+  // A pass sends the most to the app's AI model provider when no vault is
+  // connected (since #3061 a vault-bound pass never falls back to it), so the
+  // copy states that maximum (#2998). The reflection prompt (`build_prompt`)
   // carries the entry in <entry>, up to GROUNDING_LIMIT (3, the privacy
   // policy's "up to three") pieces of the writer's own writing in <prior> --
   // corpus fragments from `gather_grounding`, which may be uploaded or

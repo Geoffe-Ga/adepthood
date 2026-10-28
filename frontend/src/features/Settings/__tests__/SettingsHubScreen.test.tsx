@@ -54,8 +54,28 @@ const mockUiFlagsGet = jest.fn(() =>
 // The corpus group gates "Bring in your writing" on the account's vault
 // (#3017); each test that cares says what the server answers. The default is a
 // vault at an address, so every other suite here renders the hub as before.
-const mockVaultConnection = jest.fn<Promise<{ connected: boolean; vault_url: string | null }>, []>(
-  () => Promise.resolve({ connected: true, vault_url: 'https://v.example' }),
+const mockVaultConnection = jest.fn<
+  Promise<{
+    connected: boolean;
+    vault_url: string | null;
+    mcp_address: string | null;
+    classification_key_rejected?: boolean;
+  }>,
+  []
+>(() => Promise.resolve({ connected: true, vault_url: 'https://v.example', mcp_address: null }));
+
+// The corpus group's sorting switches read every source's decision; the
+// default is a server with nothing to say, so the other suites see no switch.
+type ConsentState = { source: string; granted: boolean; decided_at: string | null };
+const mockCorpusList = jest.fn<Promise<ConsentState[]>, []>(() => Promise.resolve([]));
+const mockCorpusSet = jest.fn<Promise<ConsentState>, [string, boolean]>((source, granted) =>
+  Promise.resolve({ source, granted, decided_at: '2026-10-02T09:00:00Z' }),
+);
+
+// The sort-the-rest row asks how much is unsorted; the default is nothing, so
+// the other suites see no such row.
+const mockSweepEstimate = jest.fn<Promise<{ entries_pending: number }>, []>(() =>
+  Promise.resolve({ entries_pending: 0 }),
 );
 
 jest.mock('@/api', () => {
@@ -63,6 +83,11 @@ jest.mock('@/api', () => {
   return {
     ...actual,
     adminFeedback: { capabilities: () => mockCapabilities() },
+    corpus: { sweepEstimate: () => mockSweepEstimate() },
+    corpusConsent: {
+      list: () => mockCorpusList(),
+      set: (source: string, granted: boolean) => mockCorpusSet(source, granted),
+    },
     uiFlags: { get: () => mockUiFlagsGet(), update: jest.fn() },
     vault: { connection: () => mockVaultConnection() },
   };
@@ -76,19 +101,30 @@ jest.mock('@/storage/writingOfferStorage', () => ({
 }));
 
 import { BYOK_HUB_DISCLOSURE } from '../byokDisclosure';
+import { KEY_REJECTED_HUB_DESCRIPTION } from '../byokOnlyCopy';
 import { LEGAL_DOCUMENTS } from '../legalLinks';
 import SettingsHubScreen from '../SettingsHubScreen';
 
-import { ApiError } from '@/api';
+import { ApiError, setTokenGetter } from '@/api';
 import { restoreFeedbackOrigin } from '@/features/Feedback/feedbackFocus';
 import {
   SEED_ROW_DESCRIPTION,
   SEED_ROW_LABEL,
   SEED_ROW_VAULT_FIRST_DESCRIPTION,
 } from '@/features/Seed/seedCopy';
+import { setActiveUser } from '@/storage/userScope';
 import { expectNavigationOwnsTitle, watchFocusMoves } from '@/testing/navigationOwnsTitle';
 
+const consentToken = `eyJhbGciOiJIUzI1NiJ9.${Buffer.from(JSON.stringify({ sub: '1', exp: 4102444800 })).toString('base64url')}.signature`;
+
+afterEach(() => {
+  setActiveUser(null);
+  setTokenGetter(null);
+});
+
 beforeEach(() => {
+  setActiveUser(1);
+  setTokenGetter(() => consentToken);
   jest.clearAllMocks();
 });
 
@@ -141,6 +177,16 @@ describe('SettingsHubScreen', () => {
     fireEvent.press(getByTestId('settings-row-delete-account'));
 
     expect(mockNavigate).toHaveBeenCalledWith('DeleteAccount');
+  });
+
+  test('describes deletion without promising that everything is erased everywhere', () => {
+    // Backups taken before a deletion still hold a copy until they age out,
+    // and the Delete account screen says so (#3057). The row may not promise
+    // more than that screen.
+    const { getByText, queryByText } = render(<SettingsHubScreen />);
+
+    expect(getByText('Erase your account from Adepthood. This cannot be undone.')).toBeTruthy();
+    expect(queryByText(/everything in it/)).toBeNull();
   });
 
   test('offers an in-app route to a copy of everything the user wrote', () => {
@@ -282,17 +328,17 @@ describe('SettingsHubScreen — Privacy section (issue #897)', () => {
 });
 
 // ---------------------------------------------------------------------------
-// Vault row, first in the Your corpus group (#3007, reordered by #3017)
+// Vault row, first in the Your writing group (#3007, reordered by #3017)
 // ---------------------------------------------------------------------------
 
 describe('SettingsHubScreen — vault row', () => {
   // Literals mirror the deck pinned verbatim in vaultCopy.test.ts. Kept literal
   // so a break in the copy module cannot take this file's other suites with it.
-  const VAULT_ROW_LABEL = 'Where your corpus lives';
+  const VAULT_ROW_LABEL = 'Where your writing lives';
   const VAULT_ROW_DESCRIPTION =
-    'An optional copy of what you write, kept in a vault Adepthood manages or one you run. Saying yes to sorting your writing by Aspect is a separate choice, and the app is complete without either.';
+    'Sorting lets reflections reach beyond your last few entries. Saying yes to sorting is a separate choice from an optional copy of what you write, kept in a vault Adepthood manages or one you run. The app is complete without either.';
 
-  test('renders the vault row first in the Your corpus group, before the way in', () => {
+  test('renders the vault row first in the Your writing group, before the way in', () => {
     const { getByTestId } = render(<SettingsHubScreen />);
     const corpus = getByTestId('settings-group-corpus');
     const privacy = getByTestId('settings-group-privacy');
@@ -382,7 +428,7 @@ describe('SettingsHubScreen — Choose your depths section', () => {
 // ---------------------------------------------------------------------------
 
 describe('SettingsHubScreen — Journal section', () => {
-  test('renders the Journal group with the writing-timer row and the offer-again row', async () => {
+  test('renders the Journal group with the writing-timer row and the offer switch', async () => {
     const { getByTestId } = render(<SettingsHubScreen />);
 
     expect(getByTestId('settings-group-journal')).toBeTruthy();
@@ -391,15 +437,20 @@ describe('SettingsHubScreen — Journal section', () => {
         'Writing timer → not linked',
       ),
     );
-    expect(getByTestId('settings-row-writing-offer-again').props.accessibilityLabel).toBe(
-      'Offer again at the end of a session',
-    );
+    const offer = getByTestId('settings-row-writing-offer-switch');
+    expect(offer.props.accessibilityRole).toBe('switch');
+    expect(offer.props.accessibilityLabel).toBe('Offer to keep a session');
   });
 
-  test('offering again clears this device’s answer', () => {
+  test('turning the offer switch on clears this device’s answer', async () => {
     const { getByTestId } = render(<SettingsHubScreen />);
+    await waitFor(() =>
+      expect(
+        getByTestId('settings-row-writing-offer-switch').props.accessibilityState.disabled,
+      ).toBe(false),
+    );
 
-    fireEvent.press(getByTestId('settings-row-writing-offer-again'));
+    fireEvent(getByTestId('settings-row-writing-offer-switch'), 'valueChange', true);
 
     expect(mockSaveWritingOfferAnswered).toHaveBeenCalledWith(false);
   });
@@ -412,6 +463,50 @@ describe('SettingsHubScreen — Journal section', () => {
     expect(tree.indexOf('settings-group-journal')).toBeGreaterThan(
       tree.indexOf('settings-group-depths'),
     );
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The order of the groups: what you chose, who you are, what you write, where
+// it goes, what we promise, what you can take, how to reach us, the small
+// print, and last the ways out.
+// ---------------------------------------------------------------------------
+
+describe('SettingsHubScreen — the order of the groups', () => {
+  test('runs depths, account, journal, corpus, privacy, data, feedback, support, legal, session', () => {
+    const { getAllByTestId } = render(<SettingsHubScreen />);
+
+    const groups = getAllByTestId(/^settings-group-/u).map((node) => node.props.testID as string);
+
+    expect(groups).toEqual([
+      'settings-group-depths',
+      'settings-group-account',
+      'settings-group-journal',
+      'settings-group-corpus',
+      'settings-group-privacy',
+      'settings-group-your-data',
+      'settings-group-feedback',
+      'settings-group-support',
+      'settings-group-legal',
+      'settings-group-session',
+    ]);
+  });
+
+  test('the Sangha door, when configured, sits right under the depths that open it', () => {
+    mockSanghaInviteUrl = 'https://discord.gg/hub-order-test';
+    try {
+      const { getAllByTestId } = render(<SettingsHubScreen />);
+
+      const groups = getAllByTestId(/^settings-group-/u).map((node) => node.props.testID as string);
+
+      expect(groups.slice(0, 3)).toEqual([
+        'settings-group-depths',
+        'settings-group-sangha',
+        'settings-group-account',
+      ]);
+    } finally {
+      mockSanghaInviteUrl = '';
+    }
   });
 });
 
@@ -516,7 +611,7 @@ describe('SettingsHubScreen — the corpus-seeding destination', () => {
 
   test('with nothing attached, invites the account to give its corpus a place first', async () => {
     mockVaultConnection.mockImplementationOnce(() =>
-      Promise.resolve({ connected: false, vault_url: null }),
+      Promise.resolve({ connected: false, vault_url: null, mcp_address: null }),
     );
     const { getByTestId } = render(<SettingsHubScreen />);
     const row = getByTestId('settings-row-seed-corpus');
@@ -546,7 +641,7 @@ describe('SettingsHubScreen — the corpus-seeding destination', () => {
 // ---------------------------------------------------------------------------
 
 describe('SettingsHubScreen — the corpus-consent destination', () => {
-  test('offers the decision about what may be sorted into the corpus', () => {
+  test('offers the full account of what may be sorted into the corpus', () => {
     const { getByTestId } = render(<SettingsHubScreen />);
 
     expect(getByTestId('settings-row-corpus-consent')).toBeTruthy();
@@ -558,6 +653,154 @@ describe('SettingsHubScreen — the corpus-consent destination', () => {
     fireEvent.press(getByTestId('settings-row-corpus-consent'));
 
     expect(mockNavigate).toHaveBeenCalledWith('CorpusConsent');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The sorting switches, on the hub itself: a decision nowhere to be seen reads
+// as one already made, and the vault screen says this is where it lives.
+// ---------------------------------------------------------------------------
+
+describe('SettingsHubScreen — the sorting switches under Your writing', () => {
+  const JOURNAL_OFF: ConsentState = { source: 'journal', granted: false, decided_at: null };
+  const UPLOAD_ON: ConsentState = {
+    source: 'upload',
+    granted: true,
+    decided_at: '2026-09-30T09:00:00Z',
+  };
+
+  test('renders a switch per sorted source, between the way in and the full account', async () => {
+    mockCorpusList.mockResolvedValueOnce([JOURNAL_OFF, UPLOAD_ON]);
+    const { getByTestId, toJSON } = render(<SettingsHubScreen />);
+    const corpus = getByTestId('settings-group-corpus');
+
+    await waitFor(() => expect(within(corpus).getByTestId('corpus-consent-switch-journal')));
+    expect(within(corpus).getByTestId('corpus-consent-switch-journal').props.value).toBe(false);
+    expect(within(corpus).getByTestId('corpus-consent-switch-upload').props.value).toBe(true);
+    expect(within(corpus).getByTestId('settings-corpus-sorting-lead')).toBeTruthy();
+
+    const tree = JSON.stringify(toJSON());
+    const order = [
+      'settings-row-seed-corpus',
+      'settings-corpus-sorting-lead',
+      'corpus-consent-switch-journal',
+      'settings-row-corpus-consent',
+    ].map((id) => tree.indexOf(id));
+    expect(order).toEqual([...order].sort((a, b) => a - b));
+    expect(order.every((index) => index > -1)).toBe(true);
+  });
+
+  test('turning a source on records the decision; turning one off asks first', async () => {
+    mockCorpusList.mockResolvedValueOnce([JOURNAL_OFF, UPLOAD_ON]);
+    const { getByTestId, queryByTestId } = render(<SettingsHubScreen />);
+    await waitFor(() => expect(getByTestId('corpus-consent-switch-journal')));
+
+    fireEvent(getByTestId('corpus-consent-switch-journal'), 'valueChange', true);
+    await waitFor(() => expect(mockCorpusSet).toHaveBeenCalledWith('journal', true));
+
+    fireEvent(getByTestId('corpus-consent-switch-upload'), 'valueChange', false);
+    expect(getByTestId('corpus-consent-revoke-upload')).toBeTruthy();
+    expect(mockCorpusSet).not.toHaveBeenCalledWith('upload', false);
+    fireEvent.press(getByTestId('corpus-consent-revoke-cancel-upload'));
+    expect(queryByTestId('corpus-consent-revoke-upload')).toBeNull();
+    expect(getByTestId('corpus-consent-switch-upload').props.value).toBe(true);
+  });
+
+  test('shows no row at all for a source nothing sorts yet; that explanation lives on the full screen', async () => {
+    const IMPORT_UNDECIDED: ConsentState = { source: 'import', granted: false, decided_at: null };
+    mockCorpusList.mockResolvedValueOnce([JOURNAL_OFF, IMPORT_UNDECIDED]);
+    const { getByTestId, queryByTestId } = render(<SettingsHubScreen />);
+    await waitFor(() => expect(getByTestId('corpus-consent-switch-journal')));
+
+    expect(queryByTestId('corpus-consent-row-import')).toBeNull();
+    expect(queryByTestId('corpus-consent-note-import')).toBeNull();
+  });
+
+  test('the sorting lead states the send, the Intimate guarantee, and the default', () => {
+    const { getByTestId } = render(<SettingsHubScreen />);
+    const lead = getByTestId('settings-corpus-sorting-lead').props.children as string;
+
+    expect(lead).toMatch(/sent once/);
+    expect(lead).toMatch(/Intimate never/);
+    expect(lead).toMatch(/Off unless you turn it on/);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Sort the rest of your writing (#3499): offered only when it can do something.
+// ---------------------------------------------------------------------------
+
+describe('SettingsHubScreen — sort the rest of your writing', () => {
+  const JOURNAL_ON: ConsentState = {
+    source: 'journal',
+    granted: true,
+    decided_at: '2026-10-01T09:00:00Z',
+  };
+  const JOURNAL_OFF: ConsentState = { source: 'journal', granted: false, decided_at: null };
+  const UPLOAD_ON: ConsentState = { ...JOURNAL_ON, source: 'upload' };
+
+  test('with sorting on and writing unsorted, offers the row after the way in, before the switches', async () => {
+    mockCorpusList.mockResolvedValueOnce([JOURNAL_ON]);
+    mockSweepEstimate.mockResolvedValue({ entries_pending: 412 });
+    const { findByTestId, getByText, toJSON } = render(<SettingsHubScreen />);
+
+    const row = await findByTestId('settings-row-corpus-sweep');
+
+    expect(row).toBeTruthy();
+    expect(getByText('Sort the rest of your writing')).toBeTruthy();
+    expect(getByText('412 entries still unsorted')).toBeTruthy();
+    const tree = JSON.stringify(toJSON());
+    const order = [
+      'settings-row-seed-corpus',
+      'settings-row-corpus-sweep',
+      'settings-corpus-sorting-lead',
+      'corpus-consent-switch-journal',
+    ].map((id) => tree.indexOf(id));
+    expect(order.every((index) => index > -1)).toBe(true);
+    expect(order).toEqual([...order].sort((a, b) => a - b));
+  });
+
+  test('tapping it opens the sort-the-rest screen', async () => {
+    mockCorpusList.mockResolvedValueOnce([JOURNAL_ON]);
+    mockSweepEstimate.mockResolvedValue({ entries_pending: 3 });
+    const { findByTestId } = render(<SettingsHubScreen />);
+
+    fireEvent.press(await findByTestId('settings-row-corpus-sweep'));
+
+    expect(mockNavigate).toHaveBeenCalledWith('CorpusSweep');
+  });
+
+  test('is absent when nothing is unsorted: a control that can do nothing is not shown', async () => {
+    mockCorpusList.mockResolvedValueOnce([JOURNAL_ON]);
+    mockSweepEstimate.mockResolvedValue({ entries_pending: 0 });
+    const { getByTestId, queryByTestId } = render(<SettingsHubScreen />);
+
+    await waitFor(() => expect(mockSweepEstimate).toHaveBeenCalled());
+    await waitFor(() => expect(getByTestId('corpus-consent-switch-journal')));
+
+    expect(queryByTestId('settings-row-corpus-sweep')).toBeNull();
+  });
+
+  test('is absent without consent to sort what is written here, however much waits', async () => {
+    mockCorpusList.mockResolvedValueOnce([JOURNAL_OFF, UPLOAD_ON]);
+    mockSweepEstimate.mockResolvedValue({ entries_pending: 412 });
+    const { getByTestId, queryByTestId } = render(<SettingsHubScreen />);
+
+    await waitFor(() => expect(getByTestId('corpus-consent-switch-journal')));
+
+    expect(queryByTestId('settings-row-corpus-sweep')).toBeNull();
+    expect(mockSweepEstimate).not.toHaveBeenCalled();
+  });
+
+  test('is absent when the count does not load: unknown is not something to offer', async () => {
+    mockCorpusList.mockResolvedValueOnce([JOURNAL_ON]);
+    mockSweepEstimate.mockRejectedValue(new Error('offline'));
+    const { getByTestId, queryByTestId } = render(<SettingsHubScreen />);
+
+    await waitFor(() => expect(mockSweepEstimate).toHaveBeenCalled());
+    await waitFor(() => expect(getByTestId('corpus-consent-switch-journal')));
+
+    expect(queryByTestId('settings-row-corpus-sweep')).toBeNull();
   });
 });
 
@@ -748,5 +991,33 @@ describe('SettingsHubScreen — opened on the writing-habit row (#3006)', () => 
     });
     expect(queryByTestId('writing-habit-picker')).toBeNull();
     expect(scrollTo).not.toHaveBeenCalled();
+  });
+});
+
+describe('SettingsHubScreen — a refused writer key (#3595)', () => {
+  test('the API key row says the provider turned the key down, on the same read', async () => {
+    mockVaultConnection.mockImplementationOnce(() =>
+      Promise.resolve({
+        connected: true,
+        vault_url: null,
+        mcp_address: null,
+        classification_key_rejected: true,
+      }),
+    );
+    const { getByTestId } = render(<SettingsHubScreen />);
+
+    await waitFor(() =>
+      expect(getByTestId('settings-row-api-key').props.accessibilityHint).toBe(
+        KEY_REJECTED_HUB_DESCRIPTION,
+      ),
+    );
+    expect(mockVaultConnection).toHaveBeenCalledTimes(1);
+  });
+
+  test('without a refusal the row keeps its standing disclosure', async () => {
+    const { getByTestId } = render(<SettingsHubScreen />);
+
+    await waitFor(() => expect(mockVaultConnection).toHaveBeenCalled());
+    expect(getByTestId('settings-row-api-key').props.accessibilityHint).toBe(BYOK_HUB_DISCLOSURE);
   });
 });

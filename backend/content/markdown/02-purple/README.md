@@ -18,15 +18,15 @@ This folder contains the modular sections for the PURPLE stage of the APTITUDE c
 - [Purple’s Gift: Welcoming in Beauty](./11-purples-gift-welcoming-in-beauty.md)
 - [Purple’s Shadow: Delusions of Reference and Magical Thinking](./12-purples-shadow-delusions-of-reference-and-magical-thinking.md)
 - [“INHABIT (Feel)”](./13-internalize-feel.md)
-- [“Pranasynthesis” as the Cure for Depression](./14-pranasynthesis-as-the-cure-for-depression.md)
+- [“Pranasynthesis”: Taking in Light When You’re Depressed](./14-pranasynthesis-as-the-cure-for-depression.md)
 - [Tarot in the Foxhole: Inviting in Source via Divination](./15-tarot-in-the-foxhole-inviting-in-source-via-divination.md)
 
 ## Navigation
 
 - **Previous Stage**: [Stage 1](../01-beige/)
 - **Next Stage**: [Stage 3](../03-red/)
-- **Course Overview**: [APTITUDE Stages Deep Dive](../resources/aptitude-stages.md)
-- **How the Stages Become a Life**: [Notes and Chords](../resources/notes-and-chords.md)
+- **Course Overview**: [APTITUDE Stages Deep Dive](../resources/04-aptitude-stages.md)
+- **How the Stages Become a Life**: [Notes and Chords](../resources/07-notes-and-chords.md)
 
 ## Source
 

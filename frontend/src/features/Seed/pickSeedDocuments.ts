@@ -14,30 +14,15 @@
  */
 import * as DocumentPicker from 'expo-document-picker';
 
+import { SEED_DOCUMENT_EXTENSIONS } from './seedDocumentTypes';
+
+import type { ImportDocumentSource } from '@/api';
+
 /**
- * The extensions the vault has an ingestor for. `.zip` is here because a
- * Discord / ChatGPT / Substack export arrives as one archive, which is the
- * shape most real seeding takes.
+ * The extensions the vault has an ingestor for, re-exported from the one list
+ * a folder import reads too, so a type is submittable both ways or neither.
  */
-export const SEED_DOCUMENT_EXTENSIONS: readonly string[] = [
-  '.md',
-  '.markdown',
-  '.txt',
-  '.pdf',
-  '.docx',
-  '.rtf',
-  '.html',
-  '.htm',
-  '.csv',
-  '.xlsx',
-  '.pptx',
-  '.jpg',
-  '.jpeg',
-  '.png',
-  '.webp',
-  '.heic',
-  '.zip',
-];
+export { SEED_DOCUMENT_EXTENSIONS };
 
 /** The two characters that would turn a filename into a path; the backend refuses both. */
 const PATH_SEPARATORS = ['/', '\\'];
@@ -51,7 +36,7 @@ const CONSECUTIVE_DOTS = '..';
  * surrounding whitespace) so a name it would refuse is named on device instead
  * of spending a round trip to earn a 422.
  */
-function isSafeFilename(name: string): boolean {
+export function isSafeFilename(name: string): boolean {
   if (name.includes(CONSECUTIVE_DOTS) || name.startsWith('.')) {
     return false;
   }
@@ -82,6 +67,11 @@ export interface PickedDocument {
   size: number | null;
   /** Whether the vault can read this format under a name it accepts. */
   seedable: boolean;
+  /**
+   * Where the document sat in a chosen folder, for a folder import only. Sent
+   * with the upload so `Work/Index.md` and `Home/Index.md` stay two documents.
+   */
+  source?: ImportDocumentSource;
 }
 
 /**

@@ -103,6 +103,12 @@ import PracticeCatalogSwitcher, {
 } from '@/features/Practice/components/PracticeCatalogSwitcher';
 import PracticeDetailSheet from '@/features/Practice/components/PracticeDetailSheet';
 import PracticeDrawer from '@/features/Practice/components/PracticeDrawer';
+import PracticeHabitConnection from '@/features/Practice/components/PracticeHabitConnection';
+import {
+  PracticeHabitSessionControls,
+  usePracticeHabitSession,
+  type PracticeHabitBindings,
+} from '@/features/Practice/components/PracticeHabitSessionProvider';
 import PracticeIdentityHeader from '@/features/Practice/components/PracticeIdentityHeader';
 import QuickLaunchWriting from '@/features/Practice/components/QuickLaunchWriting';
 import type { RitualState } from '@/features/Practice/engine/types';
@@ -117,6 +123,7 @@ import { useTabCrossFade } from '@/hooks/useTabCrossFade';
 import { useThresholdFade } from '@/hooks/useThresholdFade';
 import { useAppRoute } from '@/navigation/hooks';
 import type { RootStackParamList } from '@/navigation/RootStack';
+import { getActiveUser, getActiveUserGeneration } from '@/storage/userScope';
 import { useDerivedCurrentStage } from '@/store/useProgramProgression';
 import { selectProgramStartDate, useProgramStore } from '@/store/useProgramStore';
 import {
@@ -319,30 +326,55 @@ function usePracticeScreenModel(): PracticeScreenModel {
   };
 }
 
-const PracticeScreen = (): React.JSX.Element => {
+interface PracticeScreenProps {
+  /** Bind only to the clean qualified shared timer manager and creation form. */
+  habitBindings?: PracticeHabitBindings;
+}
+
+const PracticeScreen = ({ habitBindings }: PracticeScreenProps = {}): React.JSX.Element => {
   const s = usePracticeScreenModel();
   const { overlayOpacity } = useThresholdFade();
-  return (
+  const content = (
     <>
-      <View style={[styles.screen, { paddingTop: s.topInset }]} testID="practice-screen-safe-area">
-        {s.showSwitcher && (
-          <PracticeCatalogSwitcher
-            active={s.tab}
-            onChange={s.setTab}
-            tabRefs={{ practice: s.detail.landingRef }}
-          />
-        )}
-        <PracticeStage model={s} />
-        {/* top: -s.topInset extends the fade up over the safe-area strip the
-            shell pads for, so the whole ground dims together on focus. */}
-        <Animated.View
-          style={[styles.groundFade, { opacity: overlayOpacity, top: -s.topInset }]}
-          pointerEvents="none"
-          testID="practice-ground-fade"
-        />
-      </View>
+      <PracticeStage model={s} />
       <PracticeScreenOverlays model={s} />
     </>
+  );
+  const adoption = s.active.activeUserPractice;
+  const practice = s.active.practice;
+  const connectedContent =
+    adoption && practice ? (
+      <PracticeHabitConnection
+        key={`${getActiveUserGeneration()}:${getActiveUser()}:${adoption.id}`}
+        userPractice={adoption}
+        practiceName={s.active.effectiveName ?? practice.name}
+        timezone={s.userTimezone}
+        bindings={habitBindings}
+        onUpdated={s.active.updateActivePractice}
+      >
+        {content}
+      </PracticeHabitConnection>
+    ) : (
+      content
+    );
+  return (
+    <View style={[styles.screen, { paddingTop: s.topInset }]} testID="practice-screen-safe-area">
+      {s.showSwitcher && (
+        <PracticeCatalogSwitcher
+          active={s.tab}
+          onChange={s.setTab}
+          tabRefs={{ practice: s.detail.landingRef }}
+        />
+      )}
+      {connectedContent}
+      {/* top: -s.topInset extends the fade up over the safe-area strip the
+          shell pads for, so the whole ground dims together on focus. */}
+      <Animated.View
+        style={[styles.groundFade, { opacity: overlayOpacity, top: -s.topInset }]}
+        pointerEvents="none"
+        testID="practice-ground-fade"
+      />
+    </View>
   );
 };
 
@@ -562,25 +594,29 @@ const PracticeScreenDrawer = ({
   onBrowseCatalog,
   sessionActive,
   onLogSession,
-}: PracticeScreenDrawerProps): React.JSX.Element => (
-  <ScreenDrawer
-    visible={drawer.isOpen}
-    onClose={drawer.close}
-    screenName="Practice"
-    title="Practice"
-  >
-    <DrawerNavSection currentScreen="Practice" onNavigate={drawer.close} />
-    <PracticeDrawer
-      hasActivePractice={hasActivePractice}
-      practiceId={practiceId}
-      onCustomize={onCustomize}
-      onBrowseCatalog={onBrowseCatalog}
-      sessionActive={sessionActive}
-      onLogSession={onLogSession}
+}: PracticeScreenDrawerProps): React.JSX.Element => {
+  const habitController = usePracticeHabitSession();
+  return (
+    <ScreenDrawer
+      visible={drawer.isOpen}
       onClose={drawer.close}
-    />
-  </ScreenDrawer>
-);
+      screenName="Practice"
+      title="Practice"
+    >
+      <DrawerNavSection currentScreen="Practice" onNavigate={drawer.close} />
+      <PracticeDrawer
+        hasActivePractice={hasActivePractice}
+        practiceId={practiceId}
+        onCustomize={onCustomize}
+        onBrowseCatalog={onBrowseCatalog}
+        sessionActive={sessionActive}
+        onLogSession={onLogSession}
+        onLinkHabit={habitController?.openPicker}
+        onClose={drawer.close}
+      />
+    </ScreenDrawer>
+  );
+};
 
 /**
  * Mounts the manual-log sheet only once a practice is actually resolved.
@@ -590,6 +626,7 @@ const PracticeScreenDrawer = ({
  * own declared length rather than a made-up default.
  */
 const LogSheetHost = ({ model }: { model: PracticeScreenModel }): React.JSX.Element | null => {
+  const habitController = usePracticeHabitSession();
   const { activeUserPractice, practice, effectiveName } = model.active;
   if (!activeUserPractice || !practice) return null;
   return (
@@ -603,6 +640,7 @@ const LogSheetHost = ({ model }: { model: PracticeScreenModel }): React.JSX.Elem
       onSessionApply={model.weekly.increment}
       onSessionRollback={model.weekly.decrement}
       onSessionCommitted={() => void model.weekly.refresh()}
+      onSessionConfirmed={habitController?.onConfirmed}
     />
   );
 };
@@ -662,6 +700,7 @@ interface ActiveSessionViewProps {
 // the identity header collapses off the same status while a session holds
 // the screen (running or paused).
 const ActiveSessionView = (props: ActiveSessionViewProps): React.JSX.Element => {
+  const habitController = usePracticeHabitSession();
   const insets = useSafeAreaInsets();
   return (
     <View style={styles.leaf}>
@@ -683,6 +722,9 @@ const ActiveSessionView = (props: ActiveSessionViewProps): React.JSX.Element => 
               onStageChange={props.onStageChange}
             />
             <QuickLaunchWriting plan={props.quickLaunch.plan} onBegin={props.quickLaunch.begin} />
+            {props.status !== 'running' && props.status !== 'paused' && (
+              <PracticeHabitSessionControls />
+            )}
             <View style={styles.sessionRegion} testID="practice-session-region">
               <ActiveRitualSession
                 key={`practice-${props.userPractice.id}`}
@@ -694,6 +736,7 @@ const ActiveSessionView = (props: ActiveSessionViewProps): React.JSX.Element => 
                 onSessionApply={props.weekly.increment}
                 onSessionRollback={props.weekly.decrement}
                 onSessionCommitted={() => void props.weekly.refresh()}
+                onSessionConfirmed={habitController?.onConfirmed}
                 onUserPracticeUpdated={props.onUserPracticeUpdated}
                 onWriteReflection={props.onWriteReflection}
                 onStatusChange={props.onStatusChange}

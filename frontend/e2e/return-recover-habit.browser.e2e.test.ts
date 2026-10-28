@@ -12,6 +12,7 @@ import {
   tokenFor,
   type ReleasedHabit,
 } from './journalHabitsBrowserSupport';
+import { openPrompts } from './journalHabitsBrowserSupport';
 import { freshLicenseKey } from './licenseKey';
 
 /**
@@ -219,6 +220,7 @@ async function setDownAHabitAndLeaveTheArc(
 
 /** Press the card's way back, and hold the browser to the response the server sent. */
 async function takeTheHabitUpAgain(page: Page, habitId: number): Promise<void> {
+  await openPrompts(page);
   const recommitted = page.waitForResponse(
     (response) =>
       response.request().method() === 'POST' &&
@@ -232,6 +234,7 @@ test('a habit set down in a Return is taken up again once the arc is left', asyn
   const { token, habitId } = await setDownAHabitAndLeaveTheArc(page, 'return-recover');
 
   await page.reload();
+  await openPrompts(page);
   await expect(page.getByTestId('return-resting-card')).toBeVisible();
   // The row names the habit the server said was resting, so the card is showing
   // this account's own pause rather than any row that happened to render.

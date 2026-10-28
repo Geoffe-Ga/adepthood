@@ -809,7 +809,7 @@ Run one supported document at a time, then a mixed multi-file batch if the UI pe
 - [ ] Check in each goal tier/unit; count, star fill, streak, date, and stats change once.
 - [ ] Long-press/alternate interaction for stretch goals is discoverable and accessible.
 - [ ] Edit name/icon/start date/goals/units and verify history is preserved intentionally.
-- [ ] Undo/reset completions and missed-days flows affect only intended days and time zone.
+- [ ] Undo completions and backdated (past-day) logs affect only intended days and time zone.
 - [ ] Day rollover while the screen stays mounted updates eligibility and today state without
       refresh.
 - [ ] Weekly, streak, and aggregate stats handle no data, one event, many events, DST,

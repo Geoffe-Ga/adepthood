@@ -1,0 +1,155 @@
+import React, { useCallback, useEffect, useRef, useState } from 'react';
+import { ActivityIndicator, Text, TouchableOpacity, View } from 'react-native';
+
+import { course as courseApi, type SiteResource } from '../../api';
+import { hasOnlySessionEnded } from '../../api/sessionToken';
+import { colors } from '../../design/tokens';
+
+import ChapterReader from './ChapterReader';
+import styles from './Course.styles';
+import { captureCourseSession } from './courseSession';
+import { useStartHereStore } from './startHereStore';
+
+import { useMountedRef } from '@/hooks/useMountedRef';
+import { reportDiagnostic } from '@/observability/diagnostics';
+import { getActiveUserGeneration } from '@/storage/userScope';
+
+/** The two keys a Start Here reader needs: which page, and what to call it. */
+export type ResourceTarget = Pick<SiteResource, 'slug' | 'title'> &
+  Partial<Pick<SiteResource, 'is_read'>>;
+
+export const MARK_RESOURCE_READ_LABEL = 'Mark as Read';
+export const RESOURCE_READ_LABEL = '✓ Read';
+
+/**
+ * Mark the on-screen Start Here resource read (#3234).
+ *
+ * Known read marks reopen as read. Otherwise the idempotent backend mark
+ * establishes completion. A response from an old authenticated reading session
+ * cannot label or refresh the replacement account's reader.
+ */
+function useResourceMarkRead(
+  slug: string,
+  onMarkedRead: () => void,
+  knownRead: boolean,
+): { marking: boolean; isRead: boolean; handleMarkRead: () => Promise<void> } {
+  const [marking, setMarking] = useState(false);
+  const [isRead, setIsRead] = useState(knownRead);
+  const epoch = useStartHereStore((state) => state.epoch);
+  const ownerGeneration = getActiveUserGeneration();
+  const currentSlugRef = useRef(slug);
+  const isMountedRef = useMountedRef();
+
+  useEffect(() => {
+    currentSlugRef.current = slug;
+    setIsRead(knownRead);
+    setMarking(false);
+  }, [slug, knownRead, epoch, ownerGeneration]);
+
+  const handleMarkRead = useCallback(async () => {
+    if (isRead || marking) return;
+    const requestedSlug = slug;
+    const session = captureCourseSession();
+    if (!session) return;
+    const requestEpoch = useStartHereStore.getState().epoch;
+    const live = () => isMountedRef.current && requestEpoch === useStartHereStore.getState().epoch;
+    const current = () => live() && session.current();
+    // A later session of the same account takes no answer, but frees the button (#3423).
+    const settles = () => live() && (session.current() || hasOnlySessionEnded(session));
+    setMarking(true);
+    try {
+      await courseApi.markResourceRead(requestedSlug, session.token);
+      if (!current()) return;
+      // The mark persisted server-side whichever page is showing now, so the
+      // reading position is re-asked regardless.
+      onMarkedRead();
+      if (currentSlugRef.current === requestedSlug) setIsRead(true);
+    } catch {
+      reportDiagnostic('course_read_failed');
+    } finally {
+      if (settles() && currentSlugRef.current === requestedSlug) setMarking(false);
+    }
+  }, [isRead, marking, slug, onMarkedRead, isMountedRef]);
+
+  return { marking, isRead, handleMarkRead };
+}
+
+interface ResourceFooterProps {
+  isRead: boolean;
+  marking: boolean;
+  onMarkRead: () => void;
+}
+
+/** The resource reader's single control, offered once the page's end is in view. */
+const ResourceFooter = ({
+  isRead,
+  marking,
+  onMarkRead,
+}: ResourceFooterProps): React.JSX.Element => (
+  <View testID="resource-footer" pointerEvents="box-none" style={styles.viewerFooter}>
+    <View style={styles.viewerFooterRow}>
+      <TouchableOpacity
+        testID="resource-mark-read-button"
+        onPress={onMarkRead}
+        disabled={isRead || marking}
+        style={[styles.markReadButton, isRead && styles.markReadButtonDone]}
+        accessibilityRole="button"
+        accessibilityLabel={isRead ? 'Already read' : MARK_RESOURCE_READ_LABEL}
+      >
+        {marking ? (
+          <ActivityIndicator
+            testID="resource-mark-read-loading"
+            size="small"
+            color={colors.text.light}
+          />
+        ) : (
+          <Text style={[styles.buttonLabelOnAccent, isRead && styles.markReadTextDone]}>
+            {isRead ? RESOURCE_READ_LABEL : MARK_RESOURCE_READ_LABEL}
+          </Text>
+        )}
+      </TouchableOpacity>
+    </View>
+  </View>
+);
+
+interface ResourceViewerProps {
+  resource: ResourceTarget;
+  onBack: () => void;
+  /** Called once a mark persists, so the "Read next" target can move on. */
+  onMarkedRead: () => void;
+}
+
+/**
+ * A Start Here page in the shared reader, with a Mark as Read control so the
+ * "Read next" walk can move past it (#3234). Without the mark a reader sent
+ * here by "Read next" would be sent back to the same page forever.
+ */
+const ResourceViewer = ({
+  resource,
+  onBack,
+  onMarkedRead,
+}: ResourceViewerProps): React.JSX.Element => {
+  const { marking, isRead, handleMarkRead } = useResourceMarkRead(
+    resource.slug,
+    onMarkedRead,
+    resource.is_read ?? false,
+  );
+  return (
+    <ChapterReader
+      source={{ kind: 'resource', slug: resource.slug }}
+      fallbackTitle={resource.title}
+      onBack={onBack}
+      renderFooter={(atEssayEnd) =>
+        atEssayEnd ? (
+          <ResourceFooter
+            isRead={isRead}
+            marking={marking}
+            onMarkRead={() => void handleMarkRead()}
+          />
+        ) : null
+      }
+    />
+  );
+};
+
+export default ResourceViewer;

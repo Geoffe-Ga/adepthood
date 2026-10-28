@@ -27,7 +27,8 @@ mechanism that produced the hole: correct on the day it is written and silently
 wrong the moment a column lands beside the ones it names. So this mixin
 *derives* its redaction set from the mapper — an attribute is redacted precisely
 when its column's type is an
-:class:`~services.journal_encryption.EncryptedString`. The declaration that a
+:class:`~services.journal_encryption.EncryptedString` (directly, or behind
+``EncryptedJSONList``; see ``is_encrypted_type``). The declaration that a
 value is sensitive is the column type, which is also the declaration that makes
 it ciphertext on disk, so the two can never disagree.
 
@@ -50,7 +51,7 @@ from typing import Any, Final
 
 from sqlalchemy.orm import class_mapper
 
-from services.journal_encryption import EncryptedString
+from services.journal_encryption import is_encrypted_type
 
 # What stands in for a redacted value. Angle-bracketed so it can never be
 # mistaken for a stored string, and fixed so tests can look for it by name.
@@ -96,7 +97,7 @@ def encrypted_attribute_names(model: type[Any]) -> frozenset[str]:
     return frozenset(
         attr.key
         for attr in class_mapper(model).column_attrs
-        if isinstance(attr.columns[0].type, EncryptedString)
+        if is_encrypted_type(attr.columns[0].type)
     )
 
 

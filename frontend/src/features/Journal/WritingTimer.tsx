@@ -61,7 +61,7 @@ import {
   editorialType,
   journalLayout,
   journalSheet,
-  shadows,
+  floatingChrome,
   touchTarget,
 } from '@/design/tokens';
 import type {
@@ -78,6 +78,13 @@ const NO_DEPS: EngineDeps = {};
 const JOURNAL_SHEET_MAX_WIDTH = journalLayout.pageMaxWidth + journalLayout.marginColumnWidth;
 const TIMER_DOCK_TRACK_MAX_WIDTH = JOURNAL_SHEET_MAX_WIDTH + 2 * (touchTarget.minimum + SPACING.sm);
 const TIMER_DOCK_MIN_VIEWPORT_WIDTH = TIMER_DOCK_TRACK_MAX_WIDTH + 2 * SPACING.sm;
+/** The preset grid's gap: the row's usual gap, and the rail's tighter one. */
+const PRESET_GAP = SPACING.sm;
+/**
+ * The desktop rail is a margin's width: at the usual gap its four 44dp presets
+ * leave no room for the unit, so the rail closes the gap rather than a target.
+ */
+const PRESET_GAP_RAIL = SPACING.xs;
 
 export interface WritingTimerProps {
   /** The length the timer opens at; the writer can change it before starting. */
@@ -93,41 +100,106 @@ export interface WritingTimerProps {
   autoStart?: boolean;
   /** Called once per finished session, however the session ended. */
   onComplete: (result: WritingSessionResult) => void;
+  /** Called immediately before the first engine start changes the timer's presentation. */
+  onStart?: () => void;
+  /** The session surface already supplies the absolute floating band. */
+  withinBand?: boolean;
   /** The engine's clock and adapter seam; tests inject it, production does not. */
   deps?: EngineDeps;
 }
 
-/** The four lengths, offered as a row while the timer is at rest. */
-function PresetRow({
-  minutes,
+/** One length, as a radio chip that shares its pair's width equally. */
+function PresetChip({
+  option,
+  selected,
   onChoose,
 }: {
-  minutes: number;
+  option: number;
+  selected: boolean;
   onChoose: (next: number) => void;
 }): React.JSX.Element {
   return (
+    <TouchableOpacity
+      style={[styles.preset, selected ? styles.presetSelected : null]}
+      onPress={() => onChoose(option)}
+      accessibilityRole="radio"
+      accessibilityLabel={writingTimerPresetA11yLabel(option)}
+      accessibilityState={{ selected }}
+      testID={`writing-timer-preset-${option}`}
+    >
+      <Text style={styles.presetLabel}>{writingTimerPresetLabel(option)}</Text>
+    </TouchableOpacity>
+  );
+}
+
+/** The unit, said once after the numbers, in a trailing slot level with the last row. */
+function PresetUnit(): React.JSX.Element {
+  return (
+    <View style={styles.presetUnitSlot}>
+      <Text style={styles.presetUnit} {...decorativeHidden()} testID="writing-timer-preset-unit">
+        {WRITING_TIMER_PRESET_UNIT}
+      </Text>
+    </View>
+  );
+}
+
+/** The presets in pairs: the grid wraps a whole pair at a time, never a lone chip. */
+const PRESET_PAIRS = [
+  WRITING_DURATION_PRESET_MINUTES.slice(0, 2),
+  WRITING_DURATION_PRESET_MINUTES.slice(2),
+] as const;
+
+/**
+ * The four lengths, offered as an even grid while the timer is at rest.
+ *
+ * The presets sit in two pairs that grow equally from the same basis, and each
+ * pair splits its width equally between its two chips. On one line that gives
+ * four equal chips; when the row is too narrow (200% zoom on a phone, or
+ * enlarged text in the rail) a whole pair wraps, both pairs stretch to the
+ * full width, and the two rows share their column edges. Left to wrap chip by
+ * chip, flexbox grew a short last line's chips to fill it, so 30 and 45 came
+ * out narrower than 10 and 20 (#3403). The unit keeps a slot of its own after
+ * the grid, at the trailing edge and level with the last row, so it never
+ * squeezes a chip.
+ */
+function PresetRow({
+  minutes,
+  onChoose,
+  rail,
+}: {
+  minutes: number;
+  onChoose: (next: number) => void;
+  /** True in the narrow desktop rail, where the unit only fits at the tighter gap. */
+  rail: boolean;
+}): React.JSX.Element {
+  const gap = rail ? PRESET_GAP_RAIL : PRESET_GAP;
+  // Two touch-target chips and the gap between them: the narrowest a pair may be.
+  const pairBasis = 2 * touchTarget.minimum + gap;
+  return (
     <View
-      style={styles.row}
+      style={[styles.row, styles.presetRow, { gap }]}
       accessibilityRole="radiogroup"
       accessibilityLabel={WRITING_TIMER_PRESET_GROUP_LABEL}
       testID="writing-timer-row-presets"
     >
-      {WRITING_DURATION_PRESET_MINUTES.map((option) => (
-        <TouchableOpacity
-          key={option}
-          style={[styles.preset, option === minutes ? styles.presetSelected : null]}
-          onPress={() => onChoose(option)}
-          accessibilityRole="radio"
-          accessibilityLabel={writingTimerPresetA11yLabel(option)}
-          accessibilityState={{ selected: option === minutes }}
-          testID={`writing-timer-preset-${option}`}
-        >
-          <Text style={styles.presetLabel}>{writingTimerPresetLabel(option)}</Text>
-        </TouchableOpacity>
-      ))}
-      <Text style={styles.presetUnit} {...decorativeHidden()} testID="writing-timer-preset-unit">
-        {WRITING_TIMER_PRESET_UNIT}
-      </Text>
+      <View style={[styles.presetGrid, { gap }]} testID="writing-timer-preset-grid">
+        {PRESET_PAIRS.map((pair) => (
+          <View
+            key={pair.join('-')}
+            style={[styles.presetPair, { gap, flexBasis: pairBasis, minWidth: pairBasis }]}
+          >
+            {pair.map((option) => (
+              <PresetChip
+                key={option}
+                option={option}
+                selected={option === minutes}
+                onChoose={onChoose}
+              />
+            ))}
+          </View>
+        ))}
+      </View>
+      <PresetUnit />
     </View>
   );
 }
@@ -169,8 +241,7 @@ function TimerControl({
  * Whichever of start / pause / resume / stop the current state offers.
  *
  * A fragment, not a row of its own: the controls sit beside the readout on the
- * pill's first row, which is what keeps the pill's height a count of rows
- * rather than a consequence of how much fits across a given phone.
+ * pill's first row, while the preset choices can reflow independently below.
  */
 function LiveTimerControls({
   view,
@@ -363,6 +434,7 @@ function useWritingConfig(minutes: number): MeditationTimerConfig {
 }
 
 interface TimerPillProps {
+  expandedRail: boolean;
   compact: boolean;
   docked: boolean;
   idle: boolean;
@@ -374,11 +446,23 @@ interface TimerPillProps {
   onChooseMinutes: (_minutes: number) => void;
 }
 
-function TimerReadout({ view, docked }: { view: TimerView; docked: boolean }): React.JSX.Element {
+function TimerReadout({
+  view,
+  docked,
+  idle,
+}: {
+  view: TimerView;
+  docked: boolean;
+  idle: boolean;
+}): React.JSX.Element {
   return (
     <Text
-      style={[styles.readout, docked ? styles.readoutDocked : null]}
-      numberOfLines={1}
+      style={[
+        styles.readout,
+        docked ? styles.readoutDocked : null,
+        docked && idle && styles.intrinsicReadout,
+      ]}
+      numberOfLines={docked && !idle ? undefined : 1}
       accessibilityRole="text"
       accessibilityLabel={`${WRITING_TIMER_A11Y_LABEL}: ${view.readoutA11yLabel}`}
       testID="writing-timer-readout"
@@ -388,8 +472,15 @@ function TimerReadout({ view, docked }: { view: TimerView; docked: boolean }): R
   );
 }
 
+/** Live controls keep their rail; the resting clock can fit its text. */
+function dockedPillStyles(docked: boolean, idle: boolean) {
+  if (!docked) return undefined;
+  return [styles.pillDocked, idle && styles.intrinsicReadout];
+}
+
 /** The paper pill itself, shared by its expanded and desk-side mounts. */
 function TimerPill({
+  expandedRail,
   compact,
   docked,
   idle,
@@ -405,7 +496,8 @@ function TimerPill({
       style={[
         styles.pill,
         compact ? styles.pillCompact : styles.pillExpanded,
-        docked ? styles.pillDocked : null,
+        !compact && expandedRail && styles.pillExpandedRail,
+        dockedPillStyles(docked, idle),
       ]}
       pointerEvents="auto"
       testID="writing-timer-pill"
@@ -414,7 +506,7 @@ function TimerPill({
         style={[styles.row, docked ? styles.rowDocked : null]}
         testID="writing-timer-row-readout"
       >
-        <TimerReadout view={view} docked={docked} />
+        <TimerReadout view={view} docked={docked} idle={idle} />
         {compact && idle ? null : (
           <TimerControls
             view={view}
@@ -427,7 +519,7 @@ function TimerPill({
         )}
       </View>
       {!compact && view.showPresets ? (
-        <PresetRow minutes={minutes} onChoose={onChooseMinutes} />
+        <PresetRow minutes={minutes} onChoose={onChooseMinutes} rail={expandedRail} />
       ) : null}
     </View>
   );
@@ -436,10 +528,12 @@ function TimerPill({
 function TimerTrack({
   compact,
   docked,
+  expandedRail,
   children,
 }: {
   compact: boolean;
   docked: boolean;
+  expandedRail: boolean;
   children: React.ReactNode;
 }): React.JSX.Element {
   if (docked) {
@@ -452,7 +546,7 @@ function TimerTrack({
   if (compact) return <>{children}</>;
   return (
     <View
-      style={styles.expandedTrack}
+      style={[styles.expandedTrack, expandedRail && styles.expandedRail]}
       pointerEvents="box-none"
       testID="writing-timer-expanded-track"
     >
@@ -465,14 +559,18 @@ function TimerTrack({
 function TimerMount({
   compact,
   docked,
+  expandedRail,
   idle,
   onExpand,
+  withinBand,
   children,
 }: {
   compact: boolean;
   docked: boolean;
+  expandedRail: boolean;
   idle: boolean;
   onExpand: () => void;
+  withinBand: boolean;
   children: React.ReactNode;
 }): React.JSX.Element {
   const mountedPill =
@@ -492,32 +590,60 @@ function TimerMount({
     <View
       style={[
         styles.floatingWrapper,
+        withinBand && styles.bandWrapper,
         compact ? styles.floatingWrapperCompact : null,
         docked ? styles.floatingWrapperDocked : null,
       ]}
       pointerEvents="box-none"
       testID="writing-timer-wrapper"
     >
-      <TimerTrack compact={compact} docked={docked}>
+      <TimerTrack compact={compact} docked={docked} expandedRail={expandedRail}>
         {mountedPill}
       </TimerTrack>
     </View>
   );
 }
 
+function useTimerActions(
+  status: EngineStatus,
+  controls: RitualControls,
+  collapse: () => void,
+  setMinutes: React.Dispatch<React.SetStateAction<number>>,
+  onStart?: () => void,
+): { chooseMinutes: (_next: number) => void; start: () => void } {
+  const statusRef = useRef(status);
+  statusRef.current = status;
+  const chooseMinutes = useCallback(
+    (next: number) => {
+      setMinutes((current) => nextDurationMinutes(statusRef.current, current, next));
+    },
+    [setMinutes],
+  );
+  const start = useCallback(() => {
+    onStart?.();
+    collapse();
+    controls.start();
+  }, [collapse, controls, onStart]);
+  return { chooseMinutes, start };
+}
+
+function useTimerMountLayout(compact: boolean): { desktopRail: boolean; docked: boolean } {
+  const desktopRail = useWindowDimensions().width >= TIMER_DOCK_MIN_VIEWPORT_WIDTH;
+  return { desktopRail, docked: compact && desktopRail };
+}
+
 function WritingTimer({
   initialMinutes = DEFAULT_WRITING_MINUTES,
   autoStart = false,
   onComplete,
+  onStart,
+  withinBand = false,
   deps = NO_DEPS,
 }: WritingTimerProps): React.JSX.Element {
-  const viewportWidth = useWindowDimensions().width;
   const [minutes, setMinutes] = useState(initialMinutes);
   const [state, controls] = useRitualEngine(useWritingConfig(minutes), deps);
   const { compact, collapse, expand } = useCompactPill(state.status);
-  const docked = compact && viewportWidth >= TIMER_DOCK_MIN_VIEWPORT_WIDTH;
-  const statusRef = useRef(state.status);
-  statusRef.current = state.status;
+  const { desktopRail, docked } = useTimerMountLayout(compact);
   const view = describeTimer({
     status: state.status,
     remainingMs: state.remainingMs,
@@ -530,26 +656,28 @@ function WritingTimer({
     controls,
     onComplete,
   });
-  const chooseMinutes = useCallback((next: number) => {
-    setMinutes((current) => nextDurationMinutes(statusRef.current, current, next));
-  }, []);
-  const start = useCallback(() => {
-    collapse();
-    controls.start();
-  }, [collapse, controls]);
-  useAutoStart(autoStart, start);
+  const actions = useTimerActions(state.status, controls, collapse, setMinutes, onStart);
+  useAutoStart(autoStart, actions.start);
   return (
-    <TimerMount compact={compact} docked={docked} idle={state.status === 'idle'} onExpand={expand}>
+    <TimerMount
+      compact={compact}
+      docked={docked}
+      expandedRail={desktopRail}
+      idle={state.status === 'idle'}
+      onExpand={expand}
+      withinBand={withinBand}
+    >
       <TimerPill
+        expandedRail={desktopRail}
         compact={compact}
         docked={docked}
         idle={state.status === 'idle'}
         minutes={minutes}
         view={view}
         controls={controls}
-        onStart={start}
+        onStart={actions.start}
         onMinimize={collapse}
-        onChooseMinutes={chooseMinutes}
+        onChooseMinutes={actions.chooseMinutes}
       />
     </TimerMount>
   );
@@ -567,6 +695,10 @@ const styles = StyleSheet.create({
     left: 0,
     right: 0,
     bottom: RESONANCE_BUTTON_CLEARANCE,
+  },
+  bandWrapper: {
+    position: 'relative',
+    bottom: 0,
   },
   floatingWrapperCompact: {
     left: undefined,
@@ -589,13 +721,17 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     paddingHorizontal: journalSheet.deskPaddingH,
   },
+  /** Expanded options stay on the paper's trailing edge, clear of the body. */
+  expandedRail: {
+    maxWidth: JOURNAL_SHEET_MAX_WIDTH,
+    alignSelf: 'center',
+    alignItems: 'flex-end',
+    paddingHorizontal: 0,
+  },
   /**
-   * A column of fixed-height rows, spanning the band rather than sizing itself
-   * to its contents. Deliberately NOT a wrapping row: laid out that way the
-   * readout, four presets and Start come to roughly 452dp in this face at this
-   * size, so every phone reflowed it onto two or three rows and the page
-   * reserved space for one. A column of known rows has a height that does not
-   * depend on the width it is given.
+   * Keep the readout and controls together above independently wrapping
+   * presets. The surface measures this column, so larger text can grow the
+   * reserved band without overlapping page controls.
    */
   pill: {
     flexDirection: 'column',
@@ -603,14 +739,16 @@ const styles = StyleSheet.create({
     paddingVertical: WRITING_TIMER_PILL_PADDING_V,
     paddingHorizontal: SPACING.md,
     borderRadius: BORDER_RADIUS.xl,
-    backgroundColor: colors.paper.background,
-    borderWidth: StyleSheet.hairlineWidth,
-    borderColor: colors.paper.hairline,
-    ...shadows.small,
+    ...floatingChrome.pill,
   },
   pillExpanded: {
     width: '100%',
     maxWidth: journalLayout.pageMaxWidth,
+  },
+  pillExpandedRail: {
+    // Fit the margin and its page inset without entering the writing column.
+    width: journalLayout.marginColumnWidth + journalLayout.pageHorizontalPadding,
+    paddingHorizontal: SPACING.sm,
   },
   pillCompact: {
     minWidth: 180,
@@ -629,6 +767,34 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     gap: SPACING.sm,
     height: WRITING_TIMER_ROW_HEIGHT,
+  },
+  // Larger system text may need another line; measured band clearance grows
+  // with it instead of clipping the unit or shrinking the touch targets. The
+  // grid wraps inside; the row holds it and the unit, level with its last row.
+  presetRow: {
+    height: 'auto',
+    minHeight: WRITING_TIMER_ROW_HEIGHT,
+    alignItems: 'flex-end',
+  },
+  /** The pairs' wrapping line; it takes the row's width beside the unit. */
+  presetGrid: {
+    flex: 1,
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+  },
+  /** Two chips that split the pair's width equally; pairs grow equally from one basis. */
+  presetPair: {
+    flexGrow: 1,
+    flexDirection: 'row',
+  },
+  /**
+   * The unit's own slot, at the trailing edge, centred on the last row's 44dp
+   * height.
+   */
+  presetUnitSlot: {
+    minHeight: touchTarget.minimum,
+    justifyContent: 'center',
+    alignItems: 'flex-end',
   },
   rowDocked: {
     flexDirection: 'column',
@@ -654,6 +820,12 @@ const styles = StyleSheet.create({
     textAlign: 'center',
     textAlignVertical: 'center',
     lineHeight: touchTarget.minimum,
+  },
+  // At rest this sits below the finished note; it can use its natural width.
+  // Live controls retain their narrow rail beside the writing field.
+  intrinsicReadout: {
+    width: 'auto',
+    minWidth: touchTarget.minimum,
   },
   /**
    * Presets share their row's width instead of demanding their own. ``flex: 1``
@@ -693,8 +865,6 @@ const styles = StyleSheet.create({
   presetUnit: {
     ...editorialType.caption,
     color: colors.paper.inkSoft,
-    paddingLeft: SPACING.xs,
-    alignSelf: 'center',
   },
   control: {
     minHeight: touchTarget.minimum,

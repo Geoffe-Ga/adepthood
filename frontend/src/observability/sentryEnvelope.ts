@@ -3,17 +3,18 @@
  *
  * Adepthood is a private journal, so a crash report that carried what the user
  * was writing would be a worse failure than the invisible crash it replaced.
- * The backend closes that off subtractively — it configures the vendor SDK to
- * capture nothing automatic and then scrubs what is left. This module closes it
- * off the other way, which is stronger: the payload is *constructed* from a
- * fixed set of fields, so there is no channel for user content to arrive
- * through in the first place. There are no breadcrumbs (no buffer exists), no
- * request data, no `extra`, and no user identity.
+ * The payload is therefore *constructed* from a fixed set of fields -- the
+ * backend rebuilds its events from an allowlist the same way -- so there is no
+ * channel for user content to arrive through in the first place. There are no
+ * breadcrumbs (no buffer exists), no request data, no `extra`, and no user
+ * identity.
  *
- * Two fields could still carry something a user typed, and both are handled:
- * the exception message (redacted for credential shapes, then length-capped)
- * and the React component stack (component names only, by React's own
- * construction).
+ * The exception message is not one of those fields. It is authored at the
+ * throw site, so it can interpolate whatever the user was writing, and no cap
+ * makes a short message safe: every report carries {@link MESSAGE_WITHHELD}
+ * in its place (#3064). Error types, boundary identifiers and feature names
+ * are closed runtime enums. Component stacks are dropped: component names
+ * and display names can contain private text too (#3210).
  *
  * Why hand-built rather than `@sentry/react-native`: that SDK is a native
  * module, and this is an Expo-managed app whose test suite could only ever
@@ -27,16 +28,44 @@
 export const REDACTED = '[redacted]';
 
 /**
- * Longest exception message a report may carry.
- *
- * A message is authored at the throw site, so it is the one field this module
- * cannot structurally guarantee. The cap bounds what a message that
- * interpolated something it should not have can carry away.
+ * Reported in place of every exception message. The same marker the backend
+ * reports, so the operator inbox reads one vocabulary.
  */
-export const MAX_MESSAGE_CHARS = 512;
+export const MESSAGE_WITHHELD = 'message_withheld';
 
-/** Appended to a message the cap shortened, so a reader knows it is partial. */
-export const TRUNCATION_MARKER = '…[truncated]';
+/** Reported as the type of a thrown value that is not an `Error`. */
+export const UNKNOWN_ERROR_TYPE = 'UnknownError';
+
+/** Reported as the type of an `Error` whose `name` is not an approved fixed type. */
+const FALLBACK_ERROR_TYPE = 'Error';
+
+// Assignable names are safe only when they match an explicitly approved
+// identifier, never merely because they look like a class name.
+const ERROR_TYPES = new Set([
+  'Error',
+  'EvalError',
+  'RangeError',
+  'ReferenceError',
+  'SyntaxError',
+  'TypeError',
+  'URIError',
+  'AggregateError',
+  'AbortError',
+  'DOMException',
+  'ApiError',
+  'ApiValidationError',
+  'ApiTimeoutError',
+  'TranscriptionError',
+  'DocumentUploadError',
+  'DirectVendorError',
+  'EmptyApiKeyError',
+  'EmptyAuthTokenError',
+  'ClientMintedIdError',
+  'SilentRenderError',
+  'MarginSlotInputError',
+]);
+const BOUNDARIES = new Set(['ErrorBoundary', 'FeatureErrorBoundary']);
+const FEATURES = new Set(['Auth', 'App', 'Habits', 'Practice', 'Course', 'Journal', 'Map']);
 
 /** Sentry protocol version this payload is written to. */
 const SENTRY_PROTOCOL_VERSION = 7;
@@ -45,8 +74,8 @@ const SENTRY_PROTOCOL_VERSION = 7;
 const SENTRY_CLIENT = 'adepthood-frontend/1.0';
 
 /**
- * Structured context attached to a report — a **closed** union of exactly the
- * fields the error boundaries pass.
+ * Input shape retained for the existing error boundaries. Runtime filtering
+ * sends only fixed boundary/feature identifiers and discards `react` entirely.
  *
  * Adding a field here is an explicit, reviewed decision: extend the interface
  * (with a sensitivity check) before a call site can pass it. A permissive
@@ -69,6 +98,15 @@ export interface EventMeta {
   timestamp: string;
   environment: string;
   release: string;
+}
+
+/**
+ * One exception entry. `value` is typed as the marker itself, so a change that
+ * tried to put `error.message` back on the wire would not compile.
+ */
+interface ExceptionEntry {
+  type: string;
+  value: typeof MESSAGE_WITHHELD;
 }
 
 /** A Sentry event, as the JSON object that goes on the wire. */
@@ -119,36 +157,48 @@ export function redactCredentials(text: string): string {
   return CREDENTIAL_PATTERNS.reduce((acc, pattern) => acc.replace(pattern, REDACTED), text);
 }
 
-/** Redact then length-cap a string that is about to leave the device. */
-function safeText(text: string): string {
-  const redacted = redactCredentials(text);
-  if (redacted.length <= MAX_MESSAGE_CHARS) {
-    return redacted;
+/** Read only data properties. Never invoke a getter on a crash or context. */
+function ownData(value: unknown, key: string): unknown {
+  if (value === null || (typeof value !== 'object' && typeof value !== 'function')) {
+    return undefined;
   }
-  return redacted.slice(0, MAX_MESSAGE_CHARS) + TRUNCATION_MARKER;
+  try {
+    const descriptor = Object.getOwnPropertyDescriptor(value, key);
+    return descriptor && 'value' in descriptor ? descriptor.value : undefined;
+  } catch {
+    // A Proxy may reject reflection. Treat it as absent metadata.
+    return undefined;
+  }
 }
 
-/** Name and message of a thrown value, without assuming it is an `Error`. */
-function describeError(error: unknown): { type: string; value: string } {
-  if (error instanceof Error) {
-    return { type: error.name, value: error.message };
+/**
+ * The type of a thrown value, without reading its message or stringifying it.
+ *
+ * A non-`Error` throw is reported as {@link UNKNOWN_ERROR_TYPE}: `String(x)` of
+ * a thrown string *is* its text.
+ */
+function errorType(error: unknown): string {
+  try {
+    if (!(error instanceof Error)) return UNKNOWN_ERROR_TYPE;
+    const ownName = Object.getOwnPropertyDescriptor(error, 'name');
+    // A present accessor is not the same as an absent own property: never
+    // fall through from a hostile accessor to a seemingly valid prototype.
+    const name = ownName ? ownData(error, 'name') : ownData(Object.getPrototypeOf(error), 'name');
+    return typeof name === 'string' && ERROR_TYPES.has(name) ? name : FALLBACK_ERROR_TYPE;
+  } catch {
+    return UNKNOWN_ERROR_TYPE;
   }
-  return { type: 'UnknownError', value: String(error) };
 }
 
-/** Copy across only the contexts the interface declares. */
+/** Copy fixed identifiers only; do not traverse or serialise input objects. */
 function allowlistedContexts(contexts?: ReportContexts): Record<string, unknown> {
-  const allowed: Record<string, unknown> = {};
-  if (contexts?.react) {
-    allowed.react = { componentStack: contexts.react.componentStack };
-  }
-  if (contexts?.errorBoundary) {
-    allowed.errorBoundary = {
-      boundary: contexts.errorBoundary.boundary,
-      name: contexts.errorBoundary.name,
-    };
-  }
-  return allowed;
+  const boundaryContext = ownData(contexts, 'errorBoundary');
+  const boundary = ownData(boundaryContext, 'boundary');
+  if (typeof boundary !== 'string' || !BOUNDARIES.has(boundary)) return {};
+  const allowed: { boundary: string; name?: string } = { boundary };
+  const name = ownData(boundaryContext, 'name');
+  if (typeof name === 'string' && FEATURES.has(name)) allowed.name = name;
+  return { errorBoundary: allowed };
 }
 
 /**
@@ -162,7 +212,7 @@ export function buildEvent(
   contexts: ReportContexts | undefined,
   meta: EventMeta,
 ): SentryEvent {
-  const { type, value } = describeError(error);
+  const entry: ExceptionEntry = { type: errorType(error), value: MESSAGE_WITHHELD };
   return {
     event_id: meta.eventId,
     timestamp: meta.timestamp,
@@ -170,7 +220,7 @@ export function buildEvent(
     level: 'error',
     environment: meta.environment,
     release: meta.release,
-    exception: { values: [{ type, value: safeText(value) }] },
+    exception: { values: [entry] },
     contexts: allowlistedContexts(contexts),
   };
 }

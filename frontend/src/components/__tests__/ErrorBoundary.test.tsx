@@ -56,10 +56,11 @@ describe('ErrorBoundary', () => {
     expect(call[1].react.componentStack).toEqual(expect.any(String));
   });
 
-  it('renders the JS stack only in development builds (#272)', () => {
+  it('renders the JS message and stack only in development builds (#272)', () => {
     // In a production bundle the verbatim stack leaks file paths and
-    // internal function names to whoever holds the device; only the
-    // message should render there.
+    // internal function names to whoever holds the device, and the raw
+    // message can carry the same kind of internals; a production reader
+    // gets plain guidance and nothing from the exception itself.
     const devGlobal = globalThis as unknown as { __DEV__: boolean };
     const original = devGlobal.__DEV__;
     try {
@@ -70,7 +71,9 @@ describe('ErrorBoundary', () => {
         </ErrorBoundary>,
       );
       expect(prod.queryByTestId('error-boundary-stack')).toBeNull();
-      expect(prod.getByText('boom!')).toBeTruthy();
+      expect(prod.queryByText('boom!')).toBeNull();
+      expect(prod.getByText(/let us know what you were doing when it broke/)).toBeTruthy();
+      expect(prod.queryByText(/copy the details below/)).toBeNull();
       prod.unmount();
 
       devGlobal.__DEV__ = true;
@@ -80,6 +83,8 @@ describe('ErrorBoundary', () => {
         </ErrorBoundary>,
       );
       expect(dev.getByTestId('error-boundary-stack')).toBeTruthy();
+      expect(dev.getByText('boom!')).toBeTruthy();
+      expect(dev.getByText(/copy the details below/)).toBeTruthy();
     } finally {
       devGlobal.__DEV__ = original;
     }

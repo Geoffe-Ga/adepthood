@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Image,
@@ -63,7 +63,6 @@ import {
   STAGE_DISPLAY,
   STAGE_LINE_LADDER,
   STAGE_PERSONA_LADDER,
-  TITLE_BY_STAGE,
 } from './mapLayout';
 import type { MapRow, StageDisplay } from './mapLayout';
 import {
@@ -75,6 +74,8 @@ import {
 import { STAGE_COUNT, type StageData } from './stageData';
 import { StageExpressionsSection } from './StageExpressionsSection';
 import { stageCenterCellLabel, stageNodeLabel, THIN_FULLNESS } from './stageLegend';
+import { deriveStageVocabulary, mapWatermarkLines, rowCategory } from './stageVocabulary';
+import type { StageVocabulary } from './stageVocabulary';
 import { nominalAnchorY } from './waveGeometry';
 import type { StageAnchors } from './waveGeometry';
 import { WaveOverlay } from './WaveOverlay';
@@ -88,6 +89,7 @@ import {
 } from '@/components/drawer';
 import { Celebration } from '@/components/feedback/Celebration';
 import { ContentContainer } from '@/components/layout/ContentContainer';
+import { hyphenate } from '@/design/hyphenation';
 import { colors } from '@/design/tokens';
 
 /** Lookup of stage number → StageData for resolving row/arrow content. */
@@ -95,6 +97,18 @@ type StageLookup = Readonly<Record<number, StageData | undefined>>;
 
 /** Wheel-of-wholeness fullness (0..1) keyed by stage number; absent reads thin. */
 type FullnessLookup = Readonly<Record<number, number>>;
+
+/**
+ * Everything a stage's cells render: its words, derived from the served stage
+ * (#2666), beside its static practice line and artwork colours.
+ */
+type StageCopy = StageDisplay & StageVocabulary;
+
+/**
+ * The watermark lines every title cell sizes against, so EMPTINESS and UNITY
+ * share one ramp step. Provided once by ``MapGrid`` from the loaded stages.
+ */
+const WatermarkLinesContext = React.createContext<readonly string[]>([]);
 
 const FULL_PROGRESS = 1;
 
@@ -127,7 +141,7 @@ const BADGE_CORNER_STYLE: Readonly<Record<LabelCorner, StyleProp<ViewStyle>>> = 
 };
 
 /**
- * "Unlocks in N days" / unlock-condition copy for a locked stage, computed from
+ * "Opens in N days" / opening-condition copy for a locked stage, computed from
  * the existing calendar drip (no new backend). Falls back to the condition when
  * no program anchor is set. Its text aligns to the note's corner so the copy
  * reads away from the wave strand.
@@ -173,7 +187,7 @@ const LockedNote = ({
 
 interface StageCellProps {
   stage: StageData;
-  display: StageDisplay;
+  display: StageCopy;
   locked: boolean;
   /** The stage the person is standing in; both tap targets announce it. */
   current: boolean;
@@ -224,7 +238,7 @@ const StageLines = ({
   display,
   width,
 }: {
-  display: StageDisplay;
+  display: StageCopy;
   width: number;
 }): React.JSX.Element => (
   <>
@@ -298,7 +312,7 @@ const AspectLabelBlock = ({
   display,
   locked,
 }: {
-  display: StageDisplay;
+  display: StageCopy;
   locked: boolean;
 }): React.JSX.Element => {
   const [width, setWidth] = useState(0);
@@ -323,19 +337,24 @@ const AspectLabelBlock = ({
 
 /**
  * EMPTINESS / UNITY watermark sized to its measured cell width. Both lines take
- * ``fittedTitleFontSize``'s one ramp step, fitted to the longer line, so the
- * watermark reads at one size on a single un-hyphenated line everywhere; no
- * ``adjustsFontSizeToFit``, which would shrink it off the ramp on native.
+ * ``fittedTitleFontSize``'s one ramp step, fitted to the longer of the served
+ * watermarks, so the watermark reads at one size on a single un-hyphenated
+ * line everywhere; no ``adjustsFontSizeToFit``, which would shrink it off the
+ * ramp on native.
  */
 const FittedTitle = ({ title }: { title: string }): React.JSX.Element => {
   const [width, setWidth] = useState(0);
+  const lines = useContext(WatermarkLinesContext);
   return (
     <View
       style={styles.titleFit}
       testID={`title-fit-${title}`}
       onLayout={(e) => setWidth(e.nativeEvent.layout.width)}
     >
-      <Text style={[styles.titleText, { fontSize: fittedTitleFontSize(width) }]} numberOfLines={1}>
+      <Text
+        style={[styles.titleText, { fontSize: fittedTitleFontSize(width, lines) }]}
+        numberOfLines={1}
+      >
         {title}
       </Text>
     </View>
@@ -343,23 +362,24 @@ const FittedTitle = ({ title }: { title: string }): React.JSX.Element => {
 };
 
 /**
- * Right-column aspect label sized to its measured cell width, mirroring the
- * ``FittedTitle`` idiom. The full word is preferred on one un-hyphenated line
- * at the largest ramp step it fits; only a word too long for the floor falls
- * back to the row's pre-hyphenated lines. No line is capped with
+ * Right-column category label sized to its measured cell width, mirroring the
+ * ``FittedTitle`` idiom. The word is the row's category as the server serves
+ * it. The full word is preferred on one un-hyphenated line at the largest ramp
+ * step it fits; only a word too long for the floor falls back to its
+ * ``hyphenate`` lines. No line is capped with
  * ``numberOfLines``: the width estimate is not conservative for every serif
  * face, so a line that runs wide wraps rather than being cut to an ellipsis,
  * and a line that fits stays on one line on its own. The Android
  * break props are unconditional (no-ops on iOS/web) so the platform never
  * inserts its own hyphenation.
  */
-const FittedRightLabel = ({ row }: { row: MapRow }): React.JSX.Element => {
+const FittedRightLabel = ({ label }: { label: string }): React.JSX.Element => {
   const [width, setWidth] = useState(0);
-  const { lines, fontSize } = fitRightLabel(row.rightLabel, row.rightLabelLines, width);
+  const { lines, fontSize } = fitRightLabel(label, hyphenate(label), width);
   const lineHeight = fontSize * RIGHT_LABEL_LINE_HEIGHT_RATIO;
   return (
     <View
-      testID={`right-label-fit-${row.rightLabel}`}
+      testID={`right-label-fit-${label}`}
       onLayout={(e) => setWidth(e.nativeEvent.layout.width)}
     >
       {lines.map((line) => (
@@ -383,10 +403,10 @@ const CenterContent = ({
   display,
   locked,
 }: {
-  display: StageDisplay;
+  display: StageCopy;
   locked: boolean;
 }): React.JSX.Element | null => {
-  const title = TITLE_BY_STAGE[display.stageNumber];
+  const title = display.watermark;
   if (title) {
     return (
       <>
@@ -455,13 +475,16 @@ interface MapRowProps {
   onCellLayout: UseStageAnchorsResult['onCellLayout'];
 }
 
-/** A row's stages resolved to their loaded StageData + display copy. */
-type ResolvedStage = { stage: StageData; display: StageDisplay };
+/** A row's stages resolved to their loaded StageData + the copy derived from it. */
+type ResolvedStage = { stage: StageData; display: StageCopy };
 
 const resolveRowStages = (row: MapRow, lookup: StageLookup): ResolvedStage[] =>
-  row.stageNumbers
-    .map((n) => ({ stage: lookup[n], display: STAGE_DISPLAY[n] }))
-    .filter((r): r is ResolvedStage => !!r.stage && !!r.display);
+  row.stageNumbers.flatMap((n) => {
+    const stage = lookup[n];
+    const display = STAGE_DISPLAY[n];
+    if (!stage || !display) return [];
+    return [{ stage, display: { ...display, ...deriveStageVocabulary(stage) } }];
+  });
 
 /**
  * One stage across the left and center columns: its colored text (the -0 tap
@@ -542,6 +565,7 @@ const MapRowView = ({
   onCellLayout,
 }: MapRowProps): React.JSX.Element => {
   const resolved = resolveRowStages(row, lookup);
+  const category = rowCategory(row.stageNumbers, lookup);
   return (
     <View
       style={[
@@ -551,7 +575,7 @@ const MapRowView = ({
         // so it takes no top line (avoids a double rule under it).
         rowIndex > 0 ? styles.horizontalDivider : null,
       ]}
-      testID={`map-row-${row.rightLabel}`}
+      testID={`map-row-${category ?? row.stageNumbers.join('-')}`}
       onLayout={(e) => onRowLayout(rowIndex, e)}
     >
       <View style={styles.bandStages}>
@@ -571,7 +595,7 @@ const MapRowView = ({
       </View>
       <View style={styles.rightCell}>
         <View style={styles.rightLabelInset}>
-          <FittedRightLabel row={row} />
+          {category ? <FittedRightLabel label={category} /> : null}
         </View>
       </View>
     </View>
@@ -669,9 +693,9 @@ const GOAL_TIER_COLORS: Record<string, string> = {
 };
 
 const GOAL_TIER_LABELS: Record<string, string> = {
-  low: 'L',
-  clear: 'C',
-  stretch: 'S',
+  low: 'Low',
+  clear: 'Clear',
+  stretch: 'Stretch',
 };
 
 const PracticeHistoryRow = ({ item }: { item: PracticeHistoryItem }): React.JSX.Element => (
@@ -1228,7 +1252,22 @@ const useMapScroll = (): MapScroll => {
  * subtitle reflect the stage under the glass, live as it drags.
  */
 const useCaptionForStage = (lookup: StageLookup): ((_stageNumber: number) => LensCaption) =>
-  useCallback((stageNumber: number): LensCaption => lensCaption(lookup[stageNumber]), [lookup]);
+  useCallback(
+    (stageNumber: number): LensCaption => lensCaption(lookup[stageNumber], stageNumber),
+    [lookup],
+  );
+
+/** Share the loaded title stages' watermarks with every title cell beneath. */
+const WatermarkLinesProvider = ({
+  lookup,
+  children,
+}: {
+  lookup: StageLookup;
+  children: React.ReactNode;
+}): React.JSX.Element => {
+  const lines = useMemo(() => mapWatermarkLines(lookup), [lookup]);
+  return <WatermarkLinesContext.Provider value={lines}>{children}</WatermarkLinesContext.Provider>;
+};
 
 /** Smallest measured grid extent the lens can meaningfully float over. */
 const MIN_LENS_GRID_EXTENT = 1;
@@ -1250,35 +1289,37 @@ const MapGrid = ({
   const lensReady = size.width >= MIN_LENS_GRID_EXTENT && size.height >= MIN_LENS_GRID_EXTENT;
   const captionForStage = useCaptionForStage(lookup);
   return (
-    <View style={styles.grid} testID="map-grid" onLayout={onLayout}>
-      <WaveOverlay width={size.width} height={size.height} anchors={anchors} />
-      {MAP_ROWS.map((row, index) => (
-        <MapRowView
-          key={row.rightLabel}
-          row={row}
-          rowIndex={index}
-          lookup={lookup}
-          fullnessByStage={fullnessByStage}
-          currentStage={currentStage}
-          onPress={onSelectStage}
-          onRowLayout={onRowLayout}
-          onCellLayout={onCellLayout}
-        />
-      ))}
-      {lensReady ? (
-        <MagnifierLens
-          gridWidth={size.width}
-          gridHeight={size.height}
-          anchors={anchors}
-          focusedStage={focusedStage}
-          currentStage={currentStage}
-          captionForStage={captionForStage}
-          onSettleStage={onSettleStage}
-          onOpenStage={onOpenStage}
-          onDragActiveChange={onLensDragActiveChange}
-        />
-      ) : null}
-    </View>
+    <WatermarkLinesProvider lookup={lookup}>
+      <View style={styles.grid} testID="map-grid" onLayout={onLayout}>
+        <WaveOverlay width={size.width} height={size.height} anchors={anchors} />
+        {MAP_ROWS.map((row, index) => (
+          <MapRowView
+            key={row.stageNumbers.join('-')}
+            row={row}
+            rowIndex={index}
+            lookup={lookup}
+            fullnessByStage={fullnessByStage}
+            currentStage={currentStage}
+            onPress={onSelectStage}
+            onRowLayout={onRowLayout}
+            onCellLayout={onCellLayout}
+          />
+        ))}
+        {lensReady ? (
+          <MagnifierLens
+            gridWidth={size.width}
+            gridHeight={size.height}
+            anchors={anchors}
+            focusedStage={focusedStage}
+            currentStage={currentStage}
+            captionForStage={captionForStage}
+            onSettleStage={onSettleStage}
+            onOpenStage={onOpenStage}
+            onDragActiveChange={onLensDragActiveChange}
+          />
+        ) : null}
+      </View>
+    </WatermarkLinesProvider>
   );
 };
 
@@ -1385,7 +1426,7 @@ interface CompletionCelebration {
 const completionMessage = (completed: number, lookup: StageLookup): string => {
   if (completed >= STAGE_COUNT) return BEGIN_AGAIN_COPY.celebration;
   const next = lookup[completed + 1];
-  return `${next ? next.title : 'The next stage'} unlocked`;
+  return `${next ? next.title : 'The next stage'} is open to you now`;
 };
 
 const useStageCompletionCelebration = (

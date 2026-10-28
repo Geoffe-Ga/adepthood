@@ -44,7 +44,7 @@ It's tempting to read that list as a ladder, with Awareness at the top and Yes-A
 
 Don't. It's a scale, not a staircase.
 
-Each category is a **capacity**—a durable human ability that comes online through practice and then stays available for the rest of your life. The course introduces them in order because that's how they unlock: each one becomes learnable once the one before it can be looked at from the outside. But once a capacity is yours, it doesn't retire. Beige agency is exactly as necessary at month nine as it was in week one. If anything, more so—there's more to keep grounded.
+Each category is a **capacity**—a durable human ability that comes online through practice and then stays available for the rest of your life. The course introduces them in order because that's the order they become learnable in: each one opens up once the one before it can be looked at from the outside. But once a capacity is yours, it doesn't retire. Beige agency is exactly as necessary at month nine as it was in week one. If anything, more so—there's more to keep grounded.
 
 And notice that the pairs are **polarities**, not sequences. Red without Blue becomes narcissism. Blue without Red becomes codependency. Together they make integrated Love. Agency without Receptivity is grinding. Receptivity without Agency is drifting. Intellectual Understanding without the embodied kind produces people who are right and unbearable; embodied without intellectual produces people who are lovely and unable to explain why anything is happening.
 

@@ -1,4 +1,6 @@
 import 'react-native-reanimated';
+// Before anything that can build a zod schema: see src/zodJitless.ts.
+import './zodJitless';
 import { registerRootComponent } from 'expo';
 
 import App from './App';

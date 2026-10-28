@@ -1,14 +1,43 @@
 /* eslint-env jest */
-/* global describe, it, expect */
+/* global describe, it, expect, jest */
 
 import { buildEvent, parseDsn, redactCredentials, serializeEnvelope } from '../sentryEnvelope';
-import { MAX_MESSAGE_CHARS, REDACTED } from '../sentryEnvelope';
+import { MESSAGE_WITHHELD, REDACTED, UNKNOWN_ERROR_TYPE } from '../sentryEnvelope';
 
 const DSN = 'https://examplepublickey@o0.ingest.sentry.io/42';
 
 // Stands in for what a user wrote. A crash report that carries this is a
 // privacy failure worse than the invisibility the reporter exists to fix.
 const JOURNAL_SENTINEL = 'sat with the grief about my father and did not look away';
+
+// Synthetic canaries standing in for what a user wrote, in every shape a
+// serialiser could treat differently (#3064). Mirrors the backend set in
+// backend/tests/helpers/telemetry_canaries.py.
+const SENTINELS = [
+  'SYNTHETIC_JOURNAL_CANARY_20261005',
+  `SYNTHETIC_LONG_CANARY_${'x'.repeat(600)}`,
+  'SYNTHETIC_UNICODE_CANARY_u\u0308n\u0301i_日本語',
+  'SYNTHETIC_MULTILINE_CANARY line one\nline two\r\nline three',
+  'SYNTHETIC_RTL_CANARY \u05e9\u05dc\u05d5\u05dd \u0645\u0631\u062d\u0628\u0627',
+  'SYNTHETIC_EMOJI_CANARY \u{1F56F}\uFE0F\u{1F9E1}',
+];
+
+const PROBE_CHARS = 40;
+const SENT_AT = '2026-08-14T12:00:01.000Z';
+
+/** Every fragment of a canary whose presence in a payload means it leaked. */
+function probes(canary: string): string[] {
+  return canary
+    .split(/\r?\n/)
+    .map((line) => line.trim().slice(0, PROBE_CHARS))
+    .filter(Boolean)
+    .flatMap((head) => [head, JSON.stringify(head).slice(1, -1)]);
+}
+
+/** What actually goes on the wire for one thrown value. */
+function wire(thrown: unknown): string {
+  return serializeEnvelope(buildEvent(thrown, undefined, META), DSN, SENT_AT);
+}
 
 const META = {
   eventId: 'aaaaaaaabbbbccccddddeeeeeeeeeeee',
@@ -84,15 +113,46 @@ describe('buildEvent', () => {
     ]);
   });
 
-  it('carries the exception type and message so the report is actionable', () => {
-    const event = buildEvent(new TypeError('cannot read property of undefined'), undefined, META);
+  it.each([
+    'Error',
+    'EvalError',
+    'RangeError',
+    'ReferenceError',
+    'SyntaxError',
+    'TypeError',
+    'URIError',
+    'AggregateError',
+    'AbortError',
+    'DOMException',
+    'ApiError',
+    'ApiValidationError',
+    'ApiTimeoutError',
+    'TranscriptionError',
+    'DocumentUploadError',
+    'DirectVendorError',
+    'EmptyApiKeyError',
+    'EmptyAuthTokenError',
+    'ClientMintedIdError',
+    'SilentRenderError',
+    'MarginSlotInputError',
+  ])('keeps the approved fixed type %s', (name) => {
+    const error = new Error('boom');
+    error.name = name;
 
-    expect(event.exception).toEqual({
-      values: [{ type: 'TypeError', value: 'cannot read property of undefined' }],
+    expect(buildEvent(error, undefined, META).exception).toEqual({
+      values: [{ type: name, value: MESSAGE_WITHHELD }],
     });
   });
 
-  it('copies only the two allow-listed contexts', () => {
+  it('carries the exception type and withholds the message', () => {
+    const event = buildEvent(new TypeError('cannot read property of undefined'), undefined, META);
+
+    expect(event.exception).toEqual({
+      values: [{ type: 'TypeError', value: MESSAGE_WITHHELD }],
+    });
+  });
+
+  it('discards component stacks and keeps approved boundary metadata', () => {
     const event = buildEvent(
       new Error('boom'),
       {
@@ -103,7 +163,6 @@ describe('buildEvent', () => {
     );
 
     expect(event.contexts).toEqual({
-      react: { componentStack: '\n    in JournalScreen' },
       errorBoundary: { boundary: 'FeatureErrorBoundary', name: 'Journal' },
     });
   });
@@ -117,34 +176,32 @@ describe('buildEvent', () => {
     expect(event).not.toHaveProperty('user');
   });
 
-  it('redacts a credential that reached the exception message', () => {
-    const event = buildEvent(new Error('refresh failed: Bearer abcdef0123456789'), undefined, META);
+  it('ships no credential that reached the exception message', () => {
+    const payload = wire(new Error('refresh failed: Bearer abcdef0123456789'));
 
-    expect(JSON.stringify(event)).not.toContain('abcdef0123456789');
-    expect(JSON.stringify(event)).toContain(REDACTED);
+    expect(payload).not.toContain('abcdef0123456789');
+    expect(payload).toContain(MESSAGE_WITHHELD);
   });
 
-  it('caps a message long enough to have swallowed an entry body', () => {
-    const overlong = JOURNAL_SENTINEL.repeat(40);
+  it('ships none of a message long enough to have swallowed an entry body', () => {
+    const payload = wire(new Error(JOURNAL_SENTINEL.repeat(40)));
 
-    const event = buildEvent(new Error(overlong), undefined, META);
-    const serialised = JSON.stringify(event);
-
-    expect(serialised.length).toBeLessThan(overlong.length);
-    expect(serialised).toContain('[truncated]');
+    expect(payload).not.toContain(JOURNAL_SENTINEL);
+    expect(payload).not.toContain('[truncated]');
   });
 
-  it('leaves a short message whole', () => {
-    const event = buildEvent(new Error('render failed'), undefined, META);
+  it('withholds even a short, harmless-looking message', () => {
+    const payload = wire(new Error('render failed'));
 
-    expect(JSON.stringify(event)).toContain('render failed');
+    expect(payload).not.toContain('render failed');
+    expect(payload).toContain(MESSAGE_WITHHELD);
   });
 
-  it('reports a thrown non-Error without inventing a type', () => {
+  it('reports a thrown non-Error by a fixed type, never by its text', () => {
     const event = buildEvent('a string was thrown', undefined, META);
 
     expect(event.exception).toEqual({
-      values: [{ type: 'UnknownError', value: 'a string was thrown' }],
+      values: [{ type: UNKNOWN_ERROR_TYPE, value: MESSAGE_WITHHELD }],
     });
   });
 
@@ -155,12 +212,71 @@ describe('buildEvent', () => {
     expect(event.release).toBe('rel-9');
   });
 
-  it('caps the message at the documented length', () => {
-    const event = buildEvent(new Error('y'.repeat(MAX_MESSAGE_CHARS + 100)), undefined, META);
-    const { values } = event.exception as { values: [{ value: string }] };
-    const value = values[0].value;
+  it.each([
+    ['spaces', 'my father said'],
+    ['a newline', 'Error\nentry text'],
+    ['an empty string', ''],
+    ['a single word', 'grief'],
+    ['prose that merely ends in Error', 'my father said there was an Error'],
+    ['a lowercase word ending in Error', 'griefError'],
+  ])('reports a name with %s as plain Error, since `name` is writable', (_label, name) => {
+    const error = new Error('boom');
+    error.name = name;
 
-    expect(value.length).toBeLessThanOrEqual(MAX_MESSAGE_CHARS + '…[truncated]'.length);
+    expect(buildEvent(error, undefined, META).exception).toEqual({
+      values: [{ type: 'Error', value: MESSAGE_WITHHELD }],
+    });
+  });
+});
+
+describe('the wire payload carries no user content (#3064)', () => {
+  it.each(SENTINELS)('never ships a canary thrown as an Error message %#', (canary) => {
+    const payload = wire(new Error(canary));
+
+    probes(canary).forEach((probe) => expect(payload).not.toContain(probe));
+  });
+
+  it.each(SENTINELS)('never ships a canary thrown bare %#', (canary) => {
+    const thrown: unknown[] = [canary, { toString: () => canary }, [canary]];
+
+    thrown.forEach((value) => {
+      const payload = wire(value);
+      probes(canary).forEach((probe) => expect(payload).not.toContain(probe));
+    });
+  });
+
+  it.each(SENTINELS)('never ships a canary assigned to an Error name %#', (canary) => {
+    const error = new Error('boom');
+    error.name = canary;
+
+    const payload = wire(error);
+
+    probes(canary).forEach((probe) => expect(payload).not.toContain(probe));
+  });
+
+  it.each(SENTINELS)('never ships a canary riding on a non-string name %#', (canary) => {
+    const error = new Error('boom');
+    // `name` is typed as a string but is an ordinary writable property; an
+    // object whose string form is class-shaped would pass a coerced check
+    // and then serialise its own fields.
+    Object.defineProperty(error, 'name', {
+      value: { toString: () => 'XError', note: canary },
+    });
+
+    const payload = wire(error);
+
+    probes(canary).forEach((probe) => expect(payload).not.toContain(probe));
+    expect(buildEvent(error, undefined, META).exception).toEqual({
+      values: [{ type: 'Error', value: MESSAGE_WITHHELD }],
+    });
+  });
+
+  it.each([42, null, undefined])('reports a thrown %p as UnknownError', (thrown) => {
+    const [, , payload = ''] = wire(thrown).split('\n');
+
+    expect(JSON.parse(payload)).toMatchObject({
+      exception: { values: [{ type: UNKNOWN_ERROR_TYPE, value: MESSAGE_WITHHELD }] },
+    });
   });
 });
 
@@ -190,5 +306,107 @@ describe('serializeEnvelope', () => {
     const event = buildEvent(new Error('boom'), { react: { componentStack: '\n a \n b' } }, META);
 
     expect(serializeEnvelope(event, DSN, META.timestamp).split('\n')).toHaveLength(3);
+  });
+});
+
+describe('closed crash metadata (#3210)', () => {
+  it('rejects private class-shaped error names', () => {
+    const error = new Error('private');
+    error.name = 'PrivateJournalCanaryError';
+    expect(buildEvent(error, undefined, META).exception).toEqual({
+      values: [{ type: 'Error', value: MESSAGE_WITHHELD }],
+    });
+  });
+
+  it.each(SENTINELS)('drops private content in every context field %#', (canary) => {
+    const event = buildEvent(
+      new Error(canary),
+      {
+        react: { componentStack: canary },
+        errorBoundary: { boundary: canary, name: canary },
+      },
+      META,
+    );
+    expect(event.contexts).toEqual({});
+    probes(canary).forEach((probe) => expect(JSON.stringify(event)).not.toContain(probe));
+  });
+
+  it.each(['Auth', 'App', 'Habits', 'Practice', 'Course', 'Journal', 'Map'])(
+    'keeps the fixed feature identifier %s',
+    (name) => {
+      expect(
+        buildEvent(
+          new Error('private'),
+          {
+            errorBoundary: { boundary: 'FeatureErrorBoundary', name },
+          },
+          META,
+        ).contexts,
+      ).toEqual({
+        errorBoundary: { boundary: 'FeatureErrorBoundary', name },
+      });
+    },
+  );
+
+  it('keeps a valid boundary while dropping an unknown feature', () => {
+    expect(
+      buildEvent(
+        new Error('private'),
+        {
+          errorBoundary: { boundary: 'FeatureErrorBoundary', name: 'PrivateJournalCanary' },
+        },
+        META,
+      ).contexts,
+    ).toEqual({ errorBoundary: { boundary: 'FeatureErrorBoundary' } });
+  });
+
+  it('never evaluates getters or toJSON on untrusted crash values', () => {
+    const getter = jest.fn(() => {
+      throw new Error('PRIVATE_GETTER_CANARY');
+    });
+    const error = new Error('private');
+    Object.defineProperty(error, 'name', { get: getter });
+    const contexts = Object.defineProperty({}, 'errorBoundary', { get: getter });
+    const event = buildEvent(error, contexts, META);
+    expect(event.exception).toEqual({ values: [{ type: 'Error', value: MESSAGE_WITHHELD }] });
+    expect(event.contexts).toEqual({});
+    expect(getter).not.toHaveBeenCalled();
+    expect(() => serializeEnvelope(event, DSN, SENT_AT)).not.toThrow();
+  });
+
+  it('does not evaluate nested getters or toJSON even on an approved boundary', () => {
+    const getter = jest.fn(() => {
+      throw new Error('PRIVATE_NESTED_CANARY');
+    });
+    const boundary = Object.defineProperty(
+      { boundary: 'FeatureErrorBoundary', toJSON: getter },
+      'name',
+      { get: getter },
+    );
+    const event = buildEvent(new Error('private'), { errorBoundary: boundary }, META);
+    expect(event.contexts).toEqual({ errorBoundary: { boundary: 'FeatureErrorBoundary' } });
+    expect(() => serializeEnvelope(event, DSN, SENT_AT)).not.toThrow();
+    expect(getter).not.toHaveBeenCalled();
+  });
+
+  it('contains hostile proxies and cyclic metadata without escaping the boundary', () => {
+    const hostile = new Proxy(
+      {},
+      {
+        getPrototypeOf: () => {
+          throw new Error('PRIVATE_PROXY_CANARY');
+        },
+        getOwnPropertyDescriptor: () => {
+          throw new Error('PRIVATE_PROXY_CANARY');
+        },
+      },
+    );
+    expect(() => serializeEnvelope(buildEvent(hostile, hostile, META), DSN, SENT_AT)).not.toThrow();
+    const cyclic: { errorBoundary?: unknown; toJSON?: () => never } = {};
+    cyclic.errorBoundary = cyclic;
+    cyclic.toJSON = () => {
+      throw new Error('PRIVATE_TOJSON_CANARY');
+    };
+    expect(buildEvent(new Error('private'), cyclic as never, META).contexts).toEqual({});
   });
 });

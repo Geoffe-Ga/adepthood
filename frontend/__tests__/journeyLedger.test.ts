@@ -602,6 +602,21 @@ describe('the committed ledger is true of this repository', () => {
     expect(description).toContain('writing-only');
   });
 
+  it('accounts for replaying an offline check-in queue in the browser lane', () => {
+    const id = 'habits.offline-check-in-replay-drains';
+    const journey = committedJourney(id);
+
+    expect(journey).toMatchObject({
+      status: 'covered',
+      coveredBy: 'frontend/e2e/habits-offline-replay.browser.e2e.test.ts',
+    });
+    expect(journey).not.toHaveProperty('issue');
+    const description = committedDescription(id);
+    expect(description).not.toContain('cannot put the device offline');
+    expect(description).not.toContain('fault injection to the production app');
+    expect(description).toContain('MIN_POISON_AGE_MS');
+  });
+
   it('passes the same audit the CI gate runs', () => {
     const audit = auditJourneyLedger(readLedger(REPO_ROOT), realLedgerEnvironment(REPO_ROOT));
 

@@ -1,4 +1,11 @@
-import { expect, test, type Locator, type Page, type Request } from '@playwright/test';
+import {
+  expect,
+  test,
+  type Browser,
+  type Locator,
+  type Page,
+  type Request,
+} from '@playwright/test';
 
 import {
   backendUrl,
@@ -7,6 +14,7 @@ import {
   signUp,
   tokenFor,
 } from './journalHabitsBrowserSupport';
+import { openPrompts } from './journalHabitsBrowserSupport';
 
 const SOURCE_TITLE = 'Morning walk';
 const SOURCE_BODY = 'I walked by the river. The heron stood still. Rain came at noon.';
@@ -66,12 +74,13 @@ async function seedPromotedSource(
 
 test('a writer checks several promoted quotes and folds them into the review at once', async ({
   page,
-}) => {
+}, testInfo) => {
   const { headers, quoteIds } = await seedPromotedSource(page, 'fold-selected-quotes');
   const [firstId, secondId, thirdId] = quoteIds;
 
   // Begin the due weekly review and let it save, so it has an id to fold into.
   await page.reload();
+  await openPrompts(page);
   await page.getByTestId('journal-reflection-band').click();
   const bodyField = page.getByRole('textbox', { name: 'Entry body' });
   await bodyField.fill(OPENING);
@@ -102,6 +111,13 @@ test('a writer checks several promoted quotes and folds them into the review at 
   await expect(row(secondId)).toHaveAttribute('aria-checked', 'false');
   await expect(action).toHaveText('Fold 2 quotes into this review');
   await expect(action).toBeInViewport();
+  const paneBox = await page.getByTestId('reflection-sources-pane').boundingBox();
+  const timerBox = await page.getByTestId('writing-timer-pill').boundingBox();
+  if (paneBox === null || timerBox === null) throw new Error('Sources or timer has no layout');
+  expect(timerBox.x + timerBox.width, 'idle timer enters the Sources pane').toBeLessThanOrEqual(
+    paneBox.x,
+  );
+  await page.screenshot({ path: testInfo.outputPath('sources-timer-clearance.png') });
   await action.click();
 
   await expect(page.locator('[data-testid="journal-save-hint"]:visible')).toHaveText('Saved');
@@ -164,10 +180,78 @@ test('a writer checks several promoted quotes and folds them into the review at 
 const PHONE = { width: 390, height: 844 } as const;
 /** Lines in the typed opening -- enough to grow the body past its blank-page minimum. */
 const OPENING_LINES = 30;
-/** A last word typed after the fold, then bolded from the trailing toolbar. */
+/** A last word typed after the fold, then bolded from the toolbar above the body. */
 const CLOSING_WORD = 'Onward';
 /** Layout boxes are fractional; this much is rounding, not overlap. */
 const SUBPIXEL_TOLERANCE_PX = 1;
+
+async function expectRetryHit(locator: Locator): Promise<void> {
+  expect(
+    await locator.evaluate((node) => {
+      const box = node.getBoundingClientRect();
+      const hit = document.elementFromPoint(box.left + box.width / 2, box.top + box.height / 2);
+      return hit !== null && (hit === node || node.contains(hit));
+    }),
+  ).toBe(true);
+}
+
+async function failedFoldRetryClear(
+  browser: Browser,
+  scale: number,
+  screenshotPath: string,
+): Promise<void> {
+  const context = await browser.newContext({
+    viewport: { width: PHONE.width / scale, height: PHONE.height / scale },
+    deviceScaleFactor: scale,
+  });
+  const page = await context.newPage();
+  try {
+    const { quoteIds } = await seedPromotedSource(page, `fold-retry-clear-${scale}`);
+    await page.reload();
+    await openPrompts(page);
+    await page.getByTestId('journal-reflection-band').click();
+    await page.getByRole('textbox', { name: 'Entry body' }).fill(OPENING);
+    await expect(page.getByTestId('journal-save-hint')).toHaveText('Saved');
+    await page.locator('[data-testid="reflection-sources-toggle"]:visible').click();
+    await page.locator('[data-testid="pending-quotes-select-toggle"]:visible').click();
+    await page.locator(`[data-testid="pending-quote-${quoteIds[0]}"]:visible`).click();
+    await page.route('**/promotions/*', async (route) => {
+      if (route.request().method() === 'PATCH') {
+        await route.fulfill({
+          status: 500,
+          contentType: 'application/json',
+          body: '{"detail":"boom"}',
+        });
+      } else await route.continue();
+    });
+    await page.locator('[data-testid="quote-fold-action"]:visible').click();
+    await page.locator('[data-testid="reflection-sources-close"]:visible').click();
+    const retry = page.getByTestId('quote-inclusion-retry');
+    await expect(retry).toBeVisible();
+    await retry.scrollIntoViewIfNeeded();
+    const hint = await boxOf(page.getByTestId('quote-inclusion-hint'));
+    const dock = await boxOf(page.getByTestId('writing-session-band'));
+    expect(hint.bottom, 'the reflection retry must end above the idle dock').toBeLessThanOrEqual(
+      dock.top + SUBPIXEL_TOLERANCE_PX,
+    );
+    await expectRetryHit(retry);
+    await page.screenshot({ path: screenshotPath });
+  } finally {
+    await context.close();
+  }
+}
+
+for (const scale of [1, 2] as const) {
+  test(`a failed folded-quote retry clears the phone dock at ${scale * 100}%`, async ({
+    browser,
+  }, testInfo) => {
+    await failedFoldRetryClear(
+      browser,
+      scale,
+      testInfo.outputPath(`fold-retry-clear-390x844-${scale * 100}.png`),
+    );
+  });
+}
 
 /** A box's top and bottom edges, failing loudly when the element is not laid out. */
 async function boxOf(locator: Locator): Promise<{ top: number; bottom: number }> {
@@ -184,6 +268,7 @@ test('folded quotes stay inside the body frame at phone width (#3001)', async ({
 
   // A long opening, typed, so the field has already grown once the way typing grows it.
   await page.reload();
+  await openPrompts(page);
   await page.getByTestId('journal-reflection-band').click();
   const bodyField = page.locator('[data-testid="journal-body-input"]:visible');
   const opening = Array.from(
@@ -216,9 +301,10 @@ test('folded quotes stay inside the body frame at phone width (#3001)', async ({
 
   // The field reaches the last folded line the mirror draws ...
   expect(field.bottom + SUBPIXEL_TOLERANCE_PX).toBeGreaterThanOrEqual(lastQuoteLine.bottom);
-  // ... and the formatting toolbar, the save footer and the Finish rail start
-  // below it, not under its text (#3002 moved the toolbar under the body).
-  for (const below of [toolbar, footer, finish]) {
+  // The toolbar leads the body (#3250); the save footer and Finish still follow
+  // every folded line, never underneath the mirror's growing text.
+  expect(toolbar.bottom).toBeLessThanOrEqual(field.top + SUBPIXEL_TOLERANCE_PX);
+  for (const below of [footer, finish]) {
     expect(below.top + SUBPIXEL_TOLERANCE_PX).toBeGreaterThanOrEqual(field.bottom);
     expect(below.top + SUBPIXEL_TOLERANCE_PX).toBeGreaterThanOrEqual(lastQuoteLine.bottom);
   }
@@ -227,8 +313,8 @@ test('folded quotes stay inside the body frame at phone width (#3001)', async ({
     page.getByTestId('journal-entry-exit-row').getByTestId('reflection-sources-toggle'),
   ).toBeVisible();
 
-  // The toolbar trails a body taller than the phone: scrolling brings it into
-  // reach, and it still formats what the writer selected at the end of the text.
+  // The toolbar is above a body taller than the phone: scrolling back to it
+  // still formats what the writer selected at the end of the text.
   await bodyField.click();
   await page.keyboard.press('Control+End');
   await page.keyboard.type(CLOSING_WORD);

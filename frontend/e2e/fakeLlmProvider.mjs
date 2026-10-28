@@ -66,6 +66,8 @@ function requiredFile(name) {
 const keys = Object.fromEntries(
   Object.entries(KEY_FILES).map(([role, variable]) => [role, requiredFile(variable)]),
 );
+/** One opt-in happy path for the care+receipt journey; ordinary fault fixtures stay unchanged. */
+let receiptReflectionEnabled = false;
 
 /** Requests that reached each surface, by outcome. Never keyed by the key. */
 const attempts = {
@@ -140,6 +142,34 @@ function bearerKey(request) {
 
 function chatCompletions(request, response) {
   const key = bearerKey(request);
+  if (receiptReflectionEnabled && key === keys.throttledOpenai) {
+    send(response, HTTP_OK, {
+      id: 'loopback-receipt',
+      object: 'chat.completion',
+      created: 0,
+      model: 'loopback-receipt-model',
+      choices: [
+        {
+          index: 0,
+          message: {
+            role: 'assistant',
+            content: JSON.stringify({
+              notes: [
+                {
+                  kind: 'theme',
+                  quote: 'The heron stood in the shallows.',
+                  note: 'The quiet image sits beside a heavy feeling.',
+                },
+              ],
+            }),
+          },
+          finish_reason: 'stop',
+        },
+      ],
+      usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
+    });
+    return;
+  }
   if (key === keys.spentOpenai) {
     attempts.openaiSpent += 1;
     send(response, HTTP_TOO_MANY_REQUESTS, OPENAI_QUOTA_BODY);
@@ -172,6 +202,16 @@ const server = createServer((request, response) => {
   const pathname = new URL(request.url ?? '/', 'http://localhost').pathname;
   if (request.method === 'GET' && pathname === '/__lane/attempts') {
     send(response, HTTP_OK, attempts);
+    return;
+  }
+  if (request.method === 'POST' && pathname === '/__lane/enable-receipt-reflection') {
+    receiptReflectionEnabled = true;
+    send(response, HTTP_OK, { status: 'ok' });
+    return;
+  }
+  if (request.method === 'POST' && pathname === '/__lane/disable-receipt-reflection') {
+    receiptReflectionEnabled = false;
+    send(response, HTTP_OK, { status: 'ok' });
     return;
   }
   if (request.method === 'POST' && pathname === '/v1/chat/completions') {

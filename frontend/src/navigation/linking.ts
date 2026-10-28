@@ -51,10 +51,13 @@ export const linking: LinkingOptions<LinkedRootParamList> = {
             },
           },
           Journal: 'journal',
+          Prompts: 'prompts',
           Map: 'map',
         },
       },
       Settings: 'settings',
+      // The Notification Center (#3142), a Journal screen pushed over the tabs.
+      JournalNotifications: 'journal/notifications',
       ApiKeySettings: 'api-key-settings', // pragma: allowlist secret
       // Practice share-link landing (issue #348). The recipient
       // taps ``adepthood://practices/share/<token>`` -- the parser

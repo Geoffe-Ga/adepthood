@@ -18,8 +18,10 @@ import { ApiError, auth, botmasonUsage, journal, resonance, setTokenGetter } fro
  * own:
  *
  * - the refusal really charges nothing, in the wallet *and* its audit trail;
- * - the acknowledged ask really spends exactly one unit, and the balances the
- *   essay answer carries agree with what ``GET /user/usage`` reports afterwards;
+ * - the acknowledged ask really takes its unit, and -- because this lane serves
+ *   the stub provider, whose letter is a labelled demo (#3062) -- hands it back
+ *   in the same commit, so the audit trail reads spend then ``refund_demo``
+ *   and the balances the essay answer carries agree with ``GET /user/usage``;
  * - reopening the cached letter really is free: no balance change and no new
  *   audit row.
  *
@@ -28,7 +30,12 @@ import { ApiError, auth, botmasonUsage, journal, resonance, setTokenGetter } fro
  * unchanged balance but could not tell "never charged" apart from "charged and
  * refunded".
  *
- * Not covered here: the exhausted-wallet 402. Arranging an empty wallet needs a
+ * Not covered here: a real provider's letter whose charge is kept. Every lane
+ * serves the stub, so that half is pinned by the backend suite
+ * (``test_inference_provenance.py``) and declared uncovered in
+ * ``journeys.json`` (#3062).
+ *
+ * Not covered here either: the exhausted-wallet 402. Arranging an empty wallet needs a
  * write the wire deliberately does not offer, and spending it down through the
  * routes runs into their per-minute limit. The backend suite pins it
  * (``test_empty_wallet_essay_is_402_before_provider``), and so does the
@@ -44,6 +51,8 @@ const CONFLICT = 409;
 const WALLET_MODULE = 'tests.e2e.wallet_audit';
 /** How the wallet service names a spend from the free monthly allowance. */
 const SPEND_MONTHLY = 'spend_monthly';
+/** How the wallet service names the hand-back of a demo generation's unit (#3062). */
+const REFUND_DEMO = 'refund_demo';
 
 const PAGE =
   'The heron stood in the shallows until the light changed. I stood with it longer than I meant to.';
@@ -123,7 +132,7 @@ describe('a first letter is priced, acknowledged, charged once, and reopened fre
     expect(readWallet()).toEqual(walletBefore);
   });
 
-  it('charges exactly one unit for the acknowledged ask, and reports the balance it left', async () => {
+  it('takes the unit for the acknowledged ask and hands a demo letter its unit back', async () => {
     const usageBefore = await botmasonUsage.get();
     const walletBefore = readWallet();
 
@@ -133,16 +142,19 @@ describe('a first letter is priced, acknowledged, charged once, and reopened fre
     const walletAfter = readWallet();
 
     expect(letter).not.toBe('');
-    expect(usageAfter.monthly_messages_used).toBe(usageBefore.monthly_messages_used + 1);
-    expect(usageAfter.monthly_messages_remaining).toBe(usageBefore.monthly_messages_remaining - 1);
+    expect(answered.essay_source).toBe('demo');
+    expect(usageAfter.monthly_messages_used).toBe(usageBefore.monthly_messages_used);
+    expect(usageAfter.monthly_messages_remaining).toBe(usageBefore.monthly_messages_remaining);
     expect(usageAfter.offering_balance).toBe(usageBefore.offering_balance);
     // The essay's own balances are the same numbers the usage read reports.
     expect(answered.remaining_messages).toBe(usageAfter.monthly_messages_remaining);
     expect(answered.remaining_balance).toBe(usageAfter.offering_balance);
     expect(answered.monthly_reset_date).toBe(usageAfter.monthly_reset_date);
-    // Exactly one new audit row, and it is a spend: not a spend plus a refund.
+    // The unit really was taken before the dial and really handed back after
+    // it: a spend and its demo refund, never silence and never a kept charge.
     expect(walletAfter.rows.slice(walletBefore.rows.length).map((row) => row.reason)).toEqual([
       SPEND_MONTHLY,
+      REFUND_DEMO,
     ]);
   });
 

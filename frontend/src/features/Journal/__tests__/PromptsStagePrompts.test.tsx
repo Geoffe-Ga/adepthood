@@ -1,0 +1,597 @@
+/* eslint-env jest */
+import { jest, describe, it, expect, beforeEach } from '@jest/globals';
+import { fireEvent, render, waitFor, within } from '@testing-library/react-native';
+import { ChevronRight } from 'lucide-react-native';
+import React from 'react';
+import { StyleSheet } from 'react-native';
+
+import type {
+  JournalListResponse,
+  PromptDetail,
+  PromptListResponse,
+  StagePromptDetail,
+  StagePromptsResponse,
+} from '@/api';
+import { decorativeHidden } from '@/components/a11yHidden';
+import { editorialType, ink, touchTarget, uiType } from '@/design/tokens';
+import { ranksOrShames } from '@/features/Map/__tests__/copyIntentRule';
+import { setActiveUser } from '@/storage/userScope';
+
+const mockList = jest.fn() as jest.MockedFunction<() => Promise<JournalListResponse>>;
+const mockPromptCurrent = jest.fn() as jest.MockedFunction<() => Promise<PromptDetail>>;
+const mockPromptStage = jest.fn() as jest.MockedFunction<
+  (_stage: number) => Promise<StagePromptsResponse>
+>;
+const mockPromptHistory = jest.fn() as jest.MockedFunction<() => Promise<PromptListResponse>>;
+const mockPromptSetAside = jest.fn() as jest.MockedFunction<
+  (_stage: number, _ordinal: number) => Promise<StagePromptsResponse>
+>;
+const mockPromptBringBack = jest.fn() as jest.MockedFunction<
+  (_stage: number, _ordinal: number) => Promise<StagePromptsResponse>
+>;
+const mockNavigate = jest.fn();
+
+// The shelf is authenticated: its namespace and decoded credential agree.
+jest.mock('@/context/AuthContext', () => ({
+  useAuth: () => ({ token: 'x.eyJzdWIiOiIxIiwiZXhwIjo0MDAwMDAwMDAwfQ.y', userTimezone: 'UTC' }),
+}));
+
+jest.mock('@/api', () => ({
+  // The shelf's primary invitation asks what review is due; answer "none" so
+  // the daily-page fallback runs through a real resolved null, not a caught
+  // TypeError from a client this mock forgot.
+  reflections: {
+    due: jest.fn(() => Promise.resolve({ due: null })),
+    current: jest.fn(() => Promise.resolve({ scopes: [] })),
+  },
+  journal: {
+    list: (...a: unknown[]) => (mockList as unknown as (...x: unknown[]) => unknown)(...a),
+    update: jest.fn(),
+  },
+  prompts: {
+    current: (...a: unknown[]) =>
+      (mockPromptCurrent as unknown as (...x: unknown[]) => unknown)(...a),
+    stage: (...a: unknown[]) => (mockPromptStage as unknown as (...x: unknown[]) => unknown)(...a),
+    history: (...a: unknown[]) =>
+      (mockPromptHistory as unknown as (...x: unknown[]) => unknown)(...a),
+    setAside: (...a: unknown[]) =>
+      (mockPromptSetAside as unknown as (...x: unknown[]) => unknown)(...a),
+    bringBack: (...a: unknown[]) =>
+      (mockPromptBringBack as unknown as (...x: unknown[]) => unknown)(...a),
+  },
+}));
+
+jest.mock('@react-navigation/native', () => {
+  const react = jest.requireActual('react') as {
+    useEffect: (_cb: () => undefined | (() => void), _deps: unknown[]) => void;
+  };
+  return {
+    useNavigation: () => ({ navigate: mockNavigate, setOptions: jest.fn() }),
+    // Keyed on the callback (not []), so a stage that resolves after mount
+    // re-runs the effect the way React Navigation's own focus effect does.
+    useFocusEffect: (cb: () => undefined | (() => void)) => react.useEffect(cb, [cb]),
+  };
+});
+
+// The Notification Center's count reads five sources of its own; it has its
+// own suite, so the shelf's suites pin only the number it shows.
+let mockNotificationCount = 0;
+jest.mock('../useNotificationCount', () => ({
+  useNotificationCount: () => mockNotificationCount,
+  useFocusRefreshKey: () => 0,
+}));
+
+jest.mock('../SearchBar', () => {
+  const { View } = require('react-native');
+  const Stub = () => <View testID="shelf-search-stub" />;
+  return { __esModule: true, default: Stub };
+});
+jest.mock('../StatTileRow', () => {
+  const { View } = require('react-native');
+  const Stub = () => <View testID="stat-tile-row-stub" />;
+  return { __esModule: true, default: Stub };
+});
+jest.mock('@/features/Return/ReturnStack', () => {
+  const { View } = require('react-native');
+  const Stub = () => <View testID="return-stack-stub" />;
+  return { __esModule: true, default: Stub };
+});
+jest.mock('@/features/Invitations/InvitationStack', () => {
+  const { View } = require('react-native');
+  const Stub = () => <View testID="invitation-stack-stub" />;
+  return { __esModule: true, default: Stub };
+});
+jest.mock('../MorningPagesTip', () => {
+  const { View } = require('react-native');
+  const Stub = () => <View testID="morning-pages-tip-stub" />;
+  return {
+    ...jest.requireActual<Record<string, unknown>>('../MorningPagesTip'),
+    __esModule: true,
+    default: Stub,
+  };
+});
+
+const JournalShelfScreen = require('../NotificationCenterScreen').default;
+
+// Fixtures only: the shelf must read every one of these strings off the wire.
+const ORANGE_PROMPTS: StagePromptDetail[] = [
+  {
+    ordinal: 1,
+    title: 'Make a List of 25 Curiosities',
+    body: 'What are you curious about?',
+    cadence: 'Build to 25 across four sittings',
+  },
+  {
+    ordinal: 2,
+    title: 'Make a List of 15 Problems',
+    body: 'What keeps you up at night?',
+    cadence: 'Build to 15 across two sittings',
+  },
+  {
+    ordinal: 3,
+    title: 'Combine Curiosities in Service of One Problem',
+    body: 'Which curiosity serves which problem?',
+    cadence: 'One combination per sitting',
+  },
+  {
+    ordinal: 4,
+    title: 'Formulate Your Answer as a Four Quadrant Vow',
+    body: 'What do you vow?',
+    // A stage whose chapter states no cadence for a prompt: rendered as
+    // nothing at all rather than as an invented rhythm.
+    cadence: null,
+  },
+];
+
+const BEIGE_PROMPTS: StagePromptDetail[] = [
+  { ordinal: 1, title: 'Name What You Need', body: 'What do you need?', cadence: 'Daily' },
+  {
+    ordinal: 2,
+    title: 'Track the Body',
+    body: 'Where does it live?',
+    cadence: 'At least 2x per week',
+  },
+  {
+    ordinal: 3,
+    title: 'Notice the Ground',
+    body: 'What holds you?',
+    cadence: 'Whenever they arise',
+  },
+];
+
+function stageResponse(
+  stage: number,
+  stageName: string,
+  prompts: StagePromptDetail[],
+): StagePromptsResponse {
+  return { stage, stage_name: stageName, prompts };
+}
+
+function answered(weekNumber: number, promptOrdinal: number): PromptDetail {
+  return {
+    week_number: weekNumber,
+    question: 'Answered already.',
+    has_responded: true,
+    response: 'I wrote it.',
+    timestamp: '2026-06-01T00:00:00Z',
+    prompt_ordinal: promptOrdinal,
+  };
+}
+
+function history(items: PromptDetail[]): PromptListResponse {
+  return { items, total: items.length, has_more: false };
+}
+
+beforeEach(() => {
+  setActiveUser(1);
+  mockList.mockReset();
+  mockNavigate.mockReset();
+  mockPromptCurrent.mockReset();
+  mockPromptStage.mockReset();
+  mockPromptHistory.mockReset();
+  mockPromptSetAside.mockReset();
+  mockPromptBringBack.mockReset();
+  mockList.mockResolvedValue({ items: [], total: 0, has_more: false });
+  // Week 14 sits in stage 5 (five 21-day stages, three weeks each).
+  mockPromptCurrent.mockResolvedValue({
+    week_number: 14,
+    question: 'What did you notice this week?',
+    has_responded: false,
+    response: null,
+    timestamp: null,
+    prompt_ordinal: 1,
+  });
+  mockPromptStage.mockResolvedValue(stageResponse(5, 'Orange', ORANGE_PROMPTS));
+  mockPromptHistory.mockResolvedValue(history([]));
+  mockPromptSetAside.mockResolvedValue(stageResponse(5, 'Orange', withSetAside(2)));
+  mockPromptBringBack.mockResolvedValue(stageResponse(5, 'Orange', ORANGE_PROMPTS));
+});
+
+/** Orange's prompts with ``ordinal`` reported set aside, as the server answers. */
+function withSetAside(ordinal: number): StagePromptDetail[] {
+  return ORANGE_PROMPTS.map((prompt) =>
+    prompt.ordinal === ordinal ? { ...prompt, dismissed: true } : prompt,
+  );
+}
+
+describe('the Journal shelf shows a whole stage of prompts, each with its cadence', () => {
+  it('renders every prompt of the stage in curriculum order, not one undifferentiated question', async () => {
+    const { findByTestId, getAllByTestId } = render(<JournalShelfScreen />);
+    await findByTestId('journal-stage-prompts');
+
+    const ordinals = getAllByTestId(/^journal-stage-prompt-\d+$/).map(
+      (node) => node.props.testID as string,
+    );
+    expect(ordinals).toEqual([
+      'journal-stage-prompt-1',
+      'journal-stage-prompt-2',
+      'journal-stage-prompt-3',
+      'journal-stage-prompt-4',
+    ]);
+  });
+
+  it('reads the stage from the API for the reader’s current stage', async () => {
+    const { findByTestId } = render(<JournalShelfScreen />);
+    await findByTestId('journal-stage-prompts');
+    expect(mockPromptStage).toHaveBeenCalledWith(5);
+  });
+
+  it('says how often each prompt is meant to be written', async () => {
+    const { findByText, getByText } = render(<JournalShelfScreen />);
+    expect(await findByText('Make a List of 25 Curiosities')).toBeTruthy();
+    expect(getByText('Build to 25 across four sittings')).toBeTruthy();
+    expect(getByText('One combination per sitting')).toBeTruthy();
+  });
+
+  it('renders nothing where a prompt carries no cadence rather than inventing one', async () => {
+    const { findByTestId } = render(<JournalShelfScreen />);
+    const card = await findByTestId('journal-stage-prompt-4');
+    expect(within(card).queryByTestId('journal-stage-prompt-cadence-4')).toBeNull();
+    expect(within(card).getByText('Formulate Your Answer as a Four Quadrant Vow')).toBeTruthy();
+  });
+
+  it('renders a three-prompt stage without padding it to four', async () => {
+    mockPromptStage.mockResolvedValue(stageResponse(1, 'Beige', BEIGE_PROMPTS));
+    mockPromptCurrent.mockResolvedValue({
+      week_number: 2,
+      question: 'What did you notice this week?',
+      has_responded: false,
+      response: null,
+      timestamp: null,
+      prompt_ordinal: 1,
+    });
+    const { findByTestId, getAllByTestId } = render(<JournalShelfScreen />);
+    await findByTestId('journal-stage-prompts');
+    expect(getAllByTestId(/^journal-stage-prompt-\d+$/)).toHaveLength(3);
+    expect(mockPromptStage).toHaveBeenCalledWith(1);
+  });
+
+  it('opens the tapped prompt — not the week’s default — with its own title and ordinal', async () => {
+    const { findByTestId } = render(<JournalShelfScreen />);
+    fireEvent.press(await findByTestId('journal-stage-prompt-3'));
+    expect(mockNavigate).toHaveBeenCalledWith('JournalEntry', {
+      weekNumber: 14,
+      promptOrdinal: 3,
+      promptQuestion: 'Which curiosity serves which problem?',
+      prefillTitle: 'Combine Curiosities in Service of One Problem',
+    });
+  });
+
+  it('marks the answered prompts and keeps the unanswered ones on the shelf', async () => {
+    mockPromptHistory.mockResolvedValue(history([answered(13, 1), answered(14, 2)]));
+    const { findByTestId, getAllByTestId, queryByTestId } = render(<JournalShelfScreen />);
+    await findByTestId('journal-stage-prompts');
+
+    // Answering two of four hides neither the set nor the other two.
+    expect(getAllByTestId(/^journal-stage-prompt-\d+$/)).toHaveLength(4);
+    expect(await findByTestId('journal-stage-prompt-answered-1')).toBeTruthy();
+    expect(queryByTestId('journal-stage-prompt-answered-2')).not.toBeNull();
+    expect(queryByTestId('journal-stage-prompt-answered-3')).toBeNull();
+    expect(queryByTestId('journal-stage-prompt-answered-4')).toBeNull();
+  });
+
+  it('does not credit a prompt answered in a different stage', async () => {
+    // Week 5 is stage 2; its ordinal 3 must not mark stage 5's third prompt.
+    mockPromptHistory.mockResolvedValue(history([answered(5, 3)]));
+    const { findByTestId, queryByTestId } = render(<JournalShelfScreen />);
+    await findByTestId('journal-stage-prompts');
+    expect(queryByTestId('journal-stage-prompt-answered-3')).toBeNull();
+  });
+
+  it('keeps the whole set on the shelf once every prompt has been answered', async () => {
+    // Beige's three prompts across its three weeks — the server stores one
+    // response per week, so a whole stage answered is exactly one per week.
+    mockPromptStage.mockResolvedValue(stageResponse(1, 'Beige', BEIGE_PROMPTS));
+    mockPromptCurrent.mockResolvedValue({
+      week_number: 3,
+      question: 'What did you notice this week?',
+      has_responded: true,
+      response: 'I wrote it.',
+      timestamp: '2026-06-01T00:00:00Z',
+      prompt_ordinal: 3,
+    });
+    mockPromptHistory.mockResolvedValue(history([answered(1, 1), answered(2, 2), answered(3, 3)]));
+    const { findByTestId, getAllByTestId } = render(<JournalShelfScreen />);
+    await findByTestId('journal-stage-prompts');
+    expect(getAllByTestId(/^journal-stage-prompt-\d+$/)).toHaveLength(3);
+    expect(getAllByTestId(/^journal-stage-prompt-answered-\d+$/)).toHaveLength(3);
+  });
+
+  it('does not invite a second write in a week that already holds its one response', async () => {
+    // The server stores one response per (user, week): a second prompt tapped in
+    // the same week is a 409 that loses the writing, so the shelf must not offer
+    // the tap at all once this week's response is written.
+    mockPromptHistory.mockResolvedValue(history([answered(14, 2)]));
+    const { findByTestId, queryByTestId } = render(<JournalShelfScreen />);
+    await findByTestId('journal-stage-prompts');
+    expect(await findByTestId('journal-stage-prompt-answered-2')).toBeTruthy();
+
+    fireEvent.press(await findByTestId('journal-stage-prompt-3'));
+    expect(mockNavigate).not.toHaveBeenCalled();
+    expect(queryByTestId('journal-stage-prompts-week-written')).not.toBeNull();
+  });
+
+  it('still opens a prompt in a week that holds no response yet', async () => {
+    // The guard is the week's own response, not any response in the stage: an
+    // earlier week being answered must not freeze the current one.
+    mockPromptHistory.mockResolvedValue(history([answered(13, 1)]));
+    const { findByTestId, queryByTestId } = render(<JournalShelfScreen />);
+    await findByTestId('journal-stage-prompt-answered-1');
+    expect(queryByTestId('journal-stage-prompts-week-written')).toBeNull();
+
+    fireEvent.press(await findByTestId('journal-stage-prompt-2'));
+    expect(mockNavigate).toHaveBeenCalledWith(
+      'JournalEntry',
+      expect.objectContaining({ weekNumber: 14, promptOrdinal: 2 }),
+    );
+  });
+
+  it('shows no prompts at all rather than a stage it only guessed at', async () => {
+    // No local program anchor and a refused /prompts/current: the week is
+    // unknown, so falling back to week 1 would render another stage's prompts
+    // and compose the response against the wrong week.
+    mockPromptCurrent.mockRejectedValue(new Error('offline'));
+    const { findByTestId, queryByTestId } = render(<JournalShelfScreen />);
+    expect(await findByTestId('journal-notification-center')).toBeTruthy();
+    expect(queryByTestId('journal-stage-prompts')).toBeNull();
+    expect(mockPromptStage).not.toHaveBeenCalled();
+  });
+
+  it('renders the shelf without the prompt section when the stage fetch fails', async () => {
+    mockPromptStage.mockRejectedValue(new Error('offline'));
+    const { findByTestId, queryByTestId } = render(<JournalShelfScreen />);
+    expect(await findByTestId('journal-notification-center')).toBeTruthy();
+    expect(queryByTestId('journal-stage-prompts')).toBeNull();
+  });
+
+  it('still shows the prompts when only the response history fails to load', async () => {
+    mockPromptHistory.mockRejectedValue(new Error('offline'));
+    const { findByTestId, getAllByTestId, queryByTestId } = render(<JournalShelfScreen />);
+    await findByTestId('journal-stage-prompts');
+    expect(getAllByTestId(/^journal-stage-prompt-\d+$/)).toHaveLength(4);
+    expect(queryByTestId('journal-stage-prompt-answered-1')).toBeNull();
+  });
+
+  it('renders no prompt section for a stage that carries no prompts', async () => {
+    mockPromptStage.mockResolvedValue(stageResponse(5, 'Orange', []));
+    const { findByTestId, queryByTestId } = render(<JournalShelfScreen />);
+    expect(await findByTestId('journal-notification-center')).toBeTruthy();
+    expect(queryByTestId('journal-stage-prompts')).toBeNull();
+  });
+});
+
+describe('a writer can set a stage prompt aside, and bring it back', () => {
+  it('offers every prompt a way to be declined, named as setting aside rather than skipping', async () => {
+    const { findByTestId } = render(<JournalShelfScreen />);
+    const control = await findByTestId('journal-stage-prompt-set-aside-2');
+
+    expect(control.props.accessibilityLabel).toBe(
+      'Set this prompt aside; you can bring it back later.',
+    );
+    expect(StyleSheet.flatten(control.props.style).position).toBe('absolute');
+    expect(within(control).queryByText('Set aside')).toBeNull();
+  });
+
+  it('tells the server which prompt was set aside, and stops offering that one', async () => {
+    const { findByTestId, getAllByTestId, queryByTestId } = render(<JournalShelfScreen />);
+    fireEvent.press(await findByTestId('journal-stage-prompt-set-aside-2'));
+
+    // The stage and the ordinal, not the index: the server names prompts by
+    // curriculum position and the card is the only thing that knows it.
+    await waitFor(() => expect(mockPromptSetAside).toHaveBeenCalledWith(5, 2));
+    await waitFor(() => expect(queryByTestId('journal-stage-prompt-2')).toBeNull());
+    // The rest of the band is untouched -- this declines one prompt, not the set.
+    expect(getAllByTestId(/^journal-stage-prompt-\d+$/)).toHaveLength(3);
+  });
+
+  it('says how many prompts are set aside and offers them back, without a screen of their own', async () => {
+    const { findByTestId } = render(<JournalShelfScreen />);
+    fireEvent.press(await findByTestId('journal-stage-prompt-set-aside-2'));
+
+    const footer = await findByTestId('journal-stage-prompts-set-aside-footer');
+    // The count folds into the eyebrow row's trailing slot: a compact label and
+    // a chevron, with the full sentence kept as the accessible name.
+    expect(within(footer).getByText('1 set aside')).toBeTruthy();
+    expect(footer.props.accessibilityRole).toBe('button');
+    expect(footer.props.accessibilityLabel).toBe('Show the prompts you have set aside');
+    const chevrons = within(footer).UNSAFE_getAllByType(ChevronRight);
+    expect(chevrons).toHaveLength(1);
+    expect(chevrons[0]?.props).toMatchObject(decorativeHidden());
+
+    // One link face for the band: the button face, never the caption.
+    const label = StyleSheet.flatten(within(footer).getByText('1 set aside').props.style);
+    expect(label.fontSize).toBe(uiType.button.fontSize);
+    expect(label.fontWeight).toBe(uiType.button.fontWeight);
+    const control = StyleSheet.flatten(footer.props.style);
+    expect(control.minHeight).toBeGreaterThanOrEqual(touchTarget.minimum);
+    expect(control.minWidth).toBeGreaterThanOrEqual(touchTarget.minimum);
+  });
+
+  it('names the band as a quiet eyebrow with the count in its trailing slot', async () => {
+    mockPromptStage.mockResolvedValue(stageResponse(5, 'Orange', withSetAside(2)));
+    const { findByTestId, getByTestId, getByText } = render(<JournalShelfScreen />);
+    const footer = await findByTestId('journal-stage-prompts-set-aside-footer');
+
+    // The caption face in sentence case: the shelf's one tracked small-caps
+    // role belongs to the recency spine (JournalShelfHierarchy pins it), so
+    // this eyebrow recedes rather than announcing the band.
+    const eyebrow = getByText('Orange prompts');
+    const eyebrowStyle = StyleSheet.flatten(eyebrow.props.style);
+    expect(eyebrowStyle.fontSize).toBe(editorialType.caption.fontSize);
+    expect(eyebrowStyle.color).toBe(ink.muted);
+    expect(eyebrowStyle.textTransform).toBeUndefined();
+
+    // Label and count share one row: the count control is the label's sibling.
+    const row = getByTestId('journal-stage-prompts-eyebrow');
+    expect(StyleSheet.flatten(row.props.style).flexDirection).toBe('row');
+    expect(within(row).getByText('Orange prompts')).toBe(eyebrow);
+    expect(within(row).getByTestId('journal-stage-prompts-set-aside-footer')).toBe(footer);
+  });
+
+  it('counts more than one set-aside prompt in the plural', async () => {
+    mockPromptStage.mockResolvedValue(
+      stageResponse(5, 'Orange', [
+        { ...ORANGE_PROMPTS[0], dismissed: true } as StagePromptDetail,
+        { ...ORANGE_PROMPTS[1], dismissed: true } as StagePromptDetail,
+        ORANGE_PROMPTS[2] as StagePromptDetail,
+        ORANGE_PROMPTS[3] as StagePromptDetail,
+      ]),
+    );
+    const { findByTestId } = render(<JournalShelfScreen />);
+
+    const footer = await findByTestId('journal-stage-prompts-set-aside-footer');
+    expect(within(footer).getByText('2 set aside')).toBeTruthy();
+  });
+
+  it('re-renders the hidden cards in place when the footer is tapped', async () => {
+    mockPromptStage.mockResolvedValue(stageResponse(5, 'Orange', withSetAside(2)));
+    const { findByTestId, queryByTestId } = render(<JournalShelfScreen />);
+    await findByTestId('journal-stage-prompts');
+    expect(queryByTestId('journal-stage-prompt-2')).toBeNull();
+
+    fireEvent.press(await findByTestId('journal-stage-prompts-set-aside-footer'));
+
+    // Back in the band, in curriculum order, with the way back on the card.
+    expect(await findByTestId('journal-stage-prompt-2')).toBeTruthy();
+    expect(queryByTestId('journal-stage-prompts-set-aside-footer')).toBeNull();
+  });
+
+  it('brings a set-aside prompt back onto the band', async () => {
+    mockPromptStage.mockResolvedValue(stageResponse(5, 'Orange', withSetAside(2)));
+    const { findByTestId, queryByTestId } = render(<JournalShelfScreen />);
+    fireEvent.press(await findByTestId('journal-stage-prompts-set-aside-footer'));
+
+    const back = await findByTestId('journal-stage-prompt-bring-back-2');
+    expect(back.props.accessibilityLabel).toBe(
+      'Bring this prompt back; it will appear with the others again.',
+    );
+    fireEvent.press(back);
+
+    await waitFor(() => expect(mockPromptBringBack).toHaveBeenCalledWith(5, 2));
+    await waitFor(() => expect(queryByTestId('journal-stage-prompt-bring-back-2')).toBeNull());
+    expect(await findByTestId('journal-stage-prompt-set-aside-2')).toBeTruthy();
+  });
+
+  it('says nothing about setting prompts aside when none are', async () => {
+    const { findByTestId, queryByTestId } = render(<JournalShelfScreen />);
+    await findByTestId('journal-stage-prompts');
+
+    expect(queryByTestId('journal-stage-prompts-set-aside-footer')).toBeNull();
+  });
+
+  it('leaves the band exactly as it was when the server refuses the set-aside', async () => {
+    mockPromptSetAside.mockRejectedValue(new Error('offline'));
+    const { findByTestId, getAllByTestId, queryByTestId } = render(<JournalShelfScreen />);
+    fireEvent.press(await findByTestId('journal-stage-prompt-set-aside-2'));
+
+    await waitFor(() => expect(mockPromptSetAside).toHaveBeenCalled());
+    // No optimistic hide: a card that vanished on a request that failed would
+    // report a preference the server never recorded.
+    expect(getAllByTestId(/^journal-stage-prompt-\d+$/)).toHaveLength(4);
+    expect(queryByTestId('journal-stage-prompts-set-aside-footer')).toBeNull();
+  });
+
+  it('never marks a set-aside prompt answered, and keeps the others writable', async () => {
+    // The invariant the whole affordance turns on, asserted where a reader
+    // would see it break: declining is not completing.
+    mockPromptStage.mockResolvedValue(stageResponse(5, 'Orange', withSetAside(2)));
+    const { findByTestId, queryByTestId } = render(<JournalShelfScreen />);
+    await findByTestId('journal-stage-prompts');
+
+    expect(queryByTestId('journal-stage-prompt-answered-2')).toBeNull();
+    expect(queryByTestId('journal-stage-prompts-week-written')).toBeNull();
+
+    fireEvent.press(await findByTestId('journal-stage-prompt-3'));
+    expect(mockNavigate).toHaveBeenCalledWith(
+      'JournalEntry',
+      expect.objectContaining({ weekNumber: 14, promptOrdinal: 3 }),
+    );
+  });
+});
+
+/** Words that would frame declining a prompt as failing to do it. */
+const FAILURE_WORDS = [
+  /\bskip/i,
+  /\bdismiss/i,
+  /\bmiss(ed|ing)?\b/i,
+  /\bavoid/i,
+  /\bincomplete\b/i,
+  /\bnot doing\b/i,
+  /\bgive up\b/i,
+];
+
+describe('the copy for declining a prompt', () => {
+  /** Every string a reader can read on the set-aside affordances, label and hint alike. */
+  async function visibleCopy(): Promise<string[]> {
+    mockPromptStage.mockResolvedValue(stageResponse(5, 'Orange', withSetAside(2)));
+    const { findByTestId } = render(<JournalShelfScreen />);
+    const footer = await findByTestId('journal-stage-prompts-set-aside-footer');
+    const footerCopy = [
+      footer.props.accessibilityLabel as string,
+      within(footer).getByText(/./).props.children as string,
+    ];
+    fireEvent.press(footer);
+    const controls = [
+      await findByTestId('journal-stage-prompt-set-aside-1'),
+      await findByTestId('journal-stage-prompt-bring-back-2'),
+    ];
+    return [
+      ...footerCopy,
+      ...controls.map((node) => node.props.accessibilityLabel as string),
+      ...controls.flatMap((node) =>
+        within(node)
+          .queryAllByText(/./)
+          .map((text) => text.props.children as string),
+      ),
+    ];
+  }
+
+  it("ranks or shames nobody, by the repository's own intent rule", async () => {
+    const copy = await visibleCopy();
+
+    expect(copy).toHaveLength(5);
+    for (const line of copy) {
+      expect(line).toBeTruthy();
+      expect({ line, ranked: ranksOrShames(line) }).toEqual({ line, ranked: false });
+    }
+  });
+
+  it('is asserted against a rule that can actually fire', () => {
+    // Without this the test above would pass just as well on a predicate that
+    // returned false for everything.
+    expect(ranksOrShames('Keep your streak alive')).toBe(true);
+  });
+
+  it('never names declining a prompt as skipping or failing it', async () => {
+    // The intent rule covers ranking and shaming; this covers the register the
+    // affordance itself could slip into -- a depth that may be declined must
+    // not be offered back as something the reader failed to do.
+    const copy = await visibleCopy();
+
+    for (const line of copy) {
+      for (const word of FAILURE_WORDS) {
+        expect({ line, fails: word.test(line) }).toEqual({ line, fails: false });
+      }
+    }
+  });
+});

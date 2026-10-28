@@ -4,10 +4,12 @@ import { act, fireEvent, render, within } from '@testing-library/react-native';
 import React from 'react';
 import { Linking, Platform } from 'react-native';
 
+import { INTIMATE_TRANSCRIPTION_GATE_COPY } from '../CaptureClassificationControl';
 import type { CaptureResult, MultiPickResult, PickedAsset } from '../pickJournalPhoto';
 
 import { TranscriptionError } from '@/api';
 import type { JournalMessage, MediaType, TranscribePageT, TranscriptionErrorKind } from '@/api';
+import { LLM_KEY_REQUIRED_COPY } from '@/api/errorMessages';
 import { toISODate } from '@/components/DatePicker';
 import { useCapturedTranscriptStore } from '@/store/useCapturedTranscriptStore';
 import { settle } from '@/testing/asyncSettle';
@@ -22,7 +24,11 @@ const isoOffsetFromToday = (days: number): string => {
 const mockPick = jest.fn() as jest.MockedFunction<(_limit: number) => Promise<MultiPickResult>>;
 const mockCapture = jest.fn() as jest.MockedFunction<() => Promise<CaptureResult>>;
 const mockTranscribe = jest.fn() as jest.MockedFunction<
-  (_p: { imageBase64: string; mediaType: MediaType }) => Promise<TranscribePageT>
+  (_p: {
+    imageBase64: string;
+    mediaType: MediaType;
+    classification: string;
+  }) => Promise<TranscribePageT>
 >;
 const mockCreate = jest.fn() as jest.MockedFunction<
   (_e: unknown, _options?: unknown) => Promise<JournalMessage>
@@ -176,6 +182,8 @@ function makeEntry(overrides: Partial<JournalMessage> = {}): JournalMessage {
 /** The route params the append-mode entry point arrives with. */
 interface PhotographParams {
   appendTo?: string;
+  /** The open entry's tier, carried so the capture declares it (#3059 AC15). */
+  appendTier?: string;
 }
 
 function renderScreen(params?: PhotographParams) {
@@ -194,8 +202,8 @@ function renderScreen(params?: PhotographParams) {
 const APPEND_TOKEN = 'capture-1';
 
 /** Render the screen the way the open journal entry opens it: in append mode. */
-function renderAppendScreen() {
-  return renderScreen({ appendTo: APPEND_TOKEN });
+function renderAppendScreen(appendTier: string | undefined = 'personal') {
+  return renderScreen({ appendTo: APPEND_TOKEN, appendTier });
 }
 
 /** One deferred transcription call: resolve/reject it whenever the test wants. */
@@ -452,6 +460,7 @@ describe('JournalPhotographScreen — single-page transcribe proceed', () => {
     expect(mockTranscribe).toHaveBeenCalledWith({
       imageBase64: preparedBase64('file:///p1.jpg'),
       mediaType: 'image/jpeg',
+      classification: 'personal',
     });
   });
 });
@@ -509,7 +518,20 @@ describe('JournalPhotographScreen — transcribing (single page)', () => {
     expect(mockTranscribe).toHaveBeenCalledWith({
       imageBase64: preparedBase64('file:///page-a.jpg'),
       mediaType: 'image/jpeg',
+      classification: 'personal',
     });
+  });
+
+  it('declares the tier the writer chose, so the server can refuse one it may not read', async () => {
+    mockPick.mockResolvedValueOnce(picked([pickedAsset({ uri: 'file:///page-a.jpg' })]));
+    mockTranscribe.mockResolvedValueOnce({ text: 'x' });
+    const { getByTestId } = renderScreen();
+    await settle();
+    fireEvent.press(getByTestId('privacy-tier-public'));
+    fireEvent.press(getByTestId('capture-transcribe'));
+    await settle();
+    expect(mockTranscribe).toHaveBeenCalledTimes(1);
+    expect(mockTranscribe.mock.calls[0]?.[0]).toMatchObject({ classification: 'public' });
   });
 });
 
@@ -621,9 +643,8 @@ describe('JournalPhotographScreen — single-page error recovery', () => {
     await settle();
     fireEvent.press(getByTestId('capture-transcribe'));
     await settle();
-    expect(getByTestId('photograph-block-1-error')).toHaveTextContent(
-      /this month's free allotment/,
-    );
+    // The empty-wallet payer refusal names both remedies (#3096).
+    expect(getByTestId('photograph-block-1-error')).toHaveTextContent(/out of BotMason credits/u);
     expect(getByTestId('photograph-block-1-retry')).toBeTruthy();
   });
 
@@ -725,17 +746,33 @@ describe('JournalPhotographScreen — single-page error recovery', () => {
   });
 });
 
-describe('JournalPhotographScreen — terminal model-lacks-vision failure', () => {
-  it('renders terminal copy, typed-entry offramp, and disabled Save without Retry or Retake', async () => {
-    mockPick.mockResolvedValueOnce(picked());
-    mockTranscribe.mockRejectedValueOnce(new TranscriptionError('model_lacks_vision', 422));
+describe('JournalPhotographScreen — the server refuses the declared tier (#3059 AC15)', () => {
+  it('shows the Intimate gate copy and the typed-entry offramp, with no Retry or Retake', async () => {
+    mockPick.mockResolvedValueOnce(picked(pageAssets(uriList(2))));
+    mockTranscribe.mockRejectedValue(new TranscriptionError('tier_refused', 403));
     const { getByTestId, queryByTestId } = renderScreen();
     await settle();
     fireEvent.press(getByTestId('capture-transcribe'));
     await settle();
     expect(getByTestId('photograph-block-1-error')).toHaveTextContent(
-      "Reading photos isn't available with the configured AI model. You can still write this page by hand.",
+      INTIMATE_TRANSCRIPTION_GATE_COPY,
     );
+    expect(getByTestId('photograph-typed-entry')).toBeTruthy();
+    expect(queryByTestId('photograph-block-1-retry')).toBeNull();
+    expect(queryByTestId('photograph-block-1-retake')).toBeNull();
+    expect(getByTestId('photograph-save').props.accessibilityState.disabled).toBe(true);
+  });
+});
+
+describe('JournalPhotographScreen — terminal key-required failure', () => {
+  it('renders terminal copy, typed-entry offramp, and disabled Save without Retry or Retake', async () => {
+    mockPick.mockResolvedValueOnce(picked());
+    mockTranscribe.mockRejectedValueOnce(new TranscriptionError('key_required', 402));
+    const { getByTestId, queryByTestId } = renderScreen();
+    await settle();
+    fireEvent.press(getByTestId('capture-transcribe'));
+    await settle();
+    expect(getByTestId('photograph-block-1-error')).toHaveTextContent(LLM_KEY_REQUIRED_COPY);
     expect(getByTestId('photograph-run-progress')).toHaveTextContent(
       '0 of 1 read · 1 need attention',
     );
@@ -748,7 +785,7 @@ describe('JournalPhotographScreen — terminal model-lacks-vision failure', () =
 
   it('offers a hand-typed-entry offramp that leaves for a plain entry without charging', async () => {
     mockPick.mockResolvedValueOnce(picked());
-    mockTranscribe.mockRejectedValueOnce(new TranscriptionError('model_lacks_vision', 422));
+    mockTranscribe.mockRejectedValueOnce(new TranscriptionError('key_required', 402));
     const { getByTestId, navigation } = renderScreen();
     await settle();
     fireEvent.press(getByTestId('capture-transcribe'));
@@ -1827,9 +1864,9 @@ describe('JournalPhotographScreen — transient file cleanup', () => {
 
   it('releases every session file when stepping off to a typed entry', async () => {
     mockPick.mockResolvedValueOnce(picked());
-    // The typed-entry offramp surfaces only on a terminal, config-level failure
-    // the writer cannot retry past — model_lacks_vision — so drive the run there.
-    mockTranscribe.mockRejectedValueOnce(new TranscriptionError('model_lacks_vision', 422));
+    // The typed-entry offramp surfaces only on a terminal failure the writer
+    // cannot retry past — a page read with no key of their own — so drive the run there.
+    mockTranscribe.mockRejectedValueOnce(new TranscriptionError('key_required', 402));
     const { getByTestId, navigation } = renderScreen();
     await settle();
     fireEvent.press(getByTestId('capture-transcribe'));
@@ -2102,6 +2139,71 @@ describe('JournalPhotographScreen — classification threaded into save', () => 
 // Append mode: the same capture, handed back to the page already being written
 // ---------------------------------------------------------------------------
 
+describe('JournalPhotographScreen — append mode declares the open entry’s own tier (#3059 AC15)', () => {
+  /** Press Transcribe and let any read it starts run. */
+  async function pressTranscribe(screen: ReturnType<typeof renderAppendScreen>): Promise<void> {
+    await settle();
+    screen.getByTestId('capture-pages-list');
+    fireEvent.press(screen.getByTestId('capture-transcribe'));
+    await settle();
+  }
+
+  it.each<[string, string | undefined]>([
+    ['an intimate entry', 'intimate'],
+    ['an entry whose tier never arrived (fails closed)', undefined],
+    ['an entry with an unrecognised tier (fails closed)', 'secret'],
+  ])('from %s: the gate shows, it cannot be widened, and no page is read', async (_n, tier) => {
+    mockPick.mockResolvedValueOnce(picked());
+    mockTranscribe.mockResolvedValue({ text: 'must never be read' });
+    const screen = renderScreen({ appendTo: APPEND_TOKEN, appendTier: tier });
+    await settle();
+
+    expect(screen.getByTestId('capture-intimate-gate')).toBeTruthy();
+    expect(screen.queryByTestId('capture-keep-personal')).toBeNull();
+    fireEvent.press(screen.getByTestId('privacy-tier-personal'));
+    fireEvent.press(screen.getByTestId('privacy-tier-public'));
+    expect(screen.getByTestId('capture-intimate-gate')).toBeTruthy();
+    await pressTranscribe(screen);
+
+    expect(mockTranscribe).not.toHaveBeenCalled();
+  });
+
+  it('from a personal entry: may narrow to intimate, which reads nothing', async () => {
+    mockPick.mockResolvedValueOnce(picked());
+    const screen = renderAppendScreen('personal');
+    await settle();
+
+    fireEvent.press(screen.getByTestId('privacy-tier-intimate'));
+    // Back to the entry's own tier is not a widening past it.
+    expect(screen.getByTestId('capture-keep-personal')).toBeTruthy();
+    await pressTranscribe(screen);
+
+    expect(mockTranscribe).not.toHaveBeenCalled();
+  });
+
+  it('from a personal entry: declares personal, and the chooser cannot widen it', async () => {
+    mockPick.mockResolvedValueOnce(picked());
+    mockTranscribe.mockResolvedValueOnce({ text: 'x' });
+    const screen = renderAppendScreen('personal');
+    await settle();
+
+    fireEvent.press(screen.getByTestId('privacy-tier-public'));
+    await pressTranscribe(screen);
+
+    expect(mockTranscribe).toHaveBeenCalledTimes(1);
+    expect(mockTranscribe.mock.calls[0]?.[0]).toMatchObject({ classification: 'personal' });
+  });
+
+  it('from a public entry: declares public', async () => {
+    mockPick.mockResolvedValueOnce(picked());
+    mockTranscribe.mockResolvedValueOnce({ text: 'x' });
+    const screen = renderAppendScreen('public');
+    await pressTranscribe(screen);
+
+    expect(mockTranscribe.mock.calls[0]?.[0]).toMatchObject({ classification: 'public' });
+  });
+});
+
 describe('JournalPhotographScreen — append into the open entry', () => {
   /** Drive one page through the shared capture flow to the review stage. */
   async function transcribeThenPress(
@@ -2237,7 +2339,7 @@ describe('JournalPhotographScreen — append into the open entry', () => {
 
   it('returns the writer to the page they were on when transcription cannot work at all', async () => {
     mockPick.mockResolvedValueOnce(picked());
-    mockTranscribe.mockRejectedValueOnce(new TranscriptionError('model_lacks_vision', 422));
+    mockTranscribe.mockRejectedValueOnce(new TranscriptionError('key_required', 402));
 
     const screen = renderAppendScreen();
     await settle();

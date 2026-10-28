@@ -41,8 +41,9 @@ _BACKEND_DIR = Path(__file__).resolve().parents[1]
 _RESOURCES_DIR = _BACKEND_DIR / "content" / "markdown" / "resources"
 _DATASET_PATH = _BACKEND_DIR / "src" / "curriculum" / "archetypal_wavelength.json"
 
-_STAGES_FILE = "aptitude-stages.md"
-_ABOUT_FILE = "about.md"
+#: Site resources are named ``NN-slug.md`` since aptitude-course#76.
+_STAGES_FILE = "04-aptitude-stages.md"
+_ABOUT_FILE = "02-about.md"
 
 #: The APTITUDE curriculum has exactly ten stages.  Asserted for both parses so
 #: a parser that quietly matched nothing fails loudly instead of vacuously
@@ -84,13 +85,16 @@ _SUPERSEDABLE_FIELDS = frozenset(
 _SUPERSESSION_KEYS = frozenset({"stage_number", "field", "value"})
 
 #: The ratified supersessions recorded today: stage 4's aspect and stage 8's
-#: color, aspect and free-will archetype (December 2025).
+#: color and free-will archetype (December 2025), plus stage 8's Growing Up
+#: stage, which follows the True Self framing rather than the CSV's former
+#: "Nonduality" (2026-10). Stage 8's aspect is no longer one: the owner ruled
+#: it "True Self Wisdom" (2026-10-13, #2664), which is the CSV's own cell.
 _EXPECTED_SUPERSESSIONS = frozenset(
     {
         (4, "aspect"),
         (8, "spiral_dynamics_color"),
-        (8, "aspect"),
         (8, _FREE_WILL_FIELD),
+        (8, "growing_up_stage"),
     },
 )
 
@@ -109,7 +113,7 @@ _EXPECTED_HEADINGS: tuple[str, ...] = (
     "#### Understanding: Intellectual (Orange, Rationality, The Status Seeker)",
     "#### Understanding; Embodied (Green, Plurality, The Shadow Glorifier)",
     "#### Wisdom: Systems (Yellow, Integrative, The Despairing Analyst)",
-    "#### Wisdom: True Self (Teal, Nonduality, The Adept)",
+    "#### Wisdom: True Self (Teal, True Self Connection, The True Self Embodier)",
     "#### Being: Unity (Ultraviolet, Effortless Being, The Blissy Adept)",
     "#### Awareness: Emptiness (Clear Light, Pure Awareness, Whole Adept)",
 )

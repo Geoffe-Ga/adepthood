@@ -13,6 +13,7 @@
 import React, { useState } from 'react';
 import { ActivityIndicator, Text, TextInput, View } from 'react-native';
 
+import { INTIMATE_TRANSCRIPTION_GATE_COPY } from './CaptureClassificationControl';
 import type { CapturePage } from './captureSession';
 import styles from './JournalPhotograph.styles';
 import { SeamOverlapSlot } from './SeamOverlapNotice';
@@ -20,12 +21,12 @@ import { TERMINAL_ERROR_KINDS } from './transcriptionRun';
 import type { TranscriptionBlock } from './transcriptionRun';
 import type { BlockOverlapNotice } from './useTranscriptionRun';
 
-import { TranscriptionError } from '@/api';
 import type { TranscriptionErrorKind } from '@/api';
 import {
+  AI_ACCESS_REVOKED_COPY,
   CREDIT_EXHAUSTED_COPY,
-  SERVICE_CREDIT_EXHAUSTED_COPY,
-  formatApiError,
+  INSUFFICIENT_OFFERINGS_COPY,
+  LLM_KEY_REQUIRED_COPY,
 } from '@/api/errorMessages';
 import { Button } from '@/components/Button';
 import { accent, writingField, writingFieldFocus } from '@/design/tokens';
@@ -43,16 +44,11 @@ const REDO_CONFIRM_LABEL = 'Read again and replace my edits';
 const blockInputA11y = (position: number): string =>
   `Edit the transcribed text of page ${position}`;
 
-/** The 402 status a spent wallet reports, so its copy stays the shared 402 source. */
-const WALLET_EXHAUSTED_STATUS = 402;
-
-/** Friendly terminal copy when the configured model cannot read images at all. */
-const MODEL_LACKS_VISION_COPY =
-  "Reading photos isn't available with the configured AI model. You can still write this page by hand.";
-
-/** Per-kind copy for a recoverable page failure. `wallet_exhausted` is sourced from
- *  the shared 402 message instead, so that copy stays a single source of truth. */
+/** Per-kind copy for a recoverable page failure. The payer refusals (#3096) and the
+ *  spent provider balances are sourced from the shared code map, so each story
+ *  has a single source of truth. */
 const TRANSCRIBE_ERROR_COPY: Readonly<Record<TranscriptionErrorKind, string>> = {
+  ai_access_revoked: AI_ACCESS_REVOKED_COPY,
   provider_error: 'The transcription helper had trouble just now. Give it a moment and try again.',
   network: "We couldn't reach the transcription helper. Check your connection and try again.",
   timeout: "That took longer than expected. Try again whenever you're ready.",
@@ -63,13 +59,15 @@ const TRANSCRIBE_ERROR_COPY: Readonly<Record<TranscriptionErrorKind, string>> = 
     'The helper declined to read that page. Try once more, or type it in by hand.',
   image_too_large:
     'That photo is a little large to read. Retake it, or use a lower-resolution shot.',
-  wallet_exhausted: '',
-  model_lacks_vision: MODEL_LACKS_VISION_COPY,
+  // The server refused the declared tier (#3059 AC15): the capture screen's own
+  // Intimate gate (#1882) says the same thing, in the same words.
+  tier_refused: INTIMATE_TRANSCRIPTION_GATE_COPY,
+  wallet_exhausted: INSUFFICIENT_OFFERINGS_COPY,
+  key_required: LLM_KEY_REQUIRED_COPY,
   // Sourced from the shared code map rather than written again here: this
   // surface's own copy is where the transient story survived last time, and a
   // second wording is a second place for it to come back.
   credit_exhausted: CREDIT_EXHAUSTED_COPY,
-  service_credit_exhausted: SERVICE_CREDIT_EXHAUSTED_COPY,
   unknown: "Something didn't work while reading this page. Try again, or remove it.",
 };
 
@@ -81,11 +79,8 @@ const RETAKE_KINDS: ReadonlySet<TranscriptionErrorKind> = new Set<TranscriptionE
   'transcription_refused',
 ]);
 
-/** The user-facing copy for a failed page, sourcing wallet copy from the 402 message. */
+/** The user-facing copy for a failed page. */
 function blockErrorMessage(kind: TranscriptionErrorKind): string {
-  if (kind === 'wallet_exhausted') {
-    return formatApiError(new TranscriptionError('wallet_exhausted', WALLET_EXHAUSTED_STATUS));
-  }
   return TRANSCRIBE_ERROR_COPY[kind];
 }
 

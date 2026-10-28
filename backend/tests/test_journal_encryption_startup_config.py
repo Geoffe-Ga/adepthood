@@ -50,8 +50,15 @@ NON_PRODUCTION_ENVS = [None, "development", "staging"]
 
 
 @pytest.fixture(autouse=True)
-def _reset_registry() -> Generator[None, None, None]:
-    """Clear the cached key registry around each test so env changes take effect."""
+def _reset_registry(monkeypatch: pytest.MonkeyPatch) -> Generator[None, None, None]:
+    """Clear the key cache and every production signal, so no shell value leaks in.
+
+    The platform variables are cleared because a developer running the suite
+    from a ``railway run`` shell would otherwise turn every non-production case
+    below into a production one.
+    """
+    for name in journal_encryption.PRODUCTION_SIGNAL_ENV_VARS:
+        monkeypatch.delenv(name, raising=False)
     journal_encryption.reset_cache()
     yield
     journal_encryption.reset_cache()
@@ -96,6 +103,62 @@ def test_production_without_a_usable_key_refuses_to_boot(
         validate_journal_encryption_config()
 
     assert GENERATION_MARKER in str(excinfo.value)
+
+
+@pytest.mark.parametrize("platform_var", journal_encryption.PLATFORM_ENVIRONMENT_NAME_ENV_VARS)
+@pytest.mark.parametrize("env_value", NON_PRODUCTION_ENVS)
+def test_platform_production_refuses_boot_whatever_env_says(
+    platform_var: str,
+    env_value: str | None,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``ENV`` unset or wrong on a Railway production deploy is not an exemption.
+
+    ``ENV`` is typed by a person; the environment name is injected by the
+    platform. A deploy whose own platform says production is held to
+    production's rule even when the typed variable is missing or disagrees.
+    """
+    if env_value is not None:
+        monkeypatch.setenv(ENV_VAR, env_value)
+    monkeypatch.setenv(platform_var, "production")
+    _set_keys(monkeypatch, None)
+
+    with pytest.raises(RuntimeError, match=KEYS_ENV_VAR):
+        validate_journal_encryption_config()
+
+
+def test_typed_production_is_not_overridden_by_a_platform_staging_name(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``ENV=production`` on a service Railway calls staging still requires the key."""
+    monkeypatch.setenv(ENV_VAR, "production")
+    monkeypatch.setenv("RAILWAY_ENVIRONMENT_NAME", "staging")
+    _set_keys(monkeypatch, None)
+
+    with pytest.raises(RuntimeError, match=KEYS_ENV_VAR):
+        validate_journal_encryption_config()
+
+
+def test_platform_deploy_without_an_environment_name_refuses_boot(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """On the platform but unable to say which environment: unproven, so refused."""
+    monkeypatch.setenv("RAILWAY_PROJECT_ID", "project")
+    _set_keys(monkeypatch, None)
+
+    with pytest.raises(RuntimeError, match=KEYS_ENV_VAR):
+        validate_journal_encryption_config()
+
+
+def test_railway_staging_without_a_key_still_boots(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Staging keeps its documented exemption; requiring a key there is the owner's call."""
+    monkeypatch.setenv("RAILWAY_ENVIRONMENT_NAME", "staging")
+    monkeypatch.setenv("RAILWAY_PROJECT_ID", "project")
+    _set_keys(monkeypatch, None)
+
+    validate_journal_encryption_config()
 
 
 def test_production_with_a_key_boots_silently(
@@ -193,3 +256,40 @@ async def test_boot_completes_in_development_with_no_key(
 
     async with _isolated_factory_patch(), lifespan(app):
         assert journal_encryption.is_enabled() is False
+
+
+@pytest.mark.asyncio
+async def test_boot_logs_the_primary_key_fingerprint_and_never_the_key(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """The deployed key0 is identifiable from the boot log, for the sweep to confirm."""
+    key = Fernet.generate_key().decode()
+    monkeypatch.setenv(ENV_VAR, "development")
+    _set_keys(monkeypatch, key)
+    caplog.set_level(logging.INFO, logger=MAIN_LOGGER)
+
+    async with _isolated_factory_patch(), lifespan(app):
+        pass
+
+    expected = (
+        f"journal_encryption_primary_fingerprint={journal_encryption.primary_key_fingerprint()}"
+    )
+    assert expected in caplog.text
+    assert key not in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_boot_without_a_key_logs_no_fingerprint(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """No key, no fingerprint line -- and no crash computing one."""
+    monkeypatch.setenv(ENV_VAR, "development")
+    _set_keys(monkeypatch, None)
+    caplog.set_level(logging.INFO, logger=MAIN_LOGGER)
+
+    async with _isolated_factory_patch(), lifespan(app):
+        pass
+
+    assert "journal_encryption_primary_fingerprint" not in caplog.text

@@ -1,6 +1,7 @@
 /* eslint-env jest */
 /* global describe, it, expect */
 import {
+  MAP_LEAD,
   formatMinutes,
   journeyRead,
   progressionSentence,
@@ -35,19 +36,29 @@ describe('journeyRead', () => {
   });
 });
 
+describe('MAP_LEAD', () => {
+  it('describes a wheel of capacities without altitude or rank language', () => {
+    expect(MAP_LEAD).toContain('wheel, not a ladder');
+    expect(MAP_LEAD).toContain('ten stages revisit different capacities');
+    expect(MAP_LEAD).toContain('never ranking');
+    expect(MAP_LEAD).not.toMatch(/full|thin/i);
+    expect(MAP_LEAD).not.toMatch(/higher|lower|above|below|climb|ascend/i);
+  });
+});
+
 describe('unlockTimeline', () => {
   it('pluralises day counts', () => {
-    expect(unlockTimeline(3)).toBe('Unlocks in 3 days');
-    expect(unlockTimeline(1)).toBe('Unlocks in 1 day');
+    expect(unlockTimeline(3)).toBe('Opens in 3 days');
+    expect(unlockTimeline(1)).toBe('Opens in 1 day');
   });
 
   it('treats zero / negative as unlocking now', () => {
-    expect(unlockTimeline(0)).toBe('Unlocking now');
-    expect(unlockTimeline(-2)).toBe('Unlocking now');
+    expect(unlockTimeline(0)).toBe('Opening now');
+    expect(unlockTimeline(-2)).toBe('Opening now');
   });
 
   it('falls back to the condition when no anchor is set', () => {
-    expect(unlockTimeline(null)).toContain('reaches it');
+    expect(unlockTimeline(null)).toBe('Opens with the course');
   });
 });
 

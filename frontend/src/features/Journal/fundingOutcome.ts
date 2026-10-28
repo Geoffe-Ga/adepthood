@@ -18,5 +18,8 @@ export function fundingOutcome(error: unknown): FundingOutcome | null {
   if (response.status !== 402) return null;
   if (response.detail === 'insufficient_offerings') return 'funding_required';
   if (response.detail === 'llm_key_required') return 'key_required';
+  // A managed vault with no shared pool writes only with the writer's own key
+  // (#3501): the same remedy, refused before anything was charged.
+  if (response.detail === 'vault_key_required') return 'key_required';
   return null;
 }

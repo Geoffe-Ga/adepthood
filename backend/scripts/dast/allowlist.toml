@@ -25,6 +25,12 @@ category = "not_object_scoped"
 reason   = "slug names a published site document, not a per-user row"
 
 [[route]]
+method   = "POST"
+path     = "/course/site-resources/{slug}/mark-read"
+category = "not_object_scoped"
+reason   = "slug names a published site document, not a per-user row; the read mark is recorded against the caller"
+
+[[route]]
 method   = "GET"
 path     = "/course/stages/{stage_number}/content"
 category = "not_object_scoped"
@@ -167,7 +173,14 @@ reason   = "gated on the admin role rather than on ownership; both identities ar
 # design -- that is the whole point of an operator surface -- so ownership is
 # the wrong axis for them. The admin role is the control, and
 # tests/test_admin_entitlements.py exercises the anonymous and non-admin legs
-# on all three.
+# on the existing three, and tests/test_admin_balance_adjustment.py exercises
+# both legs plus the cross-user mutation and audit rows for the wallet route.
+
+[[route]]
+method   = "POST"
+path     = "/admin/users/{user_id}/tokens"
+category = "admin_only"
+reason   = "gated on the admin role rather than on ownership; both identities are denied"
 
 [[route]]
 method   = "POST"
@@ -241,6 +254,7 @@ path     = "/journal/suggestions/{suggestion_id}/dismiss"
 category = "no_seed_strategy"
 reason   = "suggestions are model-generated; a fresh entry's suggestion list comes back empty"
 
+
 # --- Shared catalog, one field of one route -------------------------------
 # Scoped to the field rather than to the whole route: only the practice named
 # in the body is excused, so any other id this route ever grows is probed.
@@ -251,3 +265,10 @@ path     = "/user-practices/"
 category = "shared_catalog"
 field    = "practice_id"
 reason   = "practice_id names the shared preset catalog: require_visible_practice returns any approved preset to every authenticated user by design, so adopting one that another user also adopted is the feature, and probing it would report a false LEAK"
+
+[[route]]
+method   = "GET"
+path     = "/oauth/authorize"
+category = "shared_catalog"
+field    = "client_id"
+reason   = "client_id names the anonymous registry of public OAuth clients (#3532): an agent registers before anybody signs in, no client row belongs to any account, and naming another person's agent grants nothing -- the account-scoped part of the request is the resource, refused with invalid_target unless it is the caller's own vault (tests/security/test_idor.py)"

@@ -3,6 +3,7 @@ import { randomBytes } from 'node:crypto';
 import { expect, test, type APIRequestContext, type Locator, type Page } from '@playwright/test';
 
 import { readBrowserLaneState } from './browserState';
+import { skipWelcome } from './journalHabitsBrowserSupport';
 import { readLaneState } from './laneState';
 import { freshLicenseKey } from './licenseKey';
 
@@ -57,7 +58,7 @@ const NARROW_VIEWPORT = { width: 390, height: 844 };
 const SMALL_VIEWPORT = { width: 320, height: 568 };
 /** The common compact Android phone -- the other width the header must stay tidy at. */
 const COMPACT_VIEWPORT = { width: 360, height: 640 };
-const CTA_NAME = 'Perform Energy Scaffolding';
+const CTA_NAME = 'Start Energy Scaffolding';
 
 /**
  * A full page of habits: `HABITS_PER_PAGE` is `MAX_HABITS` (10), so this fills
@@ -78,12 +79,12 @@ const SEEDED_HABITS: ReadonlyArray<{ name: string; icon: string }> = [
 
 /**
  * Seeded habits made achieved-today, so their streak renders as the coloured
- * "N DAYS — ACHIEVED TODAY!" badge -- the widest text a tile header carries
+ * "N-DAY RUN · KEPT TODAY" badge -- the widest text a tile header carries
  * (#2961). One long single-word name, one multi-word name: the badge must not
  * push either into a mid-word break.
  */
 const ACHIEVED_HABITS: readonly string[] = ['Journalling', 'Gratitude Practice'];
-const ACHIEVED_BADGE_TEXT = 'ACHIEVED TODAY';
+const ACHIEVED_BADGE_TEXT = 'KEPT TODAY';
 /** Subtractive limits per tier, loosest first, as the goal editor orders them. */
 const SUBTRACTIVE_LIMITS: Readonly<Record<string, number>> = { low: 30, clear: 10, stretch: 0 };
 
@@ -109,22 +110,23 @@ function backendUrl(): string {
 }
 
 /**
- * A locator's layout box, or a loud failure -- never a silently skipped check.
- *
- * Waits for the element itself to be visible before measuring it. `boundingBox`
- * does not auto-wait, so without this the measurement races the layout: the
- * caller has usually awaited something NEARBY -- a tile's visibility, or a
- * count that resolves the moment the right number of nodes exist -- which does
- * not establish that THIS element has been laid out yet. A viewport change
- * re-lays the whole page out, which is where the gap is widest. The wait
- * changes nothing about what is asserted; it only stops the assertion being
- * taken before the page is ready to answer.
+ * Wait for the measurement itself: changing the grid's column count remounts
+ * its FlatList, so a successful visibility check can precede a detached box.
+ * A missing layout still fails the ordinary assertion deadline; every geometry
+ * assertion below uses the real box that satisfied this wait.
  */
 async function boxOf(locator: Locator, what: string): Promise<Box> {
-  await locator.waitFor({ state: 'visible' });
-  const box = await locator.boundingBox();
-  if (box === null) throw new Error(`${what} has no layout box`);
-  return box;
+  let box: Box | null = null;
+  await expect
+    .poll(
+      async () => {
+        box = await locator.boundingBox();
+        return box;
+      },
+      { message: `${what} has no layout box` },
+    )
+    .not.toBeNull();
+  return box!;
 }
 
 /**
@@ -150,7 +152,8 @@ async function signUp(page: Page, email: string): Promise<void> {
   await page.getByRole('textbox', { name: 'Confirm password' }).fill(ACCOUNT_PHRASE);
   await page.getByRole('textbox', { name: 'Gumroad license key' }).fill(freshLicenseKey());
   await page.getByRole('button', { name: 'Create account' }).click();
-  await page.getByRole('button', { name: 'Skip the welcome' }).click();
+  // This spec reloads later, so the welcome's decline must reach the server first (#3481).
+  await skipWelcome(page);
   await expect(page.getByRole('button', { name: 'Open Journal menu' })).toBeVisible();
 }
 
@@ -487,7 +490,8 @@ test('a full page of habits clears its footer controls and every tile is reachab
   await page.reload();
   await openHabits(page);
 
-  expect(await tiles(page).count()).toBe(SEEDED_HABITS.length);
+  // The tiles arrive with the habits read; wait for all of them, not the first paint (#3481).
+  await expect(tiles(page)).toHaveCount(SEEDED_HABITS.length);
   await measureAt(page, 'wide');
 
   // The same page, re-laid-out for a phone: one column of ten rows. Driven on

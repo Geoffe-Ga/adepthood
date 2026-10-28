@@ -166,15 +166,17 @@ In the backend service's **Variables** tab, add:
 |----------|-------|-----------|
 | `ENV` | `production` | Yes |
 | `SECRET_KEY` | *(see below)* | Yes |
-| `JOURNAL_ENCRYPTION_KEYS` | *(see below)* | Yes — the backend refuses to boot in production without it |
+| `JOURNAL_ENCRYPTION_KEYS` | *(see below)* | Yes — the backend refuses to boot in production without it (production meaning `ENV=production` *or* Railway's `RAILWAY_ENVIRONMENT_NAME=production`) |
 | `PROD_DOMAIN` | `https://app.yourdomain.example` | Yes |
-| `BOTMASON_PROVIDER` | `stub` | Yes (use `stub` to start) |
-| `LLM_API_KEY` | *(your API key)* | Only if provider is `openai` or `anthropic` |
+| `BOTMASON_PROVIDER` | `stub` | Yes (reported in the boot log only. AI features are available to writers' own keys only: every app-provider request without one is refused `402 llm_key_required`, credits included, whatever this names — ADR 0009 phase (a); see the variable reference) |
+| `LLM_API_KEY` | *(leave unset)* | No — not read since ADR 0009 phase (a) (#3067); the boot log warns `llm_api_key_unused` while one is set |
 | `LLM_MODEL` | *(model name)* | No (sensible defaults built in) |
 | `WEB_CONCURRENCY` | `2` | No (default: 2). Rate-limit state is per worker process, so every limit -- the ambient floor, burst floors, the per-client ceiling and each declared route limit -- is effectively `WEB_CONCURRENCY` x its stated budget per deployment |
 | `TRUSTED_PROXY_CIDRS` | *(Railway's ingress range)* | Recommended — without it every client shares one rate-limit bucket and https redirects break; the per-client 600/minute ceiling then becomes a site-wide 600/minute across the whole API |
 | `GOOGLE_OAUTH_CLIENT_IDS` | *(comma-separated Google client IDs)* | Only for Google sign-in — unset means every Google token is rejected |
 | `APPLE_OAUTH_CLIENT_IDS` | *(the iOS bundle identifier)* | Only for Apple sign-in — unset means every Apple token is rejected |
+| `OAUTH_ISSUER_URL` | `https://api.yourdomain.example` | Yes, for vault agents — the public https origin of this API, with no trailing slash. It is the `iss` of every agent token and the issuer in `/.well-known/oauth-authorization-server`, and is read from configuration, never from the request's Host header. Unset in production means the agent OAuth endpoints answer 503 |
+| `OAUTH_SIGNING_KEYS` | *(see below)* | Yes, for vault agents — ES256 (P-256) PEM private keys, newest first; the first signs and all are published at `/.well-known/jwks.json`. Unset in production means the token endpoint and the key set answer 503 and nothing is signed |
 
 **Generate a SECRET_KEY:**
 ```bash
@@ -190,6 +192,20 @@ python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().d
 This encrypts journal entry text at rest. A production boot without it **fails**
 — see [Journal Encryption at Rest](#journal-encryption-at-rest) below for what
 that protects and how rotation works.
+
+**Generate an OAUTH_SIGNING_KEYS value:**
+```bash
+openssl genpkey -algorithm EC -pkeyopt ec_paramgen_curve:P-256
+```
+The value is a list of unencrypted PEM P-256 private keys (PKCS#8 or SEC1),
+**newest first**, separated by commas or newlines; a one-line platform value
+may write the PEM's newlines as `\n`. The first key signs vault-agent access
+tokens; every key is published at `/.well-known/jwks.json`, where each vault
+fetches it. Rotate by prepending a new key (see
+[Rotate the agent signing key (90 days)](#rotate-the-agent-signing-key-90-days)).
+Never log, paste or commit a value. Once set with `OAUTH_ISSUER_URL`, both
+`/.well-known/oauth-authorization-server` and `/.well-known/jwks.json` should
+answer 200.
 
 **About PROD_DOMAIN:**
 This controls CORS (which origins can call your API). Set it to the URL where
@@ -209,6 +225,25 @@ missing one makes the browser block all responses and the app falsely report
 - `DATABASE_URL` — auto-injected by Railway from the linked PostgreSQL
 - `PORT` — auto-injected by Railway
 - `RAILWAY_*` — auto-injected by Railway
+
+#### Rotate the agent signing key (90 days)
+
+Rotate `OAUTH_SIGNING_KEYS` every 90 days (owner decision R3-3,
+`prompts/claude-comms/2026-10-27-release-decisions.md`). The key stays a
+platform variable.
+
+1. Generate a new key with the `openssl genpkey` command above.
+2. **Prepend** it to `OAUTH_SIGNING_KEYS`, keeping the current key after it.
+   The new key now signs; the old one is still published, so tokens it signed
+   still verify.
+3. Redeploy the backend.
+4. Wait at least 10 minutes (the access-token lifetime) **plus** the vaults'
+   5-minute key-set cache, so every token the old key signed has expired and
+   every vault has fetched the new key set.
+5. Drop the old key from `OAUTH_SIGNING_KEYS` and redeploy again.
+
+Never remove the old key before step 4 has elapsed: a token the old key signed
+would stop verifying while it is still live.
 
 ### 3e. Deploy and verify
 
@@ -246,6 +281,16 @@ The following files are already in the repo:
   Expo web export, copies the resulting `dist/` into an nginx image
 - **`frontend/nginx.conf`** — SPA routing (all routes fall back to
   `index.html`), gzip compression, aggressive caching for fingerprinted assets
+  and an enforced Content-Security-Policy. The checked-in file is a template:
+  the image build renders its `connect-src` with `frontend/web-hardening/csp.js`,
+  which takes the API origin from `EXPO_PUBLIC_API_BASE_URL` (and the Sentry
+  origin from `EXPO_PUBLIC_SENTRY_DSN`, when set) and refuses to build without
+  an https API origin. Change the API origin and the policy follows on the
+  next build; there is nothing to edit by hand
+- **`frontend/web-hardening/sri.js`** — run by `npm run web:build` after
+  `expo export`: stamps every script and stylesheet in the built `index.html`
+  with a `sha384` Subresource Integrity hash and fails the build if any served
+  asset is unhashed, mismatched, inline or from another origin
 - **`frontend/metro.config.js`** — Enables Node package exports resolution
   (required for `react-native-web` to resolve `styleq` subpath imports)
 - **`frontend/.dockerignore`** — Excludes `node_modules`, tests, etc. from
@@ -279,6 +324,7 @@ In the frontend service's **Variables** tab, add:
 | `EXPO_PUBLIC_GUMROAD_HELP_URL` | `https://help.gumroad.com/article/76-license-keys` | Optional. License-key help article linked from signup; defaults to this value |
 | `EXPO_PUBLIC_GOOGLE_CLIENT_ID_WEB` | *(the Google **Web** client ID)* | Only for Google sign-in on web. Baked in at build time — see the note below |
 | `EXPO_PUBLIC_SANGHA_INVITE_URL` | `https://discord.gg/<your-permanent-invite>` | Optional. Digital Sangha invite; unset means Settings shows neither the Sangha door nor its switch |
+| `EXPO_PUBLIC_CREDIT_PACK_URL` | `https://<your-store>/l/<credit-pack>` | Optional. BotMason credit pack page; unset means the app neither links to it nor offers credits |
 | `PORT` | `80` | nginx listens on 80 |
 
 > **Important:** every `EXPO_PUBLIC_*` variable is baked into the JavaScript
@@ -427,82 +473,73 @@ So key custody is part of backup custody, and it cuts both ways:
   dies with the Railway account. There must be a second copy of every key ever
   used — current *and* rotated-out — held somewhere the platform outage cannot
   reach: a password manager entry or an offline escrow. `[HUMAN ACTION]` —
-  establishing that escrow is not something a deploy can do for you, and it is
-  tracked in issue #2319 until it is.
+  establishing that escrow is not something a deploy can do for you. Issue
+  #2319, which tracked it, is closed with its escrow items checked; nothing in
+  this repository can confirm the escrow, so re-check that it holds every key in
+  `JOURNAL_ENCRYPTION_KEYS` — current *and* retired — whenever the list changes.
 - **Keys must never be stored with the backup.** A dump and its keys in the same
   bucket, archive, or download folder is one compromise away from being
   plaintext, which defeats the encryption entirely. Different system, different
   credentials.
-- **Keep retired keys.** Rows re-encrypt lazily, so a restored backup can carry
-  rows written under a key that production stopped using months ago. Discarding
-  a key discards every un-rewritten row that needed it.
+- **Keep retired keys.** A rotation re-encrypts a column only when a write
+  modifies it; every other value keeps the token of the key it was written
+  under until the sweep (see [Rotation](#journal-encryption-at-rest)) moves it.
+  And a restored backup carries whatever tokens the database held when the
+  backup was taken, so it can need a key that production stopped using months
+  ago. Discarding a key discards every row — live or in a backup — that still
+  needs it.
 
 `SECRET_KEY` is in the same category, with a smaller blast radius: losing it
 invalidates every issued JWT (everyone is logged out) but destroys no data.
 
 ### What is backed up, on what schedule, and where it lands
 
-Two independent legs, because each one fails in a way the other survives.
+One leg: Railway's own platform backup.
 
 | Leg | Mechanism | Schedule | Retention | Survives |
 | --- | --- | --- | --- | --- |
 | Platform | Railway volume backup, configured per-database in the service's **Backups** tab | Daily | 6 days | Dropped table, bad migration, accidental delete |
-| Off-host | `pg_dump -Fc`, encrypted, copied off Railway | Weekly | 90 days | Railway account loss, project deletion, region loss |
 
-**Railway's own backups are not off-host in the sense that matters.** They are
-copy-on-write volume backups restorable only **into the same project and
-environment**, with no documented export path. That makes them excellent for the
-mistakes you make and useless for the platform going away — which is exactly why
-the second leg exists. Railway's own schedule choices are Daily (kept 6 days),
-Weekly (kept 1 month), and Monthly (kept 3 months); pick Daily.
+The owner ratified the platform leg's retention on 2026-10-13 (#3063 AC15). On
+2026-10-14 the owner retired the second, off-host leg: "No off-host copy; rely
+on Railway's 6-day backups" (#3260). The decision record is
+[docs/privacy/retention-proposal.md](docs/privacy/retention-proposal.md).
+
+Retiring the off-host leg does **not** lower the journal purge floor. Its draft
+runbook kept weekly dumps for up to 90 days, and a dump made under it is held
+until someone deletes it, so the floor stays at 97 days (90 + 7). Lowering it to
+Railway's own 7 days (6 + 1) is a separate, later change, made only once the
+owner confirms no such dump is held.
+
+**What this leaves uncovered.** Railway's backups are copy-on-write volume
+backups restorable only **into the same project and environment**, with no
+documented export path. They recover from the mistakes you make. They do not
+recover from losing the Railway account, deleting the project, or losing the
+region. With no off-host copy, those events lose the data. Railway's own
+schedule choices are Daily (kept 6 days), Weekly (kept 1 month), and Monthly
+(kept 3 months); pick Daily.
 
 `[HUMAN ACTION]` to enable the platform leg: Railway dashboard → Postgres
 service → **Backups** → set schedule to Daily → confirm a backup appears within
-24 hours. Nothing in this repository can turn it on for you; issue #2319 tracks
-it until someone does.
+24 hours. Nothing in this repository can turn it on for you. Issue #2319, which
+tracked this, closed without the Daily schedule being confirmed, so treat the
+platform leg as unverified until someone has seen a Daily backup appear (#3058).
 
 **Recovery point objective (RPO): 24 hours.** Up to a day of writing can be lost
-in a total-loss scenario. **Recovery time objective (RTO): 1 hour** — the time
-from deciding to restore to the app serving reads again. Both are modest on
-purpose; a smaller RPO means continuous archiving (WAL shipping), which is not
-configured and should not be claimed.
+when a platform backup is restored. **Recovery time objective (RTO): 1 hour**,
+the time from deciding to restore to the app serving reads again. Both are
+modest on purpose; a smaller RPO means continuous archiving (WAL shipping),
+which is not configured and should not be claimed.
 
-### Taking an off-host dump
+### Off-host dumps: retired
 
-**Use the public connection string, not the injected one.** The `DATABASE_URL`
-Railway injects into the backend service points at `postgres.railway.internal`,
-which resolves only from inside the project's private network — a laptop cannot
-reach it, and neither can `railway run`. For an external dump, take
-`DATABASE_PUBLIC_URL` (the TCP-proxy address, `…proxy.rlwy.net:<port>`) from the
-Railway dashboard → PostgreSQL service → **Variables**. Paste it into the shell
-rather than committing it anywhere.
+There is no scheduled copy of the database off Railway. The weekly encrypted
+dump and its prune step, a draft (#3063), were retired on 2026-10-14 (#3260).
 
-`umask 077` first, so the dump is never world-readable — not even for the
-seconds before it is encrypted.
-
-```bash
-umask 077
-STAMP=$(date -u +%Y%m%dT%H%M%SZ)
-
-# Paste DATABASE_PUBLIC_URL here; do not persist it in a dotfile or history.
-read -rs PGURL && export PGURL
-
-pg_dump "$PGURL" -Fc -f "adepthood-$STAMP.dump"
-
-# Encrypt before it leaves the machine. Passphrase lives in the password
-# manager, NOT beside the file and NOT with JOURNAL_ENCRYPTION_KEYS.
-gpg --symmetric --cipher-algo AES256 "adepthood-$STAMP.dump"
-shred -u "adepthood-$STAMP.dump" 2>/dev/null || rm -P "adepthood-$STAMP.dump"
-```
-
-Then copy `adepthood-$STAMP.dump.gpg` to storage that is not Railway. The
-custom format (`-Fc`) is required: it is what `pg_restore` reads, it compresses,
-and it lets you restore selectively.
-
-> This leg is **manual today**. It is written down honestly rather than
-> described as automated: a weekly calendar reminder is the current mechanism,
-> and automating it needs a credential store and a destination bucket that do
-> not yet exist.
+`[HUMAN ACTION]` If a dump of production was ever made under that draft, delete
+it wherever it is kept, then say so on #3063. The 97-day purge floor rests on
+the assumption that such a dump may still exist; it can come down only after
+that confirmation.
 
 ### Restoring, step by step
 
@@ -521,7 +558,7 @@ costs.
 
    createdb -h "$HOST" -p "$PORT" -U "$USER" "$TARGET_DB"
    ```
-3. **Decrypt the dump** (off-host leg only): `gpg --decrypt adepthood-<stamp>.dump.gpg > restore.dump`
+3. **Decrypt the dump** (an encrypted dump only): `gpg --decrypt adepthood-<stamp>.dump.gpg > restore.dump`
 4. **Restore.** `--exit-on-error` is not optional: without it `pg_restore`
    reports success-ish while skipping objects it could not create.
    ```bash
@@ -540,11 +577,44 @@ costs.
    read this database, listing **every key that could have encrypted a row in
    this dump**, newest first. The current production key alone is not enough if
    the dump predates a rotation.
-8. **Verify before cutting over** (next section). A restore is not finished when
+8. **Suppress resurrected deletions.** *DRAFT for owner review (#3063); not yet
+   a ratified step of this procedure.* A backup taken before an account or a
+   journal page was deleted still holds it, and the deletion's own record is
+   restored away with it, so the deleted account could sign in again. The
+   same goes for a page made Intimate after the backup (it would come back
+   Personal) and a deletion still waiting on its vault (it would come back
+   live, with no record that the vault copy is owed). The tombstone file
+   (format version 3, #3214) carries all four: erased accounts, soft-deleted
+   pages, Intimate pages and open vault-withdrawal obligations. Reapply
+   re-stamps the Intimate tier and re-records each obligation; the background
+   sweep then finishes the withdrawals once the app is serving. A file from
+   an earlier format is refused: export a fresh one. Before cutting over,
+   reapply the tombstones to the restored database:
+   ```bash
+   # From backend/, with DATABASE_URL pointing at the RESTORED database.
+   # TOMBSTONES is the content-free file exported with `export --out` from the
+   # live database before the restore (or from wherever it is kept -- where it
+   # lives is undecided, #3063 AC17; without one, deletions made after the
+   # backup cannot be suppressed and must be treated as resurrected).
+   # RESTORE_ID names THIS restore. Choose it once (e.g. after the backup you
+   # restored) and paste the same value on any rerun: a completed id is refused,
+   # which is what stops a second reapply after cutover.
+   TOMBSTONES=tombstones.json; RESTORE_ID=restore-of-backup-YYYYMMDD
+   PYTHONPATH=src python -m scripts.restore_suppression reapply \
+     --in "$TOMBSTONES" --restore-id "$RESTORE_ID"
+   ```
+   Exit 0 prints the counts; exit 1 is a refusal (a policy gap, or a restore
+   already marked complete -- never rerun a completed restore after cutover);
+   exit 2 is an unreadable file. Before the restored service starts at all,
+   set `RESTORE_SUPPRESSION_REQUIRED=1` and `RESTORE_ID` (the same value) on
+   it: the app then refuses to boot until that restore's reapply completed, so
+   nothing writes to a resurrected page first. Both are unset by default in the
+   code and change nothing until set here.
+9. **Verify before cutting over** (next section). A restore is not finished when
    `pg_restore` exits; it is finished when a journal entry decrypts.
-9. **Point the app at it** and bring the backend service back up. Watch the boot
-   log for `journal_encryption_enabled=True` and `/health` for
-   `{"status": "healthy", "database": "connected", ...}`.
+10. **Point the app at it** and bring the backend service back up. Watch the boot
+    log for `journal_encryption_enabled=True` and `/health` for
+    `{"status": "healthy", "database": "connected", ...}`.
 
 ### Verifying a restore
 
@@ -629,11 +699,71 @@ What was run, and what was observed:
     dangerous — it looks fine and is not trustworthy.
 
 **What this drill did not prove.** It ran against a local cluster, so the
-Railway-side restore path (steps 1 and 2 of the procedure), the encrypted
-off-host copy, and the platform Backups tab are documented from Railway's
+Railway-side restore path (steps 1 and 2 of the procedure) and the platform
+Backups tab are documented from Railway's
 reference and from the local drill's logic — not from a production rehearsal.
 The next drill should be run against a Railway staging database restored from a
 real platform backup, and this record updated with its date.
+
+---
+
+## Gumroad Webhook Registration
+
+Gumroad sends one form-encoded "ping" per event to every URL registered for
+that event's resource. The backend receives them all at
+`POST /webhooks/gumroad/ping`, authenticated by the `secret` query parameter,
+which must equal the backend's `GUMROAD_WEBHOOK_SECRET`. Every ping is stored
+verbatim; the table below is what each one then does
+(`backend/src/routers/gumroad.py`, `_EVENT_HANDLERS`).
+
+| Resource | What the app does |
+|----------|-------------------|
+| `sale` | Grants course access for an APTITUDE product, or credits a token pack |
+| `refund` | Reverses the sale once: revokes access (restricting AI) and claws back pack credits, flags `refunded` |
+| `dispute` | Same as `refund` |
+| `cancellation` | Records the click for audit only; **no access changes** (#3259) |
+| `subscription_ended` | Revokes course access; operator-funded AI is refused with `403 ai_access_revoked`. Journal, course, habits, practice, export and deletion stay open |
+| `subscription_restarted` | Gives back the access that sale's `subscription_ended` took. Never re-grants one revoked by a refund, a dispute or an operator |
+
+The membership events are ordered by Gumroad's own event times
+(`cancelled_at`, `ended_at`, `restarted_at`) when the ping carries them, so a
+late or replayed ping never overrides a newer one.
+
+Register each resource once, with a Gumroad API access token (Gumroad →
+Settings → Advanced → Applications) and the production backend URL:
+
+```bash
+# Read both values from the password manager; do not persist them in history.
+read -rs GUMROAD_ACCESS_TOKEN
+read -rs GUMROAD_WEBHOOK_SECRET
+BACKEND=https://<backend-domain>
+
+for resource in sale refund dispute cancellation subscription_ended subscription_restarted; do
+  curl --fail-with-body -sS https://api.gumroad.com/v2/resource_subscriptions -X PUT \
+    -d "access_token=$GUMROAD_ACCESS_TOKEN" \
+    -d "resource_name=$resource" \
+    --data-urlencode "post_url=$BACKEND/webhooks/gumroad/ping?secret=$GUMROAD_WEBHOOK_SECRET"
+  echo
+done
+
+# Verify: each resource should list exactly one subscription to the backend.
+curl --fail-with-body -sS -G https://api.gumroad.com/v2/resource_subscriptions \
+  -d "access_token=$GUMROAD_ACCESS_TOKEN" -d resource_name=subscription_ended
+```
+
+Register `cancellation`, `subscription_ended` and `subscription_restarted`
+only on a backend that includes #3259. An older backend treats a cancellation
+as an immediate revocation and ignores restarts.
+
+Every ping is keyed on its `sale_id`; one without it is refused with
+`400 malformed_payload` and Gumroad retries it. Before relying on the
+membership events, send one test ping per resource from Gumroad and confirm
+in the logs that it was answered `gumroad_webhook_accepted` rather than
+`malformed_payload`.
+
+To rotate the secret, set the new `GUMROAD_WEBHOOK_SECRET` on the backend,
+then re-run the loop above with the new value and delete the old
+subscriptions (`DELETE /v2/resource_subscriptions/:id`).
 
 ---
 
@@ -673,16 +803,51 @@ keys — the body and title on `journalentry`, the anchored passage on
 `promotedquote`, the passage plus the note and essay on `marginalia`, the
 passage plus its label on `completionsuggestion`, the weekly answer on
 `promptresponse` (mirrored into an entry byte-for-byte), and the ontologized
-copy on `corpusfragment`. A single plaintext copy beside the ciphertext would be
+copy on `corpusfragment`. Two values derived from the writing are encrypted
+with the same keys too: the passage's `embedding` on `corpusfragment` and the
+vault's `vault_tags` on `journalentry`, each stored as the ciphertext of its
+JSON list. A single plaintext copy beside the ciphertext would be
 the copy a stolen dump yields, so the set is pinned by a test rather than by this
 list. **Key presence is the switch**: with no key configured the columns are
 plaintext, which is the right default on a laptop and unacceptable on a server.
-So a boot with `ENV=production` and no key **fails**, naming the variable — the
-deploy never goes live rather than quietly storing every user's writing in the
-clear.
+So a production boot with no key **fails**, naming the variable — the deploy
+never goes live rather than quietly storing every user's writing in the clear.
+
+"Production" is decided by two signals, either of which is enough: `ENV` set to
+`production`, or the environment name Railway injects
+(`RAILWAY_ENVIRONMENT_NAME`, or the legacy `RAILWAY_ENVIRONMENT`) equal to
+`production`. `ENV` is typed by a person and can be missing or wrong; the
+platform's name for the environment cannot be forgotten. A process that carries
+Railway's deploy markers (`RAILWAY_PROJECT_ID`, `RAILWAY_SERVICE_ID`,
+`RAILWAY_PUBLIC_DOMAIN`) but no environment name is treated as production too.
+The check also runs at the write itself, not only at boot: wherever production
+is in force and no key is configured, writing an encrypted column raises instead
+of storing plaintext — so a script, a migration or a worker that never ran the
+boot check cannot store prose in the clear either. Note that this assumes the
+Railway production environment is literally named `production`; if it is named
+otherwise, only `ENV` protects it.
 
 Outside production an empty value is normal and silent: requiring a key to run a
 local server or the test suite would be friction with no security benefit.
+Staging (`RAILWAY_ENVIRONMENT_NAME=staging`) counts as outside production.
+
+**What is not encrypted.** Encryption covers the columns typed `EncryptedString`,
+listed by `backend/src/services/encryption_inventory.py`. Every other column that
+can hold text is classified, with a reason, in
+`backend/tests/test_column_classification.py`, and a new unclassified column
+fails the suite. Some of those plaintext columns are derived from encrypted
+writing — `corpusfragment.embedding` and `frequency_weights`, and
+`journalentry.vault_tags`, `classification` and `tag` — and some are short text
+a person typed: goal, habit and group names, a renamed practice, a display name.
+They are stored in the clear today.
+
+**Who can read it.** The keys live in the same Railway project as the database.
+Anyone who can read the service's variables and reach the database can read
+every encrypted column; anyone who can reach the database alone can read every
+plaintext column above. Encryption at rest protects a stolen disk, dump or
+backup that travels without the keys
+([ADR 0005](docs/adr/0005-operator-side-ontologization.md)); it does not keep
+the operator out.
 
 **Generate a key:**
 ```bash
@@ -701,17 +866,62 @@ compromises both.
 JOURNAL_ENCRYPTION_KEYS=<new-key>,<previous-key>
 ```
 
-The **first** key encrypts every new write; **every** listed key can decrypt. So
-a rotation is: generate a new key, prepend it, redeploy. The registry is cached
-per worker, so the change takes effect on restart — rotation is a deploy-time
-operation, not a runtime one.
+The **first** key encrypts every new write; **every** listed key can decrypt. The
+registry is cached per worker, so a change takes effect on restart — rotation is
+a deploy-time operation, not a runtime one.
 
-Rows re-encrypt lazily, on their next write. Nothing rewrites the corpus for
-you, so **keep the previous key listed** until you are willing to lose whatever
-has not been rewritten under the new one. Dropping a key that some row still
-needs does not degrade to plaintext and does not return the ciphertext as if it
-were the user's text — the read raises. There is no recovery from a discarded
-key: the ciphertext is the only copy.
+Prepending a key does **not** re-encrypt existing rows. A write re-encrypts only
+the columns it modifies, so a value nobody edits keeps the token of the key it
+was written under indefinitely, and a row written before any key was configured
+stays plaintext. Dropping a key that some row still needs does not degrade to
+plaintext and does not return the ciphertext as if it were the user's text — the
+read raises. There is no recovery from a discarded key: the ciphertext is the
+only copy. So a rotation is finished by a sweep, run from `backend/` with
+`DATABASE_URL` and `JOURNAL_ENCRYPTION_KEYS` set exactly as the service has them:
+
+1. Generate a new key, put it in escrow, prepend it, redeploy. The new key0
+   must be **deployed and escrowed before** `--apply`: the sweep encrypts the
+   whole corpus under it, and a key that exists only in an operator's shell is
+   a corpus production cannot read and nobody can recover. Each worker's boot
+   log then carries `journal_encryption_primary_fingerprint=<12 hex>` — a
+   non-secret fingerprint of key0, never the key.
+2. `PYTHONPATH=src python -m scripts.journal_encryption_sweep audit` — prints
+   `primary_key_fingerprint=<12 hex>` for the key0 in *your* shell, then, per
+   `table.column`, how many values are NULL, plaintext, readable by each key
+   position (`key0` is the new primary), and readable by none. Counts and names
+   only: never a value or a key. The fingerprint must equal the boot log's; if
+   it does not, your shell does not hold the deployed keys — stop.
+3. `PYTHONPATH=src python -m scripts.journal_encryption_sweep reencrypt` — a dry
+   run that reports what would be rewritten and writes nothing.
+4. `PYTHONPATH=src python -m scripts.journal_encryption_sweep reencrypt --apply --primary-fingerprint <12 hex>`,
+   passing the fingerprint from the deployed service's boot log — the command
+   refuses (exit `3`, nothing written) unless it matches this shell's key0. It
+   rewrites every plaintext and old-key value under the primary key, in
+   batches committed one at a time. Each write is compare-and-swap, so a value a
+   user edits meanwhile is skipped rather than overwritten. A value no listed key
+   can read stops the run before anything in its batch is written; plaintext is
+   never written. An interrupted run can be rerun (rows already on the primary
+   key are skipped) or resumed from the last line it printed with
+   `--start-after table.column:ID`.
+5. Repeat the audit until it exits `0`.
+
+Exit codes, for both commands: `0` clean; `1` rows remain (plaintext or
+old-key values, or rows a user edited during the sweep — run it again); `2` a
+malformed command line; `3` an integrity stop (no key, a malformed key, a
+missing or mismatched `--primary-fingerprint` on `--apply`, or a value no
+listed key can read); `4` a database stop (a timeout, deadlock or lost
+connection mid-run — the batch in flight is rolled back, and the error is
+reported by class, column and resume point only, never with the values it was
+writing).
+
+Only once the audit exits `0` with the old key still listed is that key no
+longer needed by the **live** database. It is still needed by every backup taken
+before the sweep (see [Backups and Restore](#backups-and-restore)), so it stays
+in escrow until the last such backup has aged out.
+
+Reads of legacy plaintext from an encrypted column while a key is configured
+are also signalled at runtime: each worker logs one `journal_plaintext_read`
+warning (no content, no row) the first time it sees one.
 
 **A malformed key fails fast in every environment**, production or not. A typo
 is never re-read as "encryption is off".
@@ -722,8 +932,9 @@ is never re-read as "encryption is off".
 journal_encryption_enabled=True
 ```
 
-`False` in a production log means the deploy predates this check or `ENV` is not
-`production` — either way, journals are being written in the clear.
+`False` in a production log means the deploy predates this check, or neither
+`ENV` nor Railway's environment name says `production` — either way, journals
+are being written in the clear.
 
 ## Environment Variables Reference
 
@@ -733,12 +944,13 @@ journal_encryption_enabled=True
 |----------|----------|---------|-------------|
 | `ENV` | Yes | `development` | `development`, `staging`, or `production` |
 | `SECRET_KEY` | Yes | `replace-me` | JWT signing key. Generate with `python -c "import secrets; print(secrets.token_urlsafe(32))"` |
-| `JOURNAL_ENCRYPTION_KEYS` | Yes in prod | *(empty)* | Comma-separated urlsafe-base64 Fernet keys encrypting journal text at rest. The first encrypts, every listed key can decrypt. Empty means plaintext columns, so `ENV=production` without it refuses to boot; outside production empty is the normal local state. An invalid key fails fast in every environment. See [Journal Encryption at Rest](#journal-encryption-at-rest). |
+| `JOURNAL_ENCRYPTION_KEYS` | Yes in prod | *(empty)* | Comma-separated urlsafe-base64 Fernet keys encrypting journal text at rest. The first encrypts, every listed key can decrypt. Empty means plaintext columns, so production without it refuses to boot and refuses encrypted-column writes (production is `ENV=production` or `RAILWAY_ENVIRONMENT_NAME=production`); outside production empty is the normal local state. Rotation is finished by `scripts.journal_encryption_sweep`, not by later writes. An invalid key fails fast in every environment. See [Journal Encryption at Rest](#journal-encryption-at-rest). |
 | `PROD_DOMAIN` | In prod/staging | — | Comma-separated HTTPS origins for CORS. Every live frontend origin must appear; this deployment's web origin is in [Production origins](#production-origins). |
-| `BOTMASON_PROVIDER` | No | `stub` | AI backend: `stub`, `openai`, or `anthropic` |
-| `LLM_API_KEY` | If not stub | — | API key for the chosen LLM provider |
-| `LLM_MODEL` | No | Provider default | `gpt-4o-mini` (OpenAI) or `claude-sonnet-5` (Anthropic). Allowlisted per provider in `backend/src/services/botmason.py`; an id outside the allowlist fails fast at startup rather than reaching the provider. See [Verifying allowlisted models still resolve](#verifying-allowlisted-models-still-resolve).  Server-paid requests refuse `claude-opus-5`, `claude-opus-4-7` and `gpt-4-turbo` (`SERVER_PAID_REFUSED_MODELS`, #623: the resonance-economy decision record rules "refuse non-cost-bounded models on the server-paid path (no multiplier)"): a charged pass, letter or page is refunded and answers `502 llm_provider_error`, and the uncharged server-paid features (frequency classification, completion detection) degrade. A user's own key (BYOK) still reaches those models. |
-| `BOTMASON_DAILY_GENERATION_CEILING` | No | `100` | Charged generations (resonance passes, first essay letters, page transcriptions) one user may make per UTC day, net of refunded failures; past it a request answers `429 daily_generation_limit_reached` with `Retry-After` set to the seconds until 00:00 UTC, and nothing is charged. The default is the owner-ratified "configurable launch ceiling of 100 charged generations/day/user" (#623). Parsed like `BOTMASON_MONTHLY_CAP`: unset, empty, malformed or negative means 100. `0` is an emergency brake that refuses every charged generation. BYOK generations are never charged, so never counted. Counted from `walletaudit` in the database, so it holds across every worker and ignores the rate-limit kill switch. |
+| `BOTMASON_PROVIDER` | No | `stub` | Reported in the boot log; nothing else reads it since ADR 0009 phase (a) (#3067). A cloud model is reached only with the writer's own key (`X-LLM-API-Key`, whose prefix selects the provider). Every other AI request -- resonance pass, letter, completion check, page transcription -- is refused `402 llm_key_required` before anything is charged, credits included, unless the writer's own vault answers it. Credits pay only when the caller's vault answers; whether the vault itself uses a cloud model is the vault's boundary (`CREEK_DOWNSTREAM_MODEL`, under the Creek deployment's `CREEK_CLOUD_CONSENT`), and is not yet verified per receipt -- a known gap escalated to the owner (a managed vault with `CREEK_CLOUD_CONSENT` could answer from a cloud model on an operator-held key); frequency classification and corpus backfill degrade to unclassified with no cloud call. `openai` or `anthropic` here no longer makes the server pay for anyone. The canned stub answer survives only as the `BOTMASON_STUB_SEAM` test seam below. |
+| `BOTMASON_STUB_SEAM` | Never in prod | *(unset)* | Test seam only. Exactly `true` lets the canned BotMason stub answer keyless requests on a `stub` server, as the backend suite (`backend/conftest.py`) and the end-to-end lane (`frontend/e2e/globalSetup.ts`) need. Anything else leaves it off. With it armed, the backend boots only with `ENV` set **explicitly** to `development` or `e2e` (an unset `ENV` refuses: it cannot tell a laptop from an unlabelled host) and with no platform variable present (`RAILWAY_ENVIRONMENT_NAME`, `RAILWAY_ENVIRONMENT`, `RAILWAY_PROJECT_ID`, `RAILWAY_SERVICE_ID`, `RAILWAY_PUBLIC_DOMAIN`, whatever their value). Production, staging, previews and a mistyped `ENV` all refuse to boot, because the stub hands writers text-replaced sentences presented as a reflection (#3096). |
+| `LLM_API_KEY` | No | — | **Not read** since ADR 0009 phase (a) (#3067): no request carrying a person's content is sent on the server's own provider account, and no other use of it exists. Leave it unset; while one is set the boot log warns `llm_api_key_unused` (by name, never the value). Sentry still scrubs the name. |
+| `LLM_MODEL` | No | Provider default | `gpt-4o-mini` (OpenAI) or `claude-sonnet-5` (Anthropic). Allowlisted per provider in `backend/src/services/botmason.py`; an id outside the allowlist fails fast at startup rather than reaching the provider. See [Verifying allowlisted models still resolve](#verifying-allowlisted-models-still-resolve).  Applies to the provider the writer's own key selects on the routes that still relay it (resonance, letters, completion detection). It does **not** govern page reading: a page read with the writer's own key goes from their device straight to the vendor (ADR 0009 phase (a), #3067) and always uses that vendor's registry default (`gpt-4o-mini` or `claude-sonnet-5`), whatever this is set to. #623's server-paid refusal of `claude-opus-5`, `claude-opus-4-7` and `gpt-4-turbo` is subsumed by ADR 0009 phase (a): nothing is server-paid, so a keyless request reaches no model; a writer's own key (BYOK) still reaches those models. |
+| `BOTMASON_DAILY_GENERATION_CEILING` | No | `100` | Charged generations (resonance passes, first essay letters, page transcriptions) one user may make per UTC day, net of refunded failures; past it a request answers `429 daily_generation_limit_reached` with `Retry-After` set to the seconds until 00:00 UTC, and nothing is charged. The default is the owner-ratified "configurable launch ceiling of 100 charged generations/day/user" (#623). Parsed like `BOTMASON_MONTHLY_CAP`: unset, empty, malformed or negative means 100. `0` is an emergency brake that refuses every charged generation. BYOK generations are never charged, so never counted. Counted from `walletaudit` in the database, so it holds across every worker and ignores the rate-limit kill switch. Because BYOK bypasses it, `0` does not stop external inference: `PRIVACY_SUSPEND_EXTERNAL_AI` is the control that also stops BYOK calls. |
 | `WEB_CONCURRENCY` | No | `2` | Number of Uvicorn worker processes. All rate-limit state lives in each worker's memory (there is no shared store), so the effective per-deployment budget of every limit -- ambient floor, burst floors, per-client ceiling, declared route limits -- is `WEB_CONCURRENCY` x the stated limit . That includes the per-user generation limit of 5 resonance or essay generations per minute (#623): it is per worker, so a deployment admits up to `WEB_CONCURRENCY` x 5 per user per minute. The other two generation guardrails are not: the cap of 2 concurrent generations per user (a `generationslot` lease row) and the daily ceiling above are both database-backed and hold across workers |
 | `ALLOWED_HOSTS` | Recommended in prod | *(empty)* | Comma-separated hostnames this deploy answers as, canonical one **first**. The authority half of the same question `TRUSTED_PROXY_CIDRS` answers for the scheme: both halves of every absolute URL the app mints are otherwise written by the caller, most visibly the router's trailing-slash `307`, which is answered before any auth check runs. A request naming an unlisted host is **not rejected** — its authority is replaced with the first entry and it proceeds normally, so a platform health prober whose `Host` you cannot predict still gets its `200` and nothing needs a path exemption; the original `Host` is recorded on that request's access-log line as `original_host`. Left empty, nothing is settled and behaviour is exactly as before, which is what keeps local dev, Expo and LAN addresses working unconfigured. Entries are bare hostnames with an optional port (`api.example.com`, `localhost:8000`) — no scheme, path or userinfo. Matching ignores the port; the substitution is verbatim. Wildcards are refused, not supported: this variable also names the host a non-matching request is settled onto, and a pattern has no single host to substitute. A malformed entry refuses the boot on every `ENV`; an unset one only warns, and only in production. |
 | `TRUSTED_PROXY_CIDRS` | Recommended in prod | *(empty)* | Comma-separated IPs/CIDRs of the reverse proxies you operate, e.g. the platform ingress range. Until it is set, `X-Forwarded-For` is ignored (every client behind the ingress shares one rate-limit bucket and one audited IP) and `X-Forwarded-Proto` is untrusted, so redirects and absolute URLs stay `http://`. Unset, the per-client overall ceiling (`CLIENT_CEILING_LIMIT`, 600/minute) is shared by every client too, which makes it a site-wide 600/minute across the whole API. Never list a public range you do not control. |
@@ -761,6 +973,9 @@ journal_encryption_enabled=True
 | `CREEK_PROVISIONING_AUTH_FILE` | With provisioning | *(empty)* | Must be the exact mounted path `/run/adepthood-secrets/creek-control-bearer`, containing Adepthood's Creek service bearer. The bearer itself must not be stored in the environment. |
 | `CREEK_PROVISIONING_HANDOFF_AUTH_FILE` | With provisioning | *(empty)* | Must be the exact mounted path `/run/adepthood-secrets/creek-handoff-bearer`, containing a distinct, separately rotated bearer used to authenticate Creek's one-time connection handoff callback. |
 | `CREEK_MANAGED_VAULT_ALERT_EMAIL` | With managed-vault activation | *(empty)* | Monitored operator mailbox for content-free fleet alerts. Managed-vault rollout remains unavailable unless this is a valid email address. |
+| `CREEK_MANAGED_VAULT_ACTIVATION_ENABLED` | With managed-vault activation | *(unset = off)* | Switch for **new** managed-vault activations. Unset, empty, `0`, `false`, `no` or `off` turns them off; `1`, `true`, `yes` or `on` turns them on, subject to the other rollout settings; any other value leaves the rollout incomplete, so no new activation is admitted. It gates new activations only: vaults that already exist keep replicating and reflecting. To stop content reaching existing vaults during an incident, use `PRIVACY_SUSPEND_VAULT_SEND`. |
+| `PRIVACY_SUSPEND_EXTERNAL_AI` | No | *(unset = off)* | Operator privacy-incident switch (#3075). On, it refuses every cloud language-model call, server-paid **and** BYOK, before any provider client is built. Resonance, essay letters, completion detection and page transcription answer `503 ai_suspended` and charge nothing. Journal create, read and edit, export and account deletion keep working; frequency classification on a write degrades to unclassified, and the entry is still saved. A cached essay letter and the care surface for an intimate entry are still served. **Only unset, empty or `false` (case- and whitespace-insensitive) is off; every other value, including `0`, `off` and `no`, suspends.** An unrecognised value is also logged once at boot by variable name, never by value. Read at call time; the boot log line `privacy_suspension_state` and `GET /admin/privacy-suspensions` confirm the state. The two switches are independent: this one does not stop vault sends, and `PRIVACY_SUSPEND_VAULT_SEND` does not stop cloud calls, so flip both for zero external egress of content. |
+| `PRIVACY_SUSPEND_VAULT_SEND` | No | *(unset = off)* | Operator privacy-incident switch (#3075). On, it refuses every content-bearing Creek vault request (any request with a body, and any `POST`, `PUT` or `PATCH`: journal ingest, reflection, upload, Voice Draft upsert, and pipeline classify/link) before it reaches the wire. The journal write, reflection and upload paths treat it as an unavailable vault, so writing is still saved locally. A pipeline stage it refuses ends on that attempt without further retries. It is recorded `failed` when no attempt could have reached the vault, and `ambiguous` when an earlier, unanswered attempt may have. Body-free requests continue: the capability probe, job polls, the wheel read, and the content-free journal withdrawal and Voice Draft deletion. Teardown reconciliation through the provisioning client is not affected. Same parsing as `PRIVACY_SUSPEND_EXTERNAL_AI`: only unset, empty or `false` is off. Confirm with `GET /admin/privacy-suspensions`. |
 | `ACCOUNT_EGRESS_BARRIER_CROSS_WORKER_ENABLED` | No | *(unset = on)* | Switch for the **cross-worker** half of the per-account egress barrier. Unset or `true` is on; `false` suppresses the PostgreSQL advisory statements and nothing else. Any other value is refused and reported as a defect rather than read as either answer. See "Per-account egress barrier" below — this is not a feature flag for the barrier itself, which cannot be turned off. |
 
 ### Per-account egress barrier
@@ -865,6 +1080,7 @@ length of its Creek round trip. Budget PostgreSQL `max_connections` at
 | `EXPO_PUBLIC_GOOGLE_CLIENT_ID_IOS` | For Google sign-in on iOS | Google **iOS** client ID. Consumed by EAS native builds, not the web Dockerfile. |
 | `EXPO_PUBLIC_GOOGLE_CLIENT_ID_ANDROID` | For Google sign-in on Android | Google **Android** client ID. Consumed by EAS native builds, not the web Dockerfile. |
 | `EXPO_PUBLIC_SANGHA_INVITE_URL` | No | Permanent, never-expiring Discord invite for the Digital Sangha, opened from Settings in the platform browser. Must be `https`; anything else resolves to nothing. There is deliberately no default — unset means the app never mentions the Sangha, which is an absent invitation rather than a dead link inside a shipped binary. |
+| `EXPO_PUBLIC_CREDIT_PACK_URL` | No | Page where BotMason credits are bought, linked from the vault-reading "balance has run out" remedy with a note to buy with the same email address as the Adepthood account. Must be `https`; anything else resolves to nothing. No default — unset means the app neither links to it nor says credits can be bought. |
 | `EXPO_PUBLIC_SENTRY_DSN` | No (recommended in prod) | Sentry DSN that crashes caught by the error boundaries are reported to. Baked in at build time like every other `EXPO_PUBLIC_*` value, so it is public — use a client DSN, never a server one. Unset means crashes go to the console only. |
 | `EXPO_PUBLIC_SENTRY_ENVIRONMENT` | No | Sentry environment for client reports. Defaults to `development` in dev builds and `production` otherwise. |
 | `EXPO_PUBLIC_SENTRY_RELEASE` | No | Version string client reports are tagged with. Defaults to `unknown`. |
@@ -1138,6 +1354,118 @@ address-rotation bypass this setting exists to close.
 
 ---
 
+## Nightly retention sweep (Railway cron)
+
+Every retention period the owner ratified (the decision record is
+`docs/privacy/retention-proposal.md`) is applied by one script,
+`backend/scripts/retention_sweep.py`. It removes, in one run, everything that
+has passed its period: energy plans, feedback reports, soft-deleted journal
+pages, confirmed withdrawal and retraction receipts, erasure receipts,
+anonymised sales, sign-in attempts, AI metering rows, expired deny-list
+tokens, dead share links, confirmed teardown receipts and finished restore
+markers. Open obligations, unconfirmed teardowns, unfinished or still-named
+restores and still-claimed sales are never removed. The periods live in
+`backend/src/domain/retention.py`; the script restates none of them.
+
+**Nothing is deleted until you create the cron service below.** It is a second
+Railway service that runs the backend's own image, executes the script once,
+and exits. It does not serve traffic and makes no backup.
+
+### Create the cron service
+
+1. In the Railway project, click **"+ New"** → **"GitHub Repo"** and pick the
+   same `adepthood` repository as the backend. Leave the root directory unset,
+   exactly as for the backend (the build context is the repository root).
+2. Rename the service **`retention-sweep`**.
+3. **Settings → Build:** builder **Dockerfile**, Dockerfile path
+   `backend/Dockerfile` (the same image as the backend).
+4. **Settings → Config-as-code:** leave the config file path **empty**. If
+   Railway picked up `backend/railway.toml`, clear it: that file sets the
+   backend's `/health` healthcheck, which a job that exits never answers.
+5. **Settings → Deploy → Custom Start Command:**
+   ```
+   python -m scripts.retention_sweep
+   ```
+   The image's working directory is `/app` and it presets
+   `PYTHONPATH=/app/src`, so no other prefix is needed. Do **not** add
+   `alembic upgrade head`: the backend service owns migrations.
+6. **Settings → Deploy → Cron Schedule:** `17 3 * * *`. Railway reads cron
+   schedules in **UTC**, so this is 03:17 UTC every night. Any off-peak
+   minute works; avoid the top of the hour, when shared infrastructure is
+   busiest.
+7. **Settings → Deploy → Restart Policy:** **Never**. A failed sweep should
+   show as a failed run, not loop; the next night's run retries every store.
+
+### Reference the backend's variables
+
+In the `retention-sweep` service's **Variables** tab, click **"+ New
+Variable"** → **"Add Reference"**, and reference these from the **backend**
+service, so the two can never drift:
+
+| Variable | Reference | Why |
+|----------|-----------|-----|
+| `DATABASE_URL` | `${{backend.DATABASE_URL}}` | The database to sweep. Required. |
+| `RESTORE_ID` | `${{backend.RESTORE_ID}}` | Only if the backend sets it: the sweep then keeps the restore marker the startup gate names. |
+
+That is all. No sweep decrypts anything, so **do not** reference
+`JOURNAL_ENCRYPTION_KEYS`; nor `SECRET_KEY`, any provider key, or any
+managed-vault variable. The fewer secrets the job holds, the less a leak of it
+exposes.
+
+### First run: dry run, then apply
+
+Before the first scheduled run, look at what it would do:
+
+1. Temporarily set the Custom Start Command to
+   `python -m scripts.retention_sweep --dry-run`.
+2. Deploy the service (**Deploy** button, or wait for the schedule). A dry run
+   counts and changes nothing.
+3. Read the counts (below). Large first-night numbers are expected: every
+   period starts applying at once, to rows that may be years old.
+4. Restore the start command to `python -m scripts.retention_sweep`. From then
+   on, the schedule runs it every night.
+
+To run it by hand from a checkout instead, from `backend/`, with
+`DATABASE_URL` set to the database's **public** URL (Postgres service →
+Variables → `DATABASE_PUBLIC_URL`; paste it, do not persist it):
+
+```bash
+PYTHONPATH=src python -m scripts.retention_sweep --dry-run
+```
+
+### Reading the counts
+
+Each run's logs (service → **Deployments** → the run → **Logs**) carry one line
+per store and a closing line, and nothing else: no id, email, IP, token or
+content.
+
+```
+retention_sweep_store store=loginattempt mode=apply eligible=412 deleted=412 blocked=0 duration_ms=38
+retention_sweep_store store=journalwithdrawalobligation mode=apply eligible=3 deleted=3 blocked=1 duration_ms=12
+retention_sweep_store_failed store=gumroadsale mode=apply error=OperationalError duration_ms=5003
+retention_sweep_done mode=apply stores=13 failed=1
+```
+
+- `eligible`: rows past their period now. On a dry run, what would go.
+- `deleted`: rows removed (always `0` on `--dry-run`). Equal to `eligible`
+  unless a row changed between the count and the delete.
+- `blocked`: rows past the period that the rules hold anyway: an open vault
+  withdrawal, an unconfirmed teardown, an unfinished or still-named restore, a
+  sale a course grant or licence binding still names, a soft-deleted page
+  whose essay withdrawal is unsettled, or a share link that was used up but
+  never expired or revoked (no column records when it ran out). A blocked
+  count that grows night after night means something is stuck upstream.
+- `duration_ms`: how long the store took.
+- `retention_sweep_store_failed`: that store's transaction was rolled back
+  and the error is named by class only. The other stores still ran, and the
+  run exits `1`, so Railway marks it failed. Fix the cause; the next run picks
+  up everything that store missed.
+
+A second run straight after a successful one reports `eligible=0 deleted=0`
+for every store.
+
+---
+
 ## Monitoring and Operations
 
 ### Health check
@@ -1165,34 +1493,27 @@ built with, so a deploy that silently shipped stale content is visible without
 opening a shell.
 
 A 503 from `GET /health` or `GET /health/ready` means the database is
-unreachable. A 503 from an application route does not — see the next section
-for the other one.
+unreachable. A 503 from an application route does not: `ai_suspended` is the
+operator's own incident switch (`PRIVACY_SUSPEND_EXTERNAL_AI`), and the
+generation slot fails closed with its own code.
 
-### When the shared AI balance runs out
+### When an AI provider balance runs out
 
-`llm_service_credit_exhausted` is the one application-route `503` that is not a
-database problem, and it is the only outage in this app that no amount of
-waiting clears: the provider account behind `LLM_API_KEY` has a spent balance or
-a reached spend cap, and every reflection, resonance pass, and page
-transcription that uses the server key fails until someone tops it up.
+**There is no shared balance any more.** Since ADR 0009 phase (a) (#3067) no
+request is sent on the server's own provider account: every vendor call carries
+the writer's own key, and `services.botmason._resolve_api_key` refuses any other
+before a client is built. The `503 llm_service_credit_exhausted` code that once
+reported a spent server balance is retired with it; no route can emit it. If a
+vendor call is ever made on `LLM_API_KEY`, that is a privacy incident
+(`docs/ops/privacy-incident-response.md`), not a billing one.
 
-**The signal.** A `WARNING` on the `services.botmason` logger whose message is
-exactly `llm_service_credit_exhausted`, carrying `provider` and `byok=false`,
-with the provider's own words on the attached exception. Alert on it: it is not
-retried, so it will not repeat on its own the way a transient failure does, and
-one line is the whole notice you get. Its `INFO` sibling
-`llm_credit_exhausted` (`byok=true`) is *not* an outage — that is a user's own
-key coming back empty, and the user has already been told in words they can act
-on. Do not page on it; it is there so that a support question has an answer.
-
-**What users see meanwhile.** Callers using their own key are unaffected. Callers
-on the server key get copy that names the condition, says restoring it is ours,
-and offers pasting their own key in Settings as the way not to wait. Nothing
-about the provider, the account, or the key reaches them.
-
-**The fix.** Add credit (or raise the cap) on the provider account for
-`LLM_API_KEY`, or rotate `LLM_API_KEY` to a funded account and redeploy. No
-code change and no migration; the next request succeeds.
+**A writer's own key coming back empty** is `402 llm_credit_exhausted`, logged
+once at `INFO` on the `services.botmason` logger with `provider` and the
+provider's own words on the attached exception. It is not an outage and not
+retried: the writer has already been told, in words they can act on, to top up
+their own provider account. Do not page on it; it is there so that a support
+question has an answer. A page read is called from the writer's device straight
+to their vendor, so a spent key there never reaches the server or its logs.
 
 ### Verifying allowlisted models still resolve
 
@@ -1405,7 +1726,12 @@ This runs:
 - [ ] PostgreSQL is linked to the backend service
 - [ ] Health check returns `{"status":"healthy","database":"connected",...}`
 - [ ] Alembic migrations are up to date (if configured)
-- [ ] `BOTMASON_PROVIDER` is set (`stub` is fine to start)
+- [ ] `BOTMASON_PROVIDER` is set. `stub` is fine to start, but it means only writers with their own API key get AI
+      features; everyone else is told to add credits or a key (#3096)
+- [ ] `BOTMASON_STUB_SEAM` is unset (every deployed environment refuses to boot with it armed)
+- [ ] `OPENAI_BASE_URL` and `ANTHROPIC_BASE_URL` are unset, or each names exactly its provider's
+      registered `https` host in `backend/src/privacy/recipients.py`. Production refuses to boot
+      on any other value, such as an unregistered AI gateway (#3065)
 
 ---
 

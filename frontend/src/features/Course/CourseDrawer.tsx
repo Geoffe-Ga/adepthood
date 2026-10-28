@@ -20,7 +20,7 @@ import {
   useWindowDimensions,
 } from 'react-native';
 
-import { course as courseApi, type ContentItem, type Stage } from '../../api';
+import { course as courseApi, type ContentItem, type SiteResource, type Stage } from '../../api';
 import {
   DrawerSearchField,
   SearchSweepStatus,
@@ -29,17 +29,29 @@ import {
   type DrawerSearchState,
   type SweepStatus,
 } from '../../components/drawer';
-import { SPACING, accent, ink, radius, surface, touchTarget, type } from '../../design/tokens';
+import {
+  SPACING,
+  accent,
+  ink,
+  radius,
+  surface,
+  touchTarget,
+  type,
+  uiType,
+} from '../../design/tokens';
 
 import {
   getStageColor,
   isCompleted,
   isUnlocked,
   STAGE_LOCKED_GLYPH,
+  START_HERE,
   stageStatusGlyph,
 } from './stageDisplay';
+import type { StartHereStatus } from './startHereStore';
 
 import { useMountedRef } from '@/hooks/useMountedRef';
+import { reportDiagnostic } from '@/observability/diagnostics';
 
 /** Copy for the inline per-section retry row after a failed fetch. */
 const RETRY_LABEL = 'Content failed to load. Tap to retry.';
@@ -115,10 +127,10 @@ export function useCourseDrawerContent(
             setSections((prev) => ({ ...prev, [stageNumber]: { status: 'loaded', items } }));
           }
         })
-        .catch((err: unknown) => {
+        .catch(() => {
           // A per-section failure must not blank the drawer: flag only this stage
           // so it shows an inline retry while siblings keep their chapters.
-          console.error('Failed to load drawer stage content:', err);
+          reportDiagnostic('course_load_failed');
           if (isLatest()) {
             setSections((prev) => ({ ...prev, [stageNumber]: { status: 'error' } }));
           }
@@ -560,6 +572,11 @@ function CourseSearchView({
 }
 
 export interface CourseDrawerProps {
+  resources?: SiteResource[];
+  resourceStatus?: StartHereStatus;
+  onResourcesRetry?: () => void;
+  activeResourceSlug?: string;
+  onResourcePress?: (_resource: SiteResource) => void;
   /** Every stage in the course; only present stages render (gap numbers are skipped). */
   stages: Stage[];
   /** The stage currently shown on the screen, marked selected in the list. */
@@ -578,25 +595,92 @@ export interface CourseDrawerProps {
   onConfirmBodySearch: () => void;
 }
 
+type StartHereDrawerProps = Pick<
+  CourseDrawerProps,
+  | 'resources'
+  | 'resourceStatus'
+  | 'onResourcesRetry'
+  | 'activeResourceSlug'
+  | 'onResourcePress'
+  | 'selectedStage'
+>;
+
+function StartHereDrawer({
+  resources = [],
+  resourceStatus = 'ready',
+  onResourcesRetry,
+  activeResourceSlug,
+  onResourcePress,
+  selectedStage,
+}: StartHereDrawerProps) {
+  return (
+    <View testID="course-drawer-start-here" style={styles.section}>
+      <View
+        style={[styles.stageHeader, selectedStage === START_HERE && styles.stageHeaderSelected]}
+      >
+        <Text style={[uiType.button, styles.stageHeaderTitle]}>Start Here</Text>
+      </View>
+      {(resourceStatus === 'idle' || resourceStatus === 'loading') && (
+        <ActivityIndicator accessibilityLabel="Loading Start Here" style={styles.sectionLoading} />
+      )}
+      {resourceStatus === 'error' && (
+        <TouchableOpacity
+          accessibilityRole="button"
+          style={styles.retryRow}
+          onPress={() => onResourcesRetry?.()}
+        >
+          <Text style={[uiType.button, styles.retryRowText]}>
+            Start Here couldn't load. Tap to retry.
+          </Text>
+        </TouchableOpacity>
+      )}
+      {resources.map((resource) => (
+        <TouchableOpacity
+          key={resource.slug}
+          style={[
+            styles.chapterRow,
+            activeResourceSlug === resource.slug && styles.stageHeaderSelected,
+          ]}
+          accessibilityRole="button"
+          accessibilityState={{ selected: activeResourceSlug === resource.slug }}
+          accessibilityLabel={`Open ${resource.title}${resource.is_read ? ', read' : ''}`}
+          onPress={() => onResourcePress?.(resource)}
+        >
+          <Text style={[uiType.button, styles.chapterRowLabel]}>{resource.title}</Text>
+          <Text style={[uiType.button, styles.chapterRowGlyph]}>
+            {resource.is_read ? '✓' : '›'}
+          </Text>
+        </TouchableOpacity>
+      ))}
+    </View>
+  );
+}
+
+function useStageIndex(stages: Stage[]) {
+  return useMemo(() => new Map(stages.map((stage) => [stage.stage_number, stage])), [stages]);
+}
+
 /** The stage-grouped table of contents for the Course header drawer, with a
  *  fuzzy chapter-title search and a confirm-gated body search on top. */
-export default function CourseDrawer({
-  stages,
-  selectedStage,
-  sections,
-  bodies,
-  sweepStatus,
-  onChapterPress,
-  onRetry,
-  onConfirmBodySearch,
-}: CourseDrawerProps): React.JSX.Element {
-  const stageById = useMemo(() => new Map(stages.map((s) => [s.stage_number, s])), [stages]);
+export default function CourseDrawer(props: CourseDrawerProps): React.JSX.Element {
+  const displayedStage = props.activeResourceSlug ? START_HERE : props.selectedStage;
+  const stageById = useStageIndex(props.stages);
   const stageNumbers = useMemo(() => [...stageById.keys()].sort((a, b) => a - b), [stageById]);
   const { matched, bodySearchActive, isSearching, handleQueryChange, handleConfirmDeepSearch } =
-    useCourseChapterSearch(sections, bodies, onConfirmBodySearch);
+    useCourseChapterSearch(props.sections, props.bodies, props.onConfirmBodySearch);
 
   return (
     <View testID="course-drawer">
+      {!isSearching && (
+        <StartHereDrawer
+          resources={props.resources}
+          resourceStatus={props.resourceStatus}
+          onResourcesRetry={props.onResourcesRetry}
+          activeResourceSlug={props.activeResourceSlug}
+          selectedStage={displayedStage}
+          onResourcePress={props.onResourcePress}
+        />
+      )}
       <DrawerSearchField
         {...SEARCH_FIELD_COPY}
         resultCount={isSearching ? countMatches(matched) : undefined}
@@ -608,21 +692,21 @@ export default function CourseDrawer({
         <CourseSearchView
           matched={matched}
           stageById={stageById}
-          selectedStage={selectedStage}
+          selectedStage={displayedStage}
           bodySearchActive={bodySearchActive}
-          sweepStatus={sweepStatus}
-          onChapterPress={onChapterPress}
-          onRetry={onRetry}
-          onConfirmBodySearch={onConfirmBodySearch}
+          sweepStatus={props.sweepStatus}
+          onChapterPress={props.onChapterPress}
+          onRetry={props.onRetry}
+          onConfirmBodySearch={props.onConfirmBodySearch}
         />
       ) : (
         <FullStageList
           stageNumbers={stageNumbers}
-          sections={sections}
+          sections={props.sections}
           stageById={stageById}
-          selectedStage={selectedStage}
-          onChapterPress={onChapterPress}
-          onRetry={onRetry}
+          selectedStage={displayedStage}
+          onChapterPress={props.onChapterPress}
+          onRetry={props.onRetry}
         />
       )}
     </View>

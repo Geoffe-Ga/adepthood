@@ -2,7 +2,7 @@
 /**
  * The shelf's one primary writing invitation (issue #2867): on a review day an
  * undismissed review is THE call to write, otherwise the daily page is, and
- * the quiet "Start a review early" link is always beneath either.
+ * the explanatory "Start a review early" card is always beneath either.
  *
  * Retargeted from the old self-contained ``ReflectionInvitationBand`` suite:
  * the band is now a presentational card this component chooses, so every
@@ -18,6 +18,7 @@ import { morningPageTitle } from '../morningPagesCopy';
 
 import type { ReflectionCurrentScope, ReflectionDue, ReflectionLevel, Stage } from '@/api';
 import { uiType } from '@/design/tokens';
+import { setActiveUser } from '@/storage/userScope';
 import { moveAccessibilityFocus } from '@/utils/accessibilityFocus';
 import { todayInUserTZ } from '@/utils/dateUtils';
 
@@ -64,6 +65,10 @@ jest.mock('@/storage/reflectionDismissalStorage', () => ({
 
 jest.mock('@/storage/morningPagesTipStorage', () => ({
   MORNING_PAGES_TIP_OPEN: { setAsideOn: null, neverOffer: false },
+  clearMorningPagesTipSetAside: async () => {
+    mockLoadTipState.mockResolvedValue(TIP_OPEN);
+    return true;
+  },
   loadMorningPagesTipState: (...a: unknown[]) =>
     (mockLoadTipState as unknown as (...x: unknown[]) => unknown)(...a),
   saveMorningPagesTipSetAside: (...a: unknown[]) =>
@@ -73,7 +78,10 @@ jest.mock('@/storage/morningPagesTipStorage', () => ({
 }));
 
 jest.mock('@/context/AuthContext', () => ({
-  useAuth: () => ({ userTimezone: 'America/New_York' }),
+  useAuth: () => ({
+    userTimezone: 'America/New_York',
+    token: 'x.eyJzdWIiOiIxIiwiZXhwIjo0MDAwMDAwMDAwfQ.y',
+  }),
 }));
 
 // Focus fires once on mount, as a first visit does. `fireFocus` replays it for
@@ -104,6 +112,10 @@ async function fireFocus(): Promise<void> {
 
 jest.mock('@/utils/accessibilityFocus', () => ({ moveAccessibilityFocus: jest.fn() }));
 const mockMoveFocus = jest.mocked(moveAccessibilityFocus);
+
+jest.mock('../useEarlyReviewDismissal', () => ({
+  useEarlyReviewDismissal: () => ({ dismissed: false, change: async () => true }),
+}));
 
 const JournalPrimaryInvitation = require('../JournalPrimaryInvitation').default;
 
@@ -148,6 +160,7 @@ async function settle(): Promise<void> {
 }
 
 beforeEach(() => {
+  setActiveUser(1);
   for (const mock of [
     mockDue,
     mockCurrent,
@@ -162,14 +175,19 @@ beforeEach(() => {
   ]) {
     mock.mockReset();
   }
+  mockSaveTipSetAside.mockImplementation(async (day) => {
+    mockLoadTipState.mockResolvedValue({ setAsideOn: day, neverOffer: false });
+  });
+  mockSaveTipNever.mockImplementation(async (neverOffer) => {
+    mockLoadTipState.mockResolvedValue({ setAsideOn: null, neverOffer });
+  });
   mockDue.mockResolvedValue({ due: due() });
   mockCurrent.mockResolvedValue({ scopes: [] });
   mockStagesListAll.mockResolvedValue([SURVIVAL]);
   mockLoadDismissed.mockResolvedValue(false);
   mockSaveDismissed.mockResolvedValue(undefined);
   mockLoadTipState.mockResolvedValue(TIP_OPEN);
-  mockSaveTipSetAside.mockResolvedValue(undefined);
-  mockSaveTipNever.mockResolvedValue(undefined);
+
   mockFocusCallbacks.current = null;
 });
 
@@ -279,7 +297,7 @@ describe('JournalPrimaryInvitation on a review day', () => {
 });
 
 describe('JournalPrimaryInvitation on any other day', () => {
-  it('offers the daily page, with the early-review link beneath it', async () => {
+  it('offers the daily page, with the early-review card beneath it', async () => {
     mockDue.mockResolvedValue({ due: null });
     const { findByTestId, getByText, getByTestId, queryByTestId } = renderInvitation();
     await findByTestId('journal-morning-pages-tip');
@@ -298,16 +316,27 @@ describe('JournalPrimaryInvitation on any other day', () => {
   });
 });
 
-describe('the early-review link', () => {
-  it('sits on the section edge in the button face, level with the set-aside count', async () => {
+describe('the early-review card', () => {
+  it('keeps the explanation and picker action together inside a Morning Pages-style card', async () => {
     mockDue.mockResolvedValue({ due: null });
     const { findByTestId, getByTestId } = renderInvitation();
     await findByTestId('journal-morning-pages-tip');
-    const link = getByTestId('journal-review-early');
+    const card = getByTestId('journal-review-early-card');
+    const link = within(card).getByTestId('journal-review-early');
+    expect(within(card).getByText('Review your Morning Pages')).toBeTruthy();
+    expect(
+      within(card).getByText(
+        'Reviews keep the lessons, patterns, and emotional experiences in your Morning Pages alive by revisiting them at regular intervals, carrying quotes from daily entries into broader learnings. What has your writing revealed this week, this stage, this trimester, or across the whole course?',
+      ),
+    ).toBeTruthy();
 
-    // No self-indent and no side padding: the label starts where the eyebrow
-    // above it starts. Button.base centres its label, so the row must be told
-    // to lead from the left or the link would float mid-column.
+    const morning = StyleSheet.flatten(getByTestId('journal-morning-pages-band').props.style);
+    const review = StyleSheet.flatten(card.props.style);
+    expect(review.backgroundColor).toBe(morning.backgroundColor);
+    expect(review.borderLeftColor).toBe(morning.borderLeftColor);
+    expect(review.borderRadius).toBe(morning.borderRadius);
+
+    // The action shares the explanation's edge, inside its own card.
     const control = StyleSheet.flatten(link.props.style);
     expect(control.alignSelf).toBeUndefined();
     expect(control.paddingHorizontal).toBe(0);
@@ -514,8 +543,16 @@ describe('every invitation control is named by the words it shows (WCAG 2.5.3)',
       expect(buttons.length).toBeGreaterThanOrEqual(4);
       for (const button of buttons) {
         const [label] = visibleText(button);
-        expect(label).toBeDefined();
-        expect(button.props.accessibilityLabel).toContain(label);
+        if (
+          ['journal-reflection-dismiss', 'journal-review-early-dismiss'].includes(
+            button.props.testID,
+          )
+        ) {
+          expect(button.props.accessibilityLabel).toBeTruthy();
+        } else {
+          expect(label).toBeDefined();
+          expect(button.props.accessibilityLabel).toContain(label);
+        }
       }
     },
   );
@@ -530,5 +567,19 @@ describe('every invitation control is named by the words it shows (WCAG 2.5.3)',
     const folded = getByTestId('journal-review-early');
     expect(visibleText(folded)[0]).toBe('Fold the reviews away');
     expect(folded.props.accessibilityLabel).toContain('Fold the reviews away');
+  });
+});
+
+describe('writing prompts set aside in Prompts', () => {
+  it('restores a daily page without changing the permanent decline', async () => {
+    mockDue.mockResolvedValue({ due: null });
+    mockSaveTipSetAside.mockImplementation(async (day) => {
+      mockLoadTipState.mockResolvedValue({ setAsideOn: day, neverOffer: false });
+    });
+    const view = render(<JournalPrimaryInvitation onBeginPage={jest.fn()} />);
+    await view.findByTestId('journal-morning-pages-dismiss');
+    await act(async () => fireEvent.press(view.getByTestId('journal-morning-pages-dismiss')));
+    fireEvent.press(await view.findByTestId('notification-bring-back-morning'));
+    expect(await view.findByTestId('journal-morning-pages-tip')).toBeTruthy();
   });
 });

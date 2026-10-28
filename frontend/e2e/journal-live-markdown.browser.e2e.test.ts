@@ -157,8 +157,95 @@ async function expectCaretLandsOn(page: Page, index: number): Promise<void> {
   expect(centreY).toBeGreaterThan(0);
   expect(centreY).toBeLessThan(page.viewportSize()?.height ?? 0);
   expect(glyph.offsetFromLineMiddle).toBeLessThanOrEqual(OVERLAY_ALIGNMENT_TOLERANCE_PX);
-  await page.mouse.click(glyph.left + glyph.width * CARET_PROBE_FRACTION, centreY);
+  const point = { x: glyph.left + glyph.width * CARET_PROBE_FRACTION, y: centreY };
+  const hit = await body(page).evaluate((field, target) => {
+    const element = document.elementFromPoint(target.x, target.y);
+    return {
+      fieldOnTop: element === field,
+      covering: element?.closest('[data-testid]')?.getAttribute('data-testid'),
+    };
+  }, point);
+  expect(
+    hit,
+    `body character ${index} must remain directly editable at its rendered glyph`,
+  ).toEqual({
+    fieldOnTop: true,
+    covering: 'journal-body-input',
+  });
+  await page.mouse.click(point.x, point.y);
   expect(await selection(body(page))).toEqual([index, index]);
+}
+
+for (const viewport of [
+  { width: 390, height: 844 },
+  { width: 1280, height: 720 },
+]) {
+  test(`formatting leads the body and keeps its commands at ${viewport.width}px (#3250)`, async ({
+    page,
+  }, testInfo) => {
+    await page.setViewportSize(viewport);
+    const email = await signUp(page, `journal-toolbar-${viewport.width}`);
+    const token = await tokenFor(page.request, email);
+    await page.getByTestId('journal-new-entry').click();
+    const created = page.waitForResponse(
+      (response) =>
+        response.request().method() === 'POST' && new URL(response.url()).pathname === '/journal/',
+    );
+    await page.getByTestId('journal-title-input').fill('Tools at the top');
+    const field = body(page);
+    await field.fill('A quiet page.');
+    const toolbar = page.getByTestId('journal-format-toolbar');
+    await toolbar.scrollIntoViewIfNeeded();
+    const order = await page.evaluate(() => {
+      const rect = (id: string) => {
+        const element = document.querySelector(`[data-testid="${id}"]`);
+        if (element === null) throw new Error(`Missing ${id}`);
+        const box = element.getBoundingClientRect();
+        return { top: box.top, bottom: box.bottom, centre: box.left + box.width / 2 };
+      };
+      return {
+        exit: rect('journal-entry-exit-row'),
+        toolbar: rect('journal-format-toolbar'),
+        body: rect('journal-body-input'),
+        rail: rect('journal-writing-controls'),
+        finish: rect('journal-finish-button'),
+      };
+    });
+    expect(order.exit.bottom).toBeLessThanOrEqual(order.toolbar.top);
+    expect(order.toolbar.bottom).toBeLessThanOrEqual(order.body.top);
+    expect(order.finish.top).toBeGreaterThanOrEqual(order.body.bottom);
+    expect(Math.abs(order.finish.centre - order.rail.centre)).toBeLessThanOrEqual(1);
+    await expect(
+      page.getByTestId('journal-entry-exit-row').getByTestId('journal-photograph-page'),
+    ).toHaveCount(1);
+    for (const label of ['Bold', 'Italic', 'Underline']) {
+      const button = toolbar.getByRole('button', { name: label, exact: true });
+      const box = await button.boundingBox();
+      expect(box).not.toBeNull();
+      expect(box?.width).toBeGreaterThanOrEqual(44);
+      expect(box?.height).toBeGreaterThanOrEqual(44);
+    }
+    await page.screenshot({ path: testInfo.outputPath('toolbar-above-body.png') });
+    await selectRange(field, 2, 7);
+    await toolbar.getByRole('button', { name: 'Bold', exact: true }).click();
+    const message = 'A **quiet** page.';
+    await expect(field).toHaveValue(message);
+    await expect(field).toBeFocused();
+    const entryId = ((await (await created).json()) as { id: number }).id;
+    await page.getByTestId('journal-finish-button').click();
+    await expect(page.getByTestId('journal-body-read')).toBeVisible();
+    await expect
+      .poll(async () => {
+        const stored = await page.request.get(`${backendUrl()}/journal/${entryId}`, {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        return ((await stored.json()) as { message: string }).message;
+      })
+      .toBe(message);
+    await page.reload();
+    await page.getByTestId(`journal-shelf-open-${entryId}`).click();
+    await expect(page.getByTestId('journal-body-read').locator('strong')).toHaveText('quiet');
+  });
 }
 
 test('live Markdown editing keeps the typed source byte-identical and renders it after reload', async ({
@@ -271,13 +358,19 @@ test('the live mirror stays in register with the real textarea at every width an
   await signUp(page, 'journal-live-geometry');
   const wrapped = 'a long line that has to wrap across the writing column '.repeat(10);
   const filler = Array.from({ length: 30 }, (_, line) => `filler line ${line}`).join('\n');
-  const text = `Open **bold words** and _soft italics_ and <u>under words</u>.\n${wrapped}\n> a quote\n- item\n  - nested\n${filler}\nTail **bold** end`;
+  // The block dialect (#3251): a heading's faux bold, a two-digit ordinal and a
+  // task checkbox must each leave every later glyph exactly under the caret.
+  const blocks = '## Tuesday heading\n10. walked far\n- [x] called Sam\n---';
+  const text = `Open **bold words** and _soft italics_ and <u>under words</u>.\n${wrapped}\n> a quote\n- item\n  - nested\n${blocks}\n${filler}\nTail **bold** end`;
   const probes = [
     text.indexOf('bold words') + 2,
     text.indexOf('soft italics') + 1,
     text.indexOf('under words') + 3,
     text.indexOf('a quote'),
     text.indexOf('nested') + 2,
+    text.indexOf('Tuesday heading') + 9,
+    text.indexOf('walked far') + 4,
+    text.indexOf('called Sam') + 7,
     // Well into the wrapped line, several visual lines down.
     text.indexOf(wrapped) + Math.floor(wrapped.length * 0.8),
   ];

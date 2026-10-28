@@ -57,6 +57,15 @@ export const MEDITATION_TIMER_LABEL: TextStyle = {
   marginBottom: SPACING.lg,
 };
 
+/**
+ * Font-scale ceiling for the fixed-geometry display numerals (the 42pt clock
+ * inside the fixed-size progress ring, the 84pt bpm, the display-size card
+ * timer). At the OS's largest text sizes these would overflow their ring or
+ * push the controls off-screen; 1.5x keeps them legible and in place. Control
+ * labels and body copy are deliberately *not* capped.
+ */
+export const SESSION_DISPLAY_MAX_FONT_SCALE = 1.5;
+
 /** Uppercase small-caps caption label under a session readout. */
 export const SESSION_CAPTION_LABEL: TextStyle = {
   fontSize: 14,

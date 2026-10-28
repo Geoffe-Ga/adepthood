@@ -1,3 +1,4 @@
+import type { BottomTabNavigationProp } from '@react-navigation/bottom-tabs';
 import { useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { Hourglass, TriangleAlert } from 'lucide-react-native';
@@ -10,7 +11,7 @@ import {
   stages as stagesApi,
   type ContentItem,
   type CourseProgress,
-  type SiteResource,
+  type NextUnread,
   type Stage,
 } from '../../api';
 import { decorativeHidden } from '../../components/a11yHidden';
@@ -28,9 +29,10 @@ import { EditorialSection } from '../../components/layout/EditorialSection';
 import { ScreenHeader } from '../../components/layout/ScreenHeader';
 import { ShowcaseCard } from '../../components/layout/ShowcaseCard';
 import { ink, resolveStageColor } from '../../design/tokens';
+import type { RootTabParamList } from '../../navigation/BottomTabs';
 import { useAppRoute } from '../../navigation/hooks';
 import type { RootStackParamList } from '../../navigation/RootStack';
-import { useProgramStore, programStage } from '../../store/useProgramStore';
+import { useProgramStore } from '../../store/useProgramStore';
 
 import { deriveChapterNeighbors, type ChapterNav } from './chapterNav';
 import ChapterReader, { type WriteNotePassage } from './ChapterReader';
@@ -38,10 +40,21 @@ import ContentCard from './ContentCard';
 import ContentViewer from './ContentViewer';
 import styles from './Course.styles';
 import CourseDrawer, { useCourseDrawerBodies, useCourseDrawerContent } from './CourseDrawer';
+import { captureCourseSession, type CourseSession } from './courseSession';
+import { useCourseSessionKey, useEachCourseSession } from './courseSessionLifecycle';
+import { loadInitialReadingStage } from './initialReadingStage';
+import ReadNextButton, { useNextUnread, type NextUnreadState } from './ReadNextButton';
+import ResourceViewer, { type ResourceTarget } from './ResourceViewer';
 import RetryButton from './RetryButton';
-import SiteResourcesPanel from './SiteResourcesPanel';
+import { START_HERE } from './stageDisplay';
 import StageIntroCard from './StageIntroCard';
 import StageSelector from './StageSelector';
+import StartHereSection from './StartHereSection';
+import { useStartHereStore } from './startHereStore';
+import { useEnergyScaffoldingHandoff } from './useEnergyScaffoldingHandoff';
+
+import { reportDiagnostic } from '@/observability/diagnostics';
+import { useDepthPreferencesStore, selectEnableHabits } from '@/store/useDepthPreferencesStore';
 
 const DEFAULT_STAGE_NUMBER = 1;
 
@@ -51,57 +64,105 @@ const EMPTY_CONTENT: ContentItem[] = [];
 
 // --- Hook: load stages on mount ---
 
+async function loadCourseEntry(
+  routeStage: number | null,
+  anchor: Date | null,
+  session: CourseSession | null,
+  current: () => boolean,
+) {
+  if (!session) throw new Error('Course session is unavailable');
+  const stagesList = await stagesApi.listAll(session.token);
+  if (!current()) return null;
+  if (routeStage !== null) return { stagesList, initialStage: null };
+  const snapshot = await useStartHereStore.getState().load();
+  if (!current()) return null;
+  const initialStage = await loadInitialReadingStage(
+    stagesList,
+    anchor,
+    snapshot?.progress ?? null,
+    null,
+    session,
+  );
+  return { stagesList, initialStage };
+}
+
+/**
+ * A warm Course tab stays mounted, so a later Map->Course deep-link changes
+ * only the route param. Follow a changed non-null incoming stage number here;
+ * a null param (no deep-link) leaves the derived default untouched, and a
+ * same-number re-navigation is a no-op because the effect keys on the number.
+ */
+function useFollowRouteStage(
+  routeStageNumber: number | null,
+  setSelectedStage: (_stageNumber: number) => void,
+): void {
+  useEffect(() => {
+    if (routeStageNumber !== null) {
+      setSelectedStage(routeStageNumber);
+    }
+  }, [routeStageNumber, setSelectedStage]);
+}
+
 function useStagesLoader() {
   const route = useAppRoute<'Course'>();
   const routeStageNumber = route.params?.stageNumber ?? null;
   const programAnchor = useProgramStore((s) => s.programStartDate);
+  const sessionKey = useCourseSessionKey();
 
   const [allStages, setAllStages] = useState<Stage[]>([]);
   const [selectedStage, setSelectedStage] = useState(routeStageNumber ?? DEFAULT_STAGE_NUMBER);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(false);
+  // The lifecycle the current stages/loading/error describe (#3343).
+  const [settledKey, setSettledKey] = useState(sessionKey);
+  const requestSeq = useRef(0);
 
   const init = useCallback(async () => {
+    const requestId = (requestSeq.current += 1);
+    const session = captureCourseSession();
+    const isLatest = () => requestId === requestSeq.current && (!session || session.current());
     setLoading(true);
     setError(false);
     try {
-      const stagesList = await stagesApi.listAll();
-      setAllStages(stagesList);
-      if (routeStageNumber === null) {
-        // Master date wins when the user has picked an anchor; otherwise ask
-        // the server, which holds the one answer — the union of the stage its
-        // calendar has opened and the stage its record says was entered. The
-        // client counts nothing: someone back after two months away has
-        // several stages open and nothing newly complete, and a completion
-        // count would drop them into the stage they last finished.
-        const dateDerived = programStage(programAnchor);
-        setSelectedStage(dateDerived ?? (await stagesApi.programCalendar()).current_stage);
-      }
-    } catch (err) {
+      const entry = await loadCourseEntry(routeStageNumber, programAnchor, session, isLatest);
+      if (!isLatest() || !entry) return;
+      if (entry.initialStage !== null) setSelectedStage(entry.initialStage);
+      setAllStages(entry.stagesList);
+      if (routeStageNumber !== null) void useStartHereStore.getState().load();
+    } catch {
+      if (!isLatest()) return;
       // Track failure explicitly so the screen can show error+retry instead of
       // an empty course (audit-ux-04).
-      console.error('Failed to load stages:', err);
+      reportDiagnostic('course_load_failed');
       setError(true);
     } finally {
-      setLoading(false);
+      if (isLatest()) {
+        setSettledKey(sessionKey);
+        setLoading(false);
+      }
     }
-  }, [routeStageNumber, programAnchor]);
+  }, [routeStageNumber, programAnchor, sessionKey]);
 
-  useEffect(() => {
-    void init();
-  }, [init]);
+  // A route, anchor or account change, or unmount, supersedes every older load.
+  const start = useCallback(() => void init(), [init]);
+  const supersede = useCallback(() => {
+    requestSeq.current += 1;
+  }, []);
+  useEachCourseSession(sessionKey, start, supersede);
 
-  // A warm Course tab stays mounted, so a later Map->Course deep-link changes
-  // only the route param. Follow a changed non-null incoming stage number here;
-  // a null param (no deep-link) leaves the derived default untouched, and a
-  // same-number re-navigation is a no-op because the effect keys on the number.
-  useEffect(() => {
-    if (routeStageNumber !== null) {
-      setSelectedStage(routeStageNumber);
-    }
-  }, [routeStageNumber]);
+  useFollowRouteStage(routeStageNumber, setSelectedStage);
 
-  return { allStages, selectedStage, setSelectedStage, loading, error, retry: init };
+  // An incoming account never paints the outgoing account's stages, even for
+  // the frame before its own load starts.
+  const stale = sessionKey !== null && settledKey !== sessionKey;
+  return {
+    allStages,
+    selectedStage,
+    setSelectedStage,
+    loading: loading || stale,
+    error: error && !stale,
+    retry: init,
+  };
 }
 
 // --- Hook: load content for selected stage ---
@@ -117,6 +178,13 @@ function useStageContent(selectedStage: number, stagesLoaded: boolean) {
     // Only the newest in-flight request may settle; stale ones are dropped.
     const requestId = (requestSeq.current += 1);
     const isLatest = () => requestId === requestSeq.current;
+    if (selectedStage === START_HERE) {
+      setContent([]);
+      setProgress(null);
+      setLoadingContent(false);
+      setError(false);
+      return;
+    }
     setLoadingContent(true);
     setError(false);
     try {
@@ -127,10 +195,10 @@ function useStageContent(selectedStage: number, stagesLoaded: boolean) {
       if (!isLatest()) return;
       setContent(contentResult);
       setProgress(progressResult);
-    } catch (err) {
+    } catch {
       // A failed fetch is distinct from a genuinely empty stage: flag it so the
       // screen shows error+retry rather than "No Content Yet" (audit-ux-04).
-      console.error('Failed to load stage content:', err);
+      reportDiagnostic('course_load_failed');
       if (isLatest()) {
         setContent([]);
         setProgress(null);
@@ -463,9 +531,9 @@ function useJournalHandoff(
   return { handleReflect, handleWriteNote };
 }
 
-function useCourseViewer(selectedStage: number) {
+function useCourseViewer(selectedStage: number, setSelectedStage: (_stageNumber: number) => void) {
   const [viewingItem, setViewingItem] = useState<ContentItem | null>(null);
-  const [viewingResource, setViewingResource] = useState<SiteResource | null>(null);
+  const [viewingResource, setViewingResource] = useState<ResourceTarget | null>(null);
   const [viewingIntro, setViewingIntro] = useState<number | null>(null);
   // Only set on a warm return; a manual open clears it so no stale scroll leaks.
   const [restoreOffset, setRestoreOffset] = useState<number | undefined>(undefined);
@@ -483,7 +551,7 @@ function useCourseViewer(selectedStage: number) {
     setViewingItem(item);
   }, []);
 
-  const handleResourcePress = useCallback((resource: SiteResource) => {
+  const handleResourcePress = useCallback((resource: ResourceTarget) => {
     setViewingResource(resource);
   }, []);
 
@@ -503,6 +571,7 @@ function useCourseViewer(selectedStage: number) {
     viewingItem,
     clearViewingItem,
   );
+  useOpenCourseSection(setSelectedStage, handleBack);
 
   return {
     viewingItem,
@@ -519,31 +588,162 @@ function useCourseViewer(selectedStage: number) {
   };
 }
 
+/**
+ * An invitation asks to see a section even when Course is already mounted on
+ * that route. Consume the request so later browsing and ordinary tab returns
+ * keep their place, and discard any reader restore left by an earlier visit.
+ */
+function useOpenCourseSection(
+  setSelectedStage: (_stageNumber: number) => void,
+  closeViewer: () => void,
+): void {
+  const route = useAppRoute<'Course'>();
+  const navigation = useNavigation<BottomTabNavigationProp<RootTabParamList, 'Course'>>();
+  const stageNumber = route.params?.stageNumber;
+  const openSection = route.params?.openSection;
+  const openReading = route.params?.openReading;
+  useEffect(() => {
+    if ((openSection !== true && openReading !== true) || stageNumber === undefined) return;
+    setSelectedStage(stageNumber);
+    closeViewer();
+    navigation.setParams({
+      openSection: undefined,
+      openReading: undefined,
+      contentId: openReading ? route.params?.contentId : undefined,
+      scrollOffset: openReading ? 0 : undefined,
+    });
+  }, [
+    openSection,
+    openReading,
+    stageNumber,
+    route.params?.contentId,
+    setSelectedStage,
+    closeViewer,
+    navigation,
+  ]);
+}
+
 /** On a return from the journal, auto-open the returned content restored to its
  *  scroll offset once the stage's content has loaded. The restore is one-shot per
  *  ``contentId``: the param persists on the route indefinitely, so a ref records
  *  the id already restored and refuses to re-fire — otherwise backing out of the
  *  reader (viewing id → null) or revisiting the tab would re-open it unbidden.
  *  Keyed on primitive params + loaded content (never object identity) so it fires
- *  once and never loops. */
+ *  once and never loops.
+ *
+ *  ``rearm`` is the one deliberate exception: "Read next" asks for the routed
+ *  chapter to open again even when the route already names it (the reader backed
+ *  out without finishing it), so it forgets the restored id and re-runs the
+ *  effect once. */
 function useReaderRestore(
   content: ContentItem[],
   currentViewingId: number | null,
   openForRestore: (_item: ContentItem, _offset: number) => void,
-): void {
+): { rearm: () => void } {
   const route = useAppRoute<'Course'>();
   const contentId = route.params?.contentId ?? null;
   const scrollOffset = route.params?.scrollOffset ?? 0;
+  const openingSection = route.params?.openSection === true || route.params?.openReading === true;
   const restoredIdRef = useRef<number | null>(null);
+  const [armSeq, setArmSeq] = useState(0);
+
+  const rearm = useCallback(() => {
+    restoredIdRef.current = null;
+    setArmSeq((seq) => seq + 1);
+  }, []);
 
   useEffect(() => {
+    if (openingSection) {
+      restoredIdRef.current = null;
+      return;
+    }
     if (contentId === null || restoredIdRef.current === contentId) return;
     if (currentViewingId === contentId) return;
     const item = content.find((c) => c.id === contentId);
     if (!item || item.is_locked) return;
     restoredIdRef.current = contentId;
     openForRestore(item, scrollOffset);
-  }, [contentId, scrollOffset, currentViewingId, content, openForRestore]);
+  }, [openingSection, contentId, scrollOffset, currentViewingId, content, openForRestore, armSeq]);
+
+  return { rearm };
+}
+
+interface ReadNextProps {
+  state: NextUnreadState;
+  onOpen: (_target: NextUnread) => void;
+}
+
+/** "Read next" (#3147): open the server's earliest unread chapter through the
+ *  same route-param path a journal return uses, so ``useReaderRestore`` does the
+ *  opening once that chapter's stage has loaded. The stage is selected directly
+ *  as well, because a route already carrying this stage number would not move
+ *  the selection a reader has since changed with the pills.
+ *
+ *  An unread Start Here resource comes before any chapter (#3234); it is not
+ *  stage content, so it opens straight in the resource reader with no route
+ *  params and no stage change. */
+function useReadNext(
+  setSelectedStage: (_stageNumber: number) => void,
+  rearm: () => void,
+  openResource: (_resource: ResourceTarget) => void,
+) {
+  const navigation = useNavigation<BottomTabNavigationProp<RootTabParamList, 'Course'>>();
+  const nextUnread = useNextUnread(useCourseSessionKey());
+
+  const openNext = useCallback(
+    (target: NextUnread) => {
+      if (target.kind === 'resource') {
+        openResource({ slug: target.slug, title: target.title });
+        return;
+      }
+      setSelectedStage(target.stage_number);
+      // ``scrollOffset`` is cleared so a stale journal-return offset can never
+      // drop the reader halfway down a chapter they have not started.
+      navigation.setParams({
+        stageNumber: target.stage_number,
+        contentId: target.content_id,
+        scrollOffset: undefined,
+      });
+      rearm();
+    },
+    [navigation, setSelectedStage, rearm, openResource],
+  );
+
+  return { state: nextUnread.state, refresh: nextUnread.refresh, openNext };
+}
+
+/** The reader's position across the screen: the journal-return restore, the
+ *  "Read next" target, and the mark-read handlers that keep both lists and the
+ *  target current. A chapter or Start Here resource marked read moves the
+ *  target, so it is re-asked. ``reloadStartHere`` re-reads the Start Here
+ *  resources and progress and re-asks "Read next" -- after a resource is marked
+ *  read and on an explicit retry of a failed read alike (#3344). */
+function useCourseReadingPosition(
+  stageContent: ReturnType<typeof useStageContent>,
+  viewer: ReturnType<typeof useCourseViewer>,
+  setSelectedStage: (_stageNumber: number) => void,
+): { readNext: ReadNextProps; onMarkRead: () => void; reloadStartHere: () => void } {
+  const { rearm } = useReaderRestore(
+    stageContent.content,
+    viewer.viewingItem?.id ?? null,
+    viewer.openForRestore,
+  );
+  const { state, refresh, openNext } = useReadNext(
+    setSelectedStage,
+    rearm,
+    viewer.handleResourcePress,
+  );
+  const { handleMarkRead } = stageContent;
+  const onMarkRead = useCallback(() => {
+    handleMarkRead();
+    refresh();
+  }, [handleMarkRead, refresh]);
+  const readNext = useMemo(() => ({ state, onOpen: openNext }), [state, openNext]);
+  const reloadStartHere = useCallback(() => {
+    refresh();
+    void useStartHereStore.getState().load(true);
+  }, [refresh]);
+  return { readNext, onMarkRead, reloadStartHere };
 }
 
 // --- Main component ---
@@ -567,9 +767,15 @@ function buildChapterNav(
   };
 }
 
+/** Mark-read callbacks the overlay readers report back through. */
+interface OverlayReadHandlers {
+  onMarkRead: () => void;
+  onResourceRead: () => void;
+}
+
 function renderOverlay(
   viewer: ReturnType<typeof useCourseViewer>,
-  onMarkRead: () => void,
+  { onMarkRead, onResourceRead }: OverlayReadHandlers,
   content: ContentItem[],
 ): React.JSX.Element | null {
   if (viewer.viewingItem) {
@@ -588,10 +794,10 @@ function renderOverlay(
   }
   if (viewer.viewingResource) {
     return (
-      <ChapterReader
-        source={{ kind: 'resource', slug: viewer.viewingResource.slug }}
-        fallbackTitle={viewer.viewingResource.title}
+      <ResourceViewer
+        resource={viewer.viewingResource}
         onBack={viewer.handleBack}
+        onMarkedRead={onResourceRead}
       />
     );
   }
@@ -615,6 +821,7 @@ interface StagePanelProps {
   selectedStageData: Stage | undefined;
   stageContent: ReturnType<typeof useStageContent>;
   viewer: ReturnType<typeof useCourseViewer>;
+  readNext: ReadNextProps;
 }
 
 /** The selected stage's cover, metadata, progress, and intro — the pinned
@@ -624,6 +831,7 @@ const StageHeader = ({
   selectedStageData,
   stageContent,
   viewer,
+  readNext,
 }: StagePanelProps): React.JSX.Element => (
   <>
     {selectedStageData && (
@@ -633,7 +841,6 @@ const StageHeader = ({
         spiralColor={selectedStageData.spiral_dynamics_color}
       />
     )}
-    <SiteResourcesPanel onSelect={viewer.handleResourcePress} />
     {selectedStageData && <StageMetadata stage={selectedStageData} />}
     <CourseProgressBar
       progress={stageContent.progress}
@@ -641,10 +848,11 @@ const StageHeader = ({
       error={stageContent.error}
     />
     <View style={styles.introBand}>
-      <EditorialSection title="Start here">
+      <EditorialSection title="About this stage">
         <StageIntroCard stageNumber={selectedStage} onOpen={viewer.handleIntroPress} />
       </EditorialSection>
     </View>
+    <ReadNextButton state={readNext.state} onOpen={readNext.onOpen} />
     <View style={styles.sectionBand}>
       <Text style={styles.sectionBandLabel}>Chapters</Text>
     </View>
@@ -658,6 +866,7 @@ const StagePanel = ({
   selectedStageData,
   stageContent,
   viewer,
+  readNext,
 }: StagePanelProps): React.JSX.Element => {
   // While loading or after a failed fetch the list is empty so the header stays
   // pinned and the loading/error state renders in ListEmptyComponent.
@@ -678,6 +887,7 @@ const StagePanel = ({
           selectedStageData={selectedStageData}
           stageContent={stageContent}
           viewer={viewer}
+          readNext={readNext}
         />
       }
       onContentPress={viewer.handleContentPress}
@@ -687,10 +897,13 @@ const StagePanel = ({
 };
 
 interface CourseScreenDrawerProps {
+  activeResourceSlug?: string;
+  onStartHereRetry: () => void;
   drawer: ScreenDrawerState;
   stages: Stage[];
   selectedStage: number;
   onChapterPress: (_stageNumber: number, _item: ContentItem) => void;
+  onResourcePress: (_resource: ResourceTarget) => void;
 }
 
 /** The Course header drawer: a stage-grouped table of contents whose chapter
@@ -700,13 +913,26 @@ const CourseScreenDrawer = ({
   stages,
   selectedStage,
   onChapterPress,
+  onResourcePress,
+  activeResourceSlug,
+  onStartHereRetry,
 }: CourseScreenDrawerProps): React.JSX.Element => {
+  const resources = useStartHereStore((state) => state.resources);
+  const resourceStatus = useStartHereStore((state) => state.status);
   const { sections, retry } = useCourseDrawerContent(stages, drawer.isOpen);
   const { bodies, status, confirmBodySearch } = useCourseDrawerBodies(sections);
   return (
     <ScreenDrawer visible={drawer.isOpen} onClose={drawer.close} screenName="Course" title="Course">
       <DrawerNavSection currentScreen="Course" onNavigate={drawer.close} />
       <CourseDrawer
+        resources={resources}
+        resourceStatus={resourceStatus}
+        onResourcesRetry={onStartHereRetry}
+        activeResourceSlug={activeResourceSlug}
+        onResourcePress={(resource) => {
+          onResourcePress(resource);
+          drawer.close();
+        }}
         stages={stages}
         selectedStage={selectedStage}
         sections={sections}
@@ -750,9 +976,45 @@ interface CourseLandingProps {
   selectedStage: number;
   stageContent: ReturnType<typeof useStageContent>;
   viewer: ReturnType<typeof useCourseViewer>;
-  drawer: ScreenDrawerState;
+  drawerProps: CourseScreenDrawerProps;
+  readNext: ReadNextProps;
   onStageSelect: (_stageNumber: number) => void;
-  onChapterPress: (_stageNumber: number, _item: ContentItem) => void;
+}
+
+function StartHereLanding({
+  viewer,
+  readNext,
+  onStartHereRetry,
+}: Pick<CourseLandingProps, 'viewer' | 'readNext'> &
+  Pick<CourseScreenDrawerProps, 'onStartHereRetry'>) {
+  const startHere = useStartHereStore();
+  const habitsEnabled = useDepthPreferencesStore(selectEnableHabits);
+  const navigation = useNavigation<BottomTabNavigationProp<RootTabParamList>>();
+  const openEnergy = useCallback(
+    (session: CourseSession) => {
+      navigation.navigate('Habits', {
+        onboardingIntent: 'energy-scaffolding',
+        onboardingOwner: session.owner,
+        onboardingGeneration: session.generation,
+        onboardingSession: session.session,
+      });
+    },
+    [navigation],
+  );
+  const energyHandoff = useEnergyScaffoldingHandoff(habitsEnabled, openEnergy);
+  return (
+    <StartHereSection
+      readNext={<ReadNextButton state={readNext.state} onOpen={readNext.onOpen} />}
+      resources={startHere.resources}
+      progress={startHere.progress}
+      status={startHere.status}
+      onSelect={viewer.handleResourcePress}
+      onRetry={onStartHereRetry}
+      habitsEnabled={habitsEnabled}
+      energyStatus={energyHandoff.status}
+      onStartEnergy={energyHandoff.start}
+    />
+  );
 }
 
 /** The Course landing view: header, stage selector, the stage-panel scroll
@@ -762,9 +1024,9 @@ const CourseLanding = ({
   selectedStage,
   stageContent,
   viewer,
-  drawer,
+  drawerProps,
+  readNext,
   onStageSelect,
-  onChapterPress,
 }: CourseLandingProps): React.JSX.Element => {
   const selectedStageData = allStages.find((s) => s.stage_number === selectedStage);
   return (
@@ -778,29 +1040,49 @@ const CourseLanding = ({
           selectedStage={selectedStage}
           onSelectStage={onStageSelect}
         />
-        <StagePanel
-          selectedStage={selectedStage}
-          selectedStageData={selectedStageData}
-          stageContent={stageContent}
-          viewer={viewer}
-        />
+        {selectedStage === START_HERE ? (
+          <StartHereLanding
+            viewer={viewer}
+            readNext={readNext}
+            onStartHereRetry={drawerProps.onStartHereRetry}
+          />
+        ) : (
+          <StagePanel
+            selectedStage={selectedStage}
+            selectedStageData={selectedStageData}
+            stageContent={stageContent}
+            viewer={viewer}
+            readNext={readNext}
+          />
+        )}
         <BottomFade />
-        <CourseScreenDrawer
-          drawer={drawer}
-          stages={allStages}
-          selectedStage={selectedStage}
-          onChapterPress={onChapterPress}
-        />
+        <CourseScreenDrawer {...drawerProps} />
       </ContentContainer>
     </SafeAreaView>
   );
 };
 
+function CourseReaderOverlay({
+  overlay,
+  ...drawerProps
+}: { overlay: React.ReactNode } & React.ComponentProps<typeof CourseScreenDrawer>) {
+  return (
+    <>
+      {overlay}
+      <CourseScreenDrawer {...drawerProps} />
+    </>
+  );
+}
+
 const CourseScreen = (): React.JSX.Element => {
   const { allStages, selectedStage, setSelectedStage, loading, error, retry } = useStagesLoader();
   const stageContent = useStageContent(selectedStage, allStages.length > 0);
-  const viewer = useCourseViewer(selectedStage);
-  useReaderRestore(stageContent.content, viewer.viewingItem?.id ?? null, viewer.openForRestore);
+  const viewer = useCourseViewer(selectedStage, setSelectedStage);
+  const { readNext, onMarkRead, reloadStartHere } = useCourseReadingPosition(
+    stageContent,
+    viewer,
+    setSelectedStage,
+  );
   const drawer = useScreenDrawer('Course');
   const { handleStageSelect, handleChapterPress } = useCourseNavigation(
     setSelectedStage,
@@ -808,21 +1090,22 @@ const CourseScreen = (): React.JSX.Element => {
     drawer,
   );
 
-  const overlay = renderOverlay(viewer, stageContent.handleMarkRead, stageContent.content);
-  if (overlay !== null) {
-    // Drawer must mount alongside the reader so the hamburger works while reading.
-    return (
-      <>
-        {overlay}
-        <CourseScreenDrawer
-          drawer={drawer}
-          stages={allStages}
-          selectedStage={selectedStage}
-          onChapterPress={handleChapterPress}
-        />
-      </>
-    );
-  }
+  const drawerProps: CourseScreenDrawerProps = {
+    drawer,
+    stages: allStages,
+    selectedStage,
+    onChapterPress: handleChapterPress,
+    onResourcePress: viewer.handleResourcePress,
+    activeResourceSlug: viewer.viewingResource?.slug,
+    onStartHereRetry: reloadStartHere,
+  };
+  const overlay = renderOverlay(
+    viewer,
+    { onMarkRead, onResourceRead: reloadStartHere },
+    stageContent.content,
+  );
+  // Drawer must mount alongside the reader so the hamburger works while reading.
+  if (overlay !== null) return <CourseReaderOverlay overlay={overlay} {...drawerProps} />;
 
   if (loading) return <CourseLoadingState onRetry={retry} />;
 
@@ -841,9 +1124,9 @@ const CourseScreen = (): React.JSX.Element => {
       selectedStage={selectedStage}
       stageContent={stageContent}
       viewer={viewer}
-      drawer={drawer}
+      drawerProps={drawerProps}
+      readNext={readNext}
       onStageSelect={handleStageSelect}
-      onChapterPress={handleChapterPress}
     />
   );
 };

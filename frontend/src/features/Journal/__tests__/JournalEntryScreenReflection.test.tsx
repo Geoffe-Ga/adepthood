@@ -29,7 +29,7 @@ import type {
 } from '@/api';
 import { decorativeHidden } from '@/components/a11yHidden';
 import { NAV_ICON_SIZE, NAV_ICON_STROKE } from '@/components/drawer';
-import { accent, touchTarget } from '@/design/tokens';
+import { SPACING, accent, touchTarget } from '@/design/tokens';
 
 const mockGet = jest.fn() as jest.MockedFunction<(_id: number) => Promise<JournalMessage>>;
 const mockCreate = jest.fn() as jest.MockedFunction<(_e: unknown) => Promise<JournalMessage>>;
@@ -61,6 +61,7 @@ const mockPromotionsCreate = jest.fn() as jest.MockedFunction<
 jest.mock('@/context/AuthContext', () => require('./authContextTestKit'));
 
 jest.mock('@/api', () => ({
+  ...require('./journalUiFlagsTestKit'),
   journal: {
     get: (...a: unknown[]) => (mockGet as unknown as (...x: unknown[]) => unknown)(...a),
     create: (...a: unknown[]) => (mockCreate as unknown as (...x: unknown[]) => unknown)(...a),
@@ -583,6 +584,7 @@ describe('JournalEntryScreen -- reflection mode', () => {
   // "Saving…" forever -- it settles, and the warm hint says what did not happen.
   it('settles the hint and warns when the inclusion mark fails', async () => {
     mockSetIncluded.mockRejectedValue({ status: 500, detail: 'boom' });
+    const restoreWidth = spyWidth(390);
     jest.useFakeTimers();
     try {
       const { getByTestId, findByTestId } = renderScreen(REFLECTION_PARAMS, {
@@ -600,8 +602,23 @@ describe('JournalEntryScreen -- reflection mode', () => {
 
       expect(getByTestId('journal-save-hint').props.children).toBe('Saved');
       expect(getByTestId('quote-inclusion-hint')).toBeTruthy();
+      // The unmeasured dock is hidden from assistive tech until the page makes room (#3481).
+      fireEvent(
+        getByTestId('writing-session-band-content', { includeHiddenElements: true }),
+        'layout',
+        {
+          nativeEvent: { layout: { height: 120 } },
+        },
+      );
+      expect(
+        StyleSheet.flatten(getByTestId('journal-compose-stack').props.style).marginBottom,
+      ).toBe(120 + SPACING.md);
+      expect(
+        StyleSheet.flatten(getByTestId('journal-compose-row').props.style).marginBottom ?? 0,
+      ).toBe(0);
     } finally {
       jest.useRealTimers();
+      restoreWidth();
     }
   });
 

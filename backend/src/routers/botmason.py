@@ -19,8 +19,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from database import get_session
 from dependencies.auth import require_admin
+from dependencies.creek_vault import get_creek_vault_client, get_reflection_boundary
+from domain.creek_vault import CreekVaultClient, VaultKeyProvider
 from error_responses import build_router
-from errors import forbidden
+from errors import forbidden, unprocessable
 from models.user import User
 from rate_limit import limiter
 from routers.auth import get_current_user
@@ -29,8 +31,11 @@ from schemas.botmason import (
     BalanceAddResponse,
     BalanceResponse,
     UsageResponse,
+    VaultKeyVendorsResponse,
 )
 from services import wallet as wallet_service
+from services.botmason import server_generation_available
+from services.reflection_boundary import ReflectionBoundary
 from services.usage import get_monthly_cap
 from services.wallet import require_user_fresh, reset_monthly_usage_if_due
 
@@ -53,6 +58,7 @@ async def get_balance(
 async def get_usage(
     current_user: Annotated[int, Depends(get_current_user)],
     session: Annotated[AsyncSession, Depends(get_session)],
+    boundary: Annotated[ReflectionBoundary, Depends(get_reflection_boundary)],
 ) -> UsageResponse:
     """Return the authenticated user's message-credit usage for the current month.
 
@@ -72,6 +78,42 @@ async def get_usage(
         monthly_cap=cap,
         monthly_reset_date=user.monthly_reset_date,
         offering_balance=user.offering_balance,
+        resonance_route=(
+            "vault_bound" if boundary is ReflectionBoundary.VAULT_BOUND else "app_provider"
+        ),
+        resonance_demo_available=(
+            boundary is ReflectionBoundary.APP_PROVIDER and server_generation_available()
+        ),
+    )
+
+
+@router.get(
+    "/user/vault-key-vendors",
+    response_model=VaultKeyVendorsResponse,
+    dependencies=[Depends(get_current_user)],
+)
+async def get_vault_key_vendors(
+    session: Annotated[AsyncSession, Depends(get_session)],
+    boundary: Annotated[ReflectionBoundary, Depends(get_reflection_boundary)],
+    vault_client: Annotated[CreekVaultClient, Depends(get_creek_vault_client)],
+) -> VaultKeyVendorsResponse:
+    """Ask the caller's vault which vendors' writer keys it would write with (#3437).
+
+    The one usage-adjacent read that dials, kept apart from ``GET /user/usage``
+    so a price snapshot still never resolves or reaches a vault. Only a
+    vault-bound caller is asked about; the probe is the capability handshake,
+    which carries no stored writing and no key. Empty for an app-provider
+    caller, an unreachable vault, and any vault that advertises none (Creek
+    contract 0.18 ``request_key_providers``).
+    """
+    if boundary is not ReflectionBoundary.VAULT_BOUND:
+        return VaultKeyVendorsResponse()
+    # Nothing is staged: end the dependencies' read-only transaction so the
+    # probe holds no pooled connection.
+    await session.commit()
+    handshake = await vault_client.handshake()
+    return VaultKeyVendorsResponse(
+        vendors=sorted(provider for provider in VaultKeyProvider if handshake.accepts_key(provider))
     )
 
 
@@ -91,9 +133,12 @@ async def add_balance(
     if admin.id is None:
         msg = "require_admin returned an unpersisted user row"
         raise RuntimeError(msg)
-    new_balance = await wallet_service.add_balance(
-        session, admin.id, payload.amount, actor_user_id=admin.id
-    )
+    try:
+        new_balance = await wallet_service.add_balance(
+            session, admin.id, payload.amount, actor_user_id=admin.id
+        )
+    except wallet_service.WalletBalanceOutOfRangeError:
+        raise unprocessable("balance_out_of_range") from None
     if new_balance is None:
         # TOCTOU: admin row existed when ``require_admin`` fetched it but was
         # deleted before the wallet UPDATE landed. Same failure mode as the

@@ -4,12 +4,12 @@ from __future__ import annotations
 
 from pydantic import BaseModel
 
-from bounds import RowIdField
+from bounds import RowIdField, StageNumberField
 from schemas.partial_update import PartialUpdateModel
 
 
 class UiFlagsResponse(BaseModel):
-    """The caller's UI flags, plus the habit their writing timer checks off.
+    """The caller's UI flags, writing habit link and course reading position.
 
     ``user_id`` is intentionally excluded — the caller already knows its own
     identity from the JWT, and surfacing surrogate keys aids enumeration.
@@ -20,6 +20,7 @@ class UiFlagsResponse(BaseModel):
     has_seen_welcome: bool
     energy_scaffolding_archived: bool
     writing_session_habit_id: int | None
+    course_last_stage: StageNumberField | None
 
 
 class UiFlagsUpdate(PartialUpdateModel):
@@ -33,7 +34,7 @@ class UiFlagsUpdate(PartialUpdateModel):
     default here is ever written on its own. An empty payload is rejected (422)
     by :class:`~schemas.partial_update.PartialUpdateModel`.
 
-    ``writing_session_habit_id`` is the one deliberate exception to that
+    ``writing_session_habit_id`` and ``course_last_stage`` are exceptions to that
     base's non-null doctrine. Its column *is* nullable -- "no habit linked" is
     a real state -- so an explicit ``null`` is a legitimate value meaning
     "clear the link", not a defect to refuse. The three states still stay
@@ -41,8 +42,10 @@ class UiFlagsUpdate(PartialUpdateModel):
     clears it, and an id sets it once the caller is shown to own that habit.
     The id is bounded like every other row id, so ``0``, a negative or a value
     past int32 is a 422 rather than a database lookup.
+    The reading position is similarly nullable and bounded to the ten stages.
     """
 
     has_seen_welcome: bool = False
     energy_scaffolding_archived: bool = False
     writing_session_habit_id: RowIdField | None = None
+    course_last_stage: StageNumberField | None = None

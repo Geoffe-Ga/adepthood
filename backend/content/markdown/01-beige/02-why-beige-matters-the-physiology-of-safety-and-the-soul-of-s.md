@@ -73,9 +73,9 @@ I became obsessed with Free Will and the sense that I was a Biological Machine 
 
 Something undoubtedly will—just keep striking matches until one stays lit.
 
-Plus, learning about a model of development has been shown to improve an individual’s ability to unlock its capacities. Just by reading about this, you are solidifying your base. Where attention goes, energy flows.
+Plus, just having a map of development in your pocket makes it easier to find your way around the territory. Just by reading about this, you are solidifying your base. Where attention goes, energy flows.
 
-Some of the most innovative models of development of our time are Integral Theory and Spiral Dynamics. But discovering them was more of an experience of validation than of inspiration. I had also identified the necessity of the basic agency available at this foundational level according to a system of my own: the Aspects of Adepthood Wholeness, in which it is referred to as the Agentic Aspect of Yes-And-Ness, which we’ll cover in greater detail in the next chapter, once were introduced to the “Yes.”
+Some of the most innovative models of development of our time are Integral Theory and Spiral Dynamics. But discovering them was more of an experience of validation than of inspiration. I’d already bumped into the same need for basic agency at the foundation on my own, in the system I call the Aspects of Adepthood Wholeness, where it’s the Agentic Aspect of Yes-And-Ness. We’ll dig into it next chapter, once you’ve met the “Yes.”
 
 For now, take this seriously. Until your root is stable, other capacities—intuition, compassion, insight—lack grounding. You can't fake that kind of stability. Your nervous system knows.
 

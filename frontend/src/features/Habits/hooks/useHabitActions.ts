@@ -7,7 +7,12 @@ import { colors } from '../../../design/tokens';
 import { useOptimisticMutation } from '../../../hooks/useOptimisticMutation';
 import { savePendingCheckIn } from '../../../storage/habitStorage';
 import type { HabitMergePlan, HabitsActions, OnboardingHabit } from '../Habits.types';
-import { habitManager, type LogUnitContext, type ShowToast } from '../services/habitManager';
+import {
+  GOAL_UNITS_NOT_SAVED_COPY,
+  habitManager,
+  type LogUnitContext,
+  type ShowToast,
+} from '../services/habitManager';
 import { ClientMintedIdError } from '../services/serverIds';
 
 import type { useHabitUI } from './useHabitUI';
@@ -113,6 +118,7 @@ const handleLogUnitFailure = (
   showToast: ShowToast,
   tz: string,
 ): void => {
+  if (!ctx.scope.current()) return;
   if (ctx.isDemoSeed === true) {
     // Ahead of every other branch: a demo tile fails online too — its
     // fabricated goal id draws a real ``goal_not_found``, which otherwise
@@ -146,8 +152,7 @@ const handleLogUnitFailure = (
     // of leaving them stuck until an app restart.
     void habitManager.loadHabits(tz);
     showToast({
-      message:
-        'Your habits were out of sync with the server — we just refreshed them. Tap to log that unit again.',
+      message: 'We just refreshed your habits — tap once more to log that one.',
       icon: SYNC_ERROR_ICON,
       color: colors.danger,
       duration: SYNC_ERROR_TOAST_DURATION_MS,
@@ -157,7 +162,7 @@ const handleLogUnitFailure = (
   showToast({
     message: formatApiError(err, {
       fallback:
-        "We couldn't save that check-in. Your local copy was restored — check your connection and tap to log again.",
+        "We couldn't save that check-in, so it's back to where it was — check your connection and tap to log again.",
     }),
     icon: SYNC_ERROR_ICON,
     color: colors.danger,
@@ -174,6 +179,7 @@ const useLogUnitMutation = (
     commit: (ctx) => habitManager.commitLogUnitContext(ctx),
     rollback: (ctx, err) => handleLogUnitFailure(ctx, err, showToast, tz),
     onSuccess: (ctx, result) => {
+      if (!ctx.scope.current()) return;
       if (ctx.isDemoSeed === true) {
         // ``commitLogUnitContext`` short-circuits a demo tile to ``null``, which
         // resolves — so this path, not ``rollback``, is where a sample tap lands.
@@ -199,6 +205,24 @@ const useLogUnitMutation = (
     [mutate, tz],
   );
 };
+
+/**
+ * A refused unit change (a timer-fed habit asked for "reps", #3154) is told
+ * through the toast with the server's reason, not a native-only Alert.
+ */
+const useGoalUnitsAction = (showToast: ShowToast): HabitsActions['updateGoalUnits'] =>
+  useCallback(
+    (habitId, changes) =>
+      habitManager.updateGoalUnits(habitId, changes, (err) =>
+        showToast({
+          message: formatApiError(err, { fallback: GOAL_UNITS_NOT_SAVED_COPY }),
+          icon: SYNC_ERROR_ICON,
+          color: colors.danger,
+          duration: SYNC_ERROR_TOAST_DURATION_MS,
+        }),
+      ),
+    [showToast],
+  );
 
 /**
  * Binds stateful callbacks — ones that read UI state such as `selectedHabit`
@@ -239,22 +263,19 @@ export const useHabitActions = (
     [showToast, tz],
   );
 
+  const updateGoalUnits = useGoalUnitsAction(showToast);
+
   return useMemo(
     () => ({
       // Bound so retries replay queued check-ins against the stored zone (#269).
       loadHabits: () => habitManager.loadHabits(tz),
       updateGoal: habitManager.updateGoal,
-      updateGoalUnits: habitManager.updateGoalUnits,
+      updateGoalUnits,
       logUnit,
       updateHabit: (habit) => habitManager.updateHabit(habit, tz),
       deleteHabit: habitManager.deleteHabit,
       addHabit: (input, isCarryover) => habitManager.addHabit(input, isCarryover, tz),
       saveHabitOrder: (habits) => habitManager.saveHabitOrder(habits, tz),
-      // Bind the hook tz so a backfill buckets its completed_on days into the
-      // user's stored zone, matching the online log path.
-      backfillMissedDays: (habitId: number, days: Date[]) =>
-        habitManager.backfillMissedDays(habitId, days, tz),
-      setNewStartDate: (habitId, date) => habitManager.setNewStartDate(habitId, date, tz),
       onboardingSave,
       iconPress,
       emojiSelect,
@@ -262,6 +283,6 @@ export const useHabitActions = (
       lockUntouchedHabits: () => habitManager.lockUntouchedHabits(tz),
       unlockHabit: (habitId) => habitManager.unlockHabit(habitId, tz),
     }),
-    [logUnit, iconPress, emojiSelect, onboardingSave, tz],
+    [logUnit, iconPress, emojiSelect, onboardingSave, updateGoalUnits, tz],
   );
 };

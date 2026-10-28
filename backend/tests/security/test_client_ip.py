@@ -20,7 +20,6 @@ from __future__ import annotations
 
 from contextlib import asynccontextmanager
 from http import HTTPStatus
-from pathlib import Path
 from typing import TYPE_CHECKING
 
 import pytest
@@ -35,6 +34,7 @@ from database import get_session
 from main import app
 from models.password_reset_token import PasswordResetToken
 from rate_limit import INVALID_LICENSE_MAX_PER_HOUR
+from tests.helpers.dockerfile_cmd import runtime_cmd, runtime_cmd_flag_names, runtime_cmd_tokens
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator
@@ -99,8 +99,6 @@ def _audit_ip_max_length() -> int:
 # returns must fit the audit column or the reset endpoint 500s.
 _AUDIT_IP_MAX_LENGTH = _audit_ip_max_length()
 
-_DOCKERFILE = Path(__file__).resolve().parents[2] / "Dockerfile"
-_CMD_DIRECTIVE = "CMD "
 _WILDCARD_ALLOW_IPS = "--forwarded-allow-ips=*"
 _PROXY_HEADERS_FLAG = "--proxy-headers"
 _FORWARDED_ALLOW_IPS_FLAG = "--forwarded-allow-ips"
@@ -108,8 +106,6 @@ _FORWARDED_ALLOW_IPS_FLAG = "--forwarded-allow-ips"
 # and the off form contains the on form as a substring, so the CMD has to be
 # compared token by token rather than searched for text.
 _NO_PROXY_HEADERS_FLAG = "--no-proxy-headers"
-_FLAG_VALUE_SEPARATOR = "="
-_CMD_JSON_PUNCTUATION = '[],"'
 
 # The import string the CMD hands uvicorn, resolved through the same
 # ``backend/src`` sys.path entry the suite itself runs on.
@@ -325,14 +321,6 @@ def test_resolved_address_fits_the_audit_column(monkeypatch: pytest.MonkeyPatch)
     assert _LONG_ZONE_ID not in resolved
 
 
-def _runtime_cmd() -> str:
-    """Return the runtime image's CMD line from the backend Dockerfile."""
-    lines = _DOCKERFILE.read_text().splitlines()
-    commands = [line for line in lines if line.startswith(_CMD_DIRECTIVE)]
-    assert len(commands) == 1, "expected exactly one CMD directive in backend/Dockerfile"
-    return commands[0]
-
-
 def test_runtime_image_never_trusts_every_forwarding_peer() -> None:
     """The server's own proxy trust set must not be a wildcard.
 
@@ -342,22 +330,12 @@ def test_runtime_image_never_trusts_every_forwarding_peer() -> None:
     reads the socket peer, including this module's fallback, is then keyed on
     an attacker-supplied string before any application code runs.
     """
-    assert _WILDCARD_ALLOW_IPS not in _runtime_cmd(), (
+    assert _WILDCARD_ALLOW_IPS not in runtime_cmd(), (
         "backend/Dockerfile CMD must not pass --forwarded-allow-ips=*; the "
         "wildcard makes uvicorn overwrite request.client with the left-most, "
         "caller-chosen X-Forwarded-For entry, so throttle keys and audit rows "
         "are forged before resolve_client_ip is reached."
     )
-
-
-def _runtime_cmd_tokens() -> list[str]:
-    """Return the runtime CMD split into tokens with its JSON-array punctuation stripped."""
-    return [token.strip(_CMD_JSON_PUNCTUATION) for token in _runtime_cmd().split()]
-
-
-def _runtime_cmd_flag_names() -> set[str]:
-    """Return every option name in the runtime CMD, discarding any attached value."""
-    return {token.split(_FLAG_VALUE_SEPARATOR)[0] for token in _runtime_cmd_tokens()}
 
 
 def _uvicorn_config(*, proxy_headers: bool) -> Config:
@@ -376,7 +354,7 @@ def _runtime_proxy_headers() -> bool:
     The switch is a flag pair, so omitting both spellings does not disable
     anything -- it leaves uvicorn's own default in force.
     """
-    tokens = _runtime_cmd_tokens()
+    tokens = runtime_cmd_tokens()
     if _NO_PROXY_HEADERS_FLAG in tokens:
         return False
     if _PROXY_HEADERS_FLAG in tokens:
@@ -401,7 +379,7 @@ def test_runtime_image_disables_uvicorn_proxy_header_handling() -> None:
     forwarding decision taken inside the application against
     ``TRUSTED_PROXY_CIDRS``.
     """
-    assert _NO_PROXY_HEADERS_FLAG in _runtime_cmd_tokens(), (
+    assert _NO_PROXY_HEADERS_FLAG in runtime_cmd_tokens(), (
         f"backend/Dockerfile CMD must pass {_NO_PROXY_HEADERS_FLAG}; leaving the "
         "flag out keeps uvicorn's ProxyHeadersMiddleware mounted, so a loopback "
         "caller can still rewrite request.client and the request scheme under a "
@@ -411,7 +389,7 @@ def test_runtime_image_disables_uvicorn_proxy_header_handling() -> None:
 
 def test_runtime_image_never_enables_uvicorn_proxy_header_handling() -> None:
     """No bare enabling token may switch the server-side rewriting layer back on."""
-    assert _PROXY_HEADERS_FLAG not in _runtime_cmd_tokens(), (
+    assert _PROXY_HEADERS_FLAG not in runtime_cmd_tokens(), (
         f"backend/Dockerfile CMD must not pass {_PROXY_HEADERS_FLAG}; uvicorn "
         "would rewrite request.client from the left-most X-Forwarded-For entry "
         "under a trust set the application never sees."
@@ -420,7 +398,7 @@ def test_runtime_image_never_enables_uvicorn_proxy_header_handling() -> None:
 
 def test_runtime_image_declares_no_server_level_forwarding_trust_set() -> None:
     """The image must name no proxy allowlist of its own, wildcard or otherwise."""
-    assert _FORWARDED_ALLOW_IPS_FLAG not in _runtime_cmd_flag_names(), (
+    assert _FORWARDED_ALLOW_IPS_FLAG not in runtime_cmd_flag_names(), (
         f"backend/Dockerfile CMD must not pass {_FORWARDED_ALLOW_IPS_FLAG}; a "
         "server-level trust set can diverge from the one the application "
         f"enforces from {TRUSTED_PROXIES_ENV_VAR}."

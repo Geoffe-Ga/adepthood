@@ -9,7 +9,8 @@
  * practice — belongs here or in the banner's ``children``, not in the ticking
  * leaf.
  *
- * Only a session that ran its whole length gets a note back. Stopping early is
+ * A full session gets a note back; an early stop gets one only after its
+ * measured habit log confirms. Stopping early is
  * the writer saying they are done, and remarking on that would be the page
  * commenting on a decision it was not asked about — the elapsed time is still
  * reported to whatever consumes the session either way. That is a decision
@@ -34,17 +35,35 @@
  * What this buys the banner's ``children`` slot is written out in
  * {@link WritingSessionBanner}.
  */
-import React, { useCallback, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
+import {
+  ScrollView,
+  StyleSheet,
+  View,
+  useWindowDimensions,
+  type LayoutChangeEvent,
+} from 'react-native';
 
-import type { WritingSessionResult } from './writingSession';
+import {
+  RESONANCE_BUTTON_CLEARANCE,
+  WRITING_BAND_LOWERED_CLEARANCE,
+  WRITING_TIMER_CLEARANCE,
+} from './JournalEntry.styles';
+import type { LoggedWritingSession, WritingSessionResult } from './writingSession';
 import WritingSessionBanner from './WritingSessionBanner';
 import WritingTimer from './WritingTimer';
 
+import { decorativeHidden } from '@/components/a11yHidden';
+import { SPACING, journalSheet, touchTarget } from '@/design/tokens';
 import type { EngineDeps } from '@/features/Practice/engine/types';
 
 export interface WritingSessionSurfaceProps {
+  /** A confirmed log may also give an early-stopped session a factual note. */
+  loggedSession?: LoggedWritingSession;
   /** The length the timer opens at; the writer can change it before starting. */
   initialMinutes?: number;
+  /** Keep floating controls inside the writing desk when Sources occupy a side pane. */
+  rightInset?: number;
   /**
    * Begin the session on mount, because the page was opened in order to run it.
    *
@@ -73,6 +92,10 @@ export interface WritingSessionSurfaceProps {
    * way to close it.
    */
   renderOffer?: (_result: WritingSessionResult) => React.ReactNode;
+  /** Reserve the measured note and timer together in the page scroller. */
+  onClearanceChange?: (_clearance: number) => void;
+  /** Reserve an untouched phone timer outside the paper instead of inside its scroller. */
+  onIdleDockHeightChange?: (_height: number) => void;
   /** The engine's clock and adapter seam; tests inject it, production does not. */
   deps?: EngineDeps;
 }
@@ -87,47 +110,297 @@ export interface WritingSessionSurfaceProps {
  * ``WritingSessionBanner``'s docstring tells the slot's occupant not to allow.
  */
 interface StandingNote {
+  message?: string;
   result: WritingSessionResult;
   ordinal: number;
 }
 
-function WritingSessionSurface({
-  initialMinutes,
-  autoStart,
-  renderOffer,
-  onSession,
-  deps,
-}: WritingSessionSurfaceProps): React.JSX.Element {
+function useBandClearance(
+  onClearanceChange: WritingSessionSurfaceProps['onClearanceChange'],
+  onIdleDockHeightChange: WritingSessionSurfaceProps['onIdleDockHeightChange'],
+  scrollWholeSurface: boolean,
+  lift: number,
+  idleDocked: boolean,
+) {
+  const [visibleHeight, setVisibleHeight] = useState<number | null>(null);
+  const reportLayout = useCallback((event: LayoutChangeEvent) => {
+    setVisibleHeight(event.nativeEvent.layout.height);
+  }, []);
+  // A layout effect, not a passive one: the page makes room for the band in
+  // the same commit that measured it, so no frame is painted between the two
+  // with the band over writing that has not yet moved out of its way (#3481).
+  useLayoutEffect(() => {
+    if (idleDocked) {
+      onClearanceChange?.(0);
+      if (visibleHeight !== null) onIdleDockHeightChange?.(visibleHeight + SPACING.md);
+      return;
+    }
+    onIdleDockHeightChange?.(0);
+    if (visibleHeight === null) return;
+    onClearanceChange?.(
+      Math.max(scrollWholeSurface ? 0 : WRITING_TIMER_CLEARANCE, visibleHeight + lift + SPACING.md),
+    );
+  }, [
+    idleDocked,
+    lift,
+    onClearanceChange,
+    onIdleDockHeightChange,
+    scrollWholeSurface,
+    visibleHeight,
+  ]);
+  useEffect(
+    () => () => {
+      onIdleDockHeightChange?.(0);
+    },
+    [onIdleDockHeightChange],
+  );
+  return { reportLayout, measured: visibleHeight !== null };
+}
+
+function useStandingNote(
+  onSession: WritingSessionSurfaceProps['onSession'],
+  loggedSession: WritingSessionSurfaceProps['loggedSession'],
+) {
   const [note, setNote] = useState<StandingNote | null>(null);
-  const dismiss = useCallback(() => setNote(null), []);
-  // Held through a ref so ``record`` keeps one identity for the life of the
-  // mount: it is the ticking timer's ``onComplete``, and a consumer that
-  // re-created its callback each render would otherwise churn that prop ten
-  // times a second.
+  const latest = useRef<WritingSessionResult | null>(null);
+  const dismissed = useRef<WritingSessionResult | null>(null);
+  const dismiss = useCallback(() => {
+    dismissed.current = latest.current;
+    setNote(null);
+  }, []);
+  // Keep the timer callback stable while delivering the latest session listener.
   const onSessionRef = useRef(onSession);
   onSessionRef.current = onSession;
   const record = useCallback((result: WritingSessionResult) => {
+    latest.current = result;
+    dismissed.current = null;
     onSessionRef.current?.(result);
     if (!result.reachedFullDuration) return;
     setNote((previous) => ({ result, ordinal: (previous?.ordinal ?? 0) + 1 }));
   }, []);
+  useEffect(() => {
+    if (
+      !loggedSession ||
+      loggedSession.result !== latest.current ||
+      loggedSession.result === dismissed.current
+    )
+      return;
+    setNote((previous) => ({
+      result: loggedSession.result,
+      message: loggedSession.message,
+      ordinal:
+        previous?.result === loggedSession.result ? previous.ordinal : (previous?.ordinal ?? 0) + 1,
+    }));
+  }, [loggedSession]);
+  return { note, dismiss, record };
+}
+
+/** The height a lowered band gains by giving up its resonance-sized lift. */
+const LIFT_GIVEN_UP = RESONANCE_BUTTON_CLEARANCE - WRITING_BAND_LOWERED_CLEARANCE;
+/** Match the page's single-column breakpoint: below it, there is no side rail for an idle card. */
+export const IDLE_TIMER_DOCK_MAX_WIDTH = 600;
+
+function useIdleTimerDock(): {
+  idleDocked: boolean;
+  idleDockMaxHeight: number;
+  beginFloatingSession: () => void;
+} {
+  const [hasStarted, setHasStarted] = useState(false);
+  const window = useWindowDimensions();
+  const idleDocked = window.width < IDLE_TIMER_DOCK_MAX_WIDTH && !hasStarted;
+  const beginFloatingSession = useCallback(() => setHasStarted(true), []);
+  // RN Web applies maxHeight to the content box; leave the tray's outer inset
+  // outside that cap so padding can never push its top above the viewport.
+  const idleDockMaxHeight = Math.max(0, window.height - touchTarget.minimum - SPACING.lg);
+  return { idleDocked, idleDockMaxHeight, beginFloatingSession };
+}
+
+function useBandBounds() {
+  // The band's height as it would be at the full lift, whichever lift it was
+  // measured at, so lowering it can never feed back into the decision to lower.
+  const [liftedHeight, setLiftedHeight] = useState(Infinity);
+  const [contentHeight, setContentHeight] = useState(0);
+  // Measure the unshrunk note, offers and clock: enlarged text and an open
+  // picker need their real height, rather than a count of nominal targets.
+  const lowered = contentHeight > liftedHeight;
+  const loweredRef = useRef(lowered);
+  loweredRef.current = lowered;
+  const scrollWholeSurface = contentHeight > liftedHeight + (lowered ? LIFT_GIVEN_UP : 0);
+  const reportBandLayout = useCallback((event: LayoutChangeEvent) => {
+    const measured = event.nativeEvent.layout.height;
+    setLiftedHeight(loweredRef.current ? measured - LIFT_GIVEN_UP : measured);
+  }, []);
+  const reportContentSize = useCallback((_width: number, height: number) => {
+    setContentHeight(height);
+  }, []);
+  const lift = lowered ? WRITING_BAND_LOWERED_CLEARANCE : RESONANCE_BUTTON_CLEARANCE;
+  return { scrollWholeSurface, lift, reportBandLayout, reportContentSize };
+}
+
+function StandingSessionNote({
+  note,
+  dismiss,
+  scrollWholeSurface,
+  renderOffer,
+}: {
+  note: StandingNote | null;
+  dismiss: () => void;
+  scrollWholeSurface: boolean;
+  renderOffer: WritingSessionSurfaceProps['renderOffer'];
+}): React.JSX.Element | null {
+  if (note === null) return null;
   return (
-    <>
-      {note === null ? null : (
-        <WritingSessionBanner result={note.result} onDismiss={dismiss}>
-          {renderOffer === undefined ? null : (
-            <React.Fragment key={note.ordinal}>{renderOffer(note.result)}</React.Fragment>
-          )}
-        </WritingSessionBanner>
+    <WritingSessionBanner
+      result={note.result}
+      onDismiss={dismiss}
+      scrollWholeSurface={scrollWholeSurface}
+      loggedMessage={note.message}
+    >
+      {renderOffer === undefined || !note.result.reachedFullDuration ? null : (
+        <React.Fragment key={note.ordinal}>{renderOffer(note.result)}</React.Fragment>
       )}
-      <WritingTimer
-        initialMinutes={initialMinutes}
-        autoStart={autoStart}
-        onComplete={record}
-        deps={deps}
-      />
-    </>
+    </WritingSessionBanner>
   );
 }
+
+function writingBandStyle(
+  layout: { idleDocked: boolean; idleDockMaxHeight: number; lift: number; unreserved: boolean },
+  rightInset: number,
+) {
+  return [
+    styles.band,
+    layout.idleDocked ? styles.idleDock : null,
+    {
+      right: rightInset,
+      bottom: layout.idleDocked ? 0 : layout.lift,
+      maxHeight: layout.idleDocked ? layout.idleDockMaxHeight : undefined,
+      opacity: layout.unreserved ? 0 : 1,
+    },
+  ];
+}
+
+function writingContentStyle(idleDocked: boolean, idleDockMaxHeight: number) {
+  return [
+    styles.content,
+    idleDocked ? styles.idleDockContent : null,
+    idleDocked ? { maxHeight: idleDockMaxHeight } : null,
+  ];
+}
+
+function useWritingBandLayout(
+  onClearanceChange: WritingSessionSurfaceProps['onClearanceChange'],
+  onIdleDockHeightChange: WritingSessionSurfaceProps['onIdleDockHeightChange'],
+) {
+  const { idleDocked, idleDockMaxHeight, beginFloatingSession } = useIdleTimerDock();
+  const bounds = useBandBounds();
+  const { reportLayout, measured } = useBandClearance(
+    onClearanceChange,
+    onIdleDockHeightChange,
+    bounds.scrollWholeSurface,
+    bounds.lift,
+    idleDocked,
+  );
+  // An untouched dock has room on the page only once it has been measured, so
+  // until then it lays out unpainted and untouchable instead of over the writing.
+  const unreserved = idleDocked && !measured;
+  return {
+    ...bounds,
+    idleDocked,
+    idleDockMaxHeight,
+    beginFloatingSession,
+    reportLayout,
+    unreserved,
+  };
+}
+
+function WritingSessionSurface({
+  loggedSession,
+  initialMinutes,
+  rightInset = 0,
+  autoStart,
+  renderOffer,
+  onSession,
+  onClearanceChange,
+  onIdleDockHeightChange,
+  deps,
+}: WritingSessionSurfaceProps): React.JSX.Element {
+  const { note, dismiss, record } = useStandingNote(onSession, loggedSession);
+  const layout = useWritingBandLayout(onClearanceChange, onIdleDockHeightChange);
+  return (
+    <View
+      style={writingBandStyle(layout, rightInset)}
+      pointerEvents={layout.unreserved ? 'none' : 'box-none'}
+      {...decorativeHidden(layout.unreserved)}
+      onLayout={layout.reportBandLayout}
+      testID="writing-session-band"
+    >
+      <ScrollView
+        style={writingContentStyle(layout.idleDocked, layout.idleDockMaxHeight)}
+        scrollEnabled={layout.idleDocked || layout.scrollWholeSurface}
+        pointerEvents="box-none"
+        onLayout={layout.reportLayout}
+        onContentSizeChange={layout.reportContentSize}
+        keyboardShouldPersistTaps="handled"
+        testID="writing-session-band-content"
+      >
+        <StandingSessionNote
+          note={note}
+          dismiss={dismiss}
+          scrollWholeSurface={layout.scrollWholeSurface}
+          renderOffer={renderOffer}
+        />
+        <WritingTimer
+          initialMinutes={initialMinutes}
+          autoStart={autoStart}
+          onComplete={record}
+          onStart={layout.beginFloatingSession}
+          withinBand
+          deps={deps}
+        />
+      </ScrollView>
+    </View>
+  );
+}
+
+const styles = StyleSheet.create({
+  content: {
+    flexGrow: 0,
+    flexShrink: 1,
+    maxHeight: '100%',
+  },
+  band: {
+    position: 'absolute',
+    // Leave the upper half for page actions. The bottom is a lift applied at
+    // render: the resonance-sized baseline, or the lowered gap when the content
+    // cannot fit above it. Past even that, the complete surface scrolls,
+    // including its summary, Close and timer.
+    top: '50%',
+    justifyContent: 'flex-end',
+    left: 0,
+    right: 0,
+    paddingHorizontal: journalSheet.deskPaddingH,
+  },
+  /**
+   * An untouched phone timer is a quiet tray below the paper, not an overlay.
+   * The page takes its measured height off the bottom of the writing column,
+   * so it covers nothing inside the sheet; until that height is known it is
+   * not painted at all (#3481).
+   */
+  idleDock: {
+    position: 'absolute',
+    // React Native Web does not let `undefined` in a later style clear the
+    // band's `top: 50%`; CSS `auto` is the explicit reset that makes this a
+    // bottom-sized tray instead of a stretched lower-half overlay.
+    top: 'auto',
+    bottom: 0,
+    paddingBottom: SPACING.md,
+    overflow: 'hidden',
+  },
+  /** Fill only the available tray height; overflow remains reachable by scroll. */
+  idleDockContent: {
+    flexShrink: 1,
+    minHeight: 0,
+  },
+});
 
 export default WritingSessionSurface;

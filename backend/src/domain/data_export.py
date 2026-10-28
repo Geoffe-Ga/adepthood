@@ -39,6 +39,7 @@ from decimal import Decimal
 from typing import TYPE_CHECKING
 
 from domain.ownership import OwnedBy
+from models.agent_grant import AgentGrant
 from models.completion_suggestion import CompletionSuggestion
 from models.content_completion import ContentCompletion
 from models.corpus_consent import CorpusConsentEvent
@@ -50,6 +51,7 @@ from models.feedback import FeedbackReport
 from models.goal import Goal
 from models.goal_completion import GoalCompletion
 from models.goal_group import GoalGroup
+from models.goal_log_event import GoalLogEvent
 from models.habit import Habit
 from models.journal_entry import JournalEntry
 from models.marginalia import Marginalia
@@ -63,6 +65,7 @@ from models.practice_tag import PracticeTag
 from models.promoted_quote import PromotedQuote
 from models.prompt_dismissal import PromptDismissal
 from models.prompt_response import PromptResponse
+from models.resource_completion import ResourceCompletion
 from models.stage_progress import StageProgress
 from models.user import User
 from models.user_depth_preferences import UserDepthPreferences
@@ -166,6 +169,20 @@ MANIFEST: Mapping[str, ExportRule] = {
         "the account it describes is gone, so it can never be anybody's to "
         "take with them.",
     ),
+    "adminbalanceadjustment": Omitted(
+        "Operator accounting for wallet corrections. The wallet owner can see "
+        "their current balance; internal admin identity and source-address "
+        "evidence are not part of a portable account archive.",
+    ),
+    "agent_grant": _include(
+        "vault_agents",
+        AgentGrant,
+        "Which vault agents the account approved, what each may do, and when "
+        "each was last used or revoked: the account's own decisions. The vault "
+        "address each grant is for is left out, because for a managed vault "
+        "that is an internal allocation the account is never shown.",
+        drop_columns=("resource",),
+    ),
     "authidentity": Omitted(
         "Opaque Google / Apple subject identifiers. They are credentials for "
         "somebody else's system and mean nothing outside this one.",
@@ -201,6 +218,12 @@ MANIFEST: Mapping[str, ExportRule] = {
         "separately, which is exactly why leaving it out would be leaving out "
         "the journal in another shape.",
         drop_columns=("embedding",),
+    ),
+    "corpusclassificationattempt": Omitted(
+        "A tally of how many times your writing was sorted, and when. Bookkeeping "
+        "about usage, not anything you wrote \u2014 it holds a date and nothing else "
+        "from the entry it was spent on. What your archive does carry is the "
+        "result: every sorted fragment travels with your corpus.",
     ),
     "corpusinvitationstate": _include(
         "corpus_invitation",
@@ -274,15 +297,20 @@ MANIFEST: Mapping[str, ExportRule] = {
         "Every check-in the account logged — the raw material of every streak.",
     ),
     "goalcompletionspend": Omitted(
-        "A hashed transport-retry receipt. It prevents one check-in operation "
-        "from being applied twice but is not content the account authored; the "
-        "check-in itself is exported from goalcompletion.",
+        "A receipt that stops one check-in from being counted twice if the app "
+        "has to retry. It holds nothing you wrote; the check-in itself is in "
+        "goal_completions.",
     ),
     "goalgroup": _include(
         "goal_groups",
         GoalGroup,
         "The account's own groupings of its goals. Shared community templates "
         "carry no user_id, so scoping by it cannot reach one.",
+    ),
+    "goallogevent": _include(
+        "goal_log_events",
+        GoalLogEvent,
+        "Each actual check-in change, its signed amount, source and logging time.",
     ),
     "gumroadsale": Omitted(
         "A payment record, carrying processor identifiers that mean nothing "
@@ -296,7 +324,7 @@ MANIFEST: Mapping[str, ExportRule] = {
     ),
     "invitationsignal": Omitted(
         "Which invitations the interface showed and how they were dismissed. "
-        "Interaction telemetry about the app, not writing by the account.",
+        "Bookkeeping about what the app showed, not anything you wrote.",
     ),
     "journalentry": _include(
         "journal_entries",
@@ -308,14 +336,23 @@ MANIFEST: Mapping[str, ExportRule] = {
         # transport bookkeeping, withheld exactly as ``feedbackreport``'s is.
         drop_columns=("vault_ref", "vault_tags", "idem_key"),
     ),
+    "journalwithdrawalnote": Omitted(
+        "A detached note left after an account is deleted: an opaque vault "
+        "fingerprint and an entry id with no account reference. It belongs to "
+        "no live account, so no export can reach it.",
+    ),
+    "journalwithdrawalobligation": Omitted(
+        "Content-free bookkeeping of which deleted pages still owe their vault "
+        "copy a withdrawal, and whether that vault confirmed it. The pages "
+        "themselves are deleted; this is housekeeping, as voicedraftretraction is.",
+    ),
     "licensebinding": Omitted(
         "The processor's sale identifier for the licence this account "
         "redeemed — an operational record the account did not write; the "
         "receipt itself is already omitted.",
     ),
     "llmusagelog": Omitted(
-        "Per-request AI metering: token counts and prices. Operational "
-        "accounting about the account's usage, not anything it wrote.",
+        "A tally of what each AI request cost. Bookkeeping about usage, not anything you wrote.",
     ),
     "loginattempt": Omitted(
         "Sign-in attempts and the IP addresses they came from. Security "
@@ -326,8 +363,7 @@ MANIFEST: Mapping[str, ExportRule] = {
     "marginalia": _include(
         "margin_notes",
         Marginalia,
-        "Notes the account wrote in the margins of its own entries, and the "
-        "passages they anchor to.",
+        "AI margin notes on the account's entries, and the passages they anchor to.",
     ),
     "mettareturnarc": _include(
         "return_arcs",
@@ -344,6 +380,22 @@ MANIFEST: Mapping[str, ExportRule] = {
         MettaReturnOfferDismissal,
         "Returns the account was offered and declined — a choice it made, "
         "not a measurement taken of it.",
+    ),
+    "oauth_authorization_code": Omitted(
+        "Unspent one-time codes waiting for an agent to exchange them, gone "
+        "within a minute. A code's digest is a credential's shadow, not "
+        "anything the account wrote or chose beyond the approval itself, "
+        "which the vault agents collection already carries.",
+    ),
+    "oauth_client": Omitted(
+        "The anonymous registry of vault agents: what each agent said about "
+        "itself when it registered. No row names an account.",
+    ),
+    "oauth_refresh_token": Omitted(
+        "Digests of the refresh tokens the account's agents hold, and when each "
+        "was rotated or revoked. A credential's shadow, not a decision: the "
+        "decisions \u2014 which agents, which grants, when each was last used \u2014 are "
+        "in the vault agents collection (#3533).",
     ),
     "passwordresettoken": Omitted(
         "Live recovery credentials. Anything that can be redeemed for a "
@@ -410,6 +462,15 @@ MANIFEST: Mapping[str, ExportRule] = {
         # The retry token's digest, not something the account wrote (see
         # ``journalentry`` above).
         drop_columns=("idem_key",),
+    ),
+    "resourcecompletion": _include(
+        "resources_read",
+        ResourceCompletion,
+        "Which Start Here resources of the course the account marked read.",
+    ),
+    "restoremarker": Omitted(
+        "Operator bookkeeping for a database restore: a restore id, a state and "
+        "counts. It names no account.",
     ),
     "revokedtoken": Omitted(
         "Expired JWT identifiers with no owner column at all. Nothing here "
@@ -488,6 +549,11 @@ MANIFEST: Mapping[str, ExportRule] = {
     "vaultteardownreceipt": Omitted(
         "Content-free post-deletion reconciliation state. It has no account "
         "reference and belongs to operations, not to an export.",
+    ),
+    "voicedraftretraction": Omitted(
+        "Content-free bookkeeping of which essays were mirrored to the "
+        "account's vault and whether their withdrawal was confirmed. The essays "
+        "themselves are exported with their notes; this is housekeeping.",
     ),
     "walletaudit": Omitted(
         "The offering-balance ledger. Operational accounting, and rows about "

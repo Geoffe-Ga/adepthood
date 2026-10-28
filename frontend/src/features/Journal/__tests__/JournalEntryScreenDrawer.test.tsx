@@ -23,13 +23,16 @@ const mockJournalList = jest.fn() as jest.MockedFunction<
 >;
 const mockVoiceReadiness = jest.fn<() => Promise<VoiceReadinessT>>();
 const mockVaultConnection =
-  jest.fn<() => Promise<{ connected: boolean; vault_url: string | null }>>();
+  jest.fn<
+    () => Promise<{ connected: boolean; vault_url: string | null; mcp_address: string | null }>
+  >();
 const mockRootNavigate = jest.fn();
 
 // ``useAuth`` throws outside a provider; the screen reads only the zone.
 jest.mock('@/context/AuthContext', () => require('./authContextTestKit'));
 
 jest.mock('@/api', () => ({
+  ...require('./journalUiFlagsTestKit'),
   journal: {
     get: (...a: unknown[]) => (mockGet as unknown as (...x: unknown[]) => unknown)(...a),
     create: (...a: unknown[]) => (mockCreate as unknown as (...x: unknown[]) => unknown)(...a),
@@ -153,7 +156,11 @@ beforeEach(() => {
   mockUpdate.mockResolvedValue(entry({ id: 42 }));
   mockResonanceList.mockResolvedValue({ items: [] });
   mockJournalList.mockResolvedValue(page([]));
-  mockVaultConnection.mockResolvedValue({ connected: true, vault_url: 'https://v.example' });
+  mockVaultConnection.mockResolvedValue({
+    connected: true,
+    vault_url: 'https://v.example',
+    mcp_address: null,
+  });
   mockVoiceReadiness.mockResolvedValue({
     ready: false,
     state: 'gathering',
@@ -279,7 +286,7 @@ describe('Journal header drawer from JournalEntryScreen', () => {
     expect(navigation.navigate).toHaveBeenCalledWith('PromotedQuotes');
   });
 
-  it('routes a consented account from Your corpus to the import surface', async () => {
+  it("routes a consented account from Everything you've written to the import surface", async () => {
     const { getByTestId, getByLabelText, navigation, queryByTestId } = renderScreen(7);
     await waitFor(() => expect(getByTestId('journal-title-input')).toBeTruthy());
 
@@ -294,7 +301,7 @@ describe('Journal header drawer from JournalEntryScreen', () => {
   it('routes a consented account with no vault to where its corpus would live', async () => {
     // #3017: a corpus lives in a vault (#3015). The drawer reads the vault on
     // press beside readiness, so this door agrees with the band and the hub.
-    mockVaultConnection.mockResolvedValue({ connected: false, vault_url: null });
+    mockVaultConnection.mockResolvedValue({ connected: false, vault_url: null, mcp_address: null });
     const { getByTestId, getByLabelText, navigation } = renderScreen(7);
     await waitFor(() => expect(getByTestId('journal-title-input')).toBeTruthy());
 
@@ -318,7 +325,7 @@ describe('Journal header drawer from JournalEntryScreen', () => {
   });
 
   it('asks an undecided account with no vault the decision first', async () => {
-    mockVaultConnection.mockResolvedValue({ connected: false, vault_url: null });
+    mockVaultConnection.mockResolvedValue({ connected: false, vault_url: null, mcp_address: null });
     mockVoiceReadiness.mockResolvedValue({
       ready: false,
       state: 'not_consented',

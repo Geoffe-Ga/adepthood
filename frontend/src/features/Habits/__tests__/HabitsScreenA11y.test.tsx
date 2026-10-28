@@ -19,10 +19,12 @@ jest.mock('expo-notifications', () => ({
 jest.mock('../components/AddHabitModal', () => ({ __esModule: true, default: () => null }));
 jest.mock('../components/GoalModal', () => ({ __esModule: true, default: () => null }));
 jest.mock('../components/HabitSettingsModal', () => ({ __esModule: true, default: () => null }));
-jest.mock('../components/MissedDaysModal', () => ({ __esModule: true, default: () => null }));
 jest.mock('../components/OnboardingModal', () => ({ __esModule: true, default: () => null }));
 jest.mock('../components/ReorderHabitsModal', () => ({ __esModule: true, default: () => null }));
-jest.mock('../components/StatsModal', () => ({ __esModule: true, default: () => null }));
+jest.mock('../story/HabitStorySheet', () => ({
+  __esModule: true,
+  HabitStorySheet: jest.fn(() => null),
+}));
 
 import HabitsDrawer from '../components/HabitsDrawer';
 import { EnergyCTA, ModeBar, PaginationBar } from '../HabitsScreen';
@@ -55,7 +57,7 @@ describe('HabitsScreen chrome accessibility', () => {
 
     it('exposes each action row as a named button', () => {
       const { getByRole } = render(<HabitsDrawer {...baseProps} />);
-      for (const name of ['Quick Log', 'Stats', 'Edit', 'Add Habit', 'Energy Scaffolding']) {
+      for (const name of ['Quick Log', 'Edit', 'Add Habit', 'Energy Scaffolding']) {
         expect(getByRole('button', { name })).toBeTruthy();
       }
       // The reveal toggle reflects the current allRevealed state in its label
@@ -81,10 +83,10 @@ describe('HabitsScreen chrome accessibility', () => {
 
   describe('ModeBar', () => {
     it('labels the exit button with the active mode', () => {
-      const { getByLabelText } = render(<ModeBar mode="stats" onExit={noop} />);
+      const { getByLabelText } = render(<ModeBar mode="edit" onExit={noop} />);
       const exit = getByLabelText(/^Exit /);
       expect(exit.props.accessibilityRole).toBe('button');
-      expect(exit.props.accessibilityLabel).toBe('Exit Stats Mode');
+      expect(exit.props.accessibilityLabel).toBe('Exit Edit Mode');
     });
 
     it('falls back to the raw mode when it is not in the label map', () => {
@@ -162,7 +164,7 @@ describe('HabitsScreen chrome accessibility', () => {
       const { getByLabelText } = render(<EnergyCTA onOpen={onOpen} onArchive={onArchive} />);
 
       // Labels contain the visible button text (WCAG 2.5.3 Label-in-Name).
-      fireEvent.press(getByLabelText('Perform Energy Scaffolding'));
+      fireEvent.press(getByLabelText('Start Energy Scaffolding'));
       expect(onOpen).toHaveBeenCalledTimes(1);
 
       fireEvent.press(getByLabelText('Archive This energy scaffolding prompt'));

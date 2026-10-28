@@ -39,4 +39,9 @@ export const CORPUS: readonly string[] = Object.freeze([
   'Intro\n- one\n- two\n> quoted\nplain',
   '- a **b** _c_ <u>d</u>\n> e *f*',
   'snake_case and for_ward_',
+  '## Tuesday\n1. walked\n2. wrote\n- [x] called Sam\n- [ ] book the room\n---',
+  '# h1\n###### h6\n####### seven\n#tag',
+  '9. nine\n10) ten\n3.14 prose',
+  '  - [X] nested **done**\n\t- [ ]',
+  '---\n***\n___\n- - -\n  ***  ',
 ]);

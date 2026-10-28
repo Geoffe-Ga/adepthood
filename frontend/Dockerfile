@@ -54,6 +54,11 @@ ENV EXPO_PUBLIC_SENTRY_RELEASE=$EXPO_PUBLIC_SENTRY_RELEASE
 ARG EXPO_PUBLIC_SANGHA_INVITE_URL
 ENV EXPO_PUBLIC_SANGHA_INVITE_URL=$EXPO_PUBLIC_SANGHA_INVITE_URL
 
+# The BotMason credit pack page, for the same reason: no default, so an
+# undeclared value leaves the web build offering no way to buy credits.
+ARG EXPO_PUBLIC_CREDIT_PACK_URL
+ENV EXPO_PUBLIC_CREDIT_PACK_URL=$EXPO_PUBLIC_CREDIT_PACK_URL
+
 # Fictional habit history is never a network fallback. It is available only to
 # purpose-built demo deployments whose public build configuration says so;
 # omitted (the production default) means disabled.
@@ -72,12 +77,26 @@ ENV EXPO_PUBLIC_GUMROAD_PRODUCT_URL=$EXPO_PUBLIC_GUMROAD_PRODUCT_URL
 ARG EXPO_PUBLIC_GUMROAD_HELP_URL
 ENV EXPO_PUBLIC_GUMROAD_HELP_URL=$EXPO_PUBLIC_GUMROAD_HELP_URL
 
+# Export, then stamp every script and stylesheet in the built index.html with
+# its sha384 Subresource Integrity hash; the stamp fails the build if any
+# served asset is left unhashed, mismatched, inline or foreign (the same two
+# steps as `npm run web:build`). Then render nginx.conf's enforced CSP: its
+# connect-src names the API origin (and the Sentry origin, when a DSN is set)
+# from the same EXPO_PUBLIC_* values the bundle was just built with, and the
+# render refuses to produce a conf without an https API origin. ADR 0009
+# phase (b), #3067.
 RUN npx expo export --platform web
+# Railway exposes this platform commit only when declared as a build ARG.
+# Stamp independently of Sentry labels and the backend's served release.
+ARG RAILWAY_GIT_COMMIT_SHA
+RUN node web-hardening/build-receipt.js dist
+RUN node web-hardening/sri.js stamp dist
+RUN node web-hardening/csp.js nginx.conf nginx.rendered.conf
 
 # ---- Serve stage ----
 FROM nginx:1.27-alpine
 
 COPY --from=builder /app/dist /usr/share/nginx/html
-COPY frontend/nginx.conf /etc/nginx/conf.d/default.conf
+COPY --from=builder /app/nginx.rendered.conf /etc/nginx/conf.d/default.conf
 
 EXPOSE 80

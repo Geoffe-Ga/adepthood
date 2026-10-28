@@ -18,8 +18,8 @@ import { readLaneState } from './laneState';
  * proves is what removal is *for*, on both ways the client picks a key:
  *
  * - The resonance pass pins the payer it disclosed and passes that key
- *   explicitly. After removal it is disclosed as, billed as, and sent as the
- *   shared allowance: no `X-LLM-API-Key` header, one monthly message drawn.
+ *   explicitly. After removal the server-confirmed demo runs without
+ *   `X-LLM-API-Key` and leaves the wallet unchanged.
  *   This catches a build that hid the card while the key stayed in context.
  * - The margin-note essay passes no key, so it reads the session getter that
  *   `ApiKeyContext` registers. After removal, in the same session and before
@@ -52,6 +52,7 @@ interface Usage {
   monthly_messages_used: number;
   offering_balance: number;
   monthly_cap: number;
+  resonance_demo_available: boolean;
 }
 
 /** Every POST this browser sends whose path matches `route`, in order. */
@@ -136,7 +137,9 @@ async function openEntry(page: Page, entryId: number): Promise<void> {
   await page.getByTestId(`journal-shelf-open-${String(entryId)}`).click();
 }
 
-test('a removed key stops travelling and the shared allowance pays', async ({ page }) => {
+test('a removed key stops travelling and the declared demo leaves the wallet unchanged', async ({
+  page,
+}) => {
   const attemptsBefore = await providerAttempts(page);
   const email = await signUp(page, 'api-key-remove');
   const token = await tokenFor(page.request, email);
@@ -190,13 +193,16 @@ test('a removed key stops travelling and the shared allowance pays', async ({ pa
   await expect(page.getByTestId('stored-key-card')).toHaveCount(0);
 
   // 4. The seam, in the same session so an in-memory copy of the key would still
-  //    be live: back on the entry, the next pass is disclosed as, and billed as,
-  //    the shared allowance, and the key no longer rides the request.
+  //    be live: back on the entry, the next pass is disclosed as a demo,
+  //    and the key no longer rides the request. This lane serves the
+  //    stub provider, whose canned pass is a labelled demo and hands its unit
+  //    back (#3062), so the wallet is unchanged once the demo label is up.
   const walletBefore = await usage(page, token);
+  expect(walletBefore.resonance_demo_available).toBe(true);
   await page.getByRole('link', { name: 'Go back' }).click();
   await page.getByRole('button', { name: 'Get resonance' }).click();
-  await expect(page.getByTestId('resonance-explainer-cost')).toContainText(
-    `one of your ${String(walletBefore.monthly_cap)} BotMason messages`,
+  await expect(page.getByTestId('resonance-explainer-cost')).toHaveText(
+    'Demo — not a real reflection. No Adepthood wallet charge.',
   );
   await expect(page.getByTestId('resonance-explainer-cost')).not.toContainText(
     'Your own API key pays',
@@ -204,19 +210,18 @@ test('a removed key stops travelling and the shared allowance pays', async ({ pa
   await page.getByTestId('resonance-explainer-continue').click();
   await expect.poll(() => passes.length).toBe(2);
   expect(passes[1]?.headers()[LLM_KEY_HEADER]).toBeUndefined();
-  await expect
-    .poll(async () => (await usage(page, token)).monthly_messages_used)
-    .toBe(walletBefore.monthly_messages_used + 1);
+  await expect(page.getByTestId('resonance-pass-source')).toContainText('Demo');
+  expect((await usage(page, token)).monthly_messages_used).toBe(walletBefore.monthly_messages_used);
 
   // 5. The getter, still in the same session: asking for the essay of a margin
-  //    note the shared pass wrote sends no explicit key, so the request's header
+  //    note the demo pass wrote sends no explicit key, so the request's header
   //    comes from the getter alone -- and it no longer carries the key. A first
-  //    letter is priced (#623), so opening the note only offers it, at the
-  //    shared allowance's price; the explicit ask is what sends the request.
-  const note = page.locator('[data-testid^="margin-note-"]:not([data-testid*="stale"])').first();
-  await note.click();
-  await expect(page.getByTestId('essay-ask-cost')).toContainText(
-    `one of your ${String(walletBefore.monthly_cap)} BotMason messages`,
+  //    letter is disclosed as a demo, so opening the note only offers it;
+  //    the explicit ask is what sends the request.
+  const openNote = page.locator('[data-testid^="margin-note-open-"]').first();
+  await openNote.click();
+  await expect(page.getByTestId('essay-ask-cost')).toHaveText(
+    'Demo — not a real reflection. No Adepthood wallet charge.',
   );
   expect(essays.length).toBe(0);
   await page.getByTestId('essay-ask').click();

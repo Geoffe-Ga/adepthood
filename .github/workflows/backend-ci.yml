@@ -21,13 +21,21 @@ on:
       - "README.md"
       - ".pre-commit-config.yaml"
       - ".github/workflows/backend-ci.yml"
+      - ".github/workflows/_affected.yml"
       # The Expo SDK and Dependabot guards (#2918) read these; without them a
       # PR reverting EXPO_OFFLINE or loosening an SDK pin never runs them.
       # tests/scripts/test_sdk_alignment_gate.py pins this list.
       - ".github/workflows/frontend-ci.yml"
+      # Cross-boundary Jest guards read this workflow as a contract too.
+      - ".github/workflows/e2e.yml"
       - ".github/dependabot.yml"
       - "frontend/package.json"
       - "frontend/package-lock.json"
+      # The web hardening meta-tests (tests/scripts/test_web_build_hardening.py)
+      # and the custody record test run these files; ADR 0009 phase (b).
+      - "frontend/web-hardening/**"
+      - "frontend/nginx.conf"
+      - "frontend/Dockerfile"
   pull_request:
     paths:
       - "backend/**"
@@ -40,10 +48,15 @@ on:
       - "README.md"
       - ".pre-commit-config.yaml"
       - ".github/workflows/backend-ci.yml"
+      - ".github/workflows/_affected.yml"
       - ".github/workflows/frontend-ci.yml"
+      - ".github/workflows/e2e.yml"
       - ".github/dependabot.yml"
       - "frontend/package.json"
       - "frontend/package-lock.json"
+      - "frontend/web-hardening/**"
+      - "frontend/nginx.conf"
+      - "frontend/Dockerfile"
 
 # One in-flight run per PR. A Ralph lane pushing a fix while CI is still
 # grinding on the previous commit used to leave the stale run to burn to
@@ -56,6 +69,13 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
+  changes:
+    permissions:
+      contents: read
+    uses: ./.github/workflows/_affected.yml
+
+  # Repository guards read docs, tooling and frontend configuration too. Keep
+  # this gate on every existing trigger; the runtime lanes below are narrower.
   backend-quality:
     runs-on: ubuntu-latest
     steps:
@@ -148,6 +168,8 @@ jobs:
   # Cross-version compatibility: verify tests pass on 3.11 and 3.13
   # (3.12 is already covered by the backend-quality job).
   backend-compat:
+    needs: changes
+    if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.compat != 'false') }}
     runs-on: ubuntu-latest
     strategy:
       # This job is the transitive-dependency canary: a red leg must not cancel
@@ -182,6 +204,8 @@ jobs:
         run: pytest -q --no-cov -n auto --dist loadfile
 
   openapi-drift:
+    needs: changes
+    if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.backend != 'false') }}
     # Guards the committed backend/openapi.json against the app's real routes
     # and schemas. Same shape as migration-drift below: regenerate, then fail on
     # a diff. No database service -- the exporter points DATABASE_URL at an
@@ -216,6 +240,8 @@ jobs:
         run: python scripts/backend/export_openapi.py --check
 
   migration-drift:
+    needs: changes
+    if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.backend != 'false') }}
     # BUG-INFRA-023: guard against models diverging from migrations.
     # Runs ``alembic upgrade head`` + ``alembic check`` on a throwaway
     # Postgres; fails if a developer added a model without generating
@@ -322,6 +348,8 @@ jobs:
           python -m pytest tests/test_pg_advisory_lock.py -q --no-cov
 
   backend-integration:
+    needs: changes
+    if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.backend != 'false') }}
     # The default suite runs entirely on in-memory SQLite, where
     # ``backend/conftest.py`` rewrites Postgres ``ARRAY`` columns to ``JSON``
     # and hand-mirrors the functional / partial unique indexes under
@@ -388,6 +416,8 @@ jobs:
           python -m pytest tests/integration -m integration -q --no-cov
 
   cross-boundary-drift:
+    needs: changes
+    if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.cross != 'false') }}
     # A handful of frontend Jest tests exist only to read backend source and
     # fail when the two stacks disagree: the ten APTITUDE colours and their
     # schedule, the upload cap, which consent sources something actually
@@ -428,6 +458,8 @@ jobs:
         run: ./scripts/frontend/cross-boundary-drift.sh
 
   content-drift:
+    needs: changes
+    if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.content != 'false') }}
     # Issue #397: the vendored backend/content/ must match its pinned
     # CONTENT_VERSION (no silent drift, no hand edits) and the manifest
     # must satisfy the frozen schema contract. Bootstrap state (nothing
@@ -450,9 +482,35 @@ jobs:
           cache-dependency-glob: backend/requirements*.txt
 
       - name: Install drift-check deps
-        # The check needs only the sync script's imports, not the app.
+        # The checks need only the sync_content, build_stage_correspondence,
+        # check_wavelength_terms and content_completeness imports, not the app
+        # (tests/scripts/test_stage_correspondence_drift_gate.py fails when any
+        # of the four grows an import this line does not install).
         run: uv pip install --system httpx 'jsonschema>=4.0'
 
       - name: Verify vendored content matches CONTENT_VERSION
         working-directory: backend
         run: python -m scripts.sync_content --check
+
+      # Issue #2667: stage_correspondence.json is generated from the CSV the
+      # step above just verified, plus the ratified supersessions; --check
+      # exits 1 when the committed artifact no longer matches those inputs.
+      - name: Verify stage_correspondence.json is current
+        working-directory: backend
+        run: python -m scripts.build_stage_correspondence --check
+
+      # Issue #3135: every Rx/OD phase name archetypal_wavelength.json serves to
+      # the Map must equal the vendored Modes of the Wavelength CSV the first
+      # step verified; exits 1 on any divergence.
+      - name: Verify wavelength phase terms match the Modes CSV
+        working-directory: backend
+        run: python -m scripts.check_wavelength_terms
+
+      # Issue #3070: the served Course is complete (every stage has an intro and
+      # chapters, no thin chapter or numbering gap outside the reviewed
+      # src/curriculum/content_gaps.json, no broken link, anchor, http or
+      # google.com/url wrapper), and the generated source-reference and
+      # practice-recommendation inventories match the vendored tree.
+      - name: Verify Course content completeness and inventories
+        working-directory: backend
+        run: python -m scripts.content_completeness --check

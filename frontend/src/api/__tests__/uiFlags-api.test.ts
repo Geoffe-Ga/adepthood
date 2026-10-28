@@ -19,6 +19,7 @@ function jsonResponse(data: unknown, status = 200) {
 const ALL_SEEN: UiFlags = {
   has_seen_welcome: true,
   energy_scaffolding_archived: false,
+  course_last_stage: null,
   writing_session_habit_id: null,
 };
 
@@ -29,6 +30,16 @@ beforeEach(() => {
 });
 
 describe('uiFlags.get', () => {
+  test.each([1, 10, null])('reads saved course Frequency %s', async (stage) => {
+    mockFetch.mockReturnValueOnce(jsonResponse({ ...ALL_SEEN, course_last_stage: stage }));
+    expect((await uiFlags.get('tok')).course_last_stage).toBe(stage);
+  });
+
+  test.each([0, 11, 1.5])('refuses impossible course Frequency %s', async (stage) => {
+    mockFetch.mockReturnValueOnce(jsonResponse({ ...ALL_SEEN, course_last_stage: stage }));
+    await expect(uiFlags.get('tok')).rejects.toBeInstanceOf(ApiValidationError);
+  });
+
   test('GETs /ui-flags (no trailing slash) with the bearer token and returns the parsed body', async () => {
     mockFetch.mockReturnValueOnce(jsonResponse(ALL_SEEN));
     const result = await uiFlags.get('tok');
@@ -73,12 +84,13 @@ describe('uiFlags.get', () => {
 });
 
 describe('uiFlags writing_session_habit_id', () => {
-  test('a payload from before the link existed parses, with the link null', async () => {
+  test('a legacy payload defaults its missing reading position and habit link to null', async () => {
     mockFetch.mockReturnValueOnce(
       jsonResponse({ has_seen_welcome: true, energy_scaffolding_archived: false }),
     );
     const result = await uiFlags.get('tok');
     expect(result.writing_session_habit_id).toBeNull();
+    expect(result.course_last_stage).toBeNull();
   });
 
   test('a linked habit id parses through as a number', async () => {
@@ -86,6 +98,7 @@ describe('uiFlags writing_session_habit_id', () => {
       jsonResponse({
         has_seen_welcome: true,
         energy_scaffolding_archived: false,
+        course_last_stage: null,
         writing_session_habit_id: LINKED_HABIT_ID,
       }),
     );
@@ -100,6 +113,7 @@ describe('uiFlags writing_session_habit_id', () => {
         jsonResponse({
           has_seen_welcome: true,
           energy_scaffolding_archived: false,
+          course_last_stage: null,
           writing_session_habit_id: bad,
         }),
       );
@@ -120,6 +134,7 @@ describe('uiFlags.update', () => {
     const fullResponse: UiFlags = {
       has_seen_welcome: true,
       energy_scaffolding_archived: false,
+      course_last_stage: null,
       writing_session_habit_id: null,
     };
     mockFetch.mockReturnValueOnce(jsonResponse(fullResponse));

@@ -16,7 +16,7 @@ If Purple was 5 minutes and Red was 10, Blue asks for **15 minutes of daily Mett
 
 Metta is not a vague, feel-good exercise. It's a *technology*. A systematic method for rewiring your brain's default settings from fear and judgment to warmth and compassion. Neuroscience backs this up: regular Metta practice increases activity in brain regions associated with empathy and emotional regulation, and decreases reactivity in the amygdala (the fear center).
 
-In other words: this practice literally makes you kinder. More patient. More resilient. More capable of staying open even when people are difficult.
+In other words: done steadily, this practice tends to make you kinder. More patient. More resilient. More able to stay open when people are difficult—not every time, and not without the days when the phrases feel like sand in your mouth.
 
 Here's how to do it.
 
@@ -82,6 +82,10 @@ Finally, expand your awareness to include *everyone*. All beings, everywhere. An
 - *May all beings live with ease.*
 
 Feel the scope of that. The whole world. Every person, every creature. All of it held in your heart, if only for a moment.
+
+**When the Mind Wanders:**
+
+It will, here too. The same move applies: notice, look at what surfaced, send the phrases into it—each person in the memory, then all beings, then yourself—and come back. Inside this timed sit the digression has to stay brief, or the sequence falls apart; on a Return Journey, where a whole week belongs to one circle, there’s room to let it breathe. The full method is in [The Return Journey](./15-the-return-journey-five-weeks-of-metta.md).
 
 **Why It Works:**
 

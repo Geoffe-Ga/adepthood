@@ -18,6 +18,8 @@
  */
 import { z } from 'zod';
 
+import { STAGE_DURATIONS_DAYS } from '../constants/program';
+
 // ---------------------------------------------------------------------------
 // Shared primitives
 // ---------------------------------------------------------------------------
@@ -132,6 +134,32 @@ export const accountDeletionReceiptSchema = z.object({
 });
 
 export type AccountDeletionReceiptT = z.infer<typeof accountDeletionReceiptSchema>;
+
+/**
+ * Response for ``POST /journal/{id}/erase-locally`` (#3094): what deleting a
+ * page "here only" did. ``remote_copy`` is ``confirmed_absent`` only when the
+ * vault holding the copy confirmed it gone; otherwise it is ``unconfirmed`` and
+ * ``copy_location`` says where a copy may remain, relative to the vault
+ * connected now; ``unrecorded_vault`` is a copy made before Adepthood recorded
+ * which vault received it, which no vault can confirm (#3095). There is no
+ * "withdrawn" value on purpose.
+ */
+export const copyLocationSchema = z.enum([
+  'connected_vault',
+  'previous_vault',
+  'disconnected_vault',
+  'unrecorded_vault',
+]);
+
+export type CopyLocationT = z.infer<typeof copyLocationSchema>;
+
+export const journalErasureReceiptSchema = z.object({
+  entry_id: z.number().int(),
+  remote_copy: z.enum(['confirmed_absent', 'unconfirmed']),
+  copy_location: copyLocationSchema.nullable(),
+});
+
+export type JournalErasureReceiptT = z.infer<typeof journalErasureReceiptSchema>;
 
 /**
  * Response for ``GET /users/me/export``: the whole archive.
@@ -273,7 +301,7 @@ export const promptDetailSchema = z.object({
 
 /** One of a stage's prompts (mirrors backend ``StagePromptDetail``).
  *
- * ``cadence`` is display prose the course author writes ("Daily", "At least 4x
+ * ``cadence`` is display prose the course author writes ("Daily", "At least 2x
  * per week", "Whenever they arise") and is carried verbatim — deliberately not
  * an enum or a recurrence rule, because the curriculum states it as prose and
  * varies it per prompt. ``null`` where the chapter states no cadence at all.
@@ -533,6 +561,42 @@ export const programCalendarSchema = z.object({
 
 export type ProgramCalendarT = z.infer<typeof programCalendarSchema>;
 
+/**
+ * Which stage-correspondence artifact a stage row was last reconciled from
+ * (mirrors ``StageCorrespondenceProvenance``). Every field is null until the
+ * seeder has reconciled the row. ``reconciled_at`` stays a plain string: the
+ * client never reads it, and the column's offset handling is the server's.
+ */
+export const stageCorrespondenceProvenanceSchema = z.object({
+  source_repo: z.string().nullable(),
+  source_sha: z.string().nullable(),
+  source_path: z.string().nullable(),
+  source_sha256: z.string().nullable(),
+  schema_version: z.string().nullable(),
+  reconciled_at: z.string().nullable(),
+});
+
+/**
+ * One stage's canonical correspondences (mirrors ``StageCorrespondenceResponse``,
+ * served by ``GET /stages/correspondence``; #2665/#2666). Global reference data:
+ * no title, no progress, and reading it records no visit.
+ */
+export const stageCorrespondenceSchema = z.object({
+  stage_key: z.string(),
+  stage_number: z.number().int(),
+  start_week: z.number().int(),
+  category: z.string(),
+  aspect: z.string(),
+  spiral_dynamics_color: z.string(),
+  growing_up_stage: z.string(),
+  divine_gender_polarity: z.string(),
+  relationship_to_free_will: z.string(),
+  free_will_description: z.string(),
+  provenance: stageCorrespondenceProvenanceSchema,
+});
+
+export type StageCorrespondenceT = z.infer<typeof stageCorrespondenceSchema>;
+
 /** A catalog practice (mirrors ``PracticeItem``); exported for reuse (issue 06). */
 export const practiceItemSchema = z.object({
   id: z.number().int(),
@@ -581,6 +645,9 @@ export const userPracticeSchema = z.object({
   end_date: isoDate.nullable(),
   custom_name: z.string().nullish(),
   mode_config_override: z.record(z.string(), z.unknown()).nullish(),
+  // The habit this practice's sessions count toward, or null when unlinked
+  // (#3151). Set via ``PATCH /user-practices/{id}/habit``.
+  habit_id: z.number().int().nullish(),
   effective_name: z.string().nullish(),
   effective_config: z.record(z.string(), z.unknown()).nullish(),
 });
@@ -642,6 +709,43 @@ export const stageIntroSchema = z.object({
   title: z.string(),
   summary: z.string().nullable(),
 });
+
+/**
+ * The "Read next" target from ``GET /course/next-unread`` (#3147, #3234): the
+ * lowest-``order`` Start Here resource the reader has not read while one
+ * remains (``kind: 'resource'``, keyed by ``slug``), then the earliest unlocked
+ * chapter they have not marked read across every open stage
+ * (``kind: 'chapter'``). The endpoint answers ``null`` when the reader is caught
+ * up, which is why the response schema is this object made nullable rather than
+ * the object alone.
+ *
+ * The wire shape is one flat object with nullable keys, so it stays comparable
+ * field-for-field with the OpenAPI component; the refinement is what holds each
+ * ``kind`` to the keys it needs, so a chapter without a ``content_id`` or a
+ * resource without a ``slug`` fails at the boundary instead of in the reader.
+ */
+export const nextUnreadSchema = z
+  .object({
+    kind: z.enum(['resource', 'chapter']),
+    slug: z.string().min(1).nullable(),
+    content_id: z.number().int().positive().nullable(),
+    stage_number: z.number().int().min(1).max(STAGE_DURATIONS_DAYS.length).nullable(),
+    title: z.string(),
+  })
+  .superRefine((target, ctx) => {
+    const required =
+      target.kind === 'resource' ? (['slug'] as const) : (['content_id', 'stage_number'] as const);
+    for (const key of required) {
+      if (target[key] === null) {
+        ctx.addIssue({ code: 'custom', path: [key], message: `${target.kind} needs ${key}` });
+      }
+    }
+  });
+
+/** A "Read next" target, narrowed by ``kind`` to the keys that kind carries. */
+export type NextUnreadT =
+  | { kind: 'resource'; slug: string; content_id: null; stage_number: null; title: string }
+  | { kind: 'chapter'; slug: null; content_id: number; stage_number: number; title: string };
 
 /**
  * Frequency-banner payload from ``GET /user-practices/current/frequency``.
@@ -752,8 +856,27 @@ export const invitationTargetTypeSchema = z.enum([
 ]);
 export const invitationKindSchema = z.enum(['readiness', 'consistency', 'mastery']);
 
+/** Python's wire limits count Unicode code points, including emoji as one character. */
+const readingText = (limit: number) =>
+  z
+    .string()
+    .min(1)
+    .refine((value) => Array.from(value).length <= limit);
+
+export const readingInvitationSchema = z.object({
+  content_id: z.number().int().positive(),
+  stage_number: z.number().int().min(1).max(10),
+  title: readingText(240),
+  entry_id: z.number().int().positive(),
+  entry_title: z.string().nullable(),
+  quote: readingText(280),
+  reason: readingText(400),
+  benefit: readingText(400),
+});
+
 /** One declinable invitation (mirrors the backend ``InvitationResponse``). */
 export const invitationSchema = z.object({
+  reading: readingInvitationSchema.nullish(),
   id: z.number().int(),
   target_type: invitationTargetTypeSchema,
   target_id: z.number().int().nullable(),
@@ -820,6 +943,7 @@ export const releasedHabitSchema = z.object({
 /** Eligibility, the week sequence, the active arc, the offer-dismissal flag, and any rested habits. */
 export const mettaReturnStateSchema = z.object({
   eligible: z.boolean(),
+  offer_episode: z.string().min(1).max(128).nullable(),
   weeks: z.array(returnWeekSchema),
   arc: returnArcSchema.nullable(),
   offer_dismissed: z.boolean(),
@@ -838,8 +962,93 @@ export type MettaReturnStateT = z.infer<typeof mettaReturnStateSchema>;
 export const marginaliaKindSchema = z.enum(['theme', 'connection', 'symbol']);
 export const marginaliaStatusSchema = z.enum(['active', 'stale']);
 
+/**
+ * Which side answered a note or its letter, as the server recorded it (#3062).
+ * Mirrors the backend ``MarginaliaSource``. ``demo`` is the stub provider's
+ * canned text, never a reflection.
+ */
+export const marginaliaSourceSchema = z.enum(['creek_vault', 'app_provider', 'demo']);
+/** Who the answering side reported itself as (mirrors ``InferenceProvider``). */
+export const inferenceProviderSchema = z.enum(['anthropic', 'openai', 'stub', 'creek']);
+/**
+ * One operation's source on a pass (mirrors ``OperationSource``): the recorded
+ * sources plus ``none``, an operation that was not run.
+ */
+export const operationSourceSchema = z.enum(['creek_vault', 'app_provider', 'demo', 'none']);
+
+/** Sources and providers are separate facts, but their supported v1 pairings are closed. */
+const providersForSource: Record<
+  z.infer<typeof operationSourceSchema>,
+  readonly (z.infer<typeof inferenceProviderSchema> | null)[]
+> = {
+  app_provider: ['anthropic', 'openai', null],
+  creek_vault: ['creek'],
+  demo: ['stub'],
+  none: [null],
+};
+
+interface ReceiptIdentity {
+  source: z.infer<typeof operationSourceSchema>;
+  provider?: z.infer<typeof inferenceProviderSchema> | null;
+  model?: string | null;
+}
+
+function supportsReportedModel(receipt: ReceiptIdentity): boolean {
+  return receipt.source === 'app_provider' || receipt.source === 'demo' || receipt.model == null;
+}
+
+function consistentReceipt(receipt: ReceiptIdentity): boolean {
+  return (
+    providersForSource[receipt.source].includes(receipt.provider ?? null) &&
+    supportsReportedModel(receipt)
+  );
+}
+
+const receiptVersionSchema = z
+  .number()
+  .int()
+  .refine((version) => version === 1);
+
+// Python's SOURCE_MODEL_MAX counts Unicode code points, not UTF-16 code units.
+const receiptModelSchema = z.string().refine((value) => Array.from(value).length <= 64);
+
+/** A persisted note's tuple. Null version permits older, coherent source-only rows. */
+const noteReceiptMetadataSchema = z
+  .object({
+    source: marginaliaSourceSchema,
+    source_provider: inferenceProviderSchema.nullish(),
+    source_model: receiptModelSchema.nullish(),
+    receipt_version: receiptVersionSchema.nullish(),
+  })
+  .refine((row) => {
+    const identity = { source: row.source, provider: row.source_provider, model: row.source_model };
+    if (row.receipt_version == null) return row.source_provider == null && row.source_model == null;
+    return consistentReceipt(identity);
+  });
+
+/** Validate the note-only display projection, including raw legacy LIST rows. */
+export function readNoteReceiptMetadata(input: unknown) {
+  return noteReceiptMetadataSchema.safeParse(input);
+}
+
+/** Validate the original tuple before field-level fallback can conceal a contradiction. */
+function normalizeNoteReceipt(input: unknown): unknown {
+  if (input == null || typeof input !== 'object' || Array.isArray(input)) return input;
+  const row = input as Record<string, unknown>;
+  const parsed = noteReceiptMetadataSchema.safeParse(row);
+  if (parsed.success) return { ...row, ...parsed.data };
+  return { ...row, source: null, source_provider: null, source_model: null, receipt_version: null };
+}
+
+// Provenance fields fail safe: a missing field (an older server), an unknown
+// value (a newer one) or a malformed one all parse to ``null``, which every
+// label reads as "Source not recorded". Never a parse failure that would cost
+// the writer the note itself, and never a guess at a source.
+const recordedSource = marginaliaSourceSchema.nullish().catch(null);
+const recordedProvider = inferenceProviderSchema.nullish().catch(null);
+
 /** One margin note (mirrors the backend ``MarginaliaResponse``). */
-export const marginaliaSchema = z.object({
+const marginaliaFieldsSchema = z.object({
   id: z.number().int(),
   journal_entry_id: z.number().int(),
   kind: marginaliaKindSchema,
@@ -852,18 +1061,16 @@ export const marginaliaSchema = z.object({
   status: marginaliaStatusSchema,
   created_at: z.string(),
   updated_at: z.string(),
+  // Provenance (#3062): server-recorded, never derived from the vault
+  // connection. All null on a note written before receipts existed.
+  source: recordedSource,
+  source_provider: recordedProvider,
+  source_model: z.string().nullish().catch(null),
+  essay_source: recordedSource,
+  receipt_version: z.number().int().nullish().catch(null),
 });
 
-/**
- * A margin note after an essay request (mirrors the backend ``EssayResponse``):
- * the note plus the wallet balances it left behind, the same three fields a
- * resonance pass reports, because both spend from the same wallet (#623).
- */
-export const essayResponseSchema = marginaliaSchema.extend({
-  remaining_messages: z.number().int(),
-  remaining_balance: z.number().int(),
-  monthly_reset_date: z.string(),
-});
+export const marginaliaSchema = z.preprocess(normalizeNoteReceipt, marginaliaFieldsSchema);
 
 /**
  * One expanded letter on the Voice Drafts shelf (mirrors the backend
@@ -884,6 +1091,8 @@ export const voiceDraftSchema = z.object({
   anchor_text: z.string(),
   essay: z.string(),
   essay_generated_at: z.string(),
+  // Which side wrote the letter (#3062); null when it was not recorded.
+  essay_source: recordedSource,
 });
 
 /** One page of the Voice Drafts shelf: ``{ items, total, has_more }``. */
@@ -894,6 +1103,9 @@ export const voiceDraftListSchema = z.object({
 });
 
 export type VoiceDraftT = z.infer<typeof voiceDraftSchema>;
+export type MarginaliaSourceT = z.infer<typeof marginaliaSourceSchema>;
+export type OperationSourceT = z.infer<typeof operationSourceSchema>;
+export type PassProvenanceT = z.infer<typeof recordedPassProvenanceSchema>;
 export type VoiceDraftListT = z.infer<typeof voiceDraftListSchema>;
 
 /**
@@ -987,6 +1199,23 @@ export const careResponseSchema = z.object({
 });
 
 /**
+ * A margin note after an essay request (mirrors the backend ``EssayResponse``):
+ * the note plus the wallet balances it left behind, the same three fields a
+ * resonance pass reports, because both spend from the same wallet (#623).
+ * ``care`` is the server's reviewed care surface, present only when a vault's
+ * care guard answered the letter ask instead of writing one (#3380).
+ */
+export const essayResponseSchema = z.preprocess(
+  normalizeNoteReceipt,
+  marginaliaFieldsSchema.extend({
+    remaining_messages: z.number().int(),
+    remaining_balance: z.number().int(),
+    monthly_reset_date: z.string(),
+    care: careResponseSchema.nullish(),
+  }),
+);
+
+/**
  * The two contraction routings (mirrors the backend contraction variants): a
  * gentle ``simple_ease_off`` nudge to tend a slipping foundation, and a warmer
  * ``return_offer`` inviting a fresh Return. Anything else is contract drift and
@@ -1048,6 +1277,57 @@ export const relatedEddySchema = z.object({
   formed: z.string(),
 });
 
+/** Which side answered one operation of a pass (mirrors ``ProvenanceReceipt``). */
+export const provenanceReceiptSchema = z
+  .object({
+    source: operationSourceSchema,
+    provider: inferenceProviderSchema.nullish(),
+    model: receiptModelSchema.nullish(),
+    receipt_version: receiptVersionSchema,
+  })
+  .refine(consistentReceipt);
+
+/** The server's complete wire contract; recovered display fields are a separate local type. */
+/** A vendor whose writer key a managed vault writes with (#3437). */
+export const vaultKeyVendorSchema = z.enum(['anthropic', 'openai']);
+
+export const passProvenanceSchema = z.object({
+  notes: provenanceReceiptSchema,
+  detection: provenanceReceiptSchema,
+  detection_checked: z.boolean(),
+  paid_by: z.enum(['own_key', 'wallet', 'free']),
+  // Set only when the writer's own key was relayed to their vault and the vault
+  // wrote the notes with it (#3437); older servers omit it.
+  own_key_vendor: vaultKeyVendorSchema.nullish(),
+});
+
+/** The v1 server refunds demo notes; conflicting live payer data is unrecorded. */
+function normalizePassPayer(input: unknown): unknown {
+  if (input == null || typeof input !== 'object' || Array.isArray(input)) return input;
+  const receipt = input as Record<string, unknown>;
+  const notes = provenanceReceiptSchema.safeParse(receipt.notes);
+  return notes.success && notes.data.source === 'demo' && receipt.paid_by !== 'free'
+    ? { ...receipt, paid_by: null }
+    : input;
+}
+
+/** A bad operation cannot erase a valid sibling or the independently reported payer. */
+const recordedPassProvenanceSchema = z.preprocess(
+  normalizePassPayer,
+  z.object({
+    notes: provenanceReceiptSchema.nullable().catch(null),
+    detection: provenanceReceiptSchema.nullable().catch(null),
+    detection_checked: z.boolean().nullable().catch(null),
+    paid_by: z.enum(['own_key', 'wallet', 'free']).nullable().catch(null),
+    own_key_vendor: vaultKeyVendorSchema.nullish().catch(null),
+  }),
+);
+
+/** Recover independently reported fields when malformed/legacy metadata misses the wire contract. */
+export function readPassProvenance(input: unknown) {
+  return recordedPassProvenanceSchema.safeParse(input);
+}
+
 /**
  * Result of a resonance pass (mirrors the backend ``ResonanceResponse``).
  *
@@ -1082,10 +1362,17 @@ export const resonanceResponseSchema = z.object({
   // these are optional only so responses predating them still validate.
   related_praxis: z.array(relatedPraxisSchema).optional(),
   related_eddies: z.array(relatedEddySchema).optional(),
+  // Which side answered each operation and who paid (#3062). A missing or
+  // malformed object parses to null, read as "Source not recorded".
+  provenance: recordedPassProvenanceSchema.nullish().catch(null),
 });
 
 /** Current BotMason wallet policy and balances, as served for this deployment. */
 export const botmasonUsageSchema = z.object({
+  // Missing or invalid routes fail validation; callers must not infer a payer from a key or balance.
+  resonance_route: z.enum(['vault_bound', 'app_provider']),
+  // Older servers omit this capability; only an explicit boolean true admits a demo.
+  resonance_demo_available: z.boolean().optional(),
   monthly_messages_used: z.number().int().nonnegative(),
   monthly_messages_remaining: z.number().int().nonnegative(),
   monthly_cap: z.number().int().nonnegative(),
@@ -1094,6 +1381,17 @@ export const botmasonUsageSchema = z.object({
 });
 
 export type BotmasonUsageT = z.infer<typeof botmasonUsageSchema>;
+
+/**
+ * ``GET /user/vault-key-vendors`` (#3437): the vendors whose writer key this
+ * caller's vault would write with. Anything malformed reads as "none": a key is
+ * only ever presented as paying when the server said its vault will spend it.
+ */
+export const vaultKeyVendorsSchema = z.object({
+  vendors: z.array(vaultKeyVendorSchema).catch([]),
+});
+
+export type VaultKeyVendorsT = z.infer<typeof vaultKeyVendorsSchema>;
 
 export type CareKindT = z.infer<typeof careKindSchema>;
 export type CareResourceT = z.infer<typeof careResourceSchema>;
@@ -1142,6 +1440,13 @@ export const uiFlagsSchema = z.object({
    * from a server that predates the link still parses, as unlinked.
    */
   writing_session_habit_id: z.number().int().positive().nullable().default(null),
+  course_last_stage: z
+    .number()
+    .int()
+    .min(1)
+    .max(STAGE_DURATIONS_DAYS.length)
+    .nullable()
+    .default(null),
 });
 
 export type UiFlagsT = z.infer<typeof uiFlagsSchema>;
@@ -1221,6 +1526,33 @@ export const voiceReadinessSchema = z.object({
 
 export type VoiceReadinessT = z.infer<typeof voiceReadinessSchema>;
 
+/**
+ * How much of this account's own writing is still unsorted (``GET /corpus/sweep``).
+ *
+ * A count and nothing else: no entry, and no price, because sorting has none.
+ */
+export const corpusSweepEstimateSchema = z.object({
+  entries_pending: z.number().int().nonnegative(),
+});
+
+export type CorpusSweepEstimateT = z.infer<typeof corpusSweepEstimateSchema>;
+
+/**
+ * What one bounded ``POST /corpus/sweep`` pass did, on top of what still waits.
+ *
+ * A strict superset of the estimate, so a screen renders the backlog the same
+ * way whichever verb it last called. ``entries_remaining`` equals
+ * ``entries_pending`` by construction and can stay above zero after a pass that
+ * sorted nothing -- a remainder is a reason to offer another pass, not proof
+ * the last one worked.
+ */
+export const corpusSweepSchema = corpusSweepEstimateSchema.extend({
+  entries_sorted: z.number().int().nonnegative(),
+  entries_remaining: z.number().int().nonnegative(),
+});
+
+export type CorpusSweepT = z.infer<typeof corpusSweepSchema>;
+
 // ---------------------------------------------------------------------------
 // Private vault (whether an account has connected a space of its own)
 // ---------------------------------------------------------------------------
@@ -1242,9 +1574,77 @@ export type VoiceReadinessT = z.infer<typeof voiceReadinessSchema>;
 export const vaultConnectionResponseSchema = z.object({
   connected: z.boolean(),
   vault_url: z.string().nullable(),
+  /**
+   * The address a person gives an agent they run elsewhere (#3534). Null on
+   * exactly the answers ``vault_url`` is null on: nothing connected, or a
+   * managed vault whose address stays private.
+   */
+  mcp_address: z.string().nullable(),
+  /**
+   * The account's latest settled vault classification stopped because the
+   * writer's own provider key was refused (Creek contract 0.26, #3595).
+   * Optional so a server from before the field still parses; absent reads as
+   * not refused. A boolean and nothing else: no key, no vendor text.
+   */
+  classification_key_rejected: z.boolean().optional(),
 });
 
 export type VaultConnectionT = z.infer<typeof vaultConnectionResponseSchema>;
+
+/**
+ * One agent this account approved for its vault and has not stopped (mirrors
+ * the backend ``ConnectedAgentResponse``, #3534).
+ *
+ * ``grants`` are scope names, never prose: the Settings screen maps each to the
+ * phrase the consent page used and renders nothing for a name it does not
+ * know, so ``vault:desk`` never reaches a person. ``name`` is the agent's own
+ * word for itself, null when it gave none.
+ */
+export const connectedAgentSchema = z.object({
+  id: z.number().int().positive(),
+  name: z.string().nullable(),
+  grants: z.array(z.string()),
+  created_at: isoDateTime,
+  last_used_at: isoDateTime.nullable(),
+  redirect_host: z.string().nullable(),
+});
+
+export type ConnectedAgentT = z.infer<typeof connectedAgentSchema>;
+
+/**
+ * One call an agent (or the app) made against this account's vault, in plain
+ * words (mirrors the backend ``AgentActivityRowResponse``, #3535).
+ *
+ * Four fields and no more: ``agent`` and ``tool_label`` are always the
+ * server's own words -- never a tool name or an audit stamp the vault chose --
+ * and nothing here can carry what was asked or what came back. ``.strict()``
+ * on purpose, unlike most schemas here: a fifth field on this surface is a
+ * broken promise to refuse, not an addition to tolerate.
+ */
+export const agentActivityRowResponseSchema = z
+  .object({
+    agent: z.string(),
+    tool_label: z.string(),
+    at: isoDateTime,
+    outcome: z.enum(['admitted', 'refused']),
+  })
+  .strict();
+
+export type AgentActivityRowT = z.infer<typeof agentActivityRowResponseSchema>;
+
+/**
+ * What ``GET /vault/agents/activity`` answers: the most recent calls, newest
+ * first, or ``unavailable`` when the vault could not be read -- which the
+ * screen says, rather than claiming nothing happened.
+ */
+export const agentActivityResponseSchema = z
+  .object({
+    status: z.enum(['ok', 'unavailable']),
+    rows: z.array(agentActivityRowResponseSchema),
+  })
+  .strict();
+
+export type AgentActivityT = z.infer<typeof agentActivityResponseSchema>;
 
 /** Durable, secret-free progress for an explicitly requested Creek allocation. */
 export const vaultActivationResponseSchema = z

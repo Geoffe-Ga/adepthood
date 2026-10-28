@@ -5,7 +5,10 @@ import React from 'react';
 import { StyleSheet } from 'react-native';
 import type { StyleProp, TextStyle, ViewStyle } from 'react-native';
 
-import AspectChordControl from '../AspectChordControl';
+import AspectChordControl, {
+  fallbackAspectOptions,
+  type AspectOption,
+} from '../AspectChordControl';
 
 import { TextField } from '@/components/TextField';
 import {
@@ -19,7 +22,7 @@ import {
   resolveStageColor,
   touchTarget,
 } from '@/design/tokens';
-import { STAGE_DISPLAY } from '@/features/Map/mapLayout';
+import { GOLDEN_STAGE_NUMBERS, goldenStage } from '@/features/Map/__tests__/stageVocabularyGolden';
 
 /** The controlled value shape the control reports back via onChange. */
 interface AspectChordValue {
@@ -27,11 +30,20 @@ interface AspectChordValue {
   secondary: number | null;
 }
 
+/** The chips a seeded server offers: each stage under its course persona. */
+const OPTIONS: readonly AspectOption[] = GOLDEN_STAGE_NUMBERS.map((stage) => ({
+  stage,
+  label: goldenStage(stage).persona,
+}));
+
+/** The persona the chip for ``stage`` is offered under. */
+const personaOf = (stage: number): string => goldenStage(stage).persona;
+
 function renderControl(
   value?: AspectChordValue,
   onChange: (_next: AspectChordValue) => void = jest.fn(),
 ) {
-  return render(<AspectChordControl value={value} onChange={onChange} />);
+  return render(<AspectChordControl value={value} onChange={onChange} options={OPTIONS} />);
 }
 
 // ---------------------------------------------------------------------------
@@ -72,10 +84,20 @@ describe('AspectChordControl — loaded value', () => {
   it('expands to reveal the loaded chip when the value arrives after mount (edit load)', () => {
     const onChange = jest.fn();
     const { getByTestId, queryByTestId, rerender } = render(
-      <AspectChordControl value={{ primary: null, secondary: null }} onChange={onChange} />,
+      <AspectChordControl
+        options={OPTIONS}
+        value={{ primary: null, secondary: null }}
+        onChange={onChange}
+      />,
     );
     expect(getByTestId('aspect-chord-trigger')).toBeTruthy();
-    rerender(<AspectChordControl value={{ primary: 3, secondary: null }} onChange={onChange} />);
+    rerender(
+      <AspectChordControl
+        options={OPTIONS}
+        value={{ primary: 3, secondary: null }}
+        onChange={onChange}
+      />,
+    );
     expect(getByTestId('aspect-primary-3')).toBeTruthy();
     expect(queryByTestId('aspect-chord-trigger')).toBeNull();
   });
@@ -94,12 +116,60 @@ describe('AspectChordControl — expanding', () => {
     }
   });
 
-  it('uses STAGE_DISPLAY labels for the primary chips, not invented copy', () => {
-    const { getByTestId, getByText } = renderControl();
+  it('labels each primary chip with the option it was given, not invented copy', () => {
+    const options = OPTIONS.map((option) =>
+      option.stage === 2 ? { ...option, label: 'Rewritten Purple Persona' } : option,
+    );
+    const { getByTestId } = render(<AspectChordControl onChange={jest.fn()} options={options} />);
     fireEvent.press(getByTestId('aspect-chord-trigger'));
-    const stageOne = STAGE_DISPLAY[1];
-    if (stageOne === undefined) throw new Error('STAGE_DISPLAY[1] missing');
-    expect(getByText(stageOne.persona)).toBeTruthy();
+    expect(getByTestId('aspect-primary-2-label').props.children).toBe('Rewritten Purple Persona');
+    expect(getByTestId('aspect-primary-2').props.accessibilityLabel).toBe(
+      'Rewritten Purple Persona',
+    );
+    expect(getByTestId('aspect-primary-1-label').props.children).toBe(personaOf(1));
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Offered before the server answers
+// ---------------------------------------------------------------------------
+
+describe('AspectChordControl — before any persona has loaded', () => {
+  it('offers all ten stages under their colour names by default', () => {
+    expect(fallbackAspectOptions()).toEqual(
+      STAGE_ORDER.map((colour, index) => ({ stage: index + 1, label: colour })),
+    );
+  });
+
+  it('renders ten selectable chips, each with a non-empty label and name', () => {
+    const onChange = jest.fn();
+    const { getByTestId } = render(<AspectChordControl onChange={onChange} />);
+    fireEvent.press(getByTestId('aspect-chord-trigger'));
+    for (let n = 1; n <= STAGE_ORDER.length; n += 1) {
+      const chip = getByTestId(`aspect-primary-${n}`);
+      expect(chip.props.accessibilityLabel).toBe(STAGE_ORDER[n - 1]);
+      expect(getByTestId(`aspect-primary-${n}-label`).props.children).toBe(STAGE_ORDER[n - 1]);
+    }
+    fireEvent.press(getByTestId('aspect-primary-2'));
+    expect(onChange).toHaveBeenCalledWith({ primary: 2, secondary: null });
+  });
+
+  it('names a stage the options leave out, or leave blank, by its colour', () => {
+    const partial: AspectOption[] = [
+      { stage: 1, label: '' },
+      { stage: 2, label: 'Pleasure Seeker' },
+    ];
+    const { getByTestId } = render(
+      <AspectChordControl
+        onChange={jest.fn()}
+        options={partial}
+        value={{ primary: 1, secondary: 5 }}
+      />,
+    );
+    fireEvent.press(getByTestId('aspect-chord-collapse'));
+    const trigger = getByTestId('aspect-chord-trigger');
+    expect(trigger.props.accessibilityLabel).toContain('Beige');
+    expect(trigger.props.accessibilityLabel).toContain('Orange');
   });
 });
 
@@ -132,11 +202,17 @@ describe('AspectChordControl — secondary chips', () => {
   it('appear once a primary is set, excluding the chosen primary', () => {
     const onChange = jest.fn();
     const { getByTestId, queryByTestId, rerender } = render(
-      <AspectChordControl value={undefined} onChange={onChange} />,
+      <AspectChordControl options={OPTIONS} value={undefined} onChange={onChange} />,
     );
     fireEvent.press(getByTestId('aspect-chord-trigger'));
     fireEvent.press(getByTestId('aspect-primary-4'));
-    rerender(<AspectChordControl value={{ primary: 4, secondary: null }} onChange={onChange} />);
+    rerender(
+      <AspectChordControl
+        options={OPTIONS}
+        value={{ primary: 4, secondary: null }}
+        onChange={onChange}
+      />,
+    );
     expect(getByTestId('aspect-secondary-1')).toBeTruthy();
     expect(queryByTestId('aspect-secondary-4')).toBeNull();
   });
@@ -144,11 +220,17 @@ describe('AspectChordControl — secondary chips', () => {
   it('fires onChange with {primary, secondary} when a secondary chip is pressed', () => {
     const onChange = jest.fn();
     const { getByTestId, rerender } = render(
-      <AspectChordControl value={undefined} onChange={onChange} />,
+      <AspectChordControl options={OPTIONS} value={undefined} onChange={onChange} />,
     );
     fireEvent.press(getByTestId('aspect-chord-trigger'));
     fireEvent.press(getByTestId('aspect-primary-4'));
-    rerender(<AspectChordControl value={{ primary: 4, secondary: null }} onChange={onChange} />);
+    rerender(
+      <AspectChordControl
+        options={OPTIONS}
+        value={{ primary: 4, secondary: null }}
+        onChange={onChange}
+      />,
+    );
     fireEvent.press(getByTestId('aspect-secondary-9'));
     expect(onChange).toHaveBeenCalledWith({ primary: 4, secondary: 9 });
   });
@@ -162,11 +244,17 @@ describe('AspectChordControl — clear affordance', () => {
   it('resets to {primary: null, secondary: null} when pressed', () => {
     const onChange = jest.fn();
     const { getByTestId, rerender } = render(
-      <AspectChordControl value={undefined} onChange={onChange} />,
+      <AspectChordControl options={OPTIONS} value={undefined} onChange={onChange} />,
     );
     fireEvent.press(getByTestId('aspect-chord-trigger'));
     fireEvent.press(getByTestId('aspect-primary-2'));
-    rerender(<AspectChordControl value={{ primary: 2, secondary: null }} onChange={onChange} />);
+    rerender(
+      <AspectChordControl
+        options={OPTIONS}
+        value={{ primary: 2, secondary: null }}
+        onChange={onChange}
+      />,
+    );
     fireEvent.press(getByTestId('aspect-chord-clear'));
     expect(onChange).toHaveBeenCalledWith({ primary: null, secondary: null });
   });
@@ -174,13 +262,23 @@ describe('AspectChordControl — clear affordance', () => {
   it('stays expanded after clearing an edit-loaded chord (no snap back to the trigger)', () => {
     const onChange = jest.fn();
     const { getByTestId, queryByTestId, rerender } = render(
-      <AspectChordControl value={{ primary: 3, secondary: null }} onChange={onChange} />,
+      <AspectChordControl
+        options={OPTIONS}
+        value={{ primary: 3, secondary: null }}
+        onChange={onChange}
+      />,
     );
     // Opened expanded via the loaded value, without ever tapping the trigger.
     fireEvent.press(getByTestId('aspect-chord-clear'));
     // Host clears the chord and re-renders; the control must remain open so the
     // writer can immediately re-pick instead of being bounced mid-edit.
-    rerender(<AspectChordControl value={{ primary: null, secondary: null }} onChange={onChange} />);
+    rerender(
+      <AspectChordControl
+        options={OPTIONS}
+        value={{ primary: null, secondary: null }}
+        onChange={onChange}
+      />,
+    );
     expect(getByTestId('aspect-primary-1')).toBeTruthy();
     expect(queryByTestId('aspect-chord-trigger')).toBeNull();
   });
@@ -195,7 +293,12 @@ describe('AspectChordControl — disabled while expanded', () => {
     // The secondary is unchosen, so its whole row is on offer and every chip of
     // it must announce itself inert. Stage 1 is the primary, so it is omitted.
     const { getByTestId } = render(
-      <AspectChordControl value={{ primary: 1, secondary: null }} onChange={jest.fn()} disabled />,
+      <AspectChordControl
+        options={OPTIONS}
+        value={{ primary: 1, secondary: null }}
+        onChange={jest.fn()}
+        disabled
+      />,
     );
     for (let n = 2; n <= 10; n += 1) {
       expect(getByTestId(`aspect-secondary-${n}`).props.accessibilityState.disabled).toBe(true);
@@ -204,7 +307,12 @@ describe('AspectChordControl — disabled while expanded', () => {
 
   it('marks the chosen primary chip and its Change disabled for assistive tech', () => {
     const { getByTestId } = render(
-      <AspectChordControl value={{ primary: 1, secondary: null }} onChange={jest.fn()} disabled />,
+      <AspectChordControl
+        options={OPTIONS}
+        value={{ primary: 1, secondary: null }}
+        onChange={jest.fn()}
+        disabled
+      />,
     );
     expect(getByTestId('aspect-primary-1').props.accessibilityState.disabled).toBe(true);
     expect(getByTestId('aspect-primary-change').props.accessibilityState.disabled).toBe(true);
@@ -212,21 +320,35 @@ describe('AspectChordControl — disabled while expanded', () => {
 
   it('marks the Clear control disabled for assistive tech', () => {
     const { getByTestId } = render(
-      <AspectChordControl value={{ primary: 1, secondary: null }} onChange={jest.fn()} disabled />,
+      <AspectChordControl
+        options={OPTIONS}
+        value={{ primary: 1, secondary: null }}
+        onChange={jest.fn()}
+        disabled
+      />,
     );
     expect(getByTestId('aspect-chord-clear').props.accessibilityState.disabled).toBe(true);
   });
 
   it('marks the collapse control disabled for assistive tech', () => {
     const { getByTestId } = render(
-      <AspectChordControl value={{ primary: 1, secondary: null }} onChange={jest.fn()} disabled />,
+      <AspectChordControl
+        options={OPTIONS}
+        value={{ primary: 1, secondary: null }}
+        onChange={jest.fn()}
+        disabled
+      />,
     );
     expect(getByTestId('aspect-chord-collapse').props.accessibilityState.disabled).toBe(true);
   });
 
   it('leaves the chips enabled for assistive tech when not disabled', () => {
     const { getByTestId } = render(
-      <AspectChordControl value={{ primary: 1, secondary: null }} onChange={jest.fn()} />,
+      <AspectChordControl
+        options={OPTIONS}
+        value={{ primary: 1, secondary: null }}
+        onChange={jest.fn()}
+      />,
     );
     expect(getByTestId('aspect-primary-1').props.accessibilityState.disabled).toBe(false);
     expect(getByTestId('aspect-chord-clear').props.accessibilityState.disabled).toBe(false);
@@ -235,7 +357,12 @@ describe('AspectChordControl — disabled while expanded', () => {
   it('keeps every new control inert: nothing fires and nothing collapses', () => {
     const onChange = jest.fn();
     const { getByTestId, queryByTestId } = render(
-      <AspectChordControl value={{ primary: 1, secondary: null }} onChange={onChange} disabled />,
+      <AspectChordControl
+        options={OPTIONS}
+        value={{ primary: 1, secondary: null }}
+        onChange={onChange}
+        disabled
+      />,
     );
     fireEvent.press(getByTestId('aspect-chord-collapse'));
     fireEvent.press(getByTestId('aspect-primary-change'));
@@ -255,10 +382,20 @@ describe('AspectChordControl — collapse affordance', () => {
   it('returns the control to its compact trigger after Clear', () => {
     const onChange = jest.fn();
     const { getByTestId, queryByTestId, rerender } = render(
-      <AspectChordControl value={{ primary: 3, secondary: null }} onChange={onChange} />,
+      <AspectChordControl
+        options={OPTIONS}
+        value={{ primary: 3, secondary: null }}
+        onChange={onChange}
+      />,
     );
     fireEvent.press(getByTestId('aspect-chord-clear'));
-    rerender(<AspectChordControl value={{ primary: null, secondary: null }} onChange={onChange} />);
+    rerender(
+      <AspectChordControl
+        options={OPTIONS}
+        value={{ primary: null, secondary: null }}
+        onChange={onChange}
+      />,
+    );
     // Clear alone leaves the writer on the chips (the mid-edit latch); the
     // separate collapse is what gives the writing column its space back.
     fireEvent.press(getByTestId('aspect-chord-collapse'));
@@ -267,14 +404,11 @@ describe('AspectChordControl — collapse affordance', () => {
   });
 
   it('collapses with a chord still set, and names that chord on the trigger', () => {
-    const primary = STAGE_DISPLAY[5];
-    const secondary = STAGE_DISPLAY[2];
-    if (primary === undefined || secondary === undefined) throw new Error('STAGE_DISPLAY missing');
     const { getByTestId } = renderControl({ primary: 5, secondary: 2 });
     fireEvent.press(getByTestId('aspect-chord-collapse'));
     const trigger = getByTestId('aspect-chord-trigger');
-    expect(trigger.props.accessibilityLabel).toContain(primary.persona);
-    expect(trigger.props.accessibilityLabel).toContain(secondary.persona);
+    expect(trigger.props.accessibilityLabel).toContain(personaOf(5));
+    expect(trigger.props.accessibilityLabel).toContain(personaOf(2));
   });
 
   it('reopens on the trigger after collapsing', () => {
@@ -371,11 +505,21 @@ describe('AspectChordControl — expanded footprint', () => {
   it('folds the row back down once the writer re-picks', () => {
     const onChange = jest.fn();
     const { getByTestId, queryByTestId, rerender } = render(
-      <AspectChordControl value={{ primary: 4, secondary: null }} onChange={onChange} />,
+      <AspectChordControl
+        options={OPTIONS}
+        value={{ primary: 4, secondary: null }}
+        onChange={onChange}
+      />,
     );
     fireEvent.press(getByTestId('aspect-primary-change'));
     fireEvent.press(getByTestId('aspect-primary-7'));
-    rerender(<AspectChordControl value={{ primary: 7, secondary: null }} onChange={onChange} />);
+    rerender(
+      <AspectChordControl
+        options={OPTIONS}
+        value={{ primary: 7, secondary: null }}
+        onChange={onChange}
+      />,
+    );
     expect(getByTestId('aspect-primary-7')).toBeTruthy();
     expect(queryByTestId('aspect-primary-1')).toBeNull();
   });
@@ -471,14 +615,13 @@ describe('AspectChordControl — stage colour', () => {
   });
 
   it('marks the chosen chip by more than colour', () => {
-    const persona = STAGE_DISPLAY[5];
-    if (persona === undefined) throw new Error('STAGE_DISPLAY[5] missing');
+    const persona = personaOf(5);
     const { getByTestId } = renderControl({ primary: 5, secondary: null });
     const chip = getByTestId('aspect-primary-5');
     expect(chip.props.accessibilityState.selected).toBe(true);
     // A reader who cannot tell the ten hues apart still sees the mark, and the
     // accessible name stays the persona alone.
-    expect(getByTestId('aspect-primary-5-label').props.children).toBe(`✓ ${persona.persona}`);
-    expect(chip.props.accessibilityLabel).toBe(persona.persona);
+    expect(getByTestId('aspect-primary-5-label').props.children).toBe(`✓ ${persona}`);
+    expect(chip.props.accessibilityLabel).toBe(persona);
   });
 });

@@ -83,13 +83,22 @@ describe('live mirror metrics match the field by construction', () => {
     expect(mirrorText[property]).toBe(field[property]);
   });
 
-  it.each(['dimmed', 'revealed', 'bold', 'italic', 'underline', 'quoteLine'] as const)(
+  it.each(['dimmed', 'revealed', 'bold', 'italic', 'underline', 'quoteLine', 'heading'] as const)(
     'styles %s runs only with advance-neutral properties',
     (name) => {
       const keys = Object.keys(StyleSheet.flatten<TextStyle>(liveStyles[name]));
       expect(keys.filter((key) => !ADVANCE_NEUTRAL.has(key))).toEqual([]);
     },
   );
+
+  it('draws a heading at body size: faux bold only, never a size, weight or face', () => {
+    const heading = StyleSheet.flatten<TextStyle>(liveStyles.heading);
+    for (const property of ['fontSize', 'fontWeight', 'fontFamily', 'lineHeight'] as const) {
+      expect(heading[property]).toBeUndefined();
+    }
+    expect(heading.textShadowColor).toBe(colors.paper.ink);
+    expect(heading.textShadowOffset?.width).toBeGreaterThan(0);
+  });
 
   it('keeps box spacing off the mirror’s INLINE text, where the browser would ignore it', () => {
     // react-native-web renders a top-level Text as display:inline, so vertical

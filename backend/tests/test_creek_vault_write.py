@@ -33,6 +33,7 @@ from domain.creek_vault import (
     VaultIngestResult,
     VaultReflection,
     VaultReflectionStatus,
+    VaultSendSuspendedError,
     VaultTierCeiling,
     VaultUploadRequest,
     VaultUploadResult,
@@ -49,6 +50,7 @@ from services.creek_vault_write import (
     VaultWriteStatus,
     store_and_classify,
 )
+from services.privacy_suspension import VAULT_SEND_SUSPEND_ENV_VAR
 from tests.test_creek_vault_http_client import Handler as _VaultHandler
 from tests.test_creek_vault_http_client import _handshake_payload as _vault_capability_payload
 from tests.test_creek_vault_http_client import _json_handler as _vault_json_handler
@@ -339,13 +341,25 @@ async def test_classify_error_after_successful_ingest_still_returns_ingested() -
 
 
 @pytest.mark.asyncio
-async def test_unknown_classification_raises_value_error_without_touching_client() -> None:
-    """An unrecognized classification fails closed via tier_ceiling_for, before any vault call."""
+@pytest.mark.parametrize("classification", ["bogus", "", "INTIMATE", "Personal"])
+async def test_unknown_classification_skips_closed_without_touching_client(
+    classification: str,
+) -> None:
+    """A tier outside the egress allowlist is withheld before any vault call (#3059).
+
+    The egress predicate is the first gate, so an unknown, empty or wrongly
+    spelled tier is *skipped* -- nothing sent, nothing raised -- exactly as
+    intimate is, rather than relying on the ceiling map to raise. It used to
+    raise ``ValueError`` from ``tier_ceiling_for``; both are closed, and the skip
+    is the one a caller can persist an entry through.
+    """
     client = RecordingVaultClient()
-    with pytest.raises(ValueError, match="bogus"):
-        await store_and_classify(
-            client, body=_BODY, classification="bogus", created_at=_CREATED_AT, entry_id=101
-        )
+    outcome = await store_and_classify(
+        client, body=_BODY, classification=classification, created_at=_CREATED_AT, entry_id=101
+    )
+    assert outcome == VaultWriteOutcome(
+        status=VaultWriteStatus.SKIPPED_INTIMATE, vault_ref=None, tags=()
+    )
     assert client.calls == []
 
 
@@ -620,3 +634,61 @@ async def test_a_failed_handshake_degrades_the_write_and_never_propagates(
     assert outcome == VaultWriteOutcome(
         status=VaultWriteStatus.UNAVAILABLE, vault_ref=None, tags=()
     )
+
+
+@pytest.mark.asyncio
+async def test_a_suspended_send_is_its_own_outcome_not_a_degrade(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """The operator switch refused the ingest before the wire: SUSPENDED, never DEGRADED (#3107).
+
+    DEGRADED means the body may have reached the vault, and callers count it as
+    sent. A suspension proves it did not, so it must not share that outcome,
+    nor be logged as a degraded write an operator would chase.
+    """
+    caplog.set_level(logging.DEBUG)
+    outcome = await _write_with(caplog, VaultSendSuspendedError(), body=_SENTINEL_BODY)
+
+    assert outcome == VaultWriteOutcome(status=VaultWriteStatus.SUSPENDED, vault_ref=None, tags=())
+    events = [record.getMessage() for record in caplog.records]
+    assert events == ["creek vault write suspended"]
+    assert _logged_fields(caplog, "reason") == []
+    assert _SENTINEL_BODY not in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_a_suspended_real_adapter_ingest_reports_suspended(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Driven through the real HTTP adapter: the probe goes out, the PUT never does."""
+    sent: list[str] = []
+
+    def _handler(request: httpx.Request) -> httpx.Response:
+        sent.append(request.method)
+        payload = _vault_capability_payload([CreekCapability.JOURNAL.value])
+        return httpx.Response(HTTPStatus.OK, json=payload)
+
+    client = HttpCreekVaultClient(
+        "https://vault.example.com",
+        "key-0123456789",  # pragma: allowlist secret
+        http_client=httpx.AsyncClient(transport=httpx.MockTransport(_handler)),
+    )
+    monkeypatch.setenv(VAULT_SEND_SUSPEND_ENV_VAR, "1")
+
+    outcome = await store_and_classify(
+        client, body=_BODY, classification="personal", created_at=_CREATED_AT, entry_id=_ENTRY_ID
+    )
+
+    assert outcome.status is VaultWriteStatus.SUSPENDED
+    assert sent == ["GET"]
+
+
+def test_vault_write_status_wire_values_are_stable() -> None:
+    """Statuses are appended, never reordered: SUSPENDED is the newest (#3107)."""
+    assert [status.value for status in VaultWriteStatus] == [
+        "ingested",
+        "skipped_intimate",
+        "unavailable",
+        "degraded",
+        "suspended",
+    ]

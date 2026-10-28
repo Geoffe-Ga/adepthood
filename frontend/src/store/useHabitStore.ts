@@ -16,6 +16,12 @@ import { registerStoreReset } from './registry';
  * selector for single-item subscriptions to avoid re-renders on unrelated
  * mutations.
  */
+/** The outcome of one finished server read of the habit list. */
+export interface HabitServerSync {
+  scope: string;
+  status: 'ok' | 'failed';
+}
+
 export interface HabitStoreState {
   /** ID-keyed map — the canonical source of truth for per-habit lookups. */
   habitsById: Record<number, Habit>;
@@ -25,10 +31,19 @@ export interface HabitStoreState {
   habits: Habit[];
   loading: boolean;
   error: string | null;
+  /**
+   * How the most recent finished server read went, and for which account and
+   * session (`habitSyncScopeKey`). `null` until a read finishes, and again
+   * while a retry of a failed read is in flight. Cached rows never set it: a
+   * caller that must act on the account's real list (the Course Energy
+   * handoff, #3328) waits for `status: 'ok'` under its own scope.
+   */
+  serverSync: HabitServerSync | null;
 
   setHabits: (_habits: Habit[]) => void;
   setLoading: (_loading: boolean) => void;
   setError: (_error: string | null) => void;
+  setServerSync: (_sync: HabitServerSync | null) => void;
   updateHabit: (_habit: Habit) => void;
   removeHabit: (_habitId: number) => void;
   /** BUG-FE-STATE-001: wipe every field back to its initial value on logout. */
@@ -41,6 +56,7 @@ const INITIAL_STATE = {
   habits: [] as Habit[],
   loading: false,
   error: null as string | null,
+  serverSync: null as HabitServerSync | null,
 };
 
 const habitCollection = createNormalizedById<Habit>((habit) => habit.id);
@@ -58,6 +74,7 @@ export const useHabitStore = create<HabitStoreState>((set) => ({
   setHabits: (habits) => set(normalizeHabits(habits)),
   setLoading: (loading) => set({ loading }),
   setError: (error) => set({ error }),
+  setServerSync: (serverSync) => set({ serverSync }),
   updateHabit: (updatedHabit) =>
     set((state) => {
       if (!(updatedHabit.id in state.habitsById)) return state;

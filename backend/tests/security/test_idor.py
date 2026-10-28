@@ -30,32 +30,45 @@ Also asserts that no owned-resource response DTO echoes ``user_id``.
 
 from __future__ import annotations
 
+import json
 import logging
 from datetime import UTC, date, datetime, timedelta
 from http import HTTPStatus
+from pathlib import Path
+from types import SimpleNamespace
 
+import httpx
+import jwt
 import pytest
 from httpx import AsyncClient, Response
 from sqlalchemy import ColumnElement, func
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import col, select, update
 
+from domain.frequencies import Frequency
+from models.agent_grant import AgentGrant
 from models.completion_suggestion import (
     CompletionSuggestion,
     CompletionTargetType,
     SuggestionStatus,
 )
+from models.corpus_fragment import CorpusFragment
 from models.corpus_invitation_state import CorpusInvitationState
+from models.corpus_sweep import CorpusSweep
 from models.course_stage import CourseStage
 from models.feedback import FeedbackReport
 from models.feedback_triage import FeedbackNote, FeedbackTriageEvent
 from models.goal import Goal
 from models.goal_completion import GoalCompletion
+from models.goal_log_event import GoalLogEvent
 from models.habit import Habit
-from models.journal_entry import JournalEntry
+from models.journal_entry import JournalClassification, JournalEntry
+from models.journal_withdrawal_obligation import JournalWithdrawalObligation
 from models.marginalia import Marginalia, MarginaliaKind
 from models.metta_return_arc import MettaReturnArc
 from models.metta_return_habit_release import MettaReturnHabitRelease
+from models.oauth_authorization_code import OAuthAuthorizationCode
+from models.oauth_refresh_token import OAuthRefreshToken
 from models.practice import Practice
 from models.practice_session import PracticeSession
 from models.promoted_quote import PromotedQuote
@@ -64,8 +77,15 @@ from models.prompt_response import PromptResponse
 from models.stage_content import StageContent
 from models.stage_progress import StageProgress
 from models.user import User
+from models.user_practice import UserPractice
 from models.user_ui_flags import UserUiFlags
 from security.idempotency import hash_idem_key
+from services import frequency_classification as fc
+from services.creek_vault_client import HttpCreekVaultClient
+from services.journal_retention import PURGE_MIN_RETENTION_DAYS
+from services.oauth_authorization import OAUTH_ISSUER_ENV_VAR
+from services.vault_agent_activity_copy import ACTIVITY_SOMETHING_ELSE
+from tests.helpers import oauth as oauth_flow
 from tests.helpers.feedback_triage import (
     DRAFT_BODY,
     make_account,
@@ -78,7 +98,50 @@ from tests.helpers.feedback_triage import (
 # the missing-row branch is the same code path as a malicious enumeration.
 _DEFINITELY_MISSING_ID = 999_999
 
+
+@pytest.mark.asyncio
+async def test_cross_owner_check_in_persists_neither_aggregate_nor_log_event(
+    async_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """Keep the goal's enumeration-safe 404 and leave both write tables empty."""
+    owner = await make_account(db_session, "event-owner@example.com")
+    other = await make_account(db_session, "event-other@example.com")
+    habit = Habit(user_id=owner.user_id, **{**_HABIT_PAYLOAD, "start_date": date(2024, 1, 1)})
+    db_session.add(habit)
+    await db_session.flush()
+    goal = Goal(
+        habit_id=habit.id,
+        title="Water",
+        tier="clear",
+        target=8,
+        target_unit="cups",
+        frequency=1,
+        frequency_unit="per_day",
+    )
+    db_session.add(goal)
+    await db_session.commit()
+    response = await async_client.post(
+        "/goal_completions/",
+        headers=other.headers,
+        json={"goal_id": goal.id, "completed_units": 2, "source": "practice_link"},
+    )
+    assert response.status_code == HTTPStatus.NOT_FOUND
+    assert (await db_session.execute(select(GoalCompletion))).scalars().all() == []
+    assert (await db_session.execute(select(GoalLogEvent))).scalars().all() == []
+
+
 _JOURNAL_PROBE_MESSAGE = "A perfectly ordinary entry."
+
+# A backlog larger than one, so a stranger's zero cannot coincide with a
+# miscount of a single row.
+_SWEEP_BACKLOG = 2
+
+# A classifier reply naming one position, and words only Alice wrote, so their
+# presence in any provider prompt Bob's pass sent could only mean a crossing.
+_SWEEP_CLASSIFIED_REPLY = json.dumps(
+    {"weights": {Frequency.F5.value: 0.9}, "overall_confidence": 0.9}
+)
+_SWEEP_ALICE_WORDS = "alice-only-backlog-sentinel"
 
 _HABIT_PAYLOAD: dict[str, object] = {
     "name": "Drink Water",
@@ -87,6 +150,17 @@ _HABIT_PAYLOAD: dict[str, object] = {
     "energy_cost": 1,
     "energy_return": 2,
 }
+
+# A habit a timer may log to (#3150): its goals count minutes, per day.
+_TIMER_GOALS: dict[str, object] = {
+    "target_unit": "minutes",
+    "frequency": 1,
+    "frequency_unit": "per_day",
+    "low": 10,
+    "clear": 20,
+    "stretch": 45,
+}
+_LINKABLE_HABIT_PAYLOAD: dict[str, object] = {**_HABIT_PAYLOAD, "goals": _TIMER_GOALS}
 
 _PRACTICE_DEFAULTS: dict[str, object] = {
     "stage_number": 1,
@@ -388,6 +462,17 @@ async def test_idor_habit_stats_returns_403(async_client: AsyncClient) -> None:
     assert resp.status_code == HTTPStatus.FORBIDDEN
 
 
+@pytest.mark.asyncio
+async def test_idor_habit_story_returns_403(async_client: AsyncClient) -> None:
+    """The lifetime Story read retains the owned-habit authorization boundary."""
+    alice_headers, _ = await _signup(async_client, "alice_story")
+    bob_headers, _ = await _signup(async_client, "bob_story")
+    created = await async_client.post("/habits/", json=_HABIT_PAYLOAD, headers=alice_headers)
+    habit_id = created.json()["id"]
+    response = await async_client.get(f"/habits/{habit_id}/story", headers=bob_headers)
+    assert response.status_code == HTTPStatus.FORBIDDEN
+
+
 # Journal entries are the deliberate exception to the 403-everywhere rule: GET,
 # DELETE, and PATCH all collapse a cross-user probe to 404 (enumeration-safe),
 # matching the goal/marginalia contract.
@@ -417,6 +502,49 @@ async def test_idor_journal_entry_delete_returns_404(async_client: AsyncClient) 
 
     resp = await async_client.delete(f"/journal/{entry_id}", headers=bob_headers)
     assert resp.status_code == HTTPStatus.NOT_FOUND
+
+
+@pytest.mark.asyncio
+async def test_idor_journal_entry_erase_locally_returns_404(
+    async_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """``POST /journal/{id}/erase-locally`` (#3094) collapses a cross-user probe to 404.
+
+    Nothing is persisted for the prober: no deletion stamp and no withdrawal
+    obligation. The owner's call to the same URL succeeds, so the 404 is the
+    ownership check and not a missing route.
+    """
+    alice_headers, _ = await _signup(async_client, "alice_j_erase")
+    bob_headers, _ = await _signup(async_client, "bob_j_erase")
+    create = await async_client.post(
+        "/journal/", json={"message": "private"}, headers=alice_headers
+    )
+    entry_id = create.json()["id"]
+
+    resp = await async_client.post(f"/journal/{entry_id}/erase-locally", headers=bob_headers)
+
+    assert resp.status_code == HTTPStatus.NOT_FOUND
+    assert resp.json() == {"detail": "journal_entry_not_found"}
+    row = (
+        await db_session.execute(
+            select(JournalEntry)
+            .where(col(JournalEntry.id) == entry_id)
+            .execution_options(populate_existing=True)
+        )
+    ).scalar_one()
+    assert row.deleted_at is None
+    obligations = (
+        await db_session.execute(
+            select(func.count())
+            .select_from(JournalWithdrawalObligation)
+            .where(col(JournalWithdrawalObligation.journal_entry_id) == entry_id)
+        )
+    ).scalar_one()
+    assert obligations == 0
+    await db_session.commit()
+
+    owned = await async_client.post(f"/journal/{entry_id}/erase-locally", headers=alice_headers)
+    assert owned.status_code == HTTPStatus.OK
 
 
 @pytest.mark.asyncio
@@ -668,11 +796,13 @@ async def test_idor_practice_session_create_returns_403(
     assert getattr(denials[0], "user_id", None) == bob_id
 
 
+@pytest.mark.parametrize("route", ["stats", "story"])
 @pytest.mark.asyncio
 async def test_idor_practice_session_stats_returns_403_and_leaks_nothing(
     async_client: AsyncClient,
     db_session: AsyncSession,
     caplog: pytest.LogCaptureFixture,
+    route: str,
 ) -> None:
     """Bob cannot read the all-time totals for Alice's practice.
 
@@ -711,7 +841,7 @@ async def test_idor_practice_session_stats_returns_403_and_leaks_nothing(
 
     with caplog.at_level(logging.WARNING):
         attack = await async_client.get(
-            "/practice-sessions/stats",
+            f"/practice-sessions/{route}",
             params={"user_practice_id": alice_practice_id},
             headers=bob_headers,
         )
@@ -726,12 +856,13 @@ async def test_idor_practice_session_stats_returns_403_and_leaks_nothing(
     # be about ownership -- and it reports his empty history, not Alice's two
     # sits on the very same catalog practice.
     baseline = await async_client.get(
-        "/practice-sessions/stats",
+        f"/practice-sessions/{route}",
         params={"user_practice_id": bob_practice_id},
         headers=bob_headers,
     )
     assert baseline.status_code == HTTPStatus.OK
-    assert baseline.json() == {"total_sessions": 0, "total_minutes": 0.0}
+    assert baseline.json()["total_sessions"] == 0
+    assert baseline.json()["total_minutes"] == 0.0
 
     # A read must not write, and must not have disturbed what it refused to show.
     after = await _sessions_where(db_session, col(PracticeSession.user_id) == alice_id)
@@ -754,7 +885,8 @@ async def _probe_missing_user_practice(
             json=_session_window_payload(_DEFINITELY_MISSING_ID),
             headers=headers,
         )
-    path = "/practice-sessions/stats" if spelling == "stats_query" else "/practice-sessions/"
+    paths = {"stats_query": "/practice-sessions/stats", "story_query": "/practice-sessions/story"}
+    path = paths.get(spelling, "/practice-sessions/")
     return await async_client.get(
         path,
         params={"user_practice_id": _DEFINITELY_MISSING_ID},
@@ -762,7 +894,7 @@ async def _probe_missing_user_practice(
     )
 
 
-@pytest.mark.parametrize("spelling", ["body", "query", "stats_query"])
+@pytest.mark.parametrize("spelling", ["body", "query", "stats_query", "story_query"])
 @pytest.mark.asyncio
 async def test_practice_session_missing_user_practice_is_404_and_unaudited(
     async_client: AsyncClient,
@@ -1506,6 +1638,96 @@ async def test_idor_voice_drafts_listing_is_scoped_to_the_caller(
 
 
 @pytest.mark.asyncio
+async def test_idor_corpus_sweep_estimate_is_scoped_to_the_caller(
+    async_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """Alice's backlog is not Bob's, and Bob cannot be told how much she has waiting.
+
+    The route takes no resource id -- it is keyed entirely on the bearer token
+    -- so there is no cross-user branch to spell 403 or 404, and the invariant
+    to pin is the one :func:`test_idor_corpus_invitation_is_scoped_to_the_caller`
+    pins for the invitation: the number is the caller's own. A backlog is a
+    disclosure about how much somebody has written, which is why a stranger
+    reading it as zero matters even though no row is named.
+    """
+    alice_headers, alice_id = await _signup(async_client, "alice_sweep")
+    bob_headers, _ = await _signup(async_client, "bob_sweep")
+
+    for index in range(_SWEEP_BACKLOG):
+        db_session.add(
+            JournalEntry(
+                message=f"alice writes {index}",
+                sender="user",
+                user_id=alice_id,
+                classification=JournalClassification.PERSONAL.value,
+                timestamp=datetime.now(UTC),
+            )
+        )
+    await db_session.commit()
+
+    alice_body = (await async_client.get("/corpus/sweep", headers=alice_headers)).json()
+    bob_body = (await async_client.get("/corpus/sweep", headers=bob_headers)).json()
+
+    assert alice_body["entries_pending"] == _SWEEP_BACKLOG
+    assert bob_body["entries_pending"] == 0
+
+
+@pytest.mark.asyncio
+async def test_idor_corpus_sweep_run_cannot_sort_another_accounts_writing(
+    async_client: AsyncClient, db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Bob's pass sorts Bob's writing, and nothing of Alice's leaves her journal.
+
+    Both have granted, so the only thing standing between Bob's request and
+    Alice's backlog is the account the token names. Asserted at the provider --
+    no prompt carries Alice's words -- and in the store: Alice gains no
+    fragment, no sweep receipt is filed against her, and her backlog is still
+    hers to sort.
+    """
+    prompts: list[str] = []
+
+    async def recording(**kwargs: object) -> SimpleNamespace:
+        prompts.append(repr(kwargs))
+        return SimpleNamespace(text=_SWEEP_CLASSIFIED_REPLY)
+
+    monkeypatch.setattr(fc, "generate_response", recording)
+    alice_headers, alice_id = await _signup(async_client, "alice_sweep_run")
+    bob_headers, bob_id = await _signup(async_client, "bob_sweep_run")
+    for headers in (alice_headers, bob_headers):
+        granted = await async_client.put(
+            "/corpus/consent/journal", json={"granted": True}, headers=headers
+        )
+        assert granted.status_code == HTTPStatus.OK, granted.text
+
+    for index in range(_SWEEP_BACKLOG):
+        db_session.add(
+            JournalEntry(
+                message=f"{_SWEEP_ALICE_WORDS} {index}",
+                sender="user",
+                user_id=alice_id,
+                classification=JournalClassification.PERSONAL.value,
+                timestamp=datetime.now(UTC),
+            )
+        )
+    await db_session.commit()
+
+    bob_pass = await async_client.post("/corpus/sweep", headers=bob_headers)
+
+    assert bob_pass.status_code == HTTPStatus.OK, bob_pass.text
+    assert bob_pass.json() == {"entries_pending": 0, "entries_sorted": 0, "entries_remaining": 0}
+    assert all(_SWEEP_ALICE_WORDS not in prompt for prompt in prompts)
+    fragment_owners = (
+        (await db_session.execute(select(col(CorpusFragment.user_id)))).scalars().all()
+    )
+    sweep_owners = (await db_session.execute(select(col(CorpusSweep.user_id)))).scalars().all()
+    assert alice_id not in fragment_owners
+    assert alice_id not in sweep_owners
+    assert bob_id not in sweep_owners
+    alice_left = (await async_client.get("/corpus/sweep", headers=alice_headers)).json()
+    assert alice_left["entries_pending"] == _SWEEP_BACKLOG
+
+
+@pytest.mark.asyncio
 async def test_idor_corpus_invitation_is_scoped_to_the_caller(
     async_client: AsyncClient, db_session: AsyncSession
 ) -> None:
@@ -2242,8 +2464,12 @@ async def test_idor_ui_flags_writing_habit_link_foreign_habit_returns_403(
     """
     alice_headers, _alice_id = await _signup(async_client, "alice_link")
     bob_headers, bob_id = await _signup(async_client, "bob_link")
-    alice_habit = await async_client.post("/habits/", json=_HABIT_PAYLOAD, headers=alice_headers)
-    bob_habit = await async_client.post("/habits/", json=_HABIT_PAYLOAD, headers=bob_headers)
+    alice_habit = await async_client.post(
+        "/habits/", json=_LINKABLE_HABIT_PAYLOAD, headers=alice_headers
+    )
+    bob_habit = await async_client.post(
+        "/habits/", json=_LINKABLE_HABIT_PAYLOAD, headers=bob_headers
+    )
     alice_habit_id = int(alice_habit.json()["id"])
     bob_habit_id = int(bob_habit.json()["id"])
     own = await async_client.patch(
@@ -2273,6 +2499,66 @@ async def test_idor_ui_flags_writing_habit_link_foreign_habit_returns_403(
 
 
 @pytest.mark.asyncio
+async def test_idor_ui_flags_link_to_foreign_non_timer_habit_is_403_not_422(
+    async_client: AsyncClient,
+    db_session: AsyncSession,
+) -> None:
+    """Ownership is decided before the unit rule (#3150).
+
+    Alice's habit counts ``units``, which the link guard would refuse with a
+    422 -- but answering 422 to Bob would tell him what Alice's goals measure.
+    The refusal is the same 403 a timer-unit habit of hers draws, and Bob's row
+    is untouched.
+    """
+    alice_headers, _alice_id = await _signup(async_client, "alice_units_link")
+    bob_headers, bob_id = await _signup(async_client, "bob_units_link")
+    alice_habit = await async_client.post("/habits/", json=_HABIT_PAYLOAD, headers=alice_headers)
+    alice_habit_id = int(alice_habit.json()["id"])
+
+    attack = await async_client.patch(
+        "/ui-flags", json={"writing_session_habit_id": alice_habit_id}, headers=bob_headers
+    )
+
+    assert attack.status_code == HTTPStatus.FORBIDDEN
+    assert attack.json()["detail"] == "forbidden"
+    stored = await _ui_flags_row(db_session, bob_id)
+    assert stored.writing_session_habit_id is None
+
+
+@pytest.mark.asyncio
+async def test_idor_habit_create_goals_block_carries_no_foreign_id(
+    async_client: AsyncClient,
+    db_session: AsyncSession,
+) -> None:
+    """``POST /habits/`` ``goals`` names no other row, so it has nothing to authorise (#3150).
+
+    The block is units, cadence and three numbers. It refuses unknown fields,
+    so a forged ``habit_id`` or ``goal_group_id`` cannot ride in it to reparent
+    the new tiers onto a stranger's habit or group: the request is a 422 and
+    no habit is written.
+    """
+    alice_headers, _alice_id = await _signup(async_client, "alice_goals_block")
+    bob_headers, bob_id = await _signup(async_client, "bob_goals_block")
+    alice_habit = await async_client.post("/habits/", json=_HABIT_PAYLOAD, headers=alice_headers)
+    alice_habit_id = int(alice_habit.json()["id"])
+
+    for forged in ({"habit_id": alice_habit_id}, {"goal_group_id": alice_habit_id}):
+        attack = await async_client.post(
+            "/habits/",
+            json={**_HABIT_PAYLOAD, "goals": {**_TIMER_GOALS, **forged}},
+            headers=bob_headers,
+        )
+        assert attack.status_code == HTTPStatus.UNPROCESSABLE_ENTITY
+
+    bob_rows = await db_session.execute(
+        select(Habit).where(col(Habit.user_id) == bob_id).execution_options(populate_existing=True)
+    )
+    assert bob_rows.scalars().all() == []
+    alice_goals = await db_session.execute(select(Goal).where(col(Goal.habit_id) == alice_habit_id))
+    assert len(alice_goals.scalars().all()) == len(("low", "clear", "stretch"))
+
+
+@pytest.mark.asyncio
 async def test_idor_ui_flags_writing_habit_link_missing_habit_404s_and_persists_nothing(
     async_client: AsyncClient,
     db_session: AsyncSession,
@@ -2293,3 +2579,525 @@ async def test_idor_ui_flags_writing_habit_link_missing_habit_404s_and_persists_
     stored = await _ui_flags_row(db_session, user_id)
     assert stored.writing_session_habit_id is None
     assert stored.has_seen_welcome is False
+
+
+async def _practice_habit_link(db_session: AsyncSession, user_practice_id: int) -> int | None:
+    """Read a selection's stored habit link from storage, not the identity map."""
+    row = await db_session.get(UserPractice, user_practice_id, populate_existing=True)
+    assert row is not None
+    return row.habit_id
+
+
+@pytest.mark.asyncio
+async def test_idor_practice_habit_link_foreign_habit_returns_403_and_changes_nothing(
+    async_client: AsyncClient,
+    db_session: AsyncSession,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Bob cannot point his practice at Alice's habit (#3151).
+
+    ``PATCH /user-practices/{id}/habit`` carries ``habit_id`` in the body, so the
+    path dependency that proves Bob owns the selection says nothing about the
+    habit. An unguarded write would let Bob's sessions check in against a
+    stranger's habit. The refusal is 403 -- Alice's habit exists -- it is
+    audited, and Bob's prior link survives.
+    """
+    alice_headers, _alice_id = await _signup(async_client, "alice_practice_link")
+    bob_headers, bob_id = await _signup(async_client, "bob_practice_link")
+    alice_habit = await async_client.post(
+        "/habits/", json=_LINKABLE_HABIT_PAYLOAD, headers=alice_headers
+    )
+    bob_habit = await async_client.post(
+        "/habits/", json=_LINKABLE_HABIT_PAYLOAD, headers=bob_headers
+    )
+    alice_habit_id = int(alice_habit.json()["id"])
+    bob_habit_id = int(bob_habit.json()["id"])
+    bob_practice_id = await _create_user_practice(async_client, db_session, bob_headers, bob_id)
+    own = await async_client.patch(
+        f"/user-practices/{bob_practice_id}/habit",
+        json={"habit_id": bob_habit_id},
+        headers=bob_headers,
+    )
+    assert own.status_code == HTTPStatus.OK
+
+    with caplog.at_level(logging.WARNING):
+        attack = await async_client.patch(
+            f"/user-practices/{bob_practice_id}/habit",
+            json={"habit_id": alice_habit_id},
+            headers=bob_headers,
+        )
+
+    assert attack.status_code == HTTPStatus.FORBIDDEN
+    assert attack.json()["detail"] == "forbidden"
+    assert await _practice_habit_link(db_session, bob_practice_id) == bob_habit_id
+
+    denials = _denial_records(caplog)
+    assert len(denials) == 1, "expected exactly one resource_access_denied audit log entry"
+    assert getattr(denials[0], "resource", None) == "habit"
+    assert getattr(denials[0], "resource_id", None) == alice_habit_id
+    assert getattr(denials[0], "user_id", None) == bob_id
+
+
+@pytest.mark.asyncio
+async def test_idor_practice_habit_link_foreign_non_timer_habit_is_403_not_422(
+    async_client: AsyncClient,
+    db_session: AsyncSession,
+) -> None:
+    """Ownership is decided before the unit rule (#3151).
+
+    Alice's habit counts ``units``, which the link guard would refuse with a
+    422 -- but answering 422 to Bob would tell him what Alice's goals measure.
+    The refusal is the same 403, and Bob's selection stays unlinked.
+    """
+    alice_headers, _alice_id = await _signup(async_client, "alice_units_practice")
+    bob_headers, bob_id = await _signup(async_client, "bob_units_practice")
+    alice_habit = await async_client.post("/habits/", json=_HABIT_PAYLOAD, headers=alice_headers)
+    alice_habit_id = int(alice_habit.json()["id"])
+    bob_practice_id = await _create_user_practice(async_client, db_session, bob_headers, bob_id)
+
+    attack = await async_client.patch(
+        f"/user-practices/{bob_practice_id}/habit",
+        json={"habit_id": alice_habit_id},
+        headers=bob_headers,
+    )
+
+    assert attack.status_code == HTTPStatus.FORBIDDEN
+    assert attack.json()["detail"] == "forbidden"
+    assert await _practice_habit_link(db_session, bob_practice_id) is None
+
+
+@pytest.mark.asyncio
+async def test_idor_practice_habit_link_on_foreign_practice_returns_403_and_changes_nothing(
+    async_client: AsyncClient,
+    db_session: AsyncSession,
+) -> None:
+    """Bob cannot rewire Alice's practice, even to a habit of his own (#3151).
+
+    The path's selection is resolved first: Alice's is 403 to Bob, and her
+    existing link to her own habit is untouched.
+    """
+    alice_headers, alice_id = await _signup(async_client, "alice_practice_owner")
+    bob_headers, _bob_id = await _signup(async_client, "bob_practice_rewire")
+    alice_habit = await async_client.post(
+        "/habits/", json=_LINKABLE_HABIT_PAYLOAD, headers=alice_headers
+    )
+    bob_habit = await async_client.post(
+        "/habits/", json=_LINKABLE_HABIT_PAYLOAD, headers=bob_headers
+    )
+    alice_habit_id = int(alice_habit.json()["id"])
+    alice_practice_id = await _create_user_practice(
+        async_client, db_session, alice_headers, alice_id
+    )
+    await async_client.patch(
+        f"/user-practices/{alice_practice_id}/habit",
+        json={"habit_id": alice_habit_id},
+        headers=alice_headers,
+    )
+
+    for body in ({"habit_id": int(bob_habit.json()["id"])}, {"habit_id": None}):
+        attack = await async_client.patch(
+            f"/user-practices/{alice_practice_id}/habit", json=body, headers=bob_headers
+        )
+        assert attack.status_code == HTTPStatus.FORBIDDEN
+
+    assert await _practice_habit_link(db_session, alice_practice_id) == alice_habit_id
+
+
+@pytest.mark.asyncio
+async def test_idor_practice_habit_link_missing_habit_404s_and_persists_nothing(
+    async_client: AsyncClient,
+    db_session: AsyncSession,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A link to a habit nobody owns is 404, unaudited, and writes nothing."""
+    headers, user_id = await _signup(async_client, "carol_practice_link")
+    user_practice_id = await _create_user_practice(async_client, db_session, headers, user_id)
+
+    with caplog.at_level(logging.WARNING):
+        probe = await async_client.patch(
+            f"/user-practices/{user_practice_id}/habit",
+            json={"habit_id": _DEFINITELY_MISSING_ID},
+            headers=headers,
+        )
+
+    assert probe.status_code == HTTPStatus.NOT_FOUND
+    assert _denial_records(caplog) == []
+    assert await _practice_habit_link(db_session, user_practice_id) is None
+
+
+@pytest.mark.asyncio
+async def test_admin_purge_rejects_non_admin_and_spares_rows(
+    async_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """A non-admin cannot purge anyone's deleted pages; nothing is removed (#3063)."""
+    victim_headers, victim_id = await _signup(async_client, "purgevictim")
+    entry = await async_client.post(
+        "/journal/", json={"message": "mine", "classification": "personal"}, headers=victim_headers
+    )
+    entry_id = entry.json()["id"]
+    await async_client.delete(f"/journal/{entry_id}", headers=victim_headers)
+    await db_session.execute(
+        update(JournalEntry)
+        .where(col(JournalEntry.id) == entry_id)
+        .values(deleted_at=datetime.now(UTC) - timedelta(days=PURGE_MIN_RETENTION_DAYS + 30))
+    )
+    await db_session.commit()
+    attacker_headers, _ = await _signup(async_client, "purgeattacker")
+
+    resp = await async_client.post(
+        "/admin/maintenance/journal-entries",
+        params={"older_than_days": PURGE_MIN_RETENTION_DAYS},
+        headers=attacker_headers,
+    )
+
+    assert resp.status_code == HTTPStatus.FORBIDDEN
+    remaining = await db_session.execute(
+        select(func.count())
+        .select_from(JournalEntry)
+        .where(col(JournalEntry.user_id) == victim_id)
+        .execution_options(populate_existing=True)
+    )
+    assert remaining.scalar_one() == 1
+
+
+async def _authorization_rows(db_session: AsyncSession) -> tuple[int, int]:
+    """How many authorization codes and agent grants exist, read from storage."""
+    codes = await db_session.execute(select(func.count()).select_from(OAuthAuthorizationCode))
+    grants = await db_session.execute(select(func.count()).select_from(AgentGrant))
+    return codes.scalar_one(), grants.scalar_one()
+
+
+@pytest.mark.asyncio
+async def test_idor_oauth_authorize_refuses_another_accounts_vault_and_writes_no_code(
+    async_client: AsyncClient,
+    db_session: AsyncSession,
+    caplog: pytest.LogCaptureFixture,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Bob cannot approve an agent for Alice's vault (#3532).
+
+    ``GET /oauth/authorize`` carries the vault in its RFC 8707 ``resource``, so
+    nothing keyed on a path sees it. A signed-in Bob naming Alice's vault MCP
+    URL -- on the bearer path and through the consent page's own sign-in form --
+    is refused with ``invalid_target`` before any consent page is drawn, with no
+    redirect, no code and no grant written, and the refusal names neither
+    vault: not on the page, not in the audit line.
+    """
+    monkeypatch.setenv(OAUTH_ISSUER_ENV_VAR, oauth_flow.ISSUER)
+    _alice_headers, alice_id = await oauth_flow.signup(async_client, "alice_oauth")
+    bob_headers, bob_id = await oauth_flow.signup(async_client, "bob_oauth")
+    alice_resource = await oauth_flow.connect_vault(db_session, alice_id, "alice-oauth")
+    await oauth_flow.connect_vault(db_session, bob_id, "bob-oauth")
+    client_id = await oauth_flow.register_agent(async_client)
+    params = oauth_flow.authorize_params(client_id, alice_resource)
+
+    with caplog.at_level(logging.WARNING):
+        on_bearer = await async_client.get("/oauth/authorize", params=params, headers=bob_headers)
+        on_form = await async_client.post(
+            "/oauth/authorize/sign-in",
+            data={**params, "email": "bob_oauth@example.com", "password": oauth_flow.PASSWORD},
+        )
+
+    for attack in (on_bearer, on_form):
+        assert attack.status_code == HTTPStatus.BAD_REQUEST
+        assert "invalid_target" in attack.text
+        assert "location" not in attack.headers
+        assert 'name="ticket"' not in attack.text
+        assert "alice-oauth" not in attack.text
+        assert "bob-oauth" not in attack.text
+    assert await _authorization_rows(db_session) == (0, 0)
+
+    refusals = [record for record in caplog.records if record.message == "oauth_resource_refused"]
+    assert [getattr(record, "user_id", None) for record in refusals] == [bob_id, bob_id]
+    for record in caplog.records:
+        assert "alice-oauth" not in record.getMessage()
+        assert "alice-oauth" not in str(vars(record))
+
+
+@pytest.mark.asyncio
+async def test_idor_oauth_authorize_serves_each_account_only_its_own_vault(
+    async_client: AsyncClient,
+    db_session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The control: Bob naming his own vault gets his consent page and, on Approve, his code.
+
+    Without it the refusal above could pass because the endpoint refuses
+    everybody. The code row that results names Bob and Bob's vault, never Alice's.
+    """
+    monkeypatch.setenv(OAUTH_ISSUER_ENV_VAR, oauth_flow.ISSUER)
+    _alice_headers, alice_id = await oauth_flow.signup(async_client, "alice_oauth_ok")
+    bob_headers, bob_id = await oauth_flow.signup(async_client, "bob_oauth_ok")
+    await oauth_flow.connect_vault(db_session, alice_id, "alice-oauth-ok")
+    bob_resource = await oauth_flow.connect_vault(db_session, bob_id, "bob-oauth-ok")
+    client_id = await oauth_flow.register_agent(async_client)
+
+    page = await async_client.get(
+        "/oauth/authorize",
+        params=oauth_flow.authorize_params(client_id, bob_resource),
+        headers=bob_headers,
+    )
+    assert page.status_code == HTTPStatus.OK
+    approved = await oauth_flow.decide(async_client, oauth_flow.ticket_from(page), "approve")
+    assert approved.status_code == HTTPStatus.SEE_OTHER
+
+    row = (await db_session.execute(select(OAuthAuthorizationCode))).scalars().one()
+    assert (row.user_id, row.resource) == (bob_id, bob_resource)
+
+
+async def _agent_tokens(db_session: AsyncSession) -> list[OAuthRefreshToken]:
+    """Every refresh token stored, read fresh from storage."""
+    result = await db_session.execute(
+        select(OAuthRefreshToken).execution_options(populate_existing=True)
+    )
+    return list(result.scalars().all())
+
+
+@pytest.mark.asyncio
+async def test_idor_oauth_token_refuses_a_code_presented_by_another_agent(
+    async_client: AsyncClient,
+    db_session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Bob's agent cannot spend the code Alice's agent was sent (#3533).
+
+    ``POST /oauth/token`` carries ``client_id`` in its form body. The code is
+    bound to the client it was issued to, so another client presenting it --
+    even with the right PKCE verifier -- is ``invalid_grant``: no refresh token
+    is written, the code stays unspent for its rightful agent, and Alice's
+    grant is not stamped as used.
+    """
+    monkeypatch.setenv(OAUTH_ISSUER_ENV_VAR, oauth_flow.ISSUER)
+    oauth_flow.install_signing_keys(monkeypatch)
+    code, alice_client, _resource, alice_id = await oauth_flow.approved_code(
+        async_client, db_session, "alice_tokens"
+    )
+    bob_client = await oauth_flow.register_agent(async_client, name="Bob's agent")
+
+    attack = await oauth_flow.exchange(
+        async_client, oauth_flow.code_exchange_form(code, bob_client)
+    )
+
+    assert attack.status_code == HTTPStatus.BAD_REQUEST
+    assert attack.json() == {"error": "invalid_grant"}
+    assert await _agent_tokens(db_session) == []
+    stored = (
+        (
+            await db_session.execute(
+                select(OAuthAuthorizationCode).execution_options(populate_existing=True)
+            )
+        )
+        .scalars()
+        .one()
+    )
+    assert stored.consumed_at is None
+    grant = (
+        (
+            await db_session.execute(
+                select(AgentGrant)
+                .where(AgentGrant.user_id == alice_id)
+                .execution_options(populate_existing=True)
+            )
+        )
+        .scalars()
+        .one()
+    )
+    assert grant.last_used_at is None
+
+    own = await oauth_flow.exchange(async_client, oauth_flow.code_exchange_form(code, alice_client))
+    assert own.status_code == HTTPStatus.OK
+
+
+@pytest.mark.asyncio
+async def test_idor_oauth_refresh_and_revoke_refuse_another_agents_token(
+    async_client: AsyncClient,
+    db_session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A refresh token presented under another agent's ``client_id`` changes nothing.
+
+    Refreshing is ``invalid_grant`` and rotates nothing; revoking is the RFC
+    7009 200 that says nothing, and revokes nothing. The control: Alice's own
+    agent refreshes, and the audience it gets is Alice's vault.
+    """
+    monkeypatch.setenv(OAUTH_ISSUER_ENV_VAR, oauth_flow.ISSUER)
+    oauth_flow.install_signing_keys(monkeypatch)
+    code, alice_client, alice_resource, _alice_id = await oauth_flow.approved_code(
+        async_client, db_session, "alice_refresh", scope="vault:read vault:desk offline_access"
+    )
+    issued = await oauth_flow.exchange(
+        async_client, oauth_flow.code_exchange_form(code, alice_client)
+    )
+    refresh_token = issued.json()["refresh_token"]
+    bob_client = await oauth_flow.register_agent(async_client, name="Bob's agent")
+
+    refresh = await oauth_flow.exchange(
+        async_client,
+        {"grant_type": "refresh_token", "refresh_token": refresh_token, "client_id": bob_client},
+    )
+    revoke = await async_client.post(
+        "/oauth/revoke", data={"token": refresh_token, "client_id": bob_client}
+    )
+
+    assert refresh.status_code == HTTPStatus.BAD_REQUEST
+    assert refresh.json() == {"error": "invalid_grant"}
+    assert revoke.status_code == HTTPStatus.OK
+    (row,) = await _agent_tokens(db_session)
+    assert (row.rotated_at, row.revoked_at) == (None, None)
+
+    own = await oauth_flow.exchange(
+        async_client,
+        {"grant_type": "refresh_token", "refresh_token": refresh_token, "client_id": alice_client},
+    )
+    assert own.status_code == HTTPStatus.OK
+    claims = jwt.decode(own.json()["access_token"], options={"verify_signature": False})
+    assert claims["aud"] == alice_resource
+
+
+@pytest.mark.asyncio
+async def test_idor_revoking_another_accounts_agent_is_refused_and_changes_nothing(
+    async_client: AsyncClient,
+    db_session: AsyncSession,
+    caplog: pytest.LogCaptureFixture,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Bob cannot stop the agent Alice approved (#3534).
+
+    ``DELETE /vault/agents/{agent_id}`` names a grant by id in its path, and the
+    account comes from the bearer alone. Bob naming Alice's grant is the same
+    404 -- status and body, byte for byte -- as naming one nobody holds, so the
+    route is no oracle for which ids exist; the probe is audited with
+    ``resource_access_denied``; and Alice's grant, its refresh token and her
+    agent's next refresh are all exactly as they were. Bob's list never shows
+    her agent either. The control: Alice's agent still refreshes afterwards.
+    """
+    monkeypatch.setenv(OAUTH_ISSUER_ENV_VAR, oauth_flow.ISSUER)
+    oauth_flow.install_signing_keys(monkeypatch)
+    code, alice_client, _resource, alice_id = await oauth_flow.approved_code(
+        async_client, db_session, "alice_agents", scope="vault:read vault:desk offline_access"
+    )
+    issued = await oauth_flow.exchange(
+        async_client, oauth_flow.code_exchange_form(code, alice_client)
+    )
+    refresh_token = issued.json()["refresh_token"]
+    bob_headers, bob_id = await oauth_flow.signup(async_client, "bob_agents")
+    await oauth_flow.connect_vault(db_session, bob_id, "bob-agents")
+    grant = (
+        (await db_session.execute(select(AgentGrant).where(AgentGrant.user_id == alice_id)))
+        .scalars()
+        .one()
+    )
+    assert grant.id is not None
+    alice_grant_id = grant.id
+    before = (grant.revoked_at, grant.last_used_at, grant.created_at, list(grant.grants))
+    absent_id = alice_grant_id + 10_000
+
+    with caplog.at_level(logging.WARNING):
+        attack = await async_client.delete(f"/vault/agents/{alice_grant_id}", headers=bob_headers)
+    missing = await async_client.delete(f"/vault/agents/{absent_id}", headers=bob_headers)
+
+    assert attack.status_code == HTTPStatus.NOT_FOUND
+    assert (attack.status_code, attack.content) == (missing.status_code, missing.content)
+    denials = [r for r in caplog.records if r.message == "resource_access_denied"]
+    assert [(getattr(r, "resource", None), getattr(r, "user_id", None)) for r in denials] == [
+        ("agent_grant", bob_id)
+    ]
+    stored = (
+        (
+            await db_session.execute(
+                select(AgentGrant)
+                .where(AgentGrant.id == alice_grant_id)
+                .execution_options(populate_existing=True)
+            )
+        )
+        .scalars()
+        .one()
+    )
+    assert (stored.revoked_at, stored.last_used_at, stored.created_at, stored.grants) == before
+    (token,) = await _agent_tokens(db_session)
+    assert token.revoked_at is None
+    assert (await async_client.get("/vault/agents", headers=bob_headers)).json() == []
+
+    refresh = await oauth_flow.exchange(
+        async_client,
+        {"grant_type": "refresh_token", "refresh_token": refresh_token, "client_id": alice_client},
+    )
+    assert refresh.status_code == HTTPStatus.OK
+
+
+#: The vendored Creek bundle, for the published handshake a scripted vault serves.
+_CREEK_BUNDLE = Path(__file__).parent.parent / "fixtures" / "creek_v1"
+
+
+async def _grant_count(db_session: AsyncSession) -> int:
+    """How many agent grants exist, read from storage."""
+    return int(
+        (await db_session.execute(select(func.count()).select_from(AgentGrant))).scalar_one()
+    )
+
+
+@pytest.mark.asyncio
+async def test_idor_agent_activity_reads_only_the_callers_own_vault_and_agents(
+    async_client: AsyncClient,
+    db_session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Bob's activity is Bob's vault's, and never names Alice's agent (#3535).
+
+    ``GET /vault/agents/activity`` takes no account or agent id: the vault it
+    dials is resolved from the bearer alone, and a row's stamp is matched only
+    against the caller's own grants. So even a vault answering with a row
+    stamped by Alice's agent's client id -- the Creek-Vault#1976 shape -- shows
+    Bob "something else", not her agent's name, and the only vault dialled for
+    Bob's request is the one Bob connected. Nothing is written by the read.
+    """
+    monkeypatch.setenv(OAUTH_ISSUER_ENV_VAR, oauth_flow.ISSUER)
+    oauth_flow.install_signing_keys(monkeypatch)
+    alice_headers, alice_id = await oauth_flow.signup(async_client, "alice_activity")
+    alice_resource = await oauth_flow.connect_vault(db_session, alice_id, "alice-activity")
+    alice_client = await oauth_flow.register_agent(async_client, name="Alice's agent")
+    await oauth_flow.approve(async_client, alice_headers, alice_client, alice_resource)
+    bob_headers, bob_id = await oauth_flow.signup(async_client, "bob_activity")
+    await oauth_flow.connect_vault(db_session, bob_id, "bob-activity")
+    dialled: list[str] = []
+    capabilities = json.loads(
+        (_CREEK_BUNDLE / "examples" / "capabilities" / "success.json").read_bytes()
+    )
+    row = {"consumer": alice_client, "tool": "creek.draft", "at": "2026-10-24T18:02:11Z"}
+    answer = {
+        "status": "ok",
+        "tier_ceiling": "open",
+        "skipped": 0,
+        "rows": [row | {"outcome": "admitted"}],
+    }
+
+    def _vault(request: httpx.Request) -> httpx.Response:
+        dialled.append(request.url.host)
+        if request.url.path == "/v1/capabilities":
+            return httpx.Response(HTTPStatus.OK, json=capabilities)
+        return httpx.Response(HTTPStatus.OK, json=answer)
+
+    def _build(url: str, api_key: str, *, managed: bool) -> HttpCreekVaultClient:
+        return HttpCreekVaultClient(
+            url,
+            api_key,
+            http_client=httpx.AsyncClient(transport=httpx.MockTransport(_vault)),
+            managed=managed,
+        )
+
+    async def _dialable(_session: AsyncSession, _vault_url: str) -> bool:
+        return False
+
+    monkeypatch.setattr("services.creek_vault_stored_client.build_connected_vault_client", _build)
+    monkeypatch.setattr("services.creek_vault_stored_client.stored_host_is_undialable", _dialable)
+    grants_before = await _grant_count(db_session)
+
+    response = await async_client.get("/vault/agents/activity", headers=bob_headers)
+
+    assert response.status_code == HTTPStatus.OK
+    (shown,) = response.json()["rows"]
+    assert shown["agent"] == ACTIVITY_SOMETHING_ELSE
+    assert "Alice" not in response.text
+    assert alice_client not in response.text
+    assert set(dialled) == {"v-bob-activity.vaults.example"}
+    assert await _grant_count(db_session) == grants_before

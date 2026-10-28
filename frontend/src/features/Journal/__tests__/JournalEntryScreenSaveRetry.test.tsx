@@ -24,6 +24,7 @@ const mockList = jest.fn() as jest.MockedFunction<(_id: number) => Promise<{ ite
 jest.mock('@/context/AuthContext', () => require('./authContextTestKit'));
 
 jest.mock('@/api', () => ({
+  ...require('./journalUiFlagsTestKit'),
   // NetworkStatusProvider registers the client's online getter on mount.
   setNetworkOnlineGetter: jest.fn(),
   journal: {
@@ -810,5 +811,99 @@ describe('a retried create is one entry (#2936)', () => {
     await typeBody(screen, 'I noticed the willow, and the heron.');
     expect(mockRespond).toHaveBeenCalledTimes(2);
     expect(hint(screen)).toBe(WEEK_TAKEN_HINT);
+  });
+});
+
+describe('a page whose deletion is in progress, and a copy in another vault (#3094/#3098)', () => {
+  const DELETION_PENDING = { status: 409, detail: 'journal_entry_deletion_pending' };
+
+  it('a save 409 without destination metadata describes a pending deletion without promising confirmation', async () => {
+    const screen = await openLoaded();
+    mockUpdate.mockRejectedValueOnce(DELETION_PENDING);
+
+    await typeBody(screen, 'Words typed after the delete.');
+
+    expect(hint(screen)).toMatch(/set to be deleted, so it can’t be edited/);
+    expect(hint(screen)).toMatch(/Deletion has not finished/);
+    expect(hint(screen)).not.toMatch(/once|vault confirms|reconnect/iu);
+    expect(screen.queryByTestId('journal-save-retry')).toBeNull();
+  });
+
+  it('Finish on a page being deleted says why, settles, and never retries the 409', async () => {
+    const screen = await openLoaded();
+    mockUpdate.mockRejectedValue(DELETION_PENDING);
+
+    fireEvent.press(screen.getByTestId('journal-finish-button'));
+    await settle();
+
+    expect(hint(screen)).toMatch(/set to be deleted, so it can’t be edited/);
+    const finishError = screen.getByTestId('journal-finish-error').props.children as string;
+    expect(finishError).toMatch(/set to be deleted/);
+    expect(finishError).not.toMatch(
+      /Check your connection|still saving|once|vault confirms|reconnect/iu,
+    );
+    expect(finishError).toMatch(/Deletion has not finished/);
+    expect(screen.queryByTestId('journal-save-retry')).toBeNull();
+
+    const sent = mockUpdate.mock.calls.length;
+    await net.emit(false);
+    await net.emit(true);
+    await act(async () => {
+      await jest.advanceTimersByTimeAsync(AUTOSAVE_MS * 10);
+    });
+    await settle();
+    expect(mockUpdate.mock.calls.length).toBe(sent);
+  });
+
+  it('settles the Finish lane on a 409, so no Retry ever re-sends that Finish', async () => {
+    const screen = await openLoaded();
+    mockUpdate.mockRejectedValueOnce(DELETION_PENDING);
+    fireEvent.press(screen.getByTestId('journal-finish-button'));
+    await settle();
+
+    // A later write that lands drops the transient hint; any lane still owed
+    // would now surface as the save-error hint and its Retry button.
+    await typeBody(screen, 'A line typed after the refusal.');
+
+    expect(hint(screen)).toBe('Saved');
+    expect(screen.queryByTestId('journal-save-retry')).toBeNull();
+    expect(
+      mockUpdate.mock.calls.filter(([, patch]) => (patch as { status?: string }).status),
+    ).toHaveLength(1);
+  });
+
+  it('reverts a refused tier change and says why', async () => {
+    const screen = await openLoaded({ classification: 'personal' });
+    mockUpdate.mockRejectedValueOnce(DELETION_PENDING);
+
+    await pressTier(screen, 'public');
+
+    expect(tierSelected(screen, 'personal')).toBe(true);
+    expect(hint(screen)).toMatch(/set to be deleted/);
+    expect(screen.queryByTestId('journal-save-retry')).toBeNull();
+  });
+
+  it.each(['vault_withdrawal_previous_vault', 'vault_withdrawal_disconnected_vault'])(
+    'asks to reconnect the old vault, not to choose Intimate again (%s)',
+    async (detail) => {
+      const screen = await openLoaded({ classification: 'personal' });
+      mockUpdate.mockRejectedValueOnce({ status: 503, detail });
+
+      await pressTier(screen, 'intimate');
+
+      expect(tierSelected(screen, 'intimate')).toBe(true);
+      expect(hint(screen)).toMatch(/no longer connected to — reconnect that vault/);
+      expect(hint(screen)).not.toMatch(/choose Intimate again/);
+    },
+  );
+
+  it('names the automatic retry while the connected vault has not confirmed', async () => {
+    const screen = await openLoaded({ classification: 'personal' });
+    mockUpdate.mockRejectedValueOnce({ status: 503, detail: 'vault_withdrawal_pending' });
+
+    await pressTier(screen, 'intimate');
+
+    expect(hint(screen)).toMatch(/not been confirmed.*retry/);
+    expect(hint(screen)).not.toMatch(/choose Intimate again/);
   });
 });
