@@ -371,9 +371,24 @@ const VaultAdvancedFold = ({ initiallyOpen, children }: VaultAdvancedFoldProps) 
 
 interface ConnectedVaultCardProps {
   address: string;
+  /** The server's sentence when the vault's sort is not finished (#3577). */
+  classificationMessage?: string;
   busy: boolean;
   onRequestDisconnect: () => void;
 }
+
+/**
+ * The server's own sentence saying the vault's sort is not finished (#3577),
+ * or nothing. A rules-only or partial sort must never read as the full one; a
+ * finished sort is the norm and says nothing. No badge, no count, no button:
+ * nothing is waiting on the person.
+ */
+const VaultSortNote = ({ message }: { message?: string }): React.JSX.Element | null =>
+  message ? (
+    <Text style={settingsFormStyles.body} testID="vault-classification-state">
+      {message}
+    </Text>
+  ) : null;
 
 /**
  * Where the copies go, and the way out.
@@ -385,12 +400,14 @@ interface ConnectedVaultCardProps {
  */
 const ConnectedVaultCard = ({
   address,
+  classificationMessage,
   busy,
   onRequestDisconnect,
 }: ConnectedVaultCardProps): React.JSX.Element => (
   <View style={styles.card} testID="vault-connected-card">
     <Text style={styles.cardLabel}>{VAULT_CONNECTED_LABEL}</Text>
     <Text style={styles.cardValue}>{address}</Text>
+    <VaultSortNote message={classificationMessage} />
     <TouchableOpacity
       onPress={onRequestDisconnect}
       style={[styles.button, styles.destructiveButton]}
@@ -768,7 +785,12 @@ const VaultConnectionNotice = ({
 }): React.JSX.Element | null => {
   if (state.kind === 'connected') return null;
   if (state.kind === 'managed') {
-    return <Text style={settingsFormStyles.body}>{VAULT_MANAGED_CONNECTED}</Text>;
+    return (
+      <>
+        <Text style={settingsFormStyles.body}>{VAULT_MANAGED_CONNECTED}</Text>
+        <VaultSortNote message={state.classificationMessage} />
+      </>
+    );
   }
   if (state.kind === 'unknown') {
     return (
@@ -874,6 +896,7 @@ const VaultBringYourOwn = ({ controller }: { controller: VaultController }) => {
       {state.kind === 'connected' ? (
         <ConnectedVaultCard
           address={state.address}
+          classificationMessage={state.classificationMessage}
           busy={form.submitting}
           onRequestDisconnect={controller.onRequestDisconnect}
         />

@@ -118,6 +118,57 @@ describe('vault.connection', () => {
     expect(err).toBeInstanceOf(ApiValidationError);
   });
 
+  test('reads the sort state and its sentence, and tolerates a server that does not say (#3577)', async () => {
+    mockFetch.mockReturnValueOnce(
+      jsonResponse({
+        connected: true,
+        vault_url: null,
+        mcp_address: null,
+        classification_state: 'incomplete',
+        classification_message: 'Some of your writing has only had a rough sort so far.',
+      }),
+    );
+    const incomplete = await vault.connection('tok');
+    expect(incomplete.classification_state).toBe('incomplete');
+    expect(incomplete.classification_message).toBe(
+      'Some of your writing has only had a rough sort so far.',
+    );
+
+    mockFetch.mockReturnValueOnce(
+      jsonResponse({
+        connected: false,
+        vault_url: null,
+        mcp_address: null,
+        classification_state: null,
+        classification_message: null,
+      }),
+    );
+    expect((await vault.connection('tok')).classification_state).toBeNull();
+
+    mockFetch.mockReturnValueOnce(
+      jsonResponse({ connected: true, vault_url: null, mcp_address: null }),
+    );
+    const older = await vault.connection('tok');
+    expect(older.classification_state).toBeUndefined();
+    expect(older.classification_message).toBeUndefined();
+  });
+
+  test('raises ApiValidationError for a sort state it does not know, rather than rendering blank', async () => {
+    mockFetch.mockReturnValueOnce(
+      jsonResponse({
+        connected: true,
+        vault_url: null,
+        mcp_address: null,
+        classification_state: 'mostly_done',
+        classification_message: null,
+      }),
+    );
+
+    const err = await vault.connection('tok').catch((error: unknown) => error);
+
+    expect(err).toBeInstanceOf(ApiValidationError);
+  });
+
   test('raises ApiValidationError when connected arrives as something other than a boolean', async () => {
     mockFetch.mockReturnValueOnce(
       jsonResponse({ connected: 'yes', vault_url: null, mcp_address: null }),
