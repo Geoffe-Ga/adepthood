@@ -153,7 +153,7 @@ describe('Habits integration flows', () => {
     // Open goal modal
     act(() => modalsResult.current.open('goal'));
     expect(modalsResult.current.goal).toBe(true);
-    expect(modalsResult.current.stats).toBe(false);
+    expect(modalsResult.current.story).toBe(false);
 
     // Close all modals
     act(() => modalsResult.current.closeAll());
@@ -241,13 +241,13 @@ describe('Habits integration flows', () => {
     expect(result.current.habits[0]!.name).toBe('Keep');
   });
 
-  it('mode transitions: normal → stats → edit → normal', () => {
+  it('mode transitions: normal → quick log → edit → normal', () => {
     const { result } = renderHook(() => useHabits());
 
     expect(result.current.mode).toBe('normal');
 
-    act(() => result.current.setMode('stats'));
-    expect(result.current.mode).toBe('stats');
+    act(() => result.current.setMode('quickLog'));
+    expect(result.current.mode).toBe('quickLog');
 
     act(() => result.current.setMode('edit'));
     expect(result.current.mode).toBe('edit');

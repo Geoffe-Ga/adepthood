@@ -21,7 +21,10 @@ jest.mock('../components/GoalModal', () => ({ __esModule: true, default: () => n
 jest.mock('../components/HabitSettingsModal', () => ({ __esModule: true, default: () => null }));
 jest.mock('../components/OnboardingModal', () => ({ __esModule: true, default: () => null }));
 jest.mock('../components/ReorderHabitsModal', () => ({ __esModule: true, default: () => null }));
-jest.mock('../components/StatsModal', () => ({ __esModule: true, default: () => null }));
+jest.mock('../story/HabitStorySheet', () => ({
+  __esModule: true,
+  HabitStorySheet: jest.fn(() => null),
+}));
 
 import { legalFontSizes } from '../../../../e2e/textCensus';
 import { INTERACTIVE_TEXT_MIN } from '../../../design/tokens';
@@ -154,7 +157,7 @@ const sizeUnder = (root: ReactTestInstance, testID: string): number => {
 /** Every role's size, read back off the rendered grid. */
 const roleSizes = (root: ReactTestInstance) => ({
   name: sizeOfText(root, (text) => text === 'Water'),
-  streak: sizeOfText(root, (text) => text.includes('DAYS')),
+  streak: sizeOfText(root, (text) => text.includes('RUN')),
   icon: sizeUnder(root, 'habit-icon'),
   tooltip: sizeUnder(root, 'tooltip-clear'),
   lockGlyph: sizeOfText(root, (text) => text === '🔒'),

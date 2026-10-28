@@ -86,6 +86,38 @@ describe('vault.connection', () => {
     expect(state.vault_url).toBeNull();
   });
 
+  test('reads a refused writer key, and tolerates a server that does not say (#3595)', async () => {
+    mockFetch.mockReturnValueOnce(
+      jsonResponse({
+        connected: true,
+        vault_url: null,
+        mcp_address: null,
+        classification_key_rejected: true,
+      }),
+    );
+    expect((await vault.connection('tok')).classification_key_rejected).toBe(true);
+
+    mockFetch.mockReturnValueOnce(
+      jsonResponse({ connected: true, vault_url: null, mcp_address: null }),
+    );
+    expect((await vault.connection('tok')).classification_key_rejected).toBeUndefined();
+  });
+
+  test('raises ApiValidationError when the refused-key flag is not a boolean', async () => {
+    mockFetch.mockReturnValueOnce(
+      jsonResponse({
+        connected: true,
+        vault_url: null,
+        mcp_address: null,
+        classification_key_rejected: 'yes',
+      }),
+    );
+
+    const err = await vault.connection('tok').catch((error: unknown) => error);
+
+    expect(err).toBeInstanceOf(ApiValidationError);
+  });
+
   test('raises ApiValidationError when connected arrives as something other than a boolean', async () => {
     mockFetch.mockReturnValueOnce(
       jsonResponse({ connected: 'yes', vault_url: null, mcp_address: null }),

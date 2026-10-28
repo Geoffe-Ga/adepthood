@@ -82,6 +82,12 @@ from uuid import UUID
 #      Settings "Recent activity" list (#3535) through
 #      `CreekVaultClient.agent_activity`; `tests/test_creek_contract_0_22.py`
 #      pins the move.
+# 3. Optional later minors are declared per call, never by moving this pin:
+#    `reading-recommendations` declares 0.25 (`_READING_CALL`), and the job
+#    status poll declares 0.26 -- whose failed job names `failure_code`
+#    `request_key_rejected` (Creek-Vault#1877, #3595) -- only to a vault whose
+#    handshake lists 0.26 (`JOB_FAILURE_CODE_SINCE_MINOR`); an older vault keeps
+#    hearing 0.22. `tests/test_creek_contract_0_26.py` pins that negotiation.
 CONTRACT_VERSION = "0.22.0"
 
 
@@ -720,6 +726,15 @@ class HandshakeResult:
     #: Optional authenticated discovery extension (0.24). Content stays pinned
     #: independently; absent or malformed metadata leaves the address unconfirmed.
     agent_mcp: AgentMcpDiscovery | None = None
+    #: Every ``major.minor`` the vault says it will answer
+    #: (``supported_contract_minors``). Kept so a call that can use a newer
+    #: optional field declares that minor only to a vault that serves it. Empty
+    #: on every degraded handshake.
+    supported_contract_minors: frozenset[str] = frozenset()
+
+    def serves_minor(self, minor: str) -> bool:
+        """Whether this usable vault listed ``minor`` among the ones it answers."""
+        return self.available and minor in self.supported_contract_minors
 
     def accepts_key(self, provider: VaultKeyProvider) -> bool:
         """Whether this usable vault will spend a writer's ``provider`` key."""
@@ -1229,6 +1244,31 @@ class VaultPipelineJobState(enum.StrEnum):
     FAILED = "failed"
 
 
+#: The first Creek minor whose ``GET /v1/jobs/{job_id}`` carries ``failure_code``
+#: (Creek-Vault#1877, ``JOB_FAILURE_CODE_SINCE_MINOR`` upstream). Declared on the
+#: job-status poll only, and only to a vault whose handshake lists it: the pin
+#: above stays where the deployed vaults are, and Creek refuses an unlisted minor.
+JOB_FAILURE_CODE_SINCE_MINOR: Final = "0.26"
+
+
+class VaultJobFailureCode(enum.StrEnum):
+    """Why a ``failed`` pipeline job failed, when the writer can remedy it (contract 0.26).
+
+    Creek's closed ``JobFailureCode`` vocabulary, member for member. A code is
+    published only for a failure the *caller* can act on; any other failure,
+    and every answer from a vault below 0.26, carries no code. Values are
+    persisted on :class:`~models.vault_pipeline_run.VaultPipelineRun`, so they
+    must not be reworded without a migration.
+
+    Attributes:
+        REQUEST_KEY_REJECTED: The writer's own provider key, relayed for the
+            pass, was refused by its vendor with ``401``/``403``. Retrying with
+            the same key fails the same way: the writer has to replace it.
+    """
+
+    REQUEST_KEY_REJECTED = "request_key_rejected"
+
+
 @dataclass(frozen=True)
 class VaultPipelineJob:
     """An opaque, consumer-bound handle for one durable Creek pipeline pass.
@@ -1236,11 +1276,16 @@ class VaultPipelineJob:
     ``stage`` is Adepthood-owned correlation metadata, not a value read from the
     job-status document. Keeping it beside the opaque UUID ensures a successful
     result is parsed as exactly the operation that was admitted.
+
+    ``failure_code`` is set only on a ``FAILED`` job whose vault published a
+    reason adepthood knows (:class:`VaultJobFailureCode`); ``None`` means the
+    vault gave none, gave one this build cannot name, or is older than 0.26.
     """
 
     job_id: UUID
     stage: VaultPipelineStage
     state: VaultPipelineJobState
+    failure_code: VaultJobFailureCode | None = None
 
 
 @dataclass(frozen=True)

@@ -14,6 +14,7 @@ from uuid import UUID
 from domain.creek_vault import (
     VaultClassificationMethod,
     VaultClassificationPass,
+    VaultJobFailureCode,
     VaultLinkPass,
     VaultLinkStage,
     VaultPipelineJob,
@@ -56,11 +57,21 @@ class StageCounts:
         touched: Fragments it rewrote, or links it emitted.
         lost: Fragments it dropped to noise. Only a clustering stage can lose
             any; the classification pass loses nothing.
+        failure_code: Why a failed stage failed, when the vault published a
+            reason the writer can act on (Creek contract 0.26). A failure that
+            names one is final: retrying cannot change the answer, so it is
+            landed rather than re-admitted (:func:`poll_needs_reconciliation`).
     """
 
     seen: int = 0
     touched: int = 0
     lost: int = 0
+    failure_code: VaultJobFailureCode | None = None
+
+    @property
+    def stored_failure_code(self) -> str | None:
+        """The reason in the row's persisted vocabulary: its wire value, or ``NULL``."""
+        return None if self.failure_code is None else self.failure_code.value
 
 
 def note_link_loss(stage: VaultLinkStage, result: VaultLinkPass) -> None:
@@ -83,9 +94,15 @@ def note_link_loss(stage: VaultLinkStage, result: VaultLinkPass) -> None:
 
 
 def counts_from_result(
-    result: VaultClassificationPass | VaultLinkPass,
+    result: VaultClassificationPass | VaultLinkPass | VaultPipelineJob,
 ) -> tuple[VaultPipelineOutcome, StageCounts]:
-    """Read either published counts-only result into the persisted vocabulary."""
+    """Read either published counts-only result, or a failed job, into the persisted vocabulary.
+
+    A job only reaches here once polling has stopped on it, which means it
+    failed: it reached nothing, and keeps whatever reason it published.
+    """
+    if isinstance(result, VaultPipelineJob):
+        return VaultPipelineOutcome.FAILED, failed_job_counts(result)
     if isinstance(result, VaultClassificationPass):
         return classification_outcome(result), StageCounts(
             seen=result.total,
@@ -105,14 +122,37 @@ def persisted_counts(run: VaultPipelineRun) -> tuple[VaultPipelineOutcome, Stage
         seen=run.fragments_seen,
         touched=run.fragments_touched,
         lost=run.fragments_lost,
+        failure_code=stored_failure_code(run.failure_code),
     )
 
 
-def poll_needs_reconciliation(run: VaultPipelineRun, outcome: VaultPipelineOutcome) -> bool:
-    """A failed status can retry; an already-persisted admission refusal is final."""
+def stored_failure_code(raw: str | None) -> VaultJobFailureCode | None:
+    """Read a persisted reason back, treating anything unrecognised as none."""
+    known = {code.value: code for code in VaultJobFailureCode}
+    return None if raw is None else known.get(raw)
+
+
+def failed_job_counts(job: VaultPipelineJob) -> StageCounts:
+    """What a failed job reached: nothing, plus the reason it published, if any."""
+    return StageCounts(failure_code=job.failure_code)
+
+
+def poll_needs_reconciliation(
+    run: VaultPipelineRun,
+    outcome: VaultPipelineOutcome,
+    counts: StageCounts | None = None,
+) -> bool:
+    """A failed status can retry; an admission refusal or a named reason is final.
+
+    A reason the vault published (``counts.failure_code``) says the writer, not
+    time, has to change something -- a refused key is refused again -- so such
+    a failure is landed now instead of being handed to the bounded retry.
+    """
+    named = counts is not None and counts.failure_code is not None
     return (
         outcome is VaultPipelineOutcome.FAILED
         and run.outcome == VaultPipelineOutcome.ATTEMPTED.value
+        and not named
     )
 
 

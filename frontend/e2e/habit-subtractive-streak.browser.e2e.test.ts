@@ -73,5 +73,5 @@ test('a new subtractive habit shows its no-log streak on the real tile', async (
 
   const tile = page.getByTestId('habit-tile').filter({ hasText: HABIT_NAME });
   await expect(tile).toBeVisible();
-  await expect(tile).toContainText('1 DAYS — ACHIEVED TODAY!');
+  await expect(tile).toContainText('1-DAY RUN · KEPT TODAY');
 });

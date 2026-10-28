@@ -22,6 +22,7 @@ import React, { useCallback, useEffect, useRef } from 'react';
 import { StyleSheet, Text, useWindowDimensions, View } from 'react-native';
 
 import { BYOK_HUB_DISCLOSURE } from './byokDisclosure';
+import { KEY_REJECTED_HUB_DESCRIPTION } from './byokOnlyCopy';
 import {
   CORPUS_CONSENT_ROW_DESCRIPTION,
   CORPUS_CONSENT_ROW_LABEL,
@@ -35,7 +36,7 @@ import { SettingsRow } from './shared/SettingsRow';
 import { useCorpusConsent } from './useCorpusConsent';
 import { refreshSweepEstimate, useCorpusSweepPending } from './useCorpusSweep';
 import { useVaultConnectionState } from './useVaultConnectionState';
-import { vaultComesFirst } from './vaultConnectionState';
+import { vaultComesFirst, type VaultConnectionState } from './vaultConnectionState';
 
 import { EditorialSection } from '@/components/layout/EditorialSection';
 import { ScreenHeader } from '@/components/layout/ScreenHeader';
@@ -90,15 +91,21 @@ const PRIVACY_A11Y_LABEL = `${PRIVACY_VISIBILITY_LINE} ${PRIVACY_INTIMATE_LINE}`
 interface AccountSectionProps {
   onApiKey: () => void;
   onTimezone: () => void;
+  /** The writer's provider refused their key on the last vault sort (#3595). */
+  keyRejected: boolean;
 }
 
 /** Account group: the bring-your-own-key and time-zone destinations. */
-const AccountSection = ({ onApiKey, onTimezone }: AccountSectionProps): React.JSX.Element => (
+const AccountSection = ({
+  onApiKey,
+  onTimezone,
+  keyRejected,
+}: AccountSectionProps): React.JSX.Element => (
   <EditorialSection title="Account" testID="settings-group-account">
     <SettingsRow
       icon={KeyRound}
       label="API key"
-      description={BYOK_HUB_DISCLOSURE}
+      description={keyRejected ? KEY_REJECTED_HUB_DESCRIPTION : BYOK_HUB_DISCLOSURE}
       onPress={onApiKey}
       testID="settings-row-api-key"
     />
@@ -242,11 +249,13 @@ const CorpusSection = ({
  * would live; every other account -- including one whose read is still out or
  * failed -- gets the picker. The read never holds the hub's render.
  */
-function useSeedCorpusRow(navigation: NativeStackNavigationProp<RootStackParamList>): {
+function useSeedCorpusRow(
+  navigation: NativeStackNavigationProp<RootStackParamList>,
+  state: VaultConnectionState,
+): {
   onSeedCorpus: () => void;
   seedDescription: string;
 } {
-  const { state } = useVaultConnectionState();
   const vaultFirst = vaultComesFirst(state);
   const onSeedCorpus = useCallback(
     () => navigation.navigate(vaultFirst ? 'VaultSettings' : 'SeedCorpus'),
@@ -375,21 +384,28 @@ const FeedbackSection = (): React.JSX.Element => {
  */
 type SettingsHubScreenProps = Partial<NativeStackScreenProps<RootStackParamList, 'Settings'>>;
 
+/** The hub's row handlers, each a stable callback onto one settings screen. */
+function useHubNavigation(navigation: NativeStackNavigationProp<RootStackParamList>) {
+  return {
+    openApiKey: useCallback(() => navigation.navigate('ApiKeySettings'), [navigation]),
+    openTimezone: useCallback(() => navigation.navigate('TimezoneSettings'), [navigation]),
+    openSupportCare: useCallback(() => navigation.navigate('SupportCare'), [navigation]),
+    openExportData: useCallback(() => navigation.navigate('ExportData'), [navigation]),
+    openCorpusConsent: useCallback(() => navigation.navigate('CorpusConsent'), [navigation]),
+    openCorpusSweep: useCallback(() => navigation.navigate('CorpusSweep'), [navigation]),
+    openDeleteAccount: useCallback(() => navigation.navigate('DeleteAccount'), [navigation]),
+    openVault: useCallback(() => navigation.navigate('VaultSettings'), [navigation]),
+  };
+}
+
 const SettingsHubScreen = ({ route }: SettingsHubScreenProps = {}): React.JSX.Element => {
   const navigation = useNavigation<NativeStackNavigationProp<RootStackParamList>>();
   const { logout } = useAuth();
   const focus = route?.params?.focus;
   const journalInView = useScrollIntoViewOnce(focus === 'writing-habit');
-
-  const openApiKey = useCallback(() => navigation.navigate('ApiKeySettings'), [navigation]);
-  const openTimezone = useCallback(() => navigation.navigate('TimezoneSettings'), [navigation]);
-  const openSupportCare = useCallback(() => navigation.navigate('SupportCare'), [navigation]);
-  const seedRow = useSeedCorpusRow(navigation);
-  const openExportData = useCallback(() => navigation.navigate('ExportData'), [navigation]);
-  const openCorpusConsent = useCallback(() => navigation.navigate('CorpusConsent'), [navigation]);
-  const openCorpusSweep = useCallback(() => navigation.navigate('CorpusSweep'), [navigation]);
-  const openDeleteAccount = useCallback(() => navigation.navigate('DeleteAccount'), [navigation]);
-  const openVault = useCallback(() => navigation.navigate('VaultSettings'), [navigation]);
+  const nav = useHubNavigation(navigation);
+  const vaultRead = useVaultConnectionState();
+  const seedRow = useSeedCorpusRow(navigation, vaultRead.state);
   const onLogout = useCallback(() => void logout(), [logout]);
 
   return (
@@ -402,24 +418,28 @@ const SettingsHubScreen = ({ route }: SettingsHubScreenProps = {}): React.JSX.El
       />
       <ChooseDepthsSection />
       <SanghaSection />
-      <AccountSection onApiKey={openApiKey} onTimezone={openTimezone} />
+      <AccountSection
+        onApiKey={nav.openApiKey}
+        onTimezone={nav.openTimezone}
+        keyRejected={vaultRead.keyRejected}
+      />
       <View testID="settings-journal-anchor" onLayout={journalInView.onTargetLayout}>
         <JournalSection focus={focus} />
       </View>
       <CorpusSection
         onSeedCorpus={seedRow.onSeedCorpus}
         seedDescription={seedRow.seedDescription}
-        onCorpusSweep={openCorpusSweep}
-        onCorpusConsent={openCorpusConsent}
-        onVault={openVault}
+        onCorpusSweep={nav.openCorpusSweep}
+        onCorpusConsent={nav.openCorpusConsent}
+        onVault={nav.openVault}
       />
       <PrivacySection />
-      <YourDataSection onExportData={openExportData} />
+      <YourDataSection onExportData={nav.openExportData} />
       <FeedbackSection />
       <AdminInboxSettingsSection />
-      <SupportSection onSupportCare={openSupportCare} />
+      <SupportSection onSupportCare={nav.openSupportCare} />
       <LegalSection />
-      <SessionSection onLogout={onLogout} onDeleteAccount={openDeleteAccount} />
+      <SessionSection onLogout={onLogout} onDeleteAccount={nav.openDeleteAccount} />
     </ScreenScaffold>
   );
 };
