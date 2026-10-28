@@ -195,6 +195,12 @@ const pipelineJobs = new Map();
 let requestKeysRejected = false;
 /** Handles whose keyed pass the vendor refused. Opaque ids only. */
 const rejectedJobs = new Set();
+/**
+ * A journey can model Creek's managed rules floor (#3577, Creek-Vault#1982): an
+ * `llm` classification admitted meanwhile finishes `complete: true` with
+ * `method: 'rules'`, which the server must read as a sort not yet finished.
+ */
+let classifyWithRules = false;
 /** The vendors a managed Creek vault spends a writer's own key for. */
 const REQUEST_KEY_PROVIDERS = ['anthropic', 'openai'];
 const PROVIDER_HEADER = 'x-creek-provider';
@@ -698,13 +704,14 @@ async function pipelineCall(request, response, pathname) {
     return true;
   }
   const handle = randomUUID();
+  const answeredMethod = classifyWithRules ? 'rules' : method;
   if (requestKeysRejected && typeof request.headers[PROVIDER_KEY_HEADER] === 'string') {
     rejectedJobs.add(handle);
   }
   pipelineJobs.set(handle, {
     status: 'ok',
     tier_ceiling: 'personal',
-    method,
+    method: answeredMethod,
     total: 1,
     classified: 1,
     preserved_manual: 0,
@@ -860,6 +867,15 @@ const server = createServer((request, response) => {
     ) {
       request.resume();
       requestKeysRejected = pathname === '/__lane/reject-request-keys';
+      send(response, HTTP_OK, { status: 'ok' });
+      return;
+    }
+    if (
+      request.method === 'POST' &&
+      ['/__lane/classify-with-rules', '/__lane/classify-with-llm'].includes(pathname)
+    ) {
+      request.resume();
+      classifyWithRules = pathname === '/__lane/classify-with-rules';
       send(response, HTTP_OK, { status: 'ok' });
       return;
     }

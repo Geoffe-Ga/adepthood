@@ -1587,6 +1587,20 @@ export const vaultConnectionResponseSchema = z.object({
    * not refused. A boolean and nothing else: no key, no vendor text.
    */
   classification_key_rejected: z.boolean().optional(),
+  /**
+   * Whether the account's vault sorting is finished (#3577): the outcome of
+   * the latest classification pass that landed labels. `incomplete` covers a
+   * rules-only sort and a partial one; a newer failed pass never masks it, so
+   * it can stand beside `classification_key_rejected`. Null when the account
+   * has no vault. A closed vocabulary: a state this client does not know is a
+   * validation error, never a blank. Optional so an older server still parses.
+   */
+  classification_state: z.enum(['complete', 'incomplete', 'not_run']).nullable().optional(),
+  /**
+   * The server's sentence for that state, rendered verbatim -- null for every
+   * state but `incomplete`. Carries no count and no content.
+   */
+  classification_message: z.string().nullable().optional(),
 });
 
 export type VaultConnectionT = z.infer<typeof vaultConnectionResponseSchema>;

@@ -3204,6 +3204,18 @@
     "coveredBy": "frontend/e2e/vault-rejected-key-classification.e2e.test.ts"
   },
   {
+    "id": "settings.vault-classification-not-finished",
+    "description": "A writer whose managed vault has only given their writing Creek's rules floor (#3577, release defect R1-F; Creek-Vault#1982) is told so, calmly, and never shown a rough sort as the finished one. The lane vault, armed to classify with its rules floor, finishes a requested llm classification job complete: true with method: rules. The live server lands that classification row incomplete after exactly one admission (classification_outcome reads a finished rules floor as incomplete) and the production vault client reads classification_state: incomplete plus the server's own classification_message off GET /vault/connection -- the state is the outcome of the latest classify row that landed labels, so a newer failed pass cannot mask it, and it stands beside #3595's classification_key_rejected without contradicting it. A later semantic pass that completes turns the state complete and the message null. The lane owner is the deployment-wide vault's owner, so the answer says connected: false and still carries a state. The Settings rendering -- the sentence on the connected card or beside a managed vault (testID vault-classification-state) and nothing for complete, not_run, an older server, or no vault -- is pinned by the Jest suite VaultSettingsScreenClassificationState.test.tsx; the four states, the rules floor, the no-masking rule and the cross-tenant scope by backend/tests/test_vault_connection_classification_state.py. No count, fragment or content reaches the response.",
+    "crosses": {
+      "screen": "frontend/src/features/Settings/VaultSettingsScreen.tsx",
+      "client": ["auth", "setTokenGetter", "setLlmApiKeyGetter", "journal", "vault"],
+      "routes": ["POST /auth/login", "POST /journal/", "GET /vault/connection"],
+      "tables": ["user", "journalentry", "vaultpipelinerun"]
+    },
+    "status": "covered",
+    "coveredBy": "frontend/e2e/vault-rules-fallback-classification.e2e.test.ts"
+  },
+  {
     "id": "habits.habit-story",
     "description": "One tap on a habit tile's Story glyph opens the Habit Story sheet (#3526), drawn entirely from GET /habits/{habit_id}/story (#3524): the four Glance figures (current run, longest run, returns, days with, in the habit's cadence unit), the day-by-day heat grid, the scheduled-day rate for the last 21 days and all time with its denominator, the tier tiles and weekly tier stack, the weekday by time-of-day grid once there are 28 days, observations and dated milestones, and an Everything door to the raw log list. Covered by frontend/e2e/habit-story.browser.e2e.test.ts, which seeds twenty scheduled days (seventeen kept, rests three and five days back) through the real POST /goal_completions/, opens the sheet from the tile, asserts every Glance figure and the exact denominator line the server computed, walks Everything and back, and checks the tile chip reads as a run. The early-days thresholds, the all-tables view, the held-while-reloading render and the error fallback are pinned by Jest beside the sheet.",
     "crosses": {
