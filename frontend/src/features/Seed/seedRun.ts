@@ -59,6 +59,11 @@ export type CorpusSeedStatus =
  * attempt there was, so nothing was kept. `unconfirmed` left the device and
  * its answer was lost -- a timeout, a dropped connection, a server error, or a
  * reply the app could not read -- so it may already be stored.
+ *
+ * `rate_limited` is the server asking for a pause (a 429) more times than the
+ * run waits one out, or for a longer wait than it will sit through (#3556).
+ * Nothing was kept, and it is not the document's fault, so it is neither
+ * `failed` nor a refusal of the file.
  */
 export type LocalSeedStatus =
   | 'unsupported_format'
@@ -66,6 +71,7 @@ export type LocalSeedStatus =
   | 'unreadable'
   | 'offline'
   | 'failed'
+  | 'rate_limited'
   | 'unconfirmed'
   | 'cancelled';
 
@@ -80,8 +86,14 @@ export type LocalSeedStatus =
  */
 export type SettledSeedStatus = VaultSeedStatus | CorpusSeedStatus | LocalSeedStatus;
 
-/** One document's lifecycle within a run. */
-export type SeedItemStatus = 'queued' | 'uploading' | SettledSeedStatus;
+/**
+ * One document's lifecycle within a run.
+ *
+ * `waiting` is a document held for a moment before it goes (#3556): paced to
+ * stay under the upload limit, or waiting out the pause a 429 asked for. Nothing
+ * of it is in flight, but it holds the run, because it is the one going next.
+ */
+export type SeedItemStatus = 'queued' | 'waiting' | 'uploading' | SettledSeedStatus;
 
 /** The per-document working record. */
 export interface SeedItem {
@@ -131,6 +143,28 @@ const LANDED_STATUSES: readonly SeedItemStatus[] = ['ingested', 'in_corpus'];
  */
 const UNCONFIRMED_STATUSES: readonly SeedItemStatus[] = ['degraded', 'unconfirmed'];
 
+/**
+ * The outcomes worth sending the same document again for (#3556): nothing was
+ * kept, or nobody can say it was, and the cause was the moment rather than the
+ * document. A retry sends it under the same identity, which updates in place
+ * rather than copying. A refusal of the document itself (too large, a tier, a
+ * format) is not here, because sending it again would be answered the same way;
+ * nor is `cancelled`, which the person chose.
+ */
+const RETRYABLE_STATUSES: readonly SeedItemStatus[] = [
+  'failed',
+  'rate_limited',
+  'offline',
+  'unconfirmed',
+  'degraded',
+  'vault_unavailable',
+];
+
+/** Whether a document that settled this way may be sent again by a retry. */
+export function isRetryableSeedStatus(status: SeedItemStatus): boolean {
+  return RETRYABLE_STATUSES.includes(status);
+}
+
 /** A run with nothing in it — the state before the first pick. */
 export const EMPTY_SEED_RUN: SeedRunState = { order: [], items: {} };
 
@@ -140,19 +174,23 @@ export const EMPTY_SEED_RUN: SeedRunState = { order: [], items: {} };
  *  - `add`    — append a pick's documents, each with its starting status.
  *  - `start`  — mark a `queued` document in flight.
  *  - `settle` — record a document's terminal outcome.
- *  - `cancel` — stop the run: everything still queued settles as never sent.
+ *  - `wait`   — hold a queued or in-flight document for a moment (#3556).
+ *  - `cancel` — stop the run: everything still queued or waiting settles as never sent.
+ *  - `requeue` — queue settled documents again, only those a retry may send.
  *  - `clear`  — empty the run (the person starting over).
  */
 export type SeedRunAction =
   | { type: 'add'; entries: readonly SeedEntry[] }
   | { type: 'start'; id: string }
+  | { type: 'wait'; id: string }
+  | { type: 'requeue'; ids: readonly string[] }
   | { type: 'settle'; id: string; status: SettledSeedStatus }
   | { type: 'cancel' }
   | { type: 'clear' };
 
 /** Whether a status is terminal — nothing further will happen to the document. */
 function isSettled(status: SeedItemStatus): boolean {
-  return status !== 'queued' && status !== 'uploading';
+  return status !== 'queued' && status !== 'waiting' && status !== 'uploading';
 }
 
 /** Return a new state with one item replaced (order untouched). */
@@ -171,11 +209,30 @@ function applyAdd(state: SeedRunState, entries: readonly SeedEntry[]): SeedRunSt
   return { order, items };
 }
 
-/** `start`: only a `queued` document may go in flight. */
+/** `start`: only a `queued` or `waiting` document may go in flight. */
 function applyStart(state: SeedRunState, id: string): SeedRunState {
   const item = state.items[id];
-  if (!item || item.status !== 'queued') return state;
+  if (!item || (item.status !== 'queued' && item.status !== 'waiting')) return state;
   return withItem(state, { ...item, status: 'uploading' });
+}
+
+/** `wait`: a document not yet settled is held for a moment. */
+function applyWait(state: SeedRunState, id: string): SeedRunState {
+  const item = state.items[id];
+  if (!item || isSettled(item.status)) return state;
+  return withItem(state, { ...item, status: 'waiting' });
+}
+
+/** `requeue`: settled documents a retry may send go back in line; nothing else moves. */
+function applyRequeue(state: SeedRunState, ids: readonly string[]): SeedRunState {
+  let next = state;
+  for (const id of ids) {
+    const item = next.items[id];
+    if (item && isRetryableSeedStatus(item.status)) {
+      next = withItem(next, { ...item, status: 'queued' });
+    }
+  }
+  return next;
 }
 
 /** `settle`: record the terminal outcome of a document the run still holds. */
@@ -186,7 +243,9 @@ function applySettle(state: SeedRunState, id: string, status: SettledSeedStatus)
 }
 
 /**
- * `cancel`: settle every document still queued as one that never went.
+ * `cancel`: settle every document still queued or waiting as one that never
+ * went. A waiting document has nothing in flight: it is between attempts, and
+ * the attempt a 429 answered kept nothing.
  *
  * A document already in flight is left `uploading` on purpose. Its request is
  * with the server, and the server will answer it; calling it cancelled here
@@ -197,7 +256,7 @@ function applyCancel(state: SeedRunState): SeedRunState {
   const items = { ...state.items };
   for (const id of state.order) {
     const item = items[id];
-    if (item && item.status === 'queued') {
+    if (item && (item.status === 'queued' || item.status === 'waiting')) {
       items[id] = { ...item, status: 'cancelled' };
     }
   }
@@ -211,6 +270,10 @@ export function seedRunReducer(state: SeedRunState, action: SeedRunAction): Seed
       return applyAdd(state, action.entries);
     case 'start':
       return applyStart(state, action.id);
+    case 'wait':
+      return applyWait(state, action.id);
+    case 'requeue':
+      return applyRequeue(state, action.ids);
     case 'settle':
       return applySettle(state, action.id, action.status);
     case 'cancel':
@@ -222,9 +285,12 @@ export function seedRunReducer(state: SeedRunState, action: SeedRunAction): Seed
   }
 }
 
-/** Whether any document is currently in flight — the sequential gate. */
+/** Whether any document is in flight or about to be — the sequential gate. */
 function hasInFlight(state: SeedRunState): boolean {
-  return state.order.some((id) => state.items[id]?.status === 'uploading');
+  return state.order.some((id) => {
+    const status = state.items[id]?.status;
+    return status === 'uploading' || status === 'waiting';
+  });
 }
 
 /**

@@ -235,13 +235,26 @@ export class ApiError extends Error {
    * carried no id, which includes every request that never reached the server.
    */
   requestId: string | null;
+  /**
+   * The whole seconds a 429's ``Retry-After`` asked the client to wait, when it
+   * sent a readable one; ``null`` otherwise, including for every other status.
+   * The backend sends it on every rate-limit refusal and exposes it to
+   * cross-origin browsers, so a caller that waits can wait exactly this long.
+   */
+  retryAfterSeconds: number | null;
 
-  constructor(status: number, detail: string, requestId: string | null = null) {
+  constructor(
+    status: number,
+    detail: string,
+    requestId: string | null = null,
+    retryAfterSeconds: number | null = null,
+  ) {
     super(`Request failed with status ${status}: ${detail}`);
     this.name = 'ApiError';
     this.status = status;
     this.detail = detail;
     this.requestId = requestId;
+    this.retryAfterSeconds = retryAfterSeconds;
   }
 }
 
@@ -381,12 +394,20 @@ export const UPLOAD_DOCUMENT_TIMEOUT_MS = 120_000;
 export class DocumentUploadError extends Error {
   kind: DocumentUploadErrorKind;
   status: number | null;
+  /** For a `rate_limited` refusal, the server's `Retry-After` in seconds when it named one. */
+  retryAfterSeconds: number | null;
 
-  constructor(kind: DocumentUploadErrorKind, status: number | null, cause?: unknown) {
+  constructor(
+    kind: DocumentUploadErrorKind,
+    status: number | null,
+    cause?: unknown,
+    retryAfterSeconds: number | null = null,
+  ) {
     super(`document upload failed: ${kind}`, cause === undefined ? undefined : { cause });
     this.name = 'DocumentUploadError';
     this.kind = kind;
     this.status = status;
+    this.retryAfterSeconds = retryAfterSeconds;
   }
 }
 
@@ -856,6 +877,29 @@ function detailFromArray(entries: readonly unknown[]): string {
  */
 const REQUEST_ID_HEADER = 'X-Request-ID';
 
+/** The header a 429 names its wait in (``rate_limit.rate_limit_exceeded_response``). */
+const RETRY_AFTER_HEADER = 'Retry-After';
+
+/** The status whose ``Retry-After`` this client reads. */
+const TOO_MANY_REQUESTS_STATUS = 429;
+
+/** ``Retry-After`` in its delta-seconds form: a plain non-negative integer. */
+const DELTA_SECONDS = /^\d+$/;
+
+/**
+ * Read a 429's ``Retry-After`` as whole seconds, or ``null`` when the response
+ * is not a 429 or carries no delta-seconds value. The HTTP-date form is not
+ * read: this backend never sends it, and a device clock is no basis for one.
+ * Tolerates a header-less test double, as {@link requestIdHeader} does.
+ */
+function retryAfterSeconds(res: Response): number | null {
+  if (res.status !== TOO_MANY_REQUESTS_STATUS) return null;
+  const { headers } = res;
+  if (!headers) return null;
+  const value = headers.get(RETRY_AFTER_HEADER)?.trim() ?? '';
+  return DELTA_SECONDS.test(value) ? Number(value) : null;
+}
+
 /** What a failed response tells us, after the single read of its body. */
 interface ErrorEnvelope {
   detail: string;
@@ -987,7 +1031,7 @@ async function apiErrorFromResponse(res: Response, path: string): Promise<ApiErr
       requestId: safeDiagnosticRequestId(requestId),
     });
   }
-  return new ApiError(res.status, detail, requestId);
+  return new ApiError(res.status, detail, requestId, retryAfterSeconds(res));
 }
 
 async function handleErrorResponse(res: Response, path: string): Promise<never> {
@@ -2219,7 +2263,8 @@ function toDocumentUploadError(err: unknown): DocumentUploadError {
     return new DocumentUploadError('timeout', null, err);
   }
   if (err instanceof ApiError) {
-    return new DocumentUploadError(UPLOAD_STATUS_KINDS[err.status] ?? 'unknown', err.status, err);
+    const kind = UPLOAD_STATUS_KINDS[err.status] ?? 'unknown';
+    return new DocumentUploadError(kind, err.status, err, err.retryAfterSeconds);
   }
   // A raw fetch failure surfaces as a TypeError on non-idempotent POSTs (which
   // the core client does not retry) rather than the synthesized ApiError(0).
