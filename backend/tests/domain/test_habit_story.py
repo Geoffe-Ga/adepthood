@@ -102,8 +102,21 @@ def test_zero_rows_populate_days_without_inventing_events() -> None:
     assert story.logged_days == story.log_count == story.continuity.days_with == 0
     assert story.tiers.totals.quiet == 3
     assert story.patterns.time_of_day_available_since is None
-    assert story.observations == []
+    assert story.observations == ["No days of Pages yet. The grid fills in as the days do."]
     assert story.milestones == []
+
+
+def test_a_kept_month_carries_its_sentences_and_dated_milestones() -> None:
+    """The observations engine (#3525) fills the payload from its own figures."""
+    rows = [_row(day, 2) for day in range(1, 26)]
+    story = build_habit_story(
+        _habit(), rows, [], context=HabitStoryContext(today=date(2026, 6, 25))
+    )
+    assert story.observations[0].startswith("You have kept Pages on 25 of 25")
+    assert [(m.kind, m.value) for m in story.milestones if m.kind == "days_with"] == [
+        ("days_with", 7),
+        ("days_with", 21),
+    ]
 
 
 def test_period_days_use_whole_period_outcome_and_native_rates() -> None:

@@ -91,6 +91,8 @@ async def test_empty_story_has_private_uncacheable_response(
     assert body["last_insight_timestamp"] is None
     assert body["stage_ask_minutes"] == 10
     assert len(body["weekly"]) == 8
+    assert body["observations"] == ["No sits recorded yet. The record starts with the first one."]
+    assert body["milestones"] == []
     assert response.headers["cache-control"] == "private, no-store"
     assert "Authorization" in response.headers["vary"]
 
@@ -216,6 +218,11 @@ async def test_just_saved_sit_from_an_accepted_fast_clock_counts_in_this_stage(
     assert response.status_code == HTTPStatus.OK
     assert response.json()["total_sessions"] == response.json()["stage_session_count"] == 1
     assert response.json()["total_minutes"] == response.json()["stage_average_minutes"] == 5
+    ask = response.json()["stage_ask_minutes"]
+    assert (
+        f"Beige asks for {round(ask)} minutes; your sits this stage average 5."
+        in (response.json()["observations"])
+    )
 
 
 @pytest.mark.asyncio

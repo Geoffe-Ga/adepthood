@@ -196,3 +196,34 @@ def test_malformed_metadata_cannot_turn_flags_or_strings_into_counts() -> None:
         stage_scope=PracticeStageScope(1),
     )
     assert story.mode_totals == {}
+
+
+def test_an_empty_practice_carries_its_first_sit_sentence() -> None:
+    """The observations engine (#3525) speaks even before the first sit."""
+    story = build_practice_story(
+        [], tz="UTC", stage_ask_minutes=20, stage_scope=PracticeStageScope(1), stage_name="Beige"
+    )
+
+    assert story.observations == ["No sits recorded yet. The record starts with the first one."]
+    assert story.milestones == []
+
+
+def test_a_practiced_month_names_its_hours_ask_and_dated_milestones() -> None:
+    """Sentences use the stage's name and ask; milestones are dated by the local day."""
+    start = datetime(2026, 10, 1, 6, tzinfo=UTC)
+    rows = [
+        _session(duration_minutes=30, timestamp=start + timedelta(days=offset))
+        for offset in range(12)
+    ]
+    story = build_practice_story(
+        rows, tz="UTC", stage_ask_minutes=45, stage_scope=PracticeStageScope(1), stage_name="Teal"
+    )
+
+    assert story.observations[:2] == [
+        "6 hours of practice across 12 sits.",
+        "Teal asks for 45 minutes; your sits this stage average 30.",
+    ]
+    assert [(m.kind, m.reached_on, m.value) for m in story.milestones] == [
+        ("practice_minutes", date(2026, 10, 2), 60),
+        ("practice_sessions", date(2026, 10, 10), 10),
+    ]

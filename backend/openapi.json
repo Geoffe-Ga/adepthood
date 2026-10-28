@@ -4059,7 +4059,7 @@
         "type": "object"
       },
       "HabitStoryMilestone": {
-        "description": "A future observation-engine milestone, empty in the foundation response.",
+        "description": "A dated milestone from the observations engine (#3525).",
         "properties": {
           "kind": {
             "title": "Kind",
@@ -6852,6 +6852,31 @@
         "title": "PracticeStatsResponse",
         "type": "object"
       },
+      "PracticeStoryMilestone": {
+        "description": "A dated practice milestone from the observations engine (#3525).",
+        "properties": {
+          "kind": {
+            "title": "Kind",
+            "type": "string"
+          },
+          "reached_on": {
+            "format": "date",
+            "title": "Reached On",
+            "type": "string"
+          },
+          "value": {
+            "title": "Value",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "kind",
+          "reached_on",
+          "value"
+        ],
+        "title": "PracticeStoryMilestone",
+        "type": "object"
+      },
       "PracticeStoryResponse": {
         "description": "Lifetime and stage facts returned by ``GET /practice-sessions/story``.",
         "properties": {
@@ -6894,6 +6919,14 @@
             ],
             "title": "Last Insight Timestamp"
           },
+          "milestones": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/PracticeStoryMilestone"
+            },
+            "title": "Milestones",
+            "type": "array"
+          },
           "mode_totals": {
             "additionalProperties": {
               "type": "number"
@@ -6907,6 +6940,14 @@
             },
             "title": "Modes",
             "type": "object"
+          },
+          "observations": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "title": "Observations",
+            "type": "array"
           },
           "partial_sessions": {
             "title": "Partial Sessions",
