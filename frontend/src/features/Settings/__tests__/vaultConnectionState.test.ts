@@ -68,6 +68,46 @@ describe('readConnectionState', () => {
     ).toEqual({ kind: 'managed', agentAddress: AGENT_ADDRESS });
   });
 
+  it("carries the server's sort sentence on a vault it is about (#3577)", () => {
+    const message = 'Some of your writing has only had a rough sort so far.';
+
+    expect(
+      readConnectionState({
+        connected: true,
+        vault_url: VAULT_URL,
+        mcp_address: null,
+        classification_state: 'incomplete',
+        classification_message: message,
+      }),
+    ).toEqual({
+      kind: 'connected',
+      address: VAULT_URL,
+      agentAddress: null,
+      classificationMessage: message,
+    });
+    expect(
+      readConnectionState({
+        connected: true,
+        vault_url: null,
+        mcp_address: null,
+        classification_state: 'incomplete',
+        classification_message: message,
+      }),
+    ).toEqual({ kind: 'managed', agentAddress: null, classificationMessage: message });
+  });
+
+  it('carries no sort sentence when the server gives none', () => {
+    const state = readConnectionState({
+      connected: true,
+      vault_url: VAULT_URL,
+      mcp_address: null,
+      classification_state: 'complete',
+      classification_message: null,
+    });
+
+    expect(state).not.toHaveProperty('classificationMessage');
+  });
+
   it('lets the connected flag decide, even when an address rides along with it', () => {
     // ``connected: false`` is answered before the address is looked at, so a
     // stale address on a disconnected answer reads as none rather than
