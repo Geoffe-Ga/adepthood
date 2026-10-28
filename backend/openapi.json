@@ -4091,6 +4091,521 @@
         "title": "HabitStats",
         "type": "object"
       },
+      "HabitStoryContinuity": {
+        "description": "Canonical runs and lifetime met units, separate from scheduled rates.",
+        "properties": {
+          "current_run": {
+            "title": "Current Run",
+            "type": "integer"
+          },
+          "days_with": {
+            "title": "Days With",
+            "type": "integer"
+          },
+          "longest_run": {
+            "title": "Longest Run",
+            "type": "integer"
+          },
+          "returns": {
+            "title": "Returns",
+            "type": "integer"
+          },
+          "unit": {
+            "enum": [
+              "days",
+              "weeks",
+              "months"
+            ],
+            "title": "Unit",
+            "type": "string"
+          }
+        },
+        "required": [
+          "current_run",
+          "longest_run",
+          "returns",
+          "days_with",
+          "unit"
+        ],
+        "title": "HabitStoryContinuity",
+        "type": "object"
+      },
+      "HabitStoryDay": {
+        "description": "One real calendar day; period outcomes do not alter its raw daily units.",
+        "properties": {
+          "date": {
+            "format": "date",
+            "title": "Date",
+            "type": "string"
+          },
+          "logged": {
+            "title": "Logged",
+            "type": "boolean"
+          },
+          "met": {
+            "title": "Met",
+            "type": "boolean"
+          },
+          "scheduled": {
+            "title": "Scheduled",
+            "type": "boolean"
+          },
+          "tier": {
+            "anyOf": [
+              {
+                "enum": [
+                  "low",
+                  "clear",
+                  "stretch"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Tier"
+          },
+          "units": {
+            "title": "Units",
+            "type": "number"
+          },
+          "unknown_time_units": {
+            "title": "Unknown Time Units",
+            "type": "number"
+          }
+        },
+        "required": [
+          "date",
+          "units",
+          "unknown_time_units",
+          "tier",
+          "logged",
+          "scheduled",
+          "met"
+        ],
+        "title": "HabitStoryDay",
+        "type": "object"
+      },
+      "HabitStoryLog": {
+        "description": "A recorded operation; local_day is represented day, timestamp is recording time.",
+        "properties": {
+          "delta_units": {
+            "title": "Delta Units",
+            "type": "number"
+          },
+          "local_day": {
+            "format": "date",
+            "title": "Local Day",
+            "type": "string"
+          },
+          "source": {
+            "title": "Source",
+            "type": "string"
+          },
+          "timestamp": {
+            "format": "date-time",
+            "title": "Timestamp",
+            "type": "string"
+          },
+          "via_timer": {
+            "title": "Via Timer",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "timestamp",
+          "local_day",
+          "delta_units",
+          "via_timer",
+          "source"
+        ],
+        "title": "HabitStoryLog",
+        "type": "object"
+      },
+      "HabitStoryMilestone": {
+        "description": "A future observation-engine milestone, empty in the foundation response.",
+        "properties": {
+          "kind": {
+            "title": "Kind",
+            "type": "string"
+          },
+          "reached_on": {
+            "format": "date",
+            "title": "Reached On",
+            "type": "string"
+          },
+          "value": {
+            "title": "Value",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "kind",
+          "reached_on",
+          "value"
+        ],
+        "title": "HabitStoryMilestone",
+        "type": "object"
+      },
+      "HabitStoryPatterns": {
+        "description": "Signed timing totals; legacy residuals never borrow aggregate timestamps.",
+        "properties": {
+          "time_of_day_available_since": {
+            "anyOf": [
+              {
+                "format": "date",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Time Of Day Available Since"
+          },
+          "unknown_time_units": {
+            "title": "Unknown Time Units",
+            "type": "number"
+          },
+          "weekday_by_time_of_day": {
+            "items": {
+              "items": {
+                "type": "number"
+              },
+              "type": "array"
+            },
+            "title": "Weekday By Time Of Day",
+            "type": "array"
+          },
+          "weekday_units": {
+            "items": {
+              "type": "number"
+            },
+            "title": "Weekday Units",
+            "type": "array"
+          }
+        },
+        "required": [
+          "weekday_units",
+          "weekday_by_time_of_day",
+          "unknown_time_units",
+          "time_of_day_available_since"
+        ],
+        "title": "HabitStoryPatterns",
+        "type": "object"
+      },
+      "HabitStoryRate": {
+        "description": "A scheduled native-cadence numerator and denominator.",
+        "properties": {
+          "met": {
+            "title": "Met",
+            "type": "integer"
+          },
+          "scheduled": {
+            "title": "Scheduled",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "met",
+          "scheduled"
+        ],
+        "title": "HabitStoryRate",
+        "type": "object"
+      },
+      "HabitStoryRates": {
+        "description": "Calendar-window rates expressed in scheduled days, weeks, or months.",
+        "properties": {
+          "all_time": {
+            "$ref": "#/components/schemas/HabitStoryRate"
+          },
+          "last_21": {
+            "$ref": "#/components/schemas/HabitStoryRate"
+          },
+          "last_30": {
+            "$ref": "#/components/schemas/HabitStoryRate"
+          },
+          "last_7": {
+            "$ref": "#/components/schemas/HabitStoryRate"
+          },
+          "unit": {
+            "enum": [
+              "days",
+              "weeks",
+              "months"
+            ],
+            "title": "Unit",
+            "type": "string"
+          }
+        },
+        "required": [
+          "last_7",
+          "last_21",
+          "last_30",
+          "all_time",
+          "unit"
+        ],
+        "title": "HabitStoryRates",
+        "type": "object"
+      },
+      "HabitStoryResponse": {
+        "description": "Everything Story and Ledger draw, scored by the server at native cadence.",
+        "properties": {
+          "cadence": {
+            "enum": [
+              "day",
+              "week",
+              "month"
+            ],
+            "title": "Cadence",
+            "type": "string"
+          },
+          "continuity": {
+            "$ref": "#/components/schemas/HabitStoryContinuity"
+          },
+          "days": {
+            "items": {
+              "$ref": "#/components/schemas/HabitStoryDay"
+            },
+            "title": "Days",
+            "type": "array"
+          },
+          "log_count": {
+            "title": "Log Count",
+            "type": "integer"
+          },
+          "logged_days": {
+            "title": "Logged Days",
+            "type": "integer"
+          },
+          "logs": {
+            "items": {
+              "$ref": "#/components/schemas/HabitStoryLog"
+            },
+            "title": "Logs",
+            "type": "array"
+          },
+          "milestones": {
+            "items": {
+              "$ref": "#/components/schemas/HabitStoryMilestone"
+            },
+            "title": "Milestones",
+            "type": "array"
+          },
+          "observations": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Observations",
+            "type": "array"
+          },
+          "patterns": {
+            "$ref": "#/components/schemas/HabitStoryPatterns"
+          },
+          "polarity": {
+            "enum": [
+              "additive",
+              "subtractive"
+            ],
+            "title": "Polarity",
+            "type": "string"
+          },
+          "rates": {
+            "$ref": "#/components/schemas/HabitStoryRates"
+          },
+          "stages": {
+            "items": {
+              "$ref": "#/components/schemas/HabitStoryStage"
+            },
+            "title": "Stages",
+            "type": "array"
+          },
+          "start_date": {
+            "format": "date",
+            "title": "Start Date",
+            "type": "string"
+          },
+          "tiers": {
+            "$ref": "#/components/schemas/HabitStoryTiers"
+          },
+          "today": {
+            "format": "date",
+            "title": "Today",
+            "type": "string"
+          },
+          "unit": {
+            "title": "Unit",
+            "type": "string"
+          }
+        },
+        "required": [
+          "polarity",
+          "cadence",
+          "unit",
+          "start_date",
+          "today",
+          "logged_days",
+          "log_count",
+          "days",
+          "stages",
+          "continuity",
+          "rates",
+          "tiers",
+          "patterns",
+          "logs",
+          "observations",
+          "milestones"
+        ],
+        "title": "HabitStoryResponse",
+        "type": "object"
+      },
+      "HabitStoryStage": {
+        "description": "Inclusive stage boundaries intersecting the displayed history.",
+        "properties": {
+          "closes_on": {
+            "format": "date",
+            "title": "Closes On",
+            "type": "string"
+          },
+          "opens_on": {
+            "format": "date",
+            "title": "Opens On",
+            "type": "string"
+          },
+          "stage_number": {
+            "title": "Stage Number",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "stage_number",
+          "opens_on",
+          "closes_on"
+        ],
+        "title": "HabitStoryStage",
+        "type": "object"
+      },
+      "HabitStoryTierCounts": {
+        "description": "Daily tier mix, keeping logged-under and unlogged-quiet distinct.",
+        "properties": {
+          "clear": {
+            "default": 0,
+            "title": "Clear",
+            "type": "integer"
+          },
+          "low": {
+            "default": 0,
+            "title": "Low",
+            "type": "integer"
+          },
+          "quiet": {
+            "default": 0,
+            "title": "Quiet",
+            "type": "integer"
+          },
+          "stretch": {
+            "default": 0,
+            "title": "Stretch",
+            "type": "integer"
+          },
+          "under": {
+            "default": 0,
+            "title": "Under",
+            "type": "integer"
+          }
+        },
+        "title": "HabitStoryTierCounts",
+        "type": "object"
+      },
+      "HabitStoryTierDelta": {
+        "description": "Tier counts in the last thirty days minus the preceding thirty.",
+        "properties": {
+          "clear": {
+            "title": "Clear",
+            "type": "integer"
+          },
+          "low": {
+            "title": "Low",
+            "type": "integer"
+          },
+          "stretch": {
+            "title": "Stretch",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "low",
+          "clear",
+          "stretch"
+        ],
+        "title": "HabitStoryTierDelta",
+        "type": "object"
+      },
+      "HabitStoryTiers": {
+        "description": "Lifetime and weekly daily tier distributions.",
+        "properties": {
+          "last_30_delta": {
+            "$ref": "#/components/schemas/HabitStoryTierDelta"
+          },
+          "totals": {
+            "$ref": "#/components/schemas/HabitStoryTierCounts"
+          },
+          "weekly": {
+            "items": {
+              "$ref": "#/components/schemas/HabitStoryWeek"
+            },
+            "title": "Weekly",
+            "type": "array"
+          }
+        },
+        "required": [
+          "totals",
+          "weekly",
+          "last_30_delta"
+        ],
+        "title": "HabitStoryTiers",
+        "type": "object"
+      },
+      "HabitStoryWeek": {
+        "description": "A Monday-start daily tier stack.",
+        "properties": {
+          "clear": {
+            "default": 0,
+            "title": "Clear",
+            "type": "integer"
+          },
+          "low": {
+            "default": 0,
+            "title": "Low",
+            "type": "integer"
+          },
+          "quiet": {
+            "default": 0,
+            "title": "Quiet",
+            "type": "integer"
+          },
+          "stretch": {
+            "default": 0,
+            "title": "Stretch",
+            "type": "integer"
+          },
+          "under": {
+            "default": 0,
+            "title": "Under",
+            "type": "integer"
+          },
+          "week_start": {
+            "format": "date",
+            "title": "Week Start",
+            "type": "string"
+          }
+        },
+        "required": [
+          "week_start"
+        ],
+        "title": "HabitStoryWeek",
+        "type": "object"
+      },
       "HabitWithGoals": {
         "description": "Habit + nested goals each carrying their embedded completions (BUG-FE-HABIT-301).",
         "properties": {
@@ -19132,6 +19647,127 @@
           }
         },
         "summary": "Get Habit Stats",
+        "tags": [
+          "habits"
+        ]
+      }
+    },
+    "/habits/{habit_id}/story": {
+      "get": {
+        "description": "Return owned lifetime habit history with explicit cadence and timing coverage.",
+        "operationId": "get_habit_story_habits__habit_id__story_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "habit_id",
+            "required": true,
+            "schema": {
+              "maximum": 2147483647,
+              "minimum": 1,
+              "title": "Habit Id",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HabitStoryResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "The request body could not be parsed, or a value it carried was refused."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "No usable credential was presented."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "The caller is authenticated but does not own the resource."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "No such resource -- or none this caller is allowed to see."
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "The request conflicts with the resource's current state."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ValidationErrorResponse"
+                }
+              }
+            },
+            "description": "The request failed validation -- an array of rejected fields -- or a check applied after the schema refused it, as one snake_case code."
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "The caller went past a rate limit."
+          }
+        },
+        "summary": "Get Habit Story",
         "tags": [
           "habits"
         ]

@@ -26,6 +26,7 @@ jest.mock('@/context/AuthContext', () => require('./authContextTestKit'));
 jest.mock('@/context/ApiKeyContext', () => require('./apiKeyContextTestKit'));
 
 jest.mock('@/api', () => ({
+  ...require('./journalUiFlagsTestKit'),
   journal: {
     get: jest.fn(),
     create: jest.fn(() => new Promise(() => {})),
