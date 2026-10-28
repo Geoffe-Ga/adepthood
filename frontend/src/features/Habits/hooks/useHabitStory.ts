@@ -10,6 +10,11 @@ import { useAccountScope } from '@/storage/useActiveUser';
 import { parseUserId } from '@/storage/userScope';
 import { decodeJwtPayload } from '@/utils/token';
 
+/** What a Story read needs to know about a habit: its id and where that id came from. */
+export type StoryTarget = Pick<Habit, 'isDemoSeed' | 'hasClientMintedIds'> & {
+  id?: number | null;
+};
+
 const credentialOwner = (token: string | null | undefined): number | null =>
   token ? parseUserId(decodeJwtPayload(token)?.sub) : null;
 
@@ -22,7 +27,7 @@ interface StoryState {
 
 const IDLE: StoryState = { key: '', story: null, loading: false, error: null };
 
-function useStoryContext(habit: Habit | null, visible: boolean) {
+function useStoryContext(habit: StoryTarget | null, visible: boolean) {
   const auth = useAuth();
   const scope = useAccountScope();
   const session = getAuthSession();
@@ -77,7 +82,7 @@ function identityIsCurrent(context: StoryContext): boolean {
  * or timezone never shows another's story. Demo and client-minted rows have no
  * server record, so nothing is requested for them and ``local`` says so.
  */
-export function useHabitStory(habit: Habit | null, visible: boolean) {
+export function useHabitStory(habit: StoryTarget | null, visible: boolean) {
   const context = useStoryContext(habit, visible);
   const latest = useRef(context);
   latest.current = context;

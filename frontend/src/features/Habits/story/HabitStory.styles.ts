@@ -130,6 +130,15 @@ const proseStyles = (type: TypeRamp) => ({
   },
   logWhen: { ...type.body, color: ink.primary, flexShrink: 1 },
   logAmount: { ...type.body, ...FIGURES, color: ink.primary },
+  /** A Ledger line keeps its label whole and lets the figure wrap. */
+  lineLabel: { ...type.body, color: ink.primary, flexShrink: 0 },
+  lineValue: {
+    ...type.body,
+    ...FIGURES,
+    color: ink.primary,
+    flexShrink: 1,
+    textAlign: 'right' as const,
+  },
 });
 
 export function createHabitStoryStyles(width: number) {

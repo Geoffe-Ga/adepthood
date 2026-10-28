@@ -22,6 +22,7 @@ from domain.constants import (
 )
 from domain.dates import ensure_aware, to_user_date, to_user_date_bucket
 from domain.frequencies import FREQUENCY_COLORS
+from domain.observations import RhythmFacts, rhythm_observations
 from domain.practice_stats import MIN_COUNTED_DURATION_MINUTES
 from domain.streaks import PERIOD_UNITS, PeriodCadence, is_scheduled_on, period_start
 from schemas.progress import (
@@ -487,14 +488,31 @@ def build_progress_overview(data: OverviewInput) -> ProgressOverviewResponse:
     """Compose the four series solely from explicit scoped values and calendar."""
     population = _population(data)
     days = _rhythm_days(data, population)
+    rhythm = ProgressRhythm(
+        days=days,
+        fullest_fortnight_ending=_fullest(days),
+        longest_rest=_rest(days),
+        rising_since=_rising(days),
+    )
     return ProgressOverviewResponse(
         arc=_arc(data),
-        rhythm=ProgressRhythm(
-            days=days,
-            fullest_fortnight_ending=_fullest(days),
-            longest_rest=_rest(days),
-            rising_since=_rising(days),
-        ),
+        rhythm=rhythm,
         cycles=_cycles(data, population),
         energy=_energy(data),
+        observations=rhythm_observations(_rhythm_facts(rhythm), today=data.today),
+    )
+
+
+def _rhythm_facts(rhythm: ProgressRhythm) -> RhythmFacts:
+    """The wave's facts in the shape the observation templates read.
+
+    A wave that never rose above zero has no fortnight worth calling fullest.
+    """
+    rest = rhythm.longest_rest
+    rose = any(day.rate > 0 for day in rhythm.days)
+    return RhythmFacts(
+        fullest_fortnight_ending=rhythm.fullest_fortnight_ending if rose else None,
+        longest_rest=None if rest is None else (rest.start, rest.end),
+        rising_since=rhythm.rising_since,
+        series_days=len(rhythm.days),
     )
