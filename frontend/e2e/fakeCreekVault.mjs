@@ -46,6 +46,15 @@ import { fileURLToPath } from 'node:url';
  * `GET /__lane/letter-care-escalation` hands a journey that same cell, so it can
  * prove none of Creek's prose reached the writer without reading backend files.
  *
+ * `POST /__lane/relate-next-reflection` arms one reflection to carry the related
+ * pages Creek publishes beside its notes: the next `/v1/reflections` answer
+ * adds the `related_praxis` and `related_eddies` of Creek's own `reflections`
+ * success cell (read verbatim from the vendored bundle, never written here) --
+ * one compiled praxis page and one recurring eddy. Every other reflection
+ * answers both collections empty, as a vault that recognised nothing does.
+ * `GET /__lane/related-pages` hands a journey those same pages, so it can prove
+ * what the writer was shown without reading backend files.
+ *
  * `GET /v1/agent-activity` (contract 0.22, #3535) answers Creek's published
  * `AgentActivityResponse` from an audit log this process keeps. The lane has no
  * `/mcp` surface, so no agent can call this vault; a journey stands in for the
@@ -151,6 +160,30 @@ const LETTER_CARE_ESCALATION = JSON.parse(
     'utf8',
   ),
 );
+/**
+ * The related pages of Creek's published `reflections` success cell, verbatim
+ * from the vendored bundle: one compiled praxis page and one eddy. A journey
+ * arms them onto a single reflection with `POST /__lane/relate-next-reflection`.
+ */
+const REFLECTION_SUCCESS = JSON.parse(
+  readFileSync(
+    fileURLToPath(
+      new URL(
+        '../../backend/tests/fixtures/creek_v1/examples/reflections/success.json',
+        import.meta.url,
+      ),
+    ),
+    'utf8',
+  ),
+);
+const RELATED_PAGES = {
+  related_eddies: REFLECTION_SUCCESS.related_eddies,
+  related_praxis: REFLECTION_SUCCESS.related_praxis,
+};
+/** What a reflection that recognised no compiled page publishes beside its notes. */
+const NO_RELATED_PAGES = { related_eddies: [], related_praxis: [] };
+/** One reflection a journey armed to carry {@link RELATED_PAGES}. */
+let relatedPagesArmed = false;
 /** Creek's content-free placeholder title for a Voice Draft stored without one. */
 const VOICE_DRAFT_TITLE = 'Voice draft';
 
@@ -627,6 +660,10 @@ async function reflect(request, response) {
     refuse(response, HTTP_BAD_REQUEST, 'invalid_request');
     return;
   }
+  // Consumed by the reflection it was armed for, so it can never leak into
+  // another journey's pass on the shared owner.
+  const related = relatedPagesArmed;
+  relatedPagesArmed = false;
   received.push({
     method: 'POST',
     path: '/v1/reflections',
@@ -634,14 +671,14 @@ async function reflect(request, response) {
     tier: null,
     ceiling,
     digest: createHash('sha256').update(body.content, 'utf8').digest('hex'),
+    related,
   });
   send(response, HTTP_OK, {
     essay: null,
     essay_grounded: false,
     inference_source: answeringRoute(request),
     notes: [{ kind: 'pattern', note: LANE_REFLECTION_NOTE, quote: firstSentence(body.content) }],
-    related_eddies: [],
-    related_praxis: [],
+    ...(related ? RELATED_PAGES : NO_RELATED_PAGES),
     routed_tier: ceiling,
     status: 'ok',
     tier_ceiling: ceiling,
@@ -960,6 +997,17 @@ const server = createServer((request, response) => {
     if (request.method === 'GET' && pathname === '/__lane/letter-care-escalation') {
       request.resume();
       send(response, HTTP_OK, LETTER_CARE_ESCALATION);
+      return;
+    }
+    if (request.method === 'GET' && pathname === '/__lane/related-pages') {
+      request.resume();
+      send(response, HTTP_OK, RELATED_PAGES);
+      return;
+    }
+    if (request.method === 'POST' && pathname === '/__lane/relate-next-reflection') {
+      request.resume();
+      relatedPagesArmed = true;
+      send(response, HTTP_OK, { status: 'ok' });
       return;
     }
     if (request.method === 'POST' && pathname === '/__lane/escalate-next-letter') {

@@ -97,6 +97,7 @@ const EXPECTED_BROWSER_JOURNEYS = [
   'prompts-recovery.browser.e2e.test.ts',
   'journal-close-save.browser.e2e.test.ts',
   'journal-corpus-drawer.browser.e2e.test.ts',
+  'journal-corpus-invitation-offer.browser.e2e.test.ts',
   'journal-entry-controls.browser.e2e.test.ts',
   'journal-failed-checkoff.browser.e2e.test.ts',
   'journal-finished-task-toggle.browser.e2e.test.ts',
@@ -123,6 +124,7 @@ const EXPECTED_BROWSER_JOURNEYS = [
   'journal-promoted-quote-reflection.browser.e2e.test.ts',
   'journal-promoted-quotes-screen.browser.e2e.test.ts',
   'journal-reflection-dismissal-owner.browser.e2e.test.ts',
+  'journal-related-vault-pages.browser.e2e.test.ts',
   'journal-reconnect-load.browser.e2e.test.ts',
   'journal-refinish-edited-entry.browser.e2e.test.ts',
   'journal-resonance-refill.browser.e2e.test.ts',
@@ -678,6 +680,20 @@ describe('the external Creek Vault boundary stays protocol-shaped and narrowly a
 
     expect(fake).toContain("const REFLECTION_REQUEST_FIELDS = ['content', 'max_notes']");
     expect(fake).toContain('ADMITTED_TIERS.includes(ceiling)');
+  });
+
+  it("relates pages only from Creek's own cell, and only to the one reflection armed for them", () => {
+    const fake = read(FAKE_VAULT, 'The related-pages journey needs a vault that relates pages.');
+
+    // Creek's published shape, never one written here: the pages are read from
+    // the vendored success cell, so a drifted contract fails the journey.
+    expect(fake).toContain('examples/reflections/success.json');
+    expect(fake).toContain('related_praxis: REFLECTION_SUCCESS.related_praxis');
+    expect(fake).toContain('related_eddies: REFLECTION_SUCCESS.related_eddies');
+    // One-shot: consumed by the reflection it was armed for, so it cannot leak
+    // into another journey's pass on the shared owner.
+    expect(fake).toContain('relatedPagesArmed = false;\n  received.push(');
+    expect(fake).toContain('...(related ? RELATED_PAGES : NO_RELATED_PAGES)');
   });
 
   it('writes letters on the published request shape and holds no writer prose', () => {

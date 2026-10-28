@@ -205,6 +205,12 @@ document adds no request, and a failed draft deletion leaves its opaque identity
 present until a confirmed retry removes it. `POST
 /__lane/fail-next-voice-draft-delete` arms exactly one deterministic 503 so the
 recovery path is exercised over the socket rather than by replacing a client.
+`POST /__lane/relate-next-reflection` arms exactly one reflection to carry the
+`related_praxis` and `related_eddies` of Creek's vendored `reflections` success
+cell -- one compiled praxis page and one eddy -- and `GET /__lane/related-pages`
+hands a spec those pages; every unarmed reflection relates none. That is what
+lets `journal-related-vault-pages.browser.e2e.test.ts` drive the "From your
+creek" band from a real vault answer.
 
 The owner is provisioned by `globalSetup`, and the assertion that it worked is
 the point. `CREEK_VAULT_OWNER_USER_ID` is read from the server process's
