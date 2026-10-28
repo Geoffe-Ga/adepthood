@@ -3107,6 +3107,13 @@ export const wheel = {
   },
 };
 
+/** Raw private whole-person progress series; the Map reader validates its shape. */
+export const progress = {
+  overview(token?: string): Promise<unknown> {
+    return request<unknown>('/progress/overview', { token });
+  },
+};
+
 // Course content types and client
 export interface ContentItem {
   id: number;

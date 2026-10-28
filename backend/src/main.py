@@ -78,6 +78,7 @@ from routers.practice_sessions import router as practice_sessions_router
 from routers.practice_share import router as practice_share_router
 from routers.practice_tags import router as practice_tags_router
 from routers.practices import router as practices_router
+from routers.progress import router as progress_router
 from routers.promotions import router as promotions_router
 from routers.prompts import router as prompts_router
 from routers.reflections import router as reflections_router
@@ -1309,6 +1310,7 @@ app.include_router(practice_recipes_router)
 app.include_router(practice_tags_router)
 app.include_router(user_practices_router)
 app.include_router(practice_sessions_router)
+app.include_router(progress_router)
 app.include_router(habits_router)
 app.include_router(journal_router)
 app.include_router(transcription_router)

@@ -1356,6 +1356,18 @@
     "coveredBy": "frontend/e2e/habits-viewport.browser.e2e.test.ts"
   },
   {
+    "id": "map.progress-door",
+    "description": "The private progress overview API is available for the Map's optional Your progress door. The raw progress client reaches that authenticated endpoint with a pinned credential; the current Map surface does not yet call it. Uncovered until #3528 connects the door, validates the response, and drives the ribbon, rhythm, cycles and deliberate energy ledger through a real browser at phone and desktop widths.",
+    "crosses": {
+      "screen": "frontend/src/features/Map/MapScreen.tsx",
+      "client": ["progress"],
+      "routes": ["GET /progress/overview"],
+      "tables": ["stageprogress", "habit", "goal", "goalcompletion", "practicesession"]
+    },
+    "status": "uncovered",
+    "issue": 3528
+  },
+  {
     "id": "map.advance-stage",
     "description": "A traveller opens the Map after the calendar has moved them into a new stage, and the server agrees they moved. Advance is not an action a person takes: the calendar over the ratified 21x8+42x2 schedule decides what is offered, and reading the Map records that the person entered it. There is deliberately no tap affordance -- a manual advance contradicts the earned, server-derived progression model -- so the covering spec moves the program anchor in the lane's own database and then reads, never posts. The three reads below are the whole of what the Map asks for: GET /stages/{stage_number}/progress is served but unreachable, and naming it here described a seam the app has no half of. Unlocking alone would prove nothing, because access is the union of the calendar and the record; so the spec asserts the record itself -- current_stage, completed_stages, stage_started_at -- moved when the Map was read, stayed put when the anchor moved without a read, and re-recorded nothing on a second read inside the same window.",
     "crosses": {
