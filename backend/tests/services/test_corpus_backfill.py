@@ -67,6 +67,7 @@ from models.user import User
 from services import corpus_backfill as cb
 from services import frequency_classification as fc
 from services.botmason import LLMCreditExhaustedError, LLMProviderError
+from services.classification_ceiling import classifications_today
 from services.corpus_backfill import backfill_after_consent
 from services.corpus_consent import ConsentChange, ConsentState, set_consent
 from services.privacy_suspension import EXTERNAL_AI_SUSPEND_ENV_VAR
@@ -607,6 +608,35 @@ async def test_a_refusal_that_never_reached_a_provider_does_not_mark_the_entry_a
     assert [await _offered_at(db_session, i) for i in (first, second, third)] == [None, None, None]
     assert outcome.entries_considered == 0
     assert len(calls) == 1
+
+
+@pytest.mark.asyncio
+async def test_a_refusal_to_bill_releases_the_allowance_it_staged(
+    db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The sweep stops on a spent balance, and the refused dial is not the account's.
+
+    Release decision R1-2 (#3516): classification the deployment's provider
+    refused to bill is overhead. The first offer is billed and stays counted;
+    the second is refused and released. The sweep stops without committing, so
+    the rollback here is what proves the release made itself durable rather
+    than leaning on a caller's commit.
+    """
+    calls = _patch_spent_balance(monkeypatch, refuse_from=2)
+    await _entry(db_session, body=_FIRST)
+    await _entry(db_session, body=_SECOND)
+    await _entry(db_session, body=_THIRD)
+    change = await set_consent(
+        db_session, user_id=_OWNER, source=CorpusSource.JOURNAL, granted=True
+    )
+
+    await backfill_after_consent(
+        db_session, user_id=_OWNER, change=change, boundary=ReflectionBoundary.APP_PROVIDER
+    )
+    await db_session.rollback()
+
+    assert len(calls) == 2
+    assert await classifications_today(db_session, _OWNER, datetime.now(UTC)) == 1
 
 
 @pytest.mark.asyncio

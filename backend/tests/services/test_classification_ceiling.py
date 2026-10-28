@@ -40,10 +40,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from domain.frequencies import Frequency
 from models.journal_entry import JournalClassification, JournalEntry
+from routers.journal import _record_corpus_fragment
 from services import frequency_classification as fc
+from services.botmason import LLMCreditExhaustedError
 from services.classification_ceiling import (
     classifications_today,
     record_classification_attempt,
+    release_classification_attempt,
 )
 from services.corpus_consent import set_consent
 from services.corpus_ingest import (
@@ -263,6 +266,117 @@ async def test_a_ceiling_of_zero_refuses_every_server_paid_classification(
     await _consent(db_session)
 
     assert await _offer(db_session) is IngestOutcome.CEILING_REACHED
+
+
+# ── A spent deployment balance is overhead, not the account's (R1-2) ───────
+
+# The provider whose balance is spent, and the words it refuses in.
+_REFUSING_PROVIDER = "anthropic"
+_NO_BALANCE = "credit balance is too low"
+
+
+def _patch_spent_balance(monkeypatch: pytest.MonkeyPatch) -> list[dict[str, object]]:
+    """A provider whose account behind the deployment's key has no balance."""
+    calls: list[dict[str, object]] = []
+
+    async def spent(**kwargs: object) -> SimpleNamespace:
+        calls.append(kwargs)
+        raise LLMCreditExhaustedError(_NO_BALANCE, provider=_REFUSING_PROVIDER)
+
+    monkeypatch.setattr(fc, "generate_response", spent)
+    return calls
+
+
+@pytest.mark.asyncio
+async def test_a_spent_deployment_balance_does_not_spend_the_allowance(
+    db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A call the provider declined to bill is released, durably (R1-2, #3516).
+
+    The control is :func:`test_a_provider_failure_still_spent_the_allowance`:
+    only a refusal to bill is about the deployment rather than the call. The
+    rollback after the raise is the durability check -- the release must not
+    lean on a caller's commit, because the sweep stops on this error and the
+    journal path suppresses it.
+    """
+    _set_ceiling(monkeypatch, _CEILING)
+    await _consent(db_session)
+    calls = _patch_spent_balance(monkeypatch)
+
+    with pytest.raises(LLMCreditExhaustedError):
+        await _offer(db_session)
+    await db_session.rollback()
+
+    assert len(calls) == 1
+    assert await classifications_today(db_session, _OWNER, datetime.now(UTC)) == 0
+
+
+@pytest.mark.asyncio
+async def test_a_spent_balance_releases_only_its_own_attempt(
+    db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Earlier attempts the account really spent today stay spent."""
+    _set_ceiling(monkeypatch, _CEILING)
+    await _consent(db_session)
+    now = datetime.now(UTC)
+    await record_classification_attempt(db_session, _OWNER, now)
+    await db_session.commit()
+    _patch_spent_balance(monkeypatch)
+
+    with pytest.raises(LLMCreditExhaustedError):
+        await _offer(db_session)
+    await db_session.rollback()
+
+    assert await classifications_today(db_session, _OWNER, now) == 1
+
+
+@pytest.mark.asyncio
+async def test_a_save_during_a_spent_balance_leaves_the_allowance_whole(
+    db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The journal path suppresses the error, and the release still lands."""
+    _set_ceiling(monkeypatch, _CEILING)
+    await _consent(db_session)
+    entry = await _entry(db_session)
+    calls = _patch_spent_balance(monkeypatch)
+
+    await _record_corpus_fragment(db_session, entry)
+    await db_session.rollback()
+
+    assert len(calls) == 1
+    assert await classifications_today(db_session, _OWNER, datetime.now(UTC)) == 0
+
+
+@pytest.mark.asyncio
+async def test_a_release_removes_exactly_the_one_attempt_it_names(
+    db_session: AsyncSession,
+) -> None:
+    """One attempt, by id: never the account's other rows for the day."""
+    now = datetime.now(UTC)
+    kept = await record_classification_attempt(db_session, _OWNER, now)
+    released = await record_classification_attempt(db_session, _OWNER, now)
+    await db_session.commit()
+
+    await release_classification_attempt(db_session, user_id=_OWNER, attempt_id=released)
+    await db_session.commit()
+
+    assert kept != released
+    assert await classifications_today(db_session, _OWNER, now) == 1
+
+
+@pytest.mark.asyncio
+async def test_a_release_cannot_delete_another_accounts_attempt(
+    db_session: AsyncSession,
+) -> None:
+    """Scoped by account as well as id, so a wrong id cannot cross tenants."""
+    now = datetime.now(UTC)
+    strangers = await record_classification_attempt(db_session, _STRANGER, now)
+    await db_session.commit()
+
+    await release_classification_attempt(db_session, user_id=_OWNER, attempt_id=strangers)
+    await db_session.commit()
+
+    assert await classifications_today(db_session, _STRANGER, now) == 1
 
 
 # ── What the ceiling may not charge for ─────────────────────────────────────
