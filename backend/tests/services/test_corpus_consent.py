@@ -39,6 +39,7 @@ from services.corpus_consent import (
     load_consent,
     load_every_consent,
     set_consent,
+    standing_consent_change,
 )
 from services.corpus_store import FragmentDraft, record_fragment
 from services.frequency_classification import ClassificationSource, FrequencyClassification
@@ -267,3 +268,83 @@ async def test_every_source_is_reported_whether_decided_or_not(
     assert [state.granted for state in states] == [
         source is CorpusSource.JOURNAL for source in CorpusSource
     ]
+
+
+@pytest.mark.asyncio
+async def test_the_standing_change_is_the_decision_in_force_and_appends_nothing(
+    db_session: AsyncSession,
+) -> None:
+    """``POST /corpus/sweep`` resumes under a decision; reading it must not make one.
+
+    The standing change names the row ``set_consent`` appended, reports the
+    same state :func:`load_consent` does, and leaves the log exactly as long as
+    it found it -- a resume is not a decision, and an audit log that grew on
+    every resume would make an account look as though it agreed forty times.
+    """
+    granted = await set_consent(
+        db_session, user_id=_OWNER, source=CorpusSource.JOURNAL, granted=True
+    )
+    await db_session.commit()
+
+    standing = await standing_consent_change(
+        db_session, user_id=_OWNER, source=CorpusSource.JOURNAL
+    )
+    rows = await db_session.execute(select(CorpusConsentEvent))
+
+    assert granted.event is not None
+    assert standing.event is not None
+    assert standing.event.id == granted.event.id
+    assert standing.state == await load_consent(
+        db_session, user_id=_OWNER, source=CorpusSource.JOURNAL
+    )
+    assert len(list(rows.scalars().all())) == 1
+
+
+@pytest.mark.asyncio
+async def test_the_standing_change_of_a_revocation_is_the_revocation(
+    db_session: AsyncSession,
+) -> None:
+    """Only the newest decision counts: a grant later withdrawn is not in force."""
+    await set_consent(db_session, user_id=_OWNER, source=CorpusSource.JOURNAL, granted=True)
+    revoked = await set_consent(
+        db_session, user_id=_OWNER, source=CorpusSource.JOURNAL, granted=False
+    )
+    await db_session.commit()
+
+    standing = await standing_consent_change(
+        db_session, user_id=_OWNER, source=CorpusSource.JOURNAL
+    )
+
+    assert revoked.event is not None
+    assert standing.event is not None
+    assert standing.event.id == revoked.event.id
+    assert standing.event.decision == ConsentDecision.REVOKED.value
+    assert standing.state.granted is False
+
+
+@pytest.mark.asyncio
+async def test_an_account_that_never_decided_has_no_standing_event(
+    db_session: AsyncSession,
+) -> None:
+    """No row, no decision to name: the default refusal, with ``event`` unset."""
+    standing = await standing_consent_change(
+        db_session, user_id=_OWNER, source=CorpusSource.JOURNAL
+    )
+
+    assert standing.event is None
+    assert standing.state.granted is CONSENT_GRANTED_BY_DEFAULT
+    assert standing.state.decided_at is None
+
+
+@pytest.mark.asyncio
+async def test_the_standing_change_is_the_callers_own(db_session: AsyncSession) -> None:
+    """Somebody else's yes is not this account's decision to resume under."""
+    await set_consent(db_session, user_id=_OWNER, source=CorpusSource.JOURNAL, granted=True)
+    await db_session.commit()
+
+    standing = await standing_consent_change(
+        db_session, user_id=_STRANGER, source=CorpusSource.JOURNAL
+    )
+
+    assert standing.event is None
+    assert standing.state.granted is False
