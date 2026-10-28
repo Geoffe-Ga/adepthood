@@ -112,6 +112,7 @@
   "/practices/{practice_id}",
   "/practices/{practice_id}/share-link",
   "/practices/{practice_id}/share-links",
+  "/progress/overview",
   "/promotions",
   "/promotions/{promotion_id}",
   "/prompts/current",

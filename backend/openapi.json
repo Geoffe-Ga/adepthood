@@ -304,6 +304,58 @@
         "title": "AppleOAuthRequest",
         "type": "object"
       },
+      "ArcStage": {
+        "description": "One canonical stage with an honest, possibly unknown opening date.",
+        "properties": {
+          "aspect": {
+            "title": "Aspect",
+            "type": "string"
+          },
+          "opens_on": {
+            "anyOf": [
+              {
+                "format": "date",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Opens On"
+          },
+          "practice_ask_minutes": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Practice Ask Minutes"
+          },
+          "stage_number": {
+            "maximum": 10.0,
+            "minimum": 1.0,
+            "title": "Stage Number",
+            "type": "integer"
+          },
+          "weeks": {
+            "minimum": 1.0,
+            "title": "Weeks",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "stage_number",
+          "aspect",
+          "weeks",
+          "opens_on",
+          "practice_ask_minutes"
+        ],
+        "title": "ArcStage",
+        "type": "object"
+      },
       "AuthRequest": {
         "description": "Login payload — email + password.\n\n``password`` carries explicit length bounds (BUG-AUTH-017): an\nunbounded ``str`` field accepts arbitrarily large inputs, which both\nwastes the bcrypt cost on a guaranteed-rejected request and gives an\nattacker a free DoS lever (each attempt costs ~250 ms server-side).\nThe bounds also keep the field aligned with the\n``_BCRYPT_MAX_PASSWORD_BYTES`` ceiling so a request that would\nsilently be truncated by bcrypt is rejected with 422 instead.\n\n``license_key`` is optional at the schema level so login's payload is\nunchanged, but the signup handler requires it — signup is gated on a\nverified APTITUDE Gumroad license.  It carries an explicit\n``_MAX_LICENSE_KEY_LENGTH`` bound for the same DoS reason ``password``\ndoes: a non-blank key is forwarded into a per-product loop of outbound\nGumroad verify calls before the invalid-license throttle applies, so an\nunbounded string would amplify each attempt upstream.  Over-length input\nis rejected with a 422 (a schema-shape rejection, like an over-length\npassword) that says nothing about whether the key is valid.",
         "properties": {
@@ -1511,6 +1563,40 @@
         "title": "CycleAnchorStatus",
         "type": "string"
       },
+      "CycleRate": {
+        "description": "A stage's habit-day and enabled-practice population in one known cycle.",
+        "properties": {
+          "cycle": {
+            "minimum": 1.0,
+            "title": "Cycle",
+            "type": "integer"
+          },
+          "met_days": {
+            "minimum": 0.0,
+            "title": "Met Days",
+            "type": "integer"
+          },
+          "rate": {
+            "maximum": 1.0,
+            "minimum": 0.0,
+            "title": "Rate",
+            "type": "number"
+          },
+          "scheduled_days": {
+            "minimum": 0.0,
+            "title": "Scheduled Days",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "cycle",
+          "rate",
+          "scheduled_days",
+          "met_days"
+        ],
+        "title": "CycleRate",
+        "type": "object"
+      },
       "DepthPreferencesResponse": {
         "description": "The four ring toggles returned to the caller.\n\n``user_id`` is intentionally excluded — the caller already knows its own\nidentity from the JWT, and surfacing surrogate keys aids enumeration.",
         "properties": {
@@ -1781,6 +1867,26 @@
           "reason_code"
         ],
         "title": "EnergyPlanResponse",
+        "type": "object"
+      },
+      "EnergyWeek": {
+        "description": "A Monday-start local week of persisted completion energy.",
+        "properties": {
+          "net": {
+            "title": "Net",
+            "type": "integer"
+          },
+          "week_start": {
+            "format": "date",
+            "title": "Week Start",
+            "type": "string"
+          }
+        },
+        "required": [
+          "week_start",
+          "net"
+        ],
+        "title": "EnergyWeek",
         "type": "object"
       },
       "EntitlementGrantRequest": {
@@ -3647,6 +3753,65 @@
           "energy_return"
         ],
         "title": "Habit",
+        "type": "object"
+      },
+      "HabitBirth": {
+        "description": "A habit's provenance in this cycle, not a mutation of its stored flag.",
+        "properties": {
+          "habit_id": {
+            "title": "Habit Id",
+            "type": "integer"
+          },
+          "icon": {
+            "title": "Icon",
+            "type": "string"
+          },
+          "is_carryover": {
+            "description": "Stored carryover or a birth before the known current-cycle anchor's local day.",
+            "title": "Is Carryover",
+            "type": "boolean"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "stage_number": {
+            "anyOf": [
+              {
+                "maximum": 10.0,
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Stage Number"
+          },
+          "week": {
+            "anyOf": [
+              {
+                "maximum": 36.0,
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Week in this 36-week arc; null for carryovers, unknown anchors, or births after week 36.",
+            "title": "Week"
+          }
+        },
+        "required": [
+          "habit_id",
+          "name",
+          "icon",
+          "week",
+          "stage_number",
+          "is_carryover"
+        ],
+        "title": "HabitBirth",
         "type": "object"
       },
       "HabitCreate": {
@@ -6693,6 +6858,176 @@
         "title": "ProgramStartRequest",
         "type": "object"
       },
+      "ProgressArc": {
+        "description": "The live programme anchor and its ten-stage shape.",
+        "properties": {
+          "current_stage": {
+            "maximum": 10.0,
+            "minimum": 1.0,
+            "title": "Current Stage",
+            "type": "integer"
+          },
+          "current_week": {
+            "anyOf": [
+              {
+                "maximum": 36.0,
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Current Week"
+          },
+          "cycle_number": {
+            "minimum": 1.0,
+            "title": "Cycle Number",
+            "type": "integer"
+          },
+          "habit_births": {
+            "items": {
+              "$ref": "#/components/schemas/HabitBirth"
+            },
+            "title": "Habit Births",
+            "type": "array"
+          },
+          "program_started_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Program Started At"
+          },
+          "stages": {
+            "items": {
+              "$ref": "#/components/schemas/ArcStage"
+            },
+            "title": "Stages",
+            "type": "array"
+          }
+        },
+        "required": [
+          "program_started_at",
+          "cycle_number",
+          "current_stage",
+          "current_week",
+          "stages",
+          "habit_births"
+        ],
+        "title": "ProgressArc",
+        "type": "object"
+      },
+      "ProgressEnergy": {
+        "description": "The ledger's signed weekly sum and its exact formula.",
+        "properties": {
+          "formula": {
+            "default": "sum(return - cost) over completions",
+            "title": "Formula",
+            "type": "string"
+          },
+          "weeks": {
+            "items": {
+              "$ref": "#/components/schemas/EnergyWeek"
+            },
+            "title": "Weeks",
+            "type": "array"
+          }
+        },
+        "required": [
+          "weeks"
+        ],
+        "title": "ProgressEnergy",
+        "type": "object"
+      },
+      "ProgressOverviewResponse": {
+        "description": "Private source series for the Map's optional Progress door.",
+        "properties": {
+          "arc": {
+            "$ref": "#/components/schemas/ProgressArc"
+          },
+          "cycles": {
+            "items": {
+              "$ref": "#/components/schemas/StageCycleRates"
+            },
+            "title": "Cycles",
+            "type": "array"
+          },
+          "energy": {
+            "$ref": "#/components/schemas/ProgressEnergy"
+          },
+          "rhythm": {
+            "$ref": "#/components/schemas/ProgressRhythm"
+          }
+        },
+        "required": [
+          "arc",
+          "rhythm",
+          "cycles",
+          "energy"
+        ],
+        "title": "ProgressOverviewResponse",
+        "type": "object"
+      },
+      "ProgressRhythm": {
+        "description": "The unnamed engagement wave and factual calendar observations.",
+        "properties": {
+          "days": {
+            "items": {
+              "$ref": "#/components/schemas/RhythmDay"
+            },
+            "title": "Days",
+            "type": "array"
+          },
+          "fullest_fortnight_ending": {
+            "anyOf": [
+              {
+                "format": "date",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Fullest Fortnight Ending"
+          },
+          "longest_rest": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/RestWindow"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "rising_since": {
+            "anyOf": [
+              {
+                "format": "date",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Rising Since"
+          }
+        },
+        "required": [
+          "days",
+          "fullest_fortnight_ending",
+          "longest_rest",
+          "rising_since"
+        ],
+        "title": "ProgressRhythm",
+        "type": "object"
+      },
       "PromoteQuoteCreate": {
         "description": "Payload for promoting a span of a source entry into a pending quote.\n\nOnly offsets are accepted; the server slices ``anchor_text`` from the\npersisted body. ``anchor_end`` must lie strictly past ``anchor_start`` so an\nempty or inverted span is rejected before it reaches the database.",
         "properties": {
@@ -7915,6 +8250,27 @@
         "title": "ResourceCompletionResponse",
         "type": "object"
       },
+      "RestWindow": {
+        "description": "The inclusive bounds of a quiet stretch after the first four weeks.",
+        "properties": {
+          "end": {
+            "format": "date",
+            "title": "End",
+            "type": "string"
+          },
+          "start": {
+            "format": "date",
+            "title": "Start",
+            "type": "string"
+          }
+        },
+        "required": [
+          "start",
+          "end"
+        ],
+        "title": "RestWindow",
+        "type": "object"
+      },
       "ReturnArcResponse": {
         "description": "The caller's active Return arc, without any owner key.\n\n``week`` is the arc's current (or, when paused, frozen) week; ``paused``\nreflects whether the arc is resting. No ``user_id`` or row ``id`` is exposed.\n``complete`` is True once the fifth week has fully closed — a reflective\nclose, never a reward or rank.",
         "properties": {
@@ -7977,6 +8333,50 @@
           "framing"
         ],
         "title": "ReturnWeekResponse",
+        "type": "object"
+      },
+      "RhythmDay": {
+        "description": "A trailing mean of daily fractions, with the raw daily opportunity pair.",
+        "properties": {
+          "daily_met": {
+            "description": "Scheduled habits meeting Low, Clear, or Stretch plus at most one counted practice day.",
+            "minimum": 0.0,
+            "title": "Daily Met",
+            "type": "integer"
+          },
+          "daily_scheduled": {
+            "description": "Scheduled habit opportunities plus one when the practice ring is enabled.",
+            "minimum": 0.0,
+            "title": "Daily Scheduled",
+            "type": "integer"
+          },
+          "date": {
+            "format": "date",
+            "title": "Date",
+            "type": "string"
+          },
+          "rate": {
+            "maximum": 1.0,
+            "minimum": 0.0,
+            "title": "Rate",
+            "type": "number"
+          },
+          "window_days": {
+            "description": "Calendar days in this trailing mean; not a ratio of pooled counts.",
+            "maximum": 14.0,
+            "minimum": 1.0,
+            "title": "Window Days",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "date",
+          "rate",
+          "daily_met",
+          "daily_scheduled",
+          "window_days"
+        ],
+        "title": "RhythmDay",
         "type": "object"
       },
       "SenseGroundingConfig": {
@@ -8582,6 +8982,30 @@
           "provenance"
         ],
         "title": "StageCorrespondenceResponse",
+        "type": "object"
+      },
+      "StageCycleRates": {
+        "description": "Recorded passes through one canonical stage, in cycle order.",
+        "properties": {
+          "rates": {
+            "items": {
+              "$ref": "#/components/schemas/CycleRate"
+            },
+            "title": "Rates",
+            "type": "array"
+          },
+          "stage_number": {
+            "maximum": 10.0,
+            "minimum": 1.0,
+            "title": "Stage Number",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "stage_number",
+          "rates"
+        ],
+        "title": "StageCycleRates",
         "type": "object"
       },
       "StageHistoryResponse": {
@@ -27160,6 +27584,106 @@
         "summary": "List Share Links",
         "tags": [
           "practice-share"
+        ]
+      }
+    },
+    "/progress/overview": {
+      "get": {
+        "description": "Return the user's optional trajectory using only persisted known anchors.",
+        "operationId": "get_progress_overview_progress_overview_get",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProgressOverviewResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "The request body could not be parsed, or a value it carried was refused."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "No usable credential was presented."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "The caller is authenticated but does not own the resource."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "No such resource -- or none this caller is allowed to see."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ValidationErrorResponse"
+                }
+              }
+            },
+            "description": "The request failed validation -- an array of rejected fields -- or a check applied after the schema refused it, as one snake_case code."
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "The caller went past a rate limit."
+          }
+        },
+        "summary": "Get Progress Overview",
+        "tags": [
+          "progress"
         ]
       }
     },
