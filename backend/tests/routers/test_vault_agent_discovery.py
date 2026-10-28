@@ -67,8 +67,8 @@ async def boundary(monkeypatch: pytest.MonkeyPatch) -> AsyncGenerator[DiscoveryB
     remote = DiscoveryBoundary()
     async with httpx.AsyncClient(transport=httpx.MockTransport(remote.answer)) as http:
 
-        def _build(url: str, key: str) -> CreekVaultPipelineClient:
-            return HttpCreekVaultClient(url, key, http_client=http)
+        def _build(url: str, key: str, *, managed: bool) -> CreekVaultPipelineClient:
+            return HttpCreekVaultClient(url, key, http_client=http, managed=managed)
 
         monkeypatch.setattr(
             "services.creek_vault_stored_client.build_connected_vault_client", _build

@@ -661,7 +661,8 @@ async def test_a_connection_changed_mid_reflection_is_never_dialed_or_substitute
     vaults = {_VAULT_URL_BEFORE: before, _VAULT_URL_AFTER: after}
     dialed: list[str] = []
 
-    def _build(url: str, _api_key: str) -> ReflectingVaultClient:
+    def _build(url: str, _api_key: str, *, managed: bool) -> ReflectingVaultClient:
+        assert managed is False, "a self-hosted connection must keep its upload allowance"
         dialed.append(url)
         return vaults[url]
 

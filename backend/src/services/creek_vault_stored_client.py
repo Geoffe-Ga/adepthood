@@ -43,9 +43,14 @@ async def stored_host_is_undialable(session: AsyncSession, vault_url: str) -> bo
 
 
 async def build_stored_vault_client(
-    session: AsyncSession, vault_url: str, api_key: str
+    session: AsyncSession, vault_url: str, api_key: str, *, managed: bool
 ) -> CreekVaultPipelineClient:
-    """Apply shared dial-time admission to a binding the caller already owns."""
+    """Apply shared dial-time admission to a binding the caller already owns.
+
+    ``managed`` is the owning row's ``provisioned`` flag, read by the caller --
+    never a request-controlled value. It bounds managed upload envelopes to the
+    replay body limit (#3051); a self-hosted vault keeps its allowance.
+    """
     if await stored_host_is_undialable(session, vault_url):
         return LocalFallbackCreekVaultClient(VaultTelemetryOutcome.FALLBACK_UNCONFIGURED)
-    return build_connected_vault_client(vault_url, api_key)
+    return build_connected_vault_client(vault_url, api_key, managed=managed)

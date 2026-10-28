@@ -3062,9 +3062,12 @@ async def test_idor_agent_activity_reads_only_the_callers_own_vault_and_agents(
             return httpx.Response(HTTPStatus.OK, json=capabilities)
         return httpx.Response(HTTPStatus.OK, json=answer)
 
-    def _build(url: str, api_key: str) -> HttpCreekVaultClient:
+    def _build(url: str, api_key: str, *, managed: bool) -> HttpCreekVaultClient:
         return HttpCreekVaultClient(
-            url, api_key, http_client=httpx.AsyncClient(transport=httpx.MockTransport(_vault))
+            url,
+            api_key,
+            http_client=httpx.AsyncClient(transport=httpx.MockTransport(_vault)),
+            managed=managed,
         )
 
     async def _dialable(_session: AsyncSession, _vault_url: str) -> bool:

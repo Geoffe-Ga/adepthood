@@ -68,6 +68,7 @@ export type CorpusSeedStatus =
 export type LocalSeedStatus =
   | 'unsupported_format'
   | 'too_large'
+  | 'managed_too_large'
   | 'unreadable'
   | 'offline'
   | 'failed'

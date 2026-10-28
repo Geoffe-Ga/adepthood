@@ -5,6 +5,7 @@ import * as DocumentPicker from 'expo-document-picker';
 import React from 'react';
 import { Platform } from 'react-native';
 
+import { SEED_STATUS_LINES } from '../seedCopy';
 import SeedCorpusScreen from '../SeedCorpusScreen';
 import {
   SEED_CHOOSE_FOLDER_LABEL,
@@ -318,5 +319,32 @@ describe('choosing a folder on the seeding screen', () => {
 
     expect(screen.getByTestId('seed-folder-notice')).toBeTruthy();
     expect(screen.queryByTestId('seed-folder-review')).toBeNull();
+  });
+});
+
+describe('a folder note too large for a managed vault (#3051)', () => {
+  function managedTooLarge() {
+    return Promise.resolve({
+      ok: false,
+      status: 413,
+      headers: new Headers(),
+      json: () => Promise.resolve({ detail: 'managed_document_too_large' }),
+    });
+  }
+
+  test('settles its row as a final refusal, sent once and never offered again', async () => {
+    mockImportFetch.mockImplementationOnce(() => managedTooLarge());
+    const screen = render(<SeedCorpusScreen />);
+    await openReview(screen);
+
+    await act(async () => {
+      fireEvent.press(screen.getByText(SEED_FOLDER_START_LABEL));
+    });
+
+    await waitFor(() => expect(mockImportFetch).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(screen.getByText(SEED_STATUS_LINES.managed_too_large)).toBeTruthy());
+    expect(screen.getByText(SEED_STATUS_LINES.ingested)).toBeTruthy();
+    expect(screen.queryByTestId('seed-retry-button')).toBeNull();
+    expect(mockImportFetch).toHaveBeenCalledTimes(2);
   });
 });
