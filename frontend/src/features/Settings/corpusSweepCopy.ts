@@ -13,6 +13,11 @@
  * (#3514), not by anything a person is asked to acknowledge here.
  */
 
+import {
+  CORPUS_INVITATION_NEVER_LABEL,
+  CORPUS_INVITATION_NOT_NOW_LABEL,
+} from './corpusConsentCopy';
+
 import type { CorpusSweepResult } from '@/api';
 
 /**
@@ -62,6 +67,31 @@ export const CORPUS_SWEEP_READ_FAILURE =
   'How much is unsorted did not load. Check your connection and try again.';
 
 export const CORPUS_SWEEP_RETRY_LABEL = 'Try again';
+
+/**
+ * The journal page's offer (#3500): a note beside the page that points at this
+ * screen. It reuses ``CORPUS_CONSENT_GAIN`` for what sorting does and
+ * ``corpusSweepPendingLine`` for how much is waiting, so the only lines it adds
+ * are its eyebrow, that nothing is sorted from the note itself, and its
+ * controls. The two declines carry the consent invitation's own labels.
+ */
+export const CORPUS_SWEEP_OFFER_LABEL = 'Your earlier writing';
+
+/** The note navigates; the pass, and its confirm, live on the next screen. */
+export const CORPUS_SWEEP_OFFER_NEXT_STEP =
+  'Nothing is sorted from here. The next screen says how a pass works and waits for you to ask.';
+
+export const CORPUS_SWEEP_OFFER_OPEN_LABEL = CORPUS_SWEEP_ROW_LABEL;
+export const CORPUS_SWEEP_OFFER_OPEN_A11Y = 'Open the screen for sorting the rest of your writing';
+
+/** A plain decline: not asked again this session. */
+export const CORPUS_SWEEP_OFFER_NOT_NOW_LABEL = CORPUS_INVITATION_NOT_NOW_LABEL;
+export const CORPUS_SWEEP_OFFER_NOT_NOW_A11Y =
+  'Set the offer to sort your earlier writing aside for now';
+
+/** A final decline: not offered on the journal page again. Settings still has the row. */
+export const CORPUS_SWEEP_OFFER_NEVER_LABEL = CORPUS_INVITATION_NEVER_LABEL;
+export const CORPUS_SWEEP_OFFER_NEVER_A11Y = 'Do not offer to sort your earlier writing again';
 
 /** ``1 entry`` / ``412 entries``. */
 function entries(count: number): string {
@@ -115,4 +145,11 @@ export const CORPUS_SWEEP_COPY_ENTRIES: readonly string[] = [
   CORPUS_SWEEP_FAILURE,
   CORPUS_SWEEP_READ_FAILURE,
   CORPUS_SWEEP_RETRY_LABEL,
+  CORPUS_SWEEP_OFFER_LABEL,
+  CORPUS_SWEEP_OFFER_NEXT_STEP,
+  CORPUS_SWEEP_OFFER_OPEN_A11Y,
+  CORPUS_SWEEP_OFFER_NOT_NOW_LABEL,
+  CORPUS_SWEEP_OFFER_NOT_NOW_A11Y,
+  CORPUS_SWEEP_OFFER_NEVER_LABEL,
+  CORPUS_SWEEP_OFFER_NEVER_A11Y,
 ];

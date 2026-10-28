@@ -1046,6 +1046,18 @@
     "issue": 2408
   },
   {
+    "id": "journal.offered-to-sort-the-rest-after-a-reflection",
+    "description": "A writer who has already said yes to sorting their journal, and who wrote before that yes, asks for resonance on a page and, once the pass has completed, finds beside the page -- never in it -- a quiet note saying what sorting gives, how many of their entries are still unsorted, and that nothing is sorted from the note itself (#3500). Its one affirmative, Sort the rest of your writing, only opens the sort-the-rest screen (corpus.sort-the-rest-of-your-writing), where a bounded pass waits for its own confirm: the note never calls POST /corpus/sweep. Not now sets it aside for the session; Do not ask again is kept for the account on this device; a read still in flight cannot bring a declined note back. It is absent at zero unsorted, without a standing yes for the journal, on any read error, and while the consent invitation is on the page -- one offer at a time, and the decision about sorting outranks an offer to sort. No server rule decides this moment: the note asks GET /corpus/consent and GET /corpus/sweep only when the screen's count of completed passes moves, so opening an entry asks nothing. Sorting is free (#3495), so the note carries no price or credit language. Uncovered as a rendered moment: the wire half is covered by corpus.sort-the-rest-of-your-writing and corpus.decide-what-may-be-sorted, and the rendered half is pinned by CorpusSweepOfferNote.test.tsx and JournalEntryScreenCorpusSweepOffer.test.tsx; #3598 tracks a browser spec for the moment itself.",
+    "crosses": {
+      "screen": "frontend/src/features/Journal/JournalEntryScreen.tsx",
+      "client": ["resonance", "corpusConsent", "corpus"],
+      "routes": ["POST /journal/{entry_id}/resonance", "GET /corpus/consent", "GET /corpus/sweep"],
+      "tables": ["corpusconsentevent", "journalentry", "corpusfragment"]
+    },
+    "status": "uncovered",
+    "issue": 3598
+  },
+  {
     "id": "corpus.decline-the-offer-and-be-left-alone",
     "description": "A writer who has never decided about their corpus completes a first resonance pass and is offered the decision; they set it aside with Not now and are not asked again on the very next pass; later they say Do not ask again, and a softer Not now afterwards does not undo it. A cold login on a fresh session reads the same standing, because the decision is the server's to remember rather than the device's; a request with no session is refused; and a neighbour's account is still un-asked until its own first pass opens its own offer. The pass that opens the offer is real -- the lane's provider is the stub, so it resolves as a refunded no-notes 200, which is still a completed pass by design -- so the seam this spec pins is the whole of it: the settlement counting the pass, the read the note makes, the verb and shape of both declines, and that the count itself never crosses the wire. Both halves are green on their own -- the note's tests mock the client, the router's tests never see it -- and this is the one place they agree.",
     "crosses": {
@@ -1357,15 +1369,15 @@
   },
   {
     "id": "map.progress-door",
-    "description": "The private progress overview API is available for the Map's optional Your progress door. The raw progress client reaches that authenticated endpoint with a pinned credential; the current Map surface does not yet call it. Uncovered until #3528 connects the door, validates the response, and drives the ribbon, rhythm, cycles and deliberate energy ledger through a real browser at phone and desktop widths.",
+    "description": "The Map's drawer offers a 'Your progress' door (#3528), hidden when both the habits and practice rings are off, that opens the Progress screen drawn entirely from GET /progress/overview (#3522): the 36-week ribbon of ten labelled stage blocks with habit births as dots, carryovers listed as brought with you and a you-are-here rule; the unnamed 14-day rhythm wave with its end value, stage swatches and a factual caption (served observations, or the fullest fortnight, longest rest and rising-since facts worded locally); per-stage dumbbells from cycle 2 on; and the weekly net-energy columns with their formula printed beside the title. Covered by frontend/e2e/map-progress-door.browser.e2e.test.ts, which anchors an account twenty-two weeks back (tests.e2e.program_anchor, the one out-of-band arrange), logs a month of real check-ins through POST /goal_completions/, opens the door from the Map drawer, and asserts the week-23 you-are-here line, the ribbon, and the energy formula and columns at phone and desktop widths. The ring-toggle gate, the 28-day rhythm gate, the cycles-from-cycle-2 rule and the held-while-reloading render are pinned by Jest beside the screen.",
     "crosses": {
       "screen": "frontend/src/features/Map/MapScreen.tsx",
-      "client": ["progress"],
-      "routes": ["GET /progress/overview"],
+      "client": ["progress", "habits", "goalCompletions"],
+      "routes": ["POST /habits/", "POST /goal_completions/", "GET /progress/overview"],
       "tables": ["stageprogress", "habit", "goal", "goalcompletion", "practicesession"]
     },
-    "status": "uncovered",
-    "issue": 3528
+    "status": "covered",
+    "coveredBy": "frontend/e2e/map-progress-door.browser.e2e.test.ts"
   },
   {
     "id": "map.advance-stage",
