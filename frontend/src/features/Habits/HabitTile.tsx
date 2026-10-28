@@ -1,9 +1,12 @@
+import { Info } from 'lucide-react-native';
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Animated, Easing, Text, TouchableOpacity, View, type DimensionValue } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
+import { decorativeHidden } from '../../components/a11yHidden';
 import {
   colors,
+  ink,
   SPACING,
   STAGE_COLORS,
   spacing,
@@ -23,7 +26,7 @@ import type { HabitTileProps, Goal, Habit } from './Habits.types';
 import {
   getProgressPercentage,
   clampPercentage,
-  formatStreakCount,
+  formatStreakAdjective,
   getGoalTarget,
   getGoalTier,
   getMarkerPositions,
@@ -46,11 +49,15 @@ import {
 /** A tile that is not wired to log units keeps the star as a tooltip-only touch target. */
 const NOOP_LOG_UNIT: NonNullable<HabitTileProps['onLogUnit']> = () => {};
 
-const ACHIEVED_COPY: Record<HabitPeriodKind, string> = {
-  day: 'Achieved Today',
-  week: 'Achieved This Week',
-  month: 'Achieved This Month',
+/** The Glance chip's second clause once a goal tier is met this period (#3526). */
+const KEPT_COPY: Record<HabitPeriodKind, string> = {
+  day: 'Kept today',
+  week: 'Kept this week',
+  month: 'Kept this month',
 };
+
+/** Lucide glyph size for the tile's Story door. */
+const STORY_GLYPH_SIZE = 20;
 
 /** Marker star size: tracks the bar's nominal thickness (spacing(2)) so it reads as a sitting marker. */
 const markerStarSize = (scale: number): number => spacing(2, scale);
@@ -78,6 +85,7 @@ interface HabitHeaderProps {
   iconInline: boolean;
   streakStacked: boolean;
   onIconPress?: () => void;
+  onStoryPress?: () => void;
 }
 
 const getStreakStyle = (
@@ -177,9 +185,13 @@ const NameAndStreak = ({ name, streakText, streakStyle, gridType, stacked }: Nam
     </>
   );
 
-const HeaderRow = (props: Omit<NameAndStreakProps, 'stacked'>) => (
+const HeaderRow = ({
+  children,
+  ...props
+}: Omit<NameAndStreakProps, 'stacked'> & { children?: React.ReactNode }) => (
   <View testID="habit-header" style={{ flexDirection: 'row', alignItems: 'center' }}>
     <NameAndStreak {...props} stacked={false} />
+    {children}
   </View>
 );
 
@@ -200,6 +212,60 @@ const HabitIconButton = ({
   </TouchableOpacity>
 );
 
+const STORY_GLYPH_STYLE = {
+  minWidth: touchTarget.minimum,
+  minHeight: touchTarget.minimum,
+  alignItems: 'center' as const,
+  justifyContent: 'center' as const,
+};
+
+/** The tile's one-tap door to its Story sheet (#3526); absent when nothing opens it. */
+const StoryGlyph = ({ name, onPress }: { name: string; onPress?: () => void }) =>
+  onPress ? (
+    <TouchableOpacity
+      testID="habit-story-glyph"
+      accessibilityRole="button"
+      accessibilityLabel="Story"
+      accessibilityHint={`Opens the story of ${name}`}
+      onPress={onPress}
+      style={STORY_GLYPH_STYLE}
+    >
+      <Info size={STORY_GLYPH_SIZE} color={ink.soft} {...decorativeHidden()} />
+    </TouchableOpacity>
+  ) : null;
+
+/** Icon, name and run on one row: the phone and narrow-tile header. */
+const InlineHeader = ({
+  habit,
+  scale,
+  gridType,
+  streakText,
+  streakStyle,
+  streakStacked,
+  onIconPress,
+  onStoryPress,
+}: Pick<
+  HabitHeaderProps,
+  'habit' | 'scale' | 'gridType' | 'streakText' | 'streakStacked' | 'onIconPress' | 'onStoryPress'
+> & { streakStyle: object }) => (
+  <View testID="habit-header" style={{ flexDirection: 'row', alignItems: 'center' }}>
+    <HabitIconButton
+      icon={habit.icon}
+      fontSize={gridType.iconInline}
+      onPress={onIconPress}
+      style={{ marginRight: spacing(1, scale) }}
+    />
+    <NameAndStreak
+      name={habit.name}
+      streakText={streakText}
+      streakStyle={streakStyle}
+      gridType={gridType}
+      stacked={streakStacked}
+    />
+    <StoryGlyph name={habit.name} onPress={onStoryPress} />
+  </View>
+);
+
 const HabitHeader = ({
   habit,
   stageColor,
@@ -211,26 +277,22 @@ const HabitHeader = ({
   iconInline,
   streakStacked,
   onIconPress,
+  onStoryPress,
 }: HabitHeaderProps) => {
   const streakStyle = getStreakStyle(hasCompletedGoal, stageColor, achievedTextColor, scale);
 
   if (iconInline) {
     return (
-      <View testID="habit-header" style={{ flexDirection: 'row', alignItems: 'center' }}>
-        <HabitIconButton
-          icon={habit.icon}
-          fontSize={gridType.iconInline}
-          onPress={onIconPress}
-          style={{ marginRight: spacing(1, scale) }}
-        />
-        <NameAndStreak
-          name={habit.name}
-          streakText={streakText}
-          streakStyle={streakStyle}
-          gridType={gridType}
-          stacked={streakStacked}
-        />
-      </View>
+      <InlineHeader
+        habit={habit}
+        scale={scale}
+        gridType={gridType}
+        streakText={streakText}
+        streakStyle={streakStyle}
+        streakStacked={streakStacked}
+        onIconPress={onIconPress}
+        onStoryPress={onStoryPress}
+      />
     );
   }
 
@@ -247,7 +309,9 @@ const HabitHeader = ({
         streakText={streakText}
         streakStyle={streakStyle}
         gridType={gridType}
-      />
+      >
+        <StoryGlyph name={habit.name} onPress={onStoryPress} />
+      </HeaderRow>
     </>
   );
 };
@@ -273,15 +337,19 @@ export const TILE_BORDER_WIDTH = 3;
 const habitGridChrome = (scale: number, gridGutter: number): number =>
   2 * spacing(1, scale) + spacing(3, scale) + 2 * spacing(1, scale) + SPACING.sm + gridGutter;
 
+/** The width a row carries without the Story glyph (#2961): badge, name, icon, padding. */
+const SINGLE_ROW_TEXT_WIDTH = 380;
+
 /**
  * Below this tile width the streak sits under the name rather than beside it
- * (#2961). On the type ramp the achieved-today badge needs ~190px and a long
+ * (#2961). On the type ramp the run badge needs up to ~190px and a long
  * single-word name ~120px, plus the inline icon and the tile's own border and
- * padding: a row only carries them all from about 380px. A 390px phone keeps
- * the single row; 320-375px phones stack. Measured by the
- * `e2e/habits-viewport.browser.e2e.test.ts` passes at 320x568 and 360x640.
+ * padding: that much fits from about 380px. The Story glyph (#3526) adds one
+ * touch target to the row, so phones up to 390px stack and wider tiles keep
+ * the single row. Measured by the `e2e/habits-viewport.browser.e2e.test.ts`
+ * passes at 320x568, 360x640 and 390x844.
  */
-export const STACKED_STREAK_MAX_TILE_WIDTH = 380;
+export const STACKED_STREAK_MAX_TILE_WIDTH = SINGLE_ROW_TEXT_WIDTH + touchTarget.minimum;
 
 export const useTileLayout = () => {
   const { width, contentWidth, height, columns, scale, gridGutter } = useResponsive();
@@ -715,6 +783,7 @@ interface UnlockedTileProps {
   onOpenGoals?: () => void;
   onLongPress?: () => void;
   onIconPress?: () => void;
+  onStoryPress?: () => void;
   onLogUnit?: HabitTileProps['onLogUnit'];
   tz: string;
 }
@@ -788,13 +857,14 @@ const TileProgressSection = ({
   );
 };
 
-const formatStreakText = (
+/** The Glance chip (D04): the current run in the habit's cadence, never a "streak". */
+export const formatStreakText = (
   habit: Habit,
   hasCompletedGoal: boolean,
   achievementPeriod: HabitPeriodKind,
 ): string =>
-  `${formatStreakCount(habit.streak, streakPeriodKind(habit))}${
-    hasCompletedGoal ? ` — ${ACHIEVED_COPY[achievementPeriod]}!` : ''
+  `${formatStreakAdjective(habit.streak, streakPeriodKind(habit))} run${
+    hasCompletedGoal ? ` · ${KEPT_COPY[achievementPeriod]}` : ''
   }`.toUpperCase();
 
 const UnlockedTile = ({
@@ -804,6 +874,7 @@ const UnlockedTile = ({
   onOpenGoals,
   onLongPress,
   onIconPress,
+  onStoryPress,
   onLogUnit,
   tz,
 }: UnlockedTileProps) => {
@@ -831,6 +902,7 @@ const UnlockedTile = ({
         iconInline={iconInline}
         streakStacked={streakStacked}
         onIconPress={onIconPress}
+        onStoryPress={onStoryPress}
       />
       <TileProgressSection
         habit={habit}
@@ -847,12 +919,17 @@ const UnlockedTile = ({
   );
 };
 
+/** A parent handler bound to this tile's own argument, or absent when the parent gave none. */
+const bindTo = <T,>(handler: ((_arg: T) => void) | undefined, arg: T) =>
+  handler ? () => handler(arg) : undefined;
+
 const HabitTileComponent = ({
   habit,
   locked,
   onOpenGoals,
   onLongPress,
   onIconPress,
+  onOpenStory,
   onUnlockHabit,
   onLogUnit,
   tz = DEFAULT_TIMEZONE,
@@ -889,9 +966,10 @@ const HabitTileComponent = ({
       habit={habit}
       stageColor={color}
       achievedTextColor={achievedTextColor}
-      onOpenGoals={onOpenGoals ? () => onOpenGoals(habit) : undefined}
-      onLongPress={onLongPress ? () => onLongPress(habit) : undefined}
-      onIconPress={onIconPress ? () => onIconPress(globalIndex) : undefined}
+      onOpenGoals={bindTo(onOpenGoals, habit)}
+      onLongPress={bindTo(onLongPress, habit)}
+      onIconPress={bindTo(onIconPress, globalIndex)}
+      onStoryPress={bindTo(onOpenStory, habit)}
       onLogUnit={onLogUnit}
       tz={tz}
     />

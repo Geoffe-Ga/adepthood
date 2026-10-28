@@ -15,6 +15,8 @@ import {
   corpusConsentListSchema,
   corpusConsentSchema,
   corpusInvitationSchema,
+  corpusSweepEstimateSchema,
+  corpusSweepSchema,
   acceptSuggestionResultSchema,
   completionSuggestionListResponseSchema,
   completionDetectionResponseSchema,
@@ -82,6 +84,8 @@ import {
   type CorpusConsentListT,
   type CorpusConsentT,
   type CorpusInvitationT,
+  type CorpusSweepEstimateT,
+  type CorpusSweepT,
   type VoiceDraftT,
   type MarginaliaSourceT,
   type PassProvenanceT,
@@ -1688,9 +1692,18 @@ export interface GoalCompletionPayload {
   completed_on?: string;
 }
 
+/** A run threshold a check-in crossed (``schemas/milestone.py``). */
+export interface CheckInMilestone {
+  threshold: number;
+  kind?: 'streak_started' | 'streak_milestone' | 'personal_best' | 'comeback';
+  /** Server-written copy; shown verbatim when present. */
+  label?: string | null;
+  achieved_at?: string | null;
+}
+
 export interface CheckInResult {
   streak: number;
-  milestones: Array<{ threshold: number }>;
+  milestones: CheckInMilestone[];
   reason_code: string;
   /** Authoritative sum across every tier row for the affected habit/day. */
   day_units: number;
@@ -2218,6 +2231,18 @@ function toDocumentUploadError(err: unknown): DocumentUploadError {
   return new DocumentUploadError('unknown', status, err);
 }
 
+/**
+ * Where a folder-imported document sat (#3554): the import's name and the
+ * path from that folder's root to the file. Identity metadata only; the
+ * server hashes it into the document's upload identity and keeps neither.
+ */
+export interface ImportDocumentSource {
+  /** The import's stable name; by default, the chosen folder's own name. */
+  namespace: string;
+  /** `/`-separated path under that folder, ending in `filename`. */
+  relativePath: string;
+}
+
 /** One document handed over: its own name, its bytes, and its tier. */
 export interface ImportDocumentInput {
   /** The document's own name; its extension selects how it is read. */
@@ -2226,6 +2251,17 @@ export interface ImportDocumentInput {
   contentBase64: string;
   /** The privacy tier the uploader chose, honored end to end. */
   classification: JournalClassification;
+  /** Set for a document from a folder import, so same-named notes stay distinct. */
+  source?: ImportDocumentSource;
+}
+
+/** The request's optional folder pair, sent together or not at all. */
+function importSourceFields(
+  source: ImportDocumentSource | undefined,
+): { source_namespace: string; source_relative_path: string } | Record<string, never> {
+  return source === undefined
+    ? {}
+    : { source_namespace: source.namespace, source_relative_path: source.relativePath };
 }
 
 /**
@@ -2239,6 +2275,15 @@ export interface ImportDocumentInput {
  * the app computing a second answer to a question the server has already
  * answered, and answering it differently the day the two disagree.
  */
+/** How much of an account's writing is still unsorted (``GET /corpus/sweep``). */
+export type CorpusSweepEstimate = CorpusSweepEstimateT;
+/** What one bounded sweep pass did, and what it left (``POST /corpus/sweep``). */
+export type CorpusSweepResult = CorpusSweepT;
+
+const corpusSweepEstimateResponseSchema =
+  corpusSweepEstimateSchema as unknown as z.ZodType<CorpusSweepEstimate>;
+const corpusSweepResponseSchema = corpusSweepSchema as unknown as z.ZodType<CorpusSweepResult>;
+
 export const corpus = {
   /**
    * Hand one document to this account's corpus and report where it landed.
@@ -2254,7 +2299,7 @@ export const corpus = {
    * error message or a log line.
    */
   async importDocument(
-    { filename, contentBase64, classification }: ImportDocumentInput,
+    { filename, contentBase64, classification, source }: ImportDocumentInput,
     token?: string,
   ): Promise<DocumentImportT> {
     const scope = captureAuthScope();
@@ -2269,7 +2314,12 @@ export const corpus = {
       const headers = vendors === null ? undefined : onboardingKeyHeaders(vendors);
       return await request<DocumentImportT>('/corpus/import', {
         method: 'POST',
-        body: { filename, content_base64: contentBase64, classification },
+        body: {
+          filename,
+          content_base64: contentBase64,
+          classification,
+          ...importSourceFields(source),
+        },
         headers,
         token,
         timeoutMs: UPLOAD_DOCUMENT_TIMEOUT_MS,
@@ -2298,6 +2348,42 @@ export const corpus = {
     return request<VoiceReadinessT>('/corpus/voice-readiness', {
       token,
       schema: voiceReadinessSchema as unknown as z.ZodType<VoiceReadinessT>,
+    });
+  },
+
+  /**
+   * How much of this account's own writing is still unsorted.
+   *
+   * Asked whether or not the account has agreed to sorting -- the server
+   * answers the count either way, so a surface can decide what to offer. No
+   * trailing slash: the router mounts ``/corpus/sweep`` directly.
+   */
+  sweepEstimate(token?: string): Promise<CorpusSweepEstimate> {
+    return request<CorpusSweepEstimate>('/corpus/sweep', {
+      token,
+      schema: corpusSweepEstimateResponseSchema,
+    });
+  },
+
+  /**
+   * Sort the next bounded share of this account's backlog, and say what is left.
+   *
+   * No body: the shipped route takes none, and it is free, so there is no price
+   * to acknowledge. Deliberately not retried, like ``corpusConsent.set`` -- a
+   * pass spends a provider call per entry it reaches, and a lost response is one
+   * a person should be told about rather than one the client sends again. A
+   * ``429`` (the per-account limit) reaches the caller as an ``ApiError``.
+   *
+   * A pass can sort nothing and leave a remainder (no standing consent, or
+   * entries the classifier places nowhere), so callers offer another pass on a
+   * person's request and never loop waiting for zero.
+   */
+  sweep(token?: string): Promise<CorpusSweepResult> {
+    return request<CorpusSweepResult>('/corpus/sweep', {
+      method: 'POST',
+      token,
+      schema: corpusSweepResponseSchema,
+      retry: false,
     });
   },
 };

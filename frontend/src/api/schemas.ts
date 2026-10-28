@@ -1526,6 +1526,33 @@ export const voiceReadinessSchema = z.object({
 
 export type VoiceReadinessT = z.infer<typeof voiceReadinessSchema>;
 
+/**
+ * How much of this account's own writing is still unsorted (``GET /corpus/sweep``).
+ *
+ * A count and nothing else: no entry, and no price, because sorting has none.
+ */
+export const corpusSweepEstimateSchema = z.object({
+  entries_pending: z.number().int().nonnegative(),
+});
+
+export type CorpusSweepEstimateT = z.infer<typeof corpusSweepEstimateSchema>;
+
+/**
+ * What one bounded ``POST /corpus/sweep`` pass did, on top of what still waits.
+ *
+ * A strict superset of the estimate, so a screen renders the backlog the same
+ * way whichever verb it last called. ``entries_remaining`` equals
+ * ``entries_pending`` by construction and can stay above zero after a pass that
+ * sorted nothing -- a remainder is a reason to offer another pass, not proof
+ * the last one worked.
+ */
+export const corpusSweepSchema = corpusSweepEstimateSchema.extend({
+  entries_sorted: z.number().int().nonnegative(),
+  entries_remaining: z.number().int().nonnegative(),
+});
+
+export type CorpusSweepT = z.infer<typeof corpusSweepSchema>;
+
 // ---------------------------------------------------------------------------
 // Private vault (whether an account has connected a space of its own)
 // ---------------------------------------------------------------------------

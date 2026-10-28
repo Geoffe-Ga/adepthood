@@ -83,12 +83,12 @@ const mountTile = (habit: Habit, tz: string): Mounted => {
   return { tree, hostRenders: () => renders };
 };
 
-/** The tile's streak line, e.g. `"3 DAYS — ACHIEVED TODAY!"`. */
+/** The tile's streak line, e.g. `"3-DAY RUN · KEPT TODAY"`. */
 const streakLine = (tree: Renderer): string =>
   tree.root
     .findAll((node: Node) => typeof node.props.children === 'string')
     .map((node: Node) => node.props.children as string)
-    .find((text: string) => text.includes('DAYS')) ?? '';
+    .find((text: string) => text.includes('RUN')) ?? '';
 
 /** Whether each tier chip is lit, keyed by tier. */
 const litChips = (tree: Renderer): Record<string, boolean> =>
@@ -121,7 +121,7 @@ describe('HabitTile across the day boundary', () => {
     jest.setSystemTime(WEST_BEFORE_MIDNIGHT);
     const { tree } = mountTile(completedHabit('2026-02-11T07:30:00.000Z'), WEST_TZ);
 
-    expect(streakLine(tree)).toBe('3 DAYS — ACHIEVED TODAY!');
+    expect(streakLine(tree)).toBe('3-DAY RUN · KEPT TODAY');
     expect(litChips(tree)).toEqual({ low: true, clear: true, stretch: true });
   });
 
@@ -134,7 +134,7 @@ describe('HabitTile across the day boundary', () => {
       jest.advanceTimersByTime(TEN_MINUTES_MS);
     });
 
-    expect(streakLine(tree)).toBe('3 DAYS');
+    expect(streakLine(tree)).toBe('3-DAY RUN');
     expect(litChips(tree)).toEqual({ low: false, clear: false, stretch: false });
     // Nothing above the tile re-rendered, so nothing above it could have
     // remounted it: the tile updated itself in place.
@@ -149,20 +149,20 @@ describe('HabitTile across the day boundary', () => {
       jest.advanceTimersByTime(TEN_MINUTES_MS - 60_000);
     });
 
-    expect(streakLine(tree)).toBe('3 DAYS — ACHIEVED TODAY!');
+    expect(streakLine(tree)).toBe('3-DAY RUN · KEPT TODAY');
   });
 
   it('turns over at the user zone east of UTC, not at UTC midnight', () => {
     // UTC midnight arrives 9h10m from here; Tokyo's is ten minutes away.
     jest.setSystemTime(EAST_BEFORE_MIDNIGHT);
     const { tree, hostRenders } = mountTile(completedHabit('2026-02-11T14:30:00.000Z'), EAST_TZ);
-    expect(streakLine(tree)).toBe('3 DAYS — ACHIEVED TODAY!');
+    expect(streakLine(tree)).toBe('3-DAY RUN · KEPT TODAY');
 
     act(() => {
       jest.advanceTimersByTime(TEN_MINUTES_MS);
     });
 
-    expect(streakLine(tree)).toBe('3 DAYS');
+    expect(streakLine(tree)).toBe('3-DAY RUN');
     expect(hostRenders()).toBe(1);
   });
 
@@ -175,7 +175,7 @@ describe('HabitTile across the day boundary', () => {
       jest.advanceTimersByTime(TEN_MINUTES_MS);
     });
 
-    expect(streakLine(tree)).toBe('3 DAYS — ACHIEVED TODAY!');
+    expect(streakLine(tree)).toBe('3-DAY RUN · KEPT TODAY');
   });
 
   it('never rewrites the completion it stopped counting', () => {

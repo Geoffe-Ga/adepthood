@@ -35,7 +35,7 @@ const USER_TIMEZONE = 'America/Los_Angeles';
 const HABIT_NAME = 'Evening stretch';
 /** Late enough that UTC is on the next day; early enough that LA is not. */
 const LATE_EVENING_WALL = '23:30';
-const ACHIEVED_TODAY = 'ACHIEVED TODAY!';
+const ACHIEVED_TODAY = 'KEPT TODAY';
 /** `saveUserTimezone`'s AsyncStorage key, which react-native-web keeps in localStorage. */
 const CACHED_ZONE_KEY = '@adepthood/user_timezone';
 const REFRESH_PATH = '/auth/refresh';

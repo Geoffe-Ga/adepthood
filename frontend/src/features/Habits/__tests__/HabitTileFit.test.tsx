@@ -249,7 +249,7 @@ describe('HabitTile streak placement on narrow tiles', () => {
     [360, 640, 'true'],
     [STACKED_STREAK_MAX_TILE_WIDTH - 1, 844, 'true'],
     [STACKED_STREAK_MAX_TILE_WIDTH, 844, 'false'],
-    [390, 844, 'false'],
+    [390, 844, 'true'],
     [1280, 720, 'false'],
   ])('at %ix%i stacks the streak under the name: %s', (w, h, expected) => {
     mockWindowDimensions(w, h);
@@ -261,7 +261,7 @@ describe('HabitTile streak placement on narrow tiles', () => {
     const { getByTestId, getByText } = render(<HabitTile habit={achievedHabit} tz="UTC" />);
     const stack = getByTestId('habit-name-stack');
     const streak = getByTestId('habit-streak');
-    expect(streak).toHaveTextContent(/ACHIEVED TODAY/);
+    expect(streak).toHaveTextContent(/KEPT TODAY/);
     expect(stack).toContainElement(getByText(achievedHabit.name));
     expect(stack).toContainElement(streak);
     expect(StyleSheet.flatten(stack.props.style).flexDirection).toBeUndefined();
@@ -269,8 +269,8 @@ describe('HabitTile streak placement on narrow tiles', () => {
     expect(StyleSheet.flatten(streak.props.style).alignSelf).toBe('flex-start');
   });
 
-  it('keeps the name and badge on one row on a 390px tile', () => {
-    mockWindowDimensions(390, 844);
+  it('keeps the name, badge and Story glyph on one row once the tile is wide enough', () => {
+    mockWindowDimensions(STACKED_STREAK_MAX_TILE_WIDTH, 844);
     const { queryByTestId, getByTestId, getByText } = render(
       <HabitTile habit={achievedHabit} tz="UTC" />,
     );

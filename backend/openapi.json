@@ -1475,6 +1475,33 @@
         "title": "CorpusSweepEstimateResponse",
         "type": "object"
       },
+      "CorpusSweepResponse": {
+        "description": "What one ``POST /corpus/sweep`` pass did, on top of what is still waiting.\n\nA strict superset of :class:`CorpusSweepEstimateResponse`, so a client\nrenders the backlog the same way whichever verb it last called.\n\n``entries_sorted`` counts entries that gained a fragment in this pass.\n``entries_remaining`` is what the pass left behind, counted once the pass\nwas over -- which is the backlog the next ``GET`` would report, so the two\nagree by construction. It can stay above zero after a pass that sorted\nnothing: an account that has not granted consent sweeps nothing, and an\nentry the classifier places nowhere stays pending on purpose and comes\nround again only after everything never offered has been tried. A client\ndriving the remainder down therefore asks again on a person's request, not\nin a loop that waits for zero.",
+        "properties": {
+          "entries_pending": {
+            "minimum": 0.0,
+            "title": "Entries Pending",
+            "type": "integer"
+          },
+          "entries_remaining": {
+            "minimum": 0.0,
+            "title": "Entries Remaining",
+            "type": "integer"
+          },
+          "entries_sorted": {
+            "minimum": 0.0,
+            "title": "Entries Sorted",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "entries_pending",
+          "entries_sorted",
+          "entries_remaining"
+        ],
+        "title": "CorpusSweepResponse",
+        "type": "object"
+      },
       "CountUpConfig": {
         "additionalProperties": false,
         "description": "Open-ended timer that counts up; user decides when to stop.",
@@ -15841,6 +15868,124 @@
           }
         },
         "summary": "Get Corpus Sweep Estimate",
+        "tags": [
+          "corpus"
+        ]
+      },
+      "post": {
+        "description": "Sort the next bounded share of this account's backlog, and say what is left.\n\nUntil this route the remainder of a bounded sweep was reachable only by\nre-sending a consent decision already given. This is the same pass given a\ndoor of its own: it runs\n:func:`services.corpus_backfill.backfill_after_consent` -- the sweep itself,\nnot a copy of it -- under the decision already standing, so the consent\ngate, the intimate-tier refusal, the per-entry clock, the deadline and the\none-receipt-per-reach rule are the ones the grant path ratified.\n\nNo second consent gate here, deliberately. The standing change of an\naccount that never said yes, or said it and withdrew it, is not a grant,\nand the sweep's own ``_authorising_event_id`` already answers that with\n\"no sweep\". So such an account is told it sorted nothing and how much is\nstill waiting -- a 200 rather than a refusal, because the request was\nunderstood and the answer is a count, the contract ``GET /corpus/sweep``\nkeeps.\n\nResuming is not deciding: :func:`services.corpus_consent.standing_consent_change`\nreads the decision and appends nothing, and no account barrier is held for\nit. The sweep takes that hold per entry, re-reading consent inside each, so\na revocation or an erasure arriving mid-pass waits for the dial in flight\nand nothing more -- the reasoning :func:`put_corpus_consent` gives.\n\nFree, like every path that ontologizes an entry: nothing here is charged or\npriced. Rate-limited per account at :data:`schemas.corpus.CONSENT_RATE_LIMIT`\nbecause this is the resume that limit was sized for.\n\nThe remainder is counted after the commit rather than taken from the pass,\nso an account the sweep declined to reach is told what is actually waiting\ninstead of the zero a sweep that never started reports.",
+        "operationId": "run_corpus_sweep_corpus_sweep_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CorpusSweepResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "The request body could not be parsed, or a value it carried was refused."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "No usable credential was presented."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "The caller is authenticated but does not own the resource."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "No such resource -- or none this caller is allowed to see."
+          },
+          "413": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "The request body is past a declared ceiling."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ValidationErrorResponse"
+                }
+              }
+            },
+            "description": "The request failed validation -- an array of rejected fields -- or a check applied after the schema refused it, as one snake_case code."
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "The caller went past a rate limit."
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "A required dependency is temporarily unusable."
+          }
+        },
+        "summary": "Run Corpus Sweep",
         "tags": [
           "corpus"
         ]

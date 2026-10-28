@@ -60,7 +60,7 @@ const PRE_MIDNIGHT_WALL = '23:58';
 /** Two minutes to midnight plus one past it: the boundary timer is due inside the jump. */
 const PAST_MIDNIGHT_SPAN = '03:00';
 const MIDDAY_WALL = '12:00';
-const ACHIEVED_TODAY = 'ACHIEVED TODAY!';
+const ACHIEVED_TODAY = 'KEPT TODAY';
 const SHELF_BEFORE = '1/1 done';
 const SHELF_AFTER = '0/1 done';
 

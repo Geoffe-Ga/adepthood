@@ -17,6 +17,7 @@ import SharePreviewScreen from '../features/Practice/screens/SharePreviewScreen'
 import SeedCorpusScreen from '../features/Seed/SeedCorpusScreen';
 import ApiKeySettingsScreen from '../features/Settings/ApiKeySettingsScreen';
 import CorpusConsentScreen from '../features/Settings/CorpusConsentScreen';
+import CorpusSweepScreen from '../features/Settings/CorpusSweepScreen';
 import DeleteAccountScreen from '../features/Settings/DeleteAccountScreen';
 import ExportDataScreen from '../features/Settings/ExportDataScreen';
 import PrivateVaultActivationScreen from '../features/Settings/PrivateVaultActivationScreen';
@@ -52,6 +53,7 @@ export type RootStackParamList = {
   Settings: { focus?: SettingsFocus } | undefined;
   SeedCorpus: undefined;
   CorpusConsent: undefined;
+  CorpusSweep: undefined;
   ApiKeySettings: undefined;
   TimezoneSettings: undefined;
   DeleteAccount: undefined;
@@ -236,6 +238,11 @@ const SettingsScreens = (): React.JSX.Element => (
       name="CorpusConsent"
       component={CorpusConsentScreen}
       options={{ title: 'What reflections draw on' }}
+    />
+    <Stack.Screen
+      name="CorpusSweep"
+      component={CorpusSweepScreen}
+      options={{ title: 'Sort the rest of your writing' }}
     />
     <Stack.Screen
       name="ApiKeySettings"

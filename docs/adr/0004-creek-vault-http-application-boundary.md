@@ -1684,3 +1684,31 @@ remedy. A locally care-flagged entry still gets care, a pass with no vault tier
 is never probed, and the reflect gate reuses the probe's handshake, so a pass
 still handshakes once. `inference_source` and `inference_pool` stay parsed and
 ignored.
+
+## Note, 2026-10-28 — "paid by your own key" is the vault's receipt, not a guess
+
+Issue #3483, from the adversarial review of #3482.
+
+**Why.** Since #3437 a vault-bound pass that relayed the writer's key took no
+credit and was labelled "Written by your own {Vendor} key". That was decided
+before the dial, from the key's prefix and the handshake's
+`request_key_providers`. Neither says the vault spent the key. A forged,
+prefix-valid key on a vault that answers anyway (a local model,
+Creek-Vault#1849) would buy unlimited free readings and letters. A handshake
+that changed between the admission probe and the dial would drop the key header
+and still bill the pass as key-paid.
+
+**What.** `inference_source` (contract 0.19) is now consumed on reflection and
+letter answers. It is surfaced on `VaultReflection` / `VaultLetter`, and any
+value outside the published vocabulary reads as no receipt. Only
+`request_key:<vendor>` naming the vendor adepthood relayed counts as the key
+paying (`domain.creek_vault.spent_request_key`). `paid_by: own_key` and
+`own_key_vendor` are decided from that receipt. A pass or letter that relayed a
+key, and so took no credit, but comes back with any other receipt is refused:
+the reflection raises `KEY_NOT_SPENT` and settles as the retryable
+`503 reflection_source_unavailable`, the letter ends `FAILED`, and nothing is
+kept or charged. An `unchanged` letter carries no receipt, so it is held to the
+same rule. An empty reflection gives nothing away and is not refused.
+Charging after the fact was rejected because the writer was never shown a
+price for a key-paid pass (#623). Classification is not billed (R1-2), and its
+receipt is unchanged. `inference_pool` stays parsed and ignored.

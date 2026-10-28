@@ -35,7 +35,8 @@ PROVIDER_HEADER: Final = "X-Creek-Provider"
 PROVIDER_KEY_HEADER: Final = "X-Creek-Provider-Key"
 
 # The key a request is relaying, if any. Set only by :func:`forwarding_provider_key`
-# around a vault-bound writer's own dial, and read only by :func:`relay_headers`.
+# around a vault-bound writer's own dial, and read by :func:`relay_headers` (to
+# send it) and :func:`forwarded_key_vendor` (to hold the answer to its receipt).
 # A context variable rather than a parameter because the key must reach three
 # sends through protocol methods every fake vault implements; it is reset when the
 # block exits, and a task the dial leaves running starts without it
@@ -85,6 +86,16 @@ def has_forwarded_provider_key() -> bool:
     context ends. Vendor eligibility remains the adapter's send-time decision.
     """
     return _FORWARDED_PROVIDER_KEY.get() is not None
+
+
+def forwarded_key_vendor() -> VaultKeyProvider | None:
+    """The vendor of the key this dial relays in place of a credit, without exposing the key.
+
+    A keyed dial is one whose writer's key was to pay (#3437), so an answer it
+    gets back is held to the vault's receipt for that vendor (#3483).
+    """
+    key = _FORWARDED_PROVIDER_KEY.get()
+    return None if key is None else key.provider
 
 
 def relay_headers(*, spends_key: bool, handshake: HandshakeResult) -> Mapping[str, str]:

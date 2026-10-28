@@ -26,8 +26,8 @@ export const EDIT_HABIT_CLOSE_LABEL = 'Close edit habit';
 /** ReorderHabitsModal, titled "Reorder Habits". */
 export const REORDER_HABITS_CLOSE_LABEL = 'Close reorder habits';
 
-/** StatsModal, titled "<habit> Stats". */
-export const STATS_CLOSE_LABEL = 'Close stats';
+/** HabitStorySheet, titled with the habit's own name. */
+export const STORY_CLOSE_LABEL = 'Close story';
 
 /** Every modal-specific name, for the distinctness invariant. */
 export const HABIT_MODAL_CLOSE_LABELS: readonly string[] = [
@@ -35,5 +35,5 @@ export const HABIT_MODAL_CLOSE_LABELS: readonly string[] = [
   GOAL_CLOSE_LABEL,
   EDIT_HABIT_CLOSE_LABEL,
   REORDER_HABITS_CLOSE_LABEL,
-  STATS_CLOSE_LABEL,
+  STORY_CLOSE_LABEL,
 ];

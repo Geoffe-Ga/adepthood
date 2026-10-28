@@ -3024,6 +3024,37 @@ describe('habitManager', () => {
       expect(toast!.message).toMatch(/logged/i);
     });
 
+    it('buildLogUnitToast names a crossed run milestone on its own line', () => {
+      useHabitStore.setState({ habits: [makeHabit({ name: 'Morning pages' })] });
+      const ctx = habitManager.prepareLogUnit(1, 1, 'UTC')!;
+
+      const toast = habitManager.buildLogUnitToast(ctx, {
+        streak: 21,
+        milestones: [{ threshold: 21, kind: 'streak_milestone' }],
+        reason_code: 'ok',
+        day_units: 1,
+      });
+
+      expect(toast.message.split('\n')).toEqual([
+        expect.stringMatching(/Low Goal met/),
+        'Twenty-one days. One full stage of Morning pages.',
+      ]);
+    });
+
+    it('buildLogUnitToast adds no line when the run is only beginning', () => {
+      useHabitStore.setState({ habits: [makeHabit()] });
+      const ctx = habitManager.prepareLogUnit(1, 1, 'UTC')!;
+
+      const toast = habitManager.buildLogUnitToast(ctx, {
+        streak: 1,
+        milestones: [{ threshold: 1, kind: 'streak_started' }],
+        reason_code: 'ok',
+        day_units: 1,
+      });
+
+      expect(toast.message).not.toContain('\n');
+    });
+
     it('buildLogUnitToast names a negative correction and its unit', () => {
       const goals = makeHabit().goals.map((goal) => ({ ...goal, target_unit: 'g' }));
       useHabitStore.setState({ habits: [makeHabit({ name: 'Protein', goals })] });

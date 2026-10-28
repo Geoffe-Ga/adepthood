@@ -139,6 +139,7 @@ export async function importSeedDocument(
         filename: document.name,
         contentBase64: read.contentBase64,
         classification,
+        ...(document.source ? { source: document.source } : {}),
       }),
     );
   } catch (error: unknown) {

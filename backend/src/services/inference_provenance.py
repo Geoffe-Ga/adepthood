@@ -109,14 +109,20 @@ def _app_provider_answered(receipts: PassReceipts) -> bool:
 
 
 def _vault_wrote_with_key(receipts: PassReceipts, vault_key: VaultProviderKey | None) -> bool:
-    """Whether the writer's own key powered a vault answer (#3437).
+    """Whether the writer's own key powered a vault answer (#3437), by the vault's receipt (#3483).
 
-    True only when the key was relayed to the vault for this pass and the vault
-    is what answered the notes.
+    True only when the key was relayed to the vault for this pass, the vault is
+    what answered the notes, and the vault's receipt reports spending a key of
+    that same vendor (``request_key:<vendor>``). The key's prefix and the
+    handshake's advertisement are known before the dial and say nothing about
+    whether the key was used, so neither decides it.
     """
     notes = receipts.notes
     return (
-        vault_key is not None and notes is not None and notes.source is MarginaliaSource.CREEK_VAULT
+        vault_key is not None
+        and notes is not None
+        and notes.source is MarginaliaSource.CREEK_VAULT
+        and notes.spent_key is vault_key.provider
     )
 
 
@@ -131,8 +137,8 @@ def paid_by(
 
     A demo costs nobody anything. The caller's own key paid when an
     app-provider operation actually used it, or when it was relayed to the
-    caller's vault and the vault answered (#3437) -- the client attaches its
-    key to every request, and a vault that does not spend it never receives it.
+    caller's vault and the vault's own receipt reports spending it (#3437,
+    #3483) -- never on the key's shape or the handshake alone.
     Otherwise the wallet when its deduction stood, or nobody when it was handed
     back or never taken.
     """

@@ -8,7 +8,7 @@ import {
   FORBIDDEN_DEMO_WIRE,
   HABITS_CACHE_PREFIX,
   HABITS_UNREACHABLE,
-  LOADING_STATS,
+  SAMPLE_STORY,
   SYNC_FAILURE_TITLE,
   forbiddenDemoRequests,
   isHabitsListGet,
@@ -46,6 +46,7 @@ function concrete(id: number): Array<{ method: string; url: string; label: strin
     { method: 'PUT', url: `${API}/goals/${id}`, label: `PUT /goals/${id}` },
     { method: 'POST', url: `${API}/goal_completions/`, label: 'POST /goal_completions/' },
     { method: 'GET', url: `${API}/habits/${id}/stats`, label: `GET /habits/${id}/stats` },
+    { method: 'GET', url: `${API}/habits/${id}/story`, label: `GET /habits/${id}/story` },
   ];
 }
 
@@ -102,7 +103,7 @@ describe('the copy the spec looks for is the copy the app shows', () => {
     [DEMO_SEED_TOAST, 'features/Habits/hooks/useHabitActions.ts'],
     [HABITS_UNREACHABLE, 'api/errorMessages.ts'],
     [SYNC_FAILURE_TITLE, 'features/Habits/services/habitManager.ts'],
-    [LOADING_STATS, 'features/Habits/components/StatsModal.tsx'],
+    [SAMPLE_STORY, 'features/Habits/story/HabitStorySheet.tsx'],
     [HABITS_CACHE_PREFIX, 'storage/habitStorage.ts'],
   ])('%s appears in src/%s', (copy, file) => {
     expect(readFileSync(join(SRC, file), 'utf8')).toContain(copy);
