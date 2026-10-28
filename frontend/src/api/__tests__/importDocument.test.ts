@@ -87,6 +87,38 @@ describe('corpus.importDocument request shape', () => {
     expect(JSON.parse(mockFetch.mock.calls[0][1].body).classification).toBe('intimate');
   });
 
+  test('names where a folder document sat, as one pair, when it came from a folder', async () => {
+    mockFetch.mockReturnValueOnce(jsonResponse(VAULT_BODY));
+
+    await corpus.importDocument(
+      {
+        filename: 'Index.md',
+        contentBase64: SENTINEL_BASE64,
+        classification: 'personal',
+        source: { namespace: 'My Vault', relativePath: 'Work/Index.md' },
+      },
+      'tok',
+    );
+
+    expect(JSON.parse(mockFetch.mock.calls[0][1].body)).toEqual({
+      filename: 'Index.md',
+      content_base64: SENTINEL_BASE64,
+      classification: 'personal',
+      source_namespace: 'My Vault',
+      source_relative_path: 'Work/Index.md',
+    });
+  });
+
+  test('sends no folder fields for a document chosen on its own', async () => {
+    mockFetch.mockReturnValueOnce(jsonResponse(CORPUS_BODY));
+
+    await importSeed();
+
+    const body = JSON.parse(mockFetch.mock.calls[0][1].body);
+    expect(body).not.toHaveProperty('source_namespace');
+    expect(body).not.toHaveProperty('source_relative_path');
+  });
+
   test('asks one route for one destination, never a second', async () => {
     // The routing rule is the server's. The client makes no vault lookup of its
     // own and never retries a "corpus" answer against the vault surface.
