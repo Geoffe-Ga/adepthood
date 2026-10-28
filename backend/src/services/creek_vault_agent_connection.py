@@ -142,7 +142,9 @@ async def _probe(session: AsyncSession, snapshot: _OwnedSnapshot) -> str | None:
     """Bound DNS and the whole optional HTTP read, including cancellation cleanup."""
     try:
         async with asyncio.timeout(AGENT_DISCOVERY_BUDGET_SECONDS):
-            client = await build_stored_vault_client(session, snapshot.vault_url, snapshot.api_key)
+            client = await build_stored_vault_client(
+                session, snapshot.vault_url, snapshot.api_key, managed=True
+            )
             handshake = await client.handshake()
             if not handshake.available:
                 return None

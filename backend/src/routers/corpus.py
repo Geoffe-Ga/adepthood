@@ -94,6 +94,7 @@ from dependencies.creek_vault import (
 from dependencies.document_payload import guard_document_payload
 from domain.corpus_import import ImportDestination
 from error_responses import build_router
+from errors import payload_too_large
 from models.corpus_fragment import CorpusSource
 from rate_limit import limiter
 from rate_limit_keys import per_user_rate_limit_key
@@ -131,6 +132,7 @@ from services.corpus_invitation import InvitationOffer, dismiss_invitation, load
 from services.creek_vault_pipeline import VaultPipelineTrigger, drive_vault_pipeline
 from services.creek_vault_relay import forwarding_provider_key
 from services.creek_vault_upload import FolderSource, UploadedDocument
+from services.creek_vault_upload_limits import ManagedUploadTooLargeError
 from services.voice_readiness import VoiceReadiness, load_voice_readiness
 
 router = build_router(
@@ -491,6 +493,8 @@ async def import_corpus_document(
     The payload guard runs first, for every caller, so an oversized or
     undecodable document is refused as such whether or not the account has a
     vault. It is the only thing done with the document on the no-vault answer.
+    A managed upload whose encoded request exceeds the replay body limit is
+    refused with 413 and managed_document_too_large before transmission.
 
     The commit is here rather than in the service because the service commits
     nothing and the caller owns the transaction. The vault ontologization pass
@@ -510,17 +514,20 @@ async def import_corpus_document(
     guard_document_payload(payload.content_base64)
     async with hold_account(session, user_id):
         await ensure_account_live(session, user_id)
-        result = await import_document(
-            vault.client,
-            UploadedDocument(
-                owner_user_id=user_id,
-                filename=payload.filename,
-                content_base64=payload.content_base64,
-                classification=payload.classification,
-                created_at=datetime.now(UTC),
-                source=_folder_source(payload),
-            ),
-        )
+        try:
+            result = await import_document(
+                vault.client,
+                UploadedDocument(
+                    owner_user_id=user_id,
+                    filename=payload.filename,
+                    content_base64=payload.content_base64,
+                    classification=payload.classification,
+                    created_at=datetime.now(UTC),
+                    source=_folder_source(payload),
+                ),
+            )
+        except ManagedUploadTooLargeError:
+            raise payload_too_large("managed_document_too_large") from None
         await session.commit()
         if isinstance(result, VaultImportResult) and result.stored:
             with forwarding_provider_key(vault.relay_key):

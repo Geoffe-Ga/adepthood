@@ -313,6 +313,7 @@ describe('sending the ones that did not go again (#3556)', () => {
     'uploading',
     'waiting',
     'too_large',
+    'managed_too_large',
     'unsupported_format',
     'consent_required',
     'tier_refused',

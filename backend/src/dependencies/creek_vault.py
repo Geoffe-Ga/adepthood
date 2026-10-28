@@ -296,14 +296,14 @@ async def resolve_creek_vault_client(
     module docstring gives -- a bad vault costs its owner a capability, never
     their writing.
 
-    The row's two columns are read into locals before that re-judgement, and the
+    The row's connection fields are read into locals before that re-judgement, and the
     order is deliberate. Re-judging ends the transaction this read opened -- see
     :func:`~services.creek_vault_stored_client.stored_host_is_undialable` for why
     -- and a mapped attribute read
     after a commit is a question the session may decide to answer by going back
     to the database. This factory's sessions are built with
     ``expire_on_commit=False`` and would not, so today the hoist changes nothing;
-    it is here so that the correctness of these three lines does not rest on a
+    it is here so that the correctness of these reads does not rest on a
     setting configured two modules away.
 
     **Every exit commits, and the commit is written once, here, at the end.**
@@ -335,8 +335,12 @@ async def resolve_creek_vault_client(
     ):
         client = LocalFallbackCreekVaultClient(VaultTelemetryOutcome.FALLBACK_UNCONFIGURED)
     else:
-        vault_url, api_key = connection.vault_url, connection.api_key
-        client = await build_stored_vault_client(session, vault_url, api_key)
+        vault_url, api_key, managed = (
+            connection.vault_url,
+            connection.api_key,
+            connection.provisioned,
+        )
+        client = await build_stored_vault_client(session, vault_url, api_key, managed=managed)
     await session.commit()
     return client
 

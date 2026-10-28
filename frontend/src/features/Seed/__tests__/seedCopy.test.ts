@@ -1,6 +1,6 @@
 /* eslint-env jest */
 /* global describe, test, expect */
-import { MAX_SEED_DOCUMENT_LABEL } from '../readSeedDocument';
+import { MANAGED_SEED_DOCUMENT_LABEL, MAX_SEED_DOCUMENT_LABEL } from '../readSeedDocument';
 import {
   CORPUS_CTA_BY_DESTINATION,
   SEED_CONSENT_LINK_LABEL,
@@ -59,6 +59,7 @@ const EVERY_STATUS: readonly SeedItemStatus[] = [
   'vault_required',
   'unsupported_format',
   'too_large',
+  'managed_too_large',
   'unreadable',
   'failed',
   'rate_limited',
@@ -142,6 +143,20 @@ describe('what each outcome says', () => {
 
   test('the size refusal names the limit', () => {
     expect(SEED_STATUS_LINES.too_large).toContain(MAX_SEED_DOCUMENT_LABEL);
+  });
+
+  test('the managed size refusal is final, says nothing was stored, and names the smaller limit', () => {
+    // #3051. The same file can never fit the managed vault's request ceiling, so
+    // the line is a refusal of this document -- never an invitation to send it
+    // again, and never the rate limit's "give it a minute".
+    const line = SEED_STATUS_LINES.managed_too_large;
+
+    expect(line).toContain(MANAGED_SEED_DOCUMENT_LABEL);
+    expect(line.toLowerCase()).toContain('too large for your vault');
+    expect(line.toLowerCase()).toContain('nothing was stored');
+    expect(line).not.toMatch(/try again|send it again|give it a minute/i);
+    expect(line).not.toBe(SEED_STATUS_LINES.too_large);
+    expect(ranksOrShames(line)).toBe(false);
   });
 
   test('a document in the corpus is not described as being in a vault', () => {

@@ -241,6 +241,13 @@ describe('corpus.importDocument failures', () => {
     expect(error.kind).toBe(kind);
   });
 
+  test('distinguishes the managed transport limit from the document cap', async () => {
+    mockFetch.mockReturnValue(jsonResponse({ detail: 'managed_document_too_large' }, 413));
+    const error = (await importAndCatch()) as InstanceType<typeof DocumentUploadError>;
+    expect(error.kind).toBe('managed_too_large');
+    expect(error.message).not.toContain(SENTINEL_BASE64);
+  });
+
   test("carries a 429's Retry-After, so the run can wait out exactly that long", async () => {
     mockFetch.mockReturnValue(
       Promise.resolve({

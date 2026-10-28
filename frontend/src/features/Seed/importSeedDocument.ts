@@ -107,6 +107,10 @@ function isDefiniteRefusal(status: number | null): boolean {
 function statusForError(error: unknown): SettledSeedStatus {
   if (!(error instanceof DocumentUploadError)) return 'unconfirmed';
   if (error.kind === 'too_large') return 'too_large';
+  // The managed vault's request-size ceiling (#3051): refused before a byte
+  // left the server, so nothing was kept -- and the same file can never fit,
+  // so it is a refusal of this document, not a `failed` worth sending again.
+  if (error.kind === 'managed_too_large') return 'managed_too_large';
   // A 429 is the server asking for a pause, not turning the document away
   // (#3556): nothing was kept, and the run waits it out before settling here.
   if (error.kind === 'rate_limited') return 'rate_limited';

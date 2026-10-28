@@ -29,6 +29,15 @@ export const MAX_SEED_DOCUMENT_BYTES = 10 * 1024 * 1024;
 /** How the cap is said out loud, so every surface names the same number. */
 export const MAX_SEED_DOCUMENT_LABEL = '10 MB';
 
+/**
+ * The smaller size a managed vault takes, said out loud (#3051). The managed
+ * transport bounds the whole request at 1,048,576 bytes, and base64 inside JSON
+ * spends four characters on every three bytes, so a document much past 768 KB
+ * cannot fit. The server checks the actual encoded request and is authoritative;
+ * this is the conservative figure the refusal suggests aiming under.
+ */
+export const MANAGED_SEED_DOCUMENT_LABEL = '750 KB';
+
 /** A browser read must settle while the screen is still actionable. */
 export const SEED_DOCUMENT_READ_TIMEOUT_MS = 10_000;
 
