@@ -30,21 +30,7 @@ export interface DirectoryInputLike<F> {
 /** Where a directory input comes from; null where none can be built. */
 export interface FolderPickerHost<F> {
   createDirectoryInput(): DirectoryInputLike<F> | null;
-  /**
-   * Call `listener` whenever the page regains focus, as it does when a file
-   * dialog closes; returns a function that stops watching. Absent where focus
-   * cannot be watched.
-   */
-  watchFocusReturn?(listener: () => void): () => void;
 }
-
-/**
- * How long after focus returns a dialog may still deliver its files before it
- * is taken as dismissed. Browsers that never fire `cancel` give no other sign
- * of a dismissal, and `change` can trail the focus by a beat while a large
- * folder is listed.
- */
-export const FOCUS_RETURN_SETTLE_MS = 1000;
 
 /**
  * The outcome of choosing a folder, discriminated on `kind`:
@@ -62,18 +48,11 @@ export interface DocumentLike {
   readonly body: { appendChild(node: unknown): unknown } | null;
 }
 
-/** The slice of `window` the browser host needs to notice focus returning. */
-export interface WindowLike {
-  addEventListener(type: 'focus', listener: () => void): void;
-  removeEventListener(type: 'focus', listener: () => void): void;
-}
-
 /** A directory input that is also a page element, so it can be hidden and attached. */
 type DirectoryElement = DirectoryInputLike<File> & { style: { display: string } };
 
 const INPUT_TAG = 'input';
 const HIDDEN_DISPLAY = 'none';
-const FOCUS_EVENT = 'focus';
 
 /** A dialog still open from an earlier tap, settled as cancelled when another starts. */
 let abandonOpenPick: (() => void) | null = null;
@@ -88,27 +67,12 @@ function pageDocument(): DocumentLike | undefined {
   return typeof document === 'undefined' ? undefined : document;
 }
 
-/** The page's `window`, when there is one. */
-function pageWindow(): WindowLike | undefined {
-  return typeof window === 'undefined' ? undefined : window;
-}
-
-/** Watch `win` for focus returning, or nothing where there is no window. */
-function focusWatcher(win: WindowLike | undefined): FolderPickerHost<File>['watchFocusReturn'] {
-  if (win === undefined) return undefined;
-  return (listener) => {
-    win.addEventListener(FOCUS_EVENT, listener);
-    return () => win.removeEventListener(FOCUS_EVENT, listener);
-  };
-}
-
 /**
  * The browser's folder picker, or null where there is none: on native, with no
  * document, or on a browser whose inputs cannot choose a directory.
  */
 export function browserFolderPickerHost(
   doc: DocumentLike | undefined = pageDocument(),
-  win: WindowLike | undefined = pageWindow(),
 ): FolderPickerHost<File> | null {
   if (Platform.OS !== 'web' || doc === undefined) return null;
   if (!isDirectoryElement(doc.createElement(INPUT_TAG))) return null;
@@ -122,7 +86,6 @@ export function browserFolderPickerHost(
       doc.body?.appendChild(element);
       return element;
     },
-    watchFocusReturn: focusWatcher(win),
   };
 }
 
@@ -132,10 +95,11 @@ export function browserFolderPickerHost(
  *
  * The dialog settles once, and releases its input whichever way it settles.
  * `cancel` (fired by current browsers when the dialog is dismissed) and
- * `change` race, and whichever lands first wins. Where `cancel` never fires,
- * focus returning with no files within {@link FOCUS_RETURN_SETTLE_MS} counts as
- * a dismissal, and so does a new pick starting while this one is still open,
- * so no dismissed dialog leaves its input behind on the page.
+ * `change` race, and whichever lands first wins. Where `cancel` never fires, a
+ * new pick starting while this one is still open settles it as cancelled, so at
+ * most one dismissed dialog's input is ever left on the page. Focus returning
+ * is deliberately not read as a dismissal: a browser may still be listing a
+ * large folder when focus comes back, and its files must not be thrown away.
  */
 export function pickSeedFolder<F>(
   host: FolderPickerHost<F> | null,
@@ -148,21 +112,14 @@ export function pickSeedFolder<F>(
   input.webkitdirectory = true;
   return new Promise((resolve) => {
     let settled = false;
-    let timer: ReturnType<typeof setTimeout> | undefined;
     const settle = (result: SeedFolderPickResult<F>): void => {
       if (settled) return;
       settled = true;
-      clearTimeout(timer);
-      stopWatching?.();
       if (abandonOpenPick === cancel) abandonOpenPick = null;
       input.remove();
       resolve(result);
     };
     const cancel = (): void => settle({ kind: 'cancelled' });
-    const stopWatching = host.watchFocusReturn?.(() => {
-      clearTimeout(timer);
-      timer = setTimeout(cancel, FOCUS_RETURN_SETTLE_MS);
-    });
     abandonOpenPick = cancel;
     input.addEventListener('change', () => {
       const files = input.files;
