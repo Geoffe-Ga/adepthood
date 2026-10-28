@@ -24,6 +24,14 @@ export const progressOverviewSchema = z.object({
         week: z.number().nullable(),
         stage_number: z.number().nullable(),
         is_carryover: z.boolean(),
+        unit_histories: z
+          .array(
+            z.object({
+              unit: z.string(),
+              days: z.array(z.object({ date: z.string(), units: z.number() })),
+            }),
+          )
+          .optional(),
       }),
     ),
   }),

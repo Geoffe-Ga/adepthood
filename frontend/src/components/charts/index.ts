@@ -22,3 +22,4 @@ export type {
   RibbonBlock,
   LabelledSwatch,
 } from './types';
+export { HistoryChart } from './HistoryChart';

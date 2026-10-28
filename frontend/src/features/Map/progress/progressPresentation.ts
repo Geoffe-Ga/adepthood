@@ -5,25 +5,13 @@
  * (D14) or ranking anything (ADR 0003).
  */
 import type { ApiProgressOverview } from '@/api';
-import type {
-  ChartColumn,
-  ChartPoint,
-  Dumbbell,
-  RibbonBlock,
-  RibbonMarker,
-  WaveSwatch,
-  WaveTick,
-} from '@/components/charts';
-import { accent, chart, STAGE_COLORS, STAGE_ORDER } from '@/design/tokens';
+import type { ChartPoint, Dumbbell, RibbonBlock, RibbonMarker } from '@/components/charts';
+import { chart, STAGE_COLORS, STAGE_ORDER } from '@/design/tokens';
 import { dayKeyToInstant } from '@/utils/dateUtils';
 
 /** The rhythm has no shape to show before four weeks of days (D09). */
 export const RHYTHM_MIN_DAYS = 28;
 export const RHYTHM_EARLY_LINE = 'The rhythm view appears after four weeks.';
-/** Energy columns: the share above zero and the share below it. */
-export const ENERGY_SERIES = ['Above zero', 'Below zero'] as const;
-export const ENERGY_COLORS = [accent.primary, chart.dim] as const;
-
 const PERCENT = 100;
 const EARLY_MONTH_LAST_DAY = 10;
 const MID_MONTH_LAST_DAY = 20;
@@ -34,11 +22,11 @@ const format = (date: string, options: Intl.DateTimeFormatOptions): string =>
 
 export const stageName = (stageNumber: number): string =>
   STAGE_ORDER[stageNumber - 1] ?? `Stage ${stageNumber}`;
-const stageColor = (stageNumber: number): string =>
+export const stageColor = (stageNumber: number): string =>
   STAGE_COLORS[stageName(stageNumber)] ?? chart.dim;
 export const percent = (rate: number): string => `${Math.round(rate * PERCENT)}%`;
 
-/** D13: ten stage blocks sized by weeks, colour only as a labelled swatch. */
+/** D13: ten stage blocks sized by weeks, colour aligned to the shared adoption timelines. */
 export const ribbonBlocks = (overview: ApiProgressOverview): RibbonBlock[] =>
   overview.arc.stages.map((stage) => ({
     label: `${stageName(stage.stage_number)} · ${stage.aspect}`,
@@ -71,29 +59,10 @@ export function arcSummary(overview: ApiProgressOverview): string {
 
 export const rhythmPoints = (overview: ApiProgressOverview): ChartPoint[] =>
   overview.rhythm.days.map((day) => ({
-    label: format(day.date, { day: 'numeric', month: 'short' }),
-    value: Math.round(day.rate * PERCENT),
-    stateLabel: `${day.daily_met} of ${day.daily_scheduled} that day`,
+    label: format(day.date, { day: 'numeric', month: 'short', year: 'numeric' }),
+    value: day.rate * PERCENT,
+    stateLabel: `${day.window_days}-day average; ${day.daily_met} of ${day.daily_scheduled} scheduled activities completed that day`,
   }));
-
-/** A tick at the first day of each month the series spans. */
-export const rhythmTicks = (overview: ApiProgressOverview): WaveTick[] =>
-  overview.rhythm.days.flatMap((day, index) =>
-    day.date.endsWith('-01') || index === 0
-      ? [{ index, label: format(day.date, { month: 'short' }) }]
-      : [],
-  );
-
-/** A swatch where a stage opens inside the series, labelled with its name. */
-export function rhythmSwatches(overview: ApiProgressOverview): WaveSwatch[] {
-  const indexOf = new Map(overview.rhythm.days.map((day, index) => [day.date, index]));
-  return overview.arc.stages.flatMap((stage) => {
-    const index = stage.opens_on === null ? undefined : indexOf.get(stage.opens_on);
-    return index === undefined
-      ? []
-      : [{ index, label: stageName(stage.stage_number), color: stageColor(stage.stage_number) }];
-  });
-}
 
 export const rhythmVisible = (overview: ApiProgressOverview): boolean =>
   overview.rhythm.days.length >= RHYTHM_MIN_DAYS;
@@ -153,15 +122,35 @@ export function cycleCaption(overview: ApiProgressOverview): string {
   return `Each line runs from ${from.toLowerCase()} to ${to.toLowerCase()}: the share of scheduled days kept in that stage. Either direction is part of the shape.`;
 }
 
-/** D16: weekly net energy, the part above zero in the accent and below it de-emphasised. */
-export const energyColumns = (overview: ApiProgressOverview): ChartColumn[] =>
-  overview.energy.weeks.map((week) => ({
-    label: `Week of ${format(week.week_start, { day: 'numeric', month: 'short' })}`,
-    segments: [Math.max(week.net, 0), Math.min(week.net, 0)],
-  }));
-
 export function energySummary(overview: ApiProgressOverview): string {
   const weeks = overview.energy.weeks;
   const latest = weeks.at(-1);
   return `Net energy per week for ${weeks.length} weeks, ${overview.energy.formula}.${latest ? ` The latest week is ${latest.net}.` : ''}`;
+}
+
+/** Actual daily measures; the server keeps unrelated units in separate histories. */
+export const habitHistories = (overview: ApiProgressOverview) =>
+  overview.arc.habit_births.map((birth) => ({
+    id: birth.habit_id,
+    name: birth.name,
+    carryover: birth.is_carryover,
+    color: birth.stage_number === null ? chart.dim : stageColor(birth.stage_number),
+    histories: (birth.unit_histories ?? []).map(unitHistory),
+  }));
+
+export const energyPoints = (overview: ApiProgressOverview): ChartPoint[] =>
+  overview.energy.weeks.map((week) => ({
+    label: `Week of ${format(week.week_start, { day: 'numeric', month: 'short', year: 'numeric' })}`,
+    value: week.net,
+  }));
+
+function unitHistory(history: { unit: string; days: { date: string; units: number }[] }) {
+  return {
+    unit: history.unit,
+    measure: `${history.unit || 'Units'} logged`,
+    points: history.days.map((day) => ({
+      label: format(day.date, { day: 'numeric', month: 'short', year: 'numeric' }),
+      value: day.units,
+    })),
+  };
 }

@@ -7,14 +7,13 @@ import {
   cycleCaption,
   cycleLabels,
   cycleRows,
-  energyColumns,
+  energyPoints,
+  habitHistories,
   energySummary,
   ribbonBlocks,
   rhythmCaption,
   rhythmEnd,
   rhythmPoints,
-  rhythmSwatches,
-  rhythmTicks,
   rhythmVisible,
   RHYTHM_MIN_DAYS,
   youAreHere,
@@ -61,15 +60,14 @@ describe('the rhythm', () => {
     expect(rhythmVisible(young)).toBe(true);
   });
 
-  it('plots percentages with month ticks, stage swatches and a labelled end', () => {
+  it('plots labeled percentages and daily context with a labelled end', () => {
     const overview = progressOverviewFixture();
-    overview.arc.stages[6]!.opens_on = '2026-10-05';
     const points = rhythmPoints(overview);
-    expect(points[0]).toEqual({ label: '29 Aug', value: 40, stateLabel: '2 of 3 that day' });
-    expect(rhythmTicks(overview).map((tick) => tick.label)).toEqual(['Aug', 'Sept', 'Oct']);
-    expect(rhythmSwatches(overview)).toEqual([
-      { index: 37, label: 'Yellow', color: STAGE_COLORS.Yellow },
-    ]);
+    expect(points[0]).toEqual({
+      label: '29 Aug 2026',
+      value: 40,
+      stateLabel: '14-day average; 2 of 3 scheduled activities completed that day',
+    });
     expect(rhythmEnd(overview)).toMatch(/^Now \d+% over the last 14 days$/);
     expect(
       rhythmEnd(progressOverviewFixture({ rhythm: { ...overview.rhythm, days: [] } })),
@@ -115,13 +113,26 @@ describe('cycles and energy', () => {
     expect(cycleRows(overview)).toEqual([{ label: 'Blue', from: null, to: 0.5 }]);
   });
 
-  it('splits each week of net energy above and below zero', () => {
+  it('keeps each week of net energy signed', () => {
     const overview = progressOverviewFixture();
-    const columns = energyColumns(overview);
-    expect(columns[0]).toEqual({ label: 'Week of 10 Aug', segments: [4, 0] });
-    expect(columns[2]).toEqual({ label: 'Week of 24 Aug', segments: [0, -2] });
+    const columns = energyPoints(overview);
+    expect(columns[0]).toEqual({ label: 'Week of 10 Aug 2026', value: 4 });
+    expect(columns[2]).toEqual({ label: 'Week of 24 Aug 2026', value: -2 });
     expect(energySummary(overview)).toBe(
       'Net energy per week for 12 weeks, sum(return - cost) over completions. The latest week is 6.',
     );
+  });
+});
+
+it('maps actual units to the adoption colour without a colour legend', () => {
+  const [journal] = habitHistories(progressOverviewFixture());
+  expect(journal?.color).toBe(STAGE_COLORS.Beige);
+  expect(journal?.histories[0]).toEqual({
+    unit: 'pages',
+    measure: 'pages logged',
+    points: [
+      { label: '18 May 2026', value: 0 },
+      { label: '19 May 2026', value: 2 },
+    ],
   });
 });
