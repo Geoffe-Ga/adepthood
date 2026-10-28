@@ -1046,6 +1046,18 @@
     "issue": 2408
   },
   {
+    "id": "journal.offered-to-sort-the-rest-after-a-reflection",
+    "description": "A writer who has already said yes to sorting their journal, and who wrote before that yes, asks for resonance on a page and, once the pass has completed, finds beside the page -- never in it -- a quiet note saying what sorting gives, how many of their entries are still unsorted, and that nothing is sorted from the note itself (#3500). Its one affirmative, Sort the rest of your writing, only opens the sort-the-rest screen (corpus.sort-the-rest-of-your-writing), where a bounded pass waits for its own confirm: the note never calls POST /corpus/sweep. Not now sets it aside for the session; Do not ask again is kept for the account on this device; a read still in flight cannot bring a declined note back. It is absent at zero unsorted, without a standing yes for the journal, on any read error, and while the consent invitation is on the page -- one offer at a time, and the decision about sorting outranks an offer to sort. No server rule decides this moment: the note asks GET /corpus/consent and GET /corpus/sweep only when the screen's count of completed passes moves, so opening an entry asks nothing. Sorting is free (#3495), so the note carries no price or credit language. Uncovered as a rendered moment: the wire half is covered by corpus.sort-the-rest-of-your-writing and corpus.decide-what-may-be-sorted, and the rendered half is pinned by CorpusSweepOfferNote.test.tsx and JournalEntryScreenCorpusSweepOffer.test.tsx; #3598 tracks a browser spec for the moment itself.",
+    "crosses": {
+      "screen": "frontend/src/features/Journal/JournalEntryScreen.tsx",
+      "client": ["resonance", "corpusConsent", "corpus"],
+      "routes": ["POST /journal/{entry_id}/resonance", "GET /corpus/consent", "GET /corpus/sweep"],
+      "tables": ["corpusconsentevent", "journalentry", "corpusfragment"]
+    },
+    "status": "uncovered",
+    "issue": 3598
+  },
+  {
     "id": "corpus.decline-the-offer-and-be-left-alone",
     "description": "A writer who has never decided about their corpus completes a first resonance pass and is offered the decision; they set it aside with Not now and are not asked again on the very next pass; later they say Do not ask again, and a softer Not now afterwards does not undo it. A cold login on a fresh session reads the same standing, because the decision is the server's to remember rather than the device's; a request with no session is refused; and a neighbour's account is still un-asked until its own first pass opens its own offer. The pass that opens the offer is real -- the lane's provider is the stub, so it resolves as a refunded no-notes 200, which is still a completed pass by design -- so the seam this spec pins is the whole of it: the settlement counting the pass, the read the note makes, the verb and shape of both declines, and that the count itself never crosses the wire. Both halves are green on their own -- the note's tests mock the client, the router's tests never see it -- and this is the one place they agree.",
     "crosses": {

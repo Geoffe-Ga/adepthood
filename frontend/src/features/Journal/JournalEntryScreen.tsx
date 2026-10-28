@@ -28,6 +28,7 @@ import CompletionSuggestionNote from './CompletionSuggestionNote';
 import ContractionReflectionNote from './ContractionReflectionNote';
 import type { CorpusDestination } from './corpusDestination';
 import CorpusInvitationNote from './CorpusInvitationNote';
+import CorpusSweepOfferNote from './CorpusSweepOfferNote';
 import { claimCreateAttempt, type CreateKey, type CreateKeyRef } from './createKey';
 import { DELETION_PENDING_DETAIL, WITHDRAWAL_PENDING_LOCATIONS } from './deleteEntryCopy';
 import EditConfirmDialog from './EditConfirmDialog';
@@ -5097,6 +5098,10 @@ function EntryCreekSurface({ ctl }: { ctl: Controller }): React.JSX.Element | nu
  * never in the margin column -- and, like them, silent unless the server says
  * otherwise. Looking at the decision is routed here because the screen owns
  * navigation; the note owns everything else.
+ *
+ * The offer to sort the rest of the writing (#3500) shares this host so the
+ * page carries one offer at a time: it gives way while the invitation shows,
+ * because the decision about sorting outranks an offer to sort.
  */
 function EntryCorpusInvitation({
   ctl,
@@ -5105,8 +5110,23 @@ function EntryCorpusInvitation({
   ctl: Controller;
   navigation: ScreenNavigation;
 }): React.JSX.Element {
+  const [invitationShowing, setInvitationShowing] = useState(false);
   const onOpen = useCallback(() => navigation.navigate('CorpusConsent'), [navigation]);
-  return <CorpusInvitationNote completedPasses={ctl.resonance.completedPasses} onOpen={onOpen} />;
+  const onOpenSweep = useCallback(() => navigation.navigate('CorpusSweep'), [navigation]);
+  return (
+    <>
+      <CorpusInvitationNote
+        completedPasses={ctl.resonance.completedPasses}
+        onOpen={onOpen}
+        onOfferChange={setInvitationShowing}
+      />
+      <CorpusSweepOfferNote
+        completedPasses={ctl.resonance.completedPasses}
+        onOpen={onOpenSweep}
+        suppressed={invitationShowing}
+      />
+    </>
+  );
 }
 
 /**

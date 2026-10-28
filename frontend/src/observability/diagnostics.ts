@@ -65,6 +65,7 @@ const STORAGE_CATEGORIES = [
   'link_habit_nudge',
   'pagination_visibility',
   'writing_habit_link',
+  'corpus_sweep_offer',
   'unknown',
 ] as const;
 
