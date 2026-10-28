@@ -1369,15 +1369,15 @@
   },
   {
     "id": "map.progress-door",
-    "description": "The private progress overview API is available for the Map's optional Your progress door. The raw progress client reaches that authenticated endpoint with a pinned credential; the current Map surface does not yet call it. Uncovered until #3528 connects the door, validates the response, and drives the ribbon, rhythm, cycles and deliberate energy ledger through a real browser at phone and desktop widths.",
+    "description": "The Map's drawer offers a 'Your progress' door (#3528), hidden when both the habits and practice rings are off, that opens the Progress screen drawn entirely from GET /progress/overview (#3522): the 36-week ribbon of ten labelled stage blocks with habit births as dots, carryovers listed as brought with you and a you-are-here rule; the unnamed 14-day rhythm wave with its end value, stage swatches and a factual caption (served observations, or the fullest fortnight, longest rest and rising-since facts worded locally); per-stage dumbbells from cycle 2 on; and the weekly net-energy columns with their formula printed beside the title. Covered by frontend/e2e/map-progress-door.browser.e2e.test.ts, which anchors an account twenty-two weeks back (tests.e2e.program_anchor, the one out-of-band arrange), logs a month of real check-ins through POST /goal_completions/, opens the door from the Map drawer, and asserts the week-23 you-are-here line, the ribbon, and the energy formula and columns at phone and desktop widths. The ring-toggle gate, the 28-day rhythm gate, the cycles-from-cycle-2 rule and the held-while-reloading render are pinned by Jest beside the screen.",
     "crosses": {
       "screen": "frontend/src/features/Map/MapScreen.tsx",
-      "client": ["progress"],
-      "routes": ["GET /progress/overview"],
+      "client": ["progress", "habits", "goalCompletions"],
+      "routes": ["POST /habits/", "POST /goal_completions/", "GET /progress/overview"],
       "tables": ["stageprogress", "habit", "goal", "goalcompletion", "practicesession"]
     },
-    "status": "uncovered",
-    "issue": 3528
+    "status": "covered",
+    "coveredBy": "frontend/e2e/map-progress-door.browser.e2e.test.ts"
   },
   {
     "id": "map.advance-stage",
@@ -1499,15 +1499,15 @@
   },
   {
     "id": "seed.import-a-folder",
-    "description": "On the web, a person chooses a whole folder -- an Obsidian vault, say -- from 'Bring in what you've written' and reviews it before anything is sent (#3555). The browser's directory input hands over each file's path under the chosen folder; the manifest is built from names and sizes alone, so no file is read until it is sent. Notes (.md, .markdown, .txt, .text) start selected; every other type Creek ingests through /v1/uploads is one optional attachments switch; app settings (.obsidian, .git, .trash, __MACOSX), hidden files, unreadable types, unsendable names, files past the 10 MB cap and two spellings of one path are counted by reason and never sent. The review shows the editable import name (the folder's own name by default), the selected paths and their total size under the existing privacy choice; putting it aside sends nothing, and starting refuses an empty selection, more than 250 MB, or a name the server would refuse. Each document then goes through the existing sequential sender with its filename plus source_namespace and source_relative_path, so Work/Index.md and Home/Index.md land as two fragments (#3554). Pinned by SeedCorpusScreenFolder, useSeedFolder, folderManifest, pickSeedFolder and importDocument tests; uncovered across the seam until #3557's browser journey selects a nested folder and reads the vault back. The run paces itself under the endpoint's UPLOAD_RATE_LIMIT (20/minute, a moving window measured from each answer), shows a held document as a calm 'waiting' row, waits out a 429 for exactly its Retry-After (now CORS-exposed) up to three times before settling it as rate_limited, and offers 'Try again' for only the documents that did not go over, under the same identity and tier, at most twice each (#3556). A note too large for a managed vault's request ceiling settles as a final managed_too_large row -- nothing stored, a smaller size named -- and is never among those offered again (#3051), pinned by SeedCorpusScreenFolder. Pinned by useSeedRunPacing, seedUploadPacing and uploadRateDrift tests.",
+    "description": "On the web, a person chooses a whole folder -- an Obsidian vault, say -- from 'Bring in what you've written' and reviews it before anything is sent (#3555). The browser's directory input hands over each file's path under the chosen folder; the manifest is built from names and sizes alone, so no file is read until it is sent. Notes (.md, .markdown, .txt, .text) start selected; every other type Creek ingests through /v1/uploads is one optional attachments switch; app settings (.obsidian, .git, .trash, __MACOSX), hidden files, unreadable types, unsendable names, files past the 10 MB cap and two spellings of one path are counted by reason and never sent. The review shows the editable import name (the folder's own name by default), the selected paths and their total size under the existing privacy choice; putting it aside sends nothing, and starting refuses an empty selection, more than 250 MB, or a name the server would refuse. Each document then goes through the existing sequential sender with its filename plus source_namespace and source_relative_path, so Work/Index.md and Home/Index.md land as two fragments (#3554). Pinned by SeedCorpusScreenFolder, useSeedFolder, folderManifest, pickSeedFolder and importDocument tests. The run paces itself under the endpoint's UPLOAD_RATE_LIMIT (20/minute, a moving window measured from each answer), shows a held document as a calm 'waiting' row, waits out a 429 for exactly its Retry-After (now CORS-exposed) up to three times before settling it as rate_limited, and offers 'Try again' for only the documents that did not go over, under the same identity and tier, at most twice each (#3556). A note too large for a managed vault's request ceiling settles as a final managed_too_large row -- nothing stored, a smaller size named -- and is never among those offered again (#3051), pinned by SeedCorpusScreenFolder; the browser lane's vault is a deployment-wide binding rather than a managed one, so that refusal is not exercised by this seam spec. Pinned by useSeedRunPacing, seedUploadPacing and uploadRateDrift tests. Covered across the seam by frontend/e2e/seed-folder-import.browser.e2e.test.ts (#3557): Chromium's own webkitdirectory input is answered with a real synthetic folder on disk (Work/Index.md, Home/Index.md, Attachments/diagram.png, .obsidian/app.json), and the spec pins the webkitRelativePath each File carries. The review shows two notes, one offered attachment and one app-settings file left out before any request; putting it aside reads no file and sends nothing; started with the attachment switched in, three uploads reach the lane vault with three distinct external ids and fragments at the digests the spec computes itself. Those stored outcomes are asserted first; then that the settings file was never read (every Blob/FileReader read is recorded in the page), never sent and never reached the vault, and that no request URL and no line of the server's captured log names the folder, a path, a byte or the vault bearer. Re-importing under the same name reports both notes unchanged at the same ids; editing Work/Index.md on disk updates only that fragment in place. Leaving mid-run through the leave prompt, with the first upload held at the browser, lets that one land and sends none of the three queued behind it. A real vault refusal of one document by digest is shown as unconfirmed with Try again, and the retry stores it under the same external id without re-sending its sibling. A single picked file still lands and re-sends to the same fragment. Two seams are the harness's, because the lane cannot produce them: the 429 is fulfilled at the browser (the lane server disarms its limiter for every journey) with the server's own envelope and a CORS-exposed Retry-After of 2s, and the spec proves the resend waited at least that long and that the landed document was not re-sent -- the server's own 429 and Retry-After are pinned by the backend's rate-limit tests and the client's wait by useSeedRunPacing; and the lane's vault-bound account is bound by the deployment-wide CREEK_VAULT_OWNER_USER_ID, which GET /vault/connection does not report, so the spec fetches the real answer, pins that it says connected false, and rewrites only that bit for the screen's vault-first gate. frontend/e2e/seed-upload.e2e.test.ts proves the same identity rule through the production client alone: one basename alone and under two folders is three fragments, and the single file keeps its filename-only identity.",
     "crosses": {
       "screen": "frontend/src/features/Seed/SeedCorpusScreen.tsx",
       "client": ["auth", "setTokenGetter", "corpus"],
-      "routes": ["POST /auth/login", "POST /corpus/import"],
+      "routes": ["POST /auth/login", "GET /vault/connection", "POST /corpus/import"],
       "tables": ["user"]
     },
-    "status": "uncovered",
-    "issue": 3557
+    "status": "covered",
+    "coveredBy": "frontend/e2e/seed-folder-import.browser.e2e.test.ts"
   },
   {
     "id": "corpus.import-without-a-vault",
@@ -3216,6 +3216,18 @@
     "coveredBy": "frontend/e2e/vault-rejected-key-classification.e2e.test.ts"
   },
   {
+    "id": "settings.vault-classification-not-finished",
+    "description": "A writer whose managed vault has only given their writing Creek's rules floor (#3577, release defect R1-F; Creek-Vault#1982) is told so, calmly, and never shown a rough sort as the finished one. The lane vault, armed to classify with its rules floor, finishes a requested llm classification job complete: true with method: rules. The live server lands that classification row incomplete after exactly one admission (classification_outcome reads a finished rules floor as incomplete) and the production vault client reads classification_state: incomplete plus the server's own classification_message off GET /vault/connection -- the state is the outcome of the latest classify row that landed labels, so a newer failed pass cannot mask it, and it stands beside #3595's classification_key_rejected without contradicting it. A later semantic pass that completes turns the state complete and the message null. The lane owner is the deployment-wide vault's owner, so the answer says connected: false and still carries a state. The Settings rendering -- the sentence on the connected card or beside a managed vault (testID vault-classification-state) and nothing for complete, not_run, an older server, or no vault -- is pinned by the Jest suite VaultSettingsScreenClassificationState.test.tsx; the four states, the rules floor, the no-masking rule and the cross-tenant scope by backend/tests/test_vault_connection_classification_state.py. No count, fragment or content reaches the response.",
+    "crosses": {
+      "screen": "frontend/src/features/Settings/VaultSettingsScreen.tsx",
+      "client": ["auth", "setTokenGetter", "setLlmApiKeyGetter", "journal", "vault"],
+      "routes": ["POST /auth/login", "POST /journal/", "GET /vault/connection"],
+      "tables": ["user", "journalentry", "vaultpipelinerun"]
+    },
+    "status": "covered",
+    "coveredBy": "frontend/e2e/vault-rules-fallback-classification.e2e.test.ts"
+  },
+  {
     "id": "habits.habit-story",
     "description": "One tap on a habit tile's Story glyph opens the Habit Story sheet (#3526), drawn entirely from GET /habits/{habit_id}/story (#3524): the four Glance figures (current run, longest run, returns, days with, in the habit's cadence unit), the day-by-day heat grid, the scheduled-day rate for the last 21 days and all time with its denominator, the tier tiles and weekly tier stack, the weekday by time-of-day grid once there are 28 days, observations and dated milestones, and an Everything door to the raw log list. Covered by frontend/e2e/habit-story.browser.e2e.test.ts, which seeds twenty scheduled days (seventeen kept, rests three and five days back) through the real POST /goal_completions/, opens the sheet from the tile, asserts every Glance figure and the exact denominator line the server computed, walks Everything and back, and checks the tile chip reads as a run. The early-days thresholds, the all-tables view, the held-while-reloading render and the error fallback are pinned by Jest beside the sheet.",
     "crosses": {
@@ -3226,5 +3238,17 @@
     },
     "status": "covered",
     "coveredBy": "frontend/e2e/habit-story.browser.e2e.test.ts"
+  },
+  {
+    "id": "habits.habit-ledger",
+    "description": "The Habit Story's Everything door opens the Habit Ledger (#3529): a strip of day cells per program stage, every continuity figure with its unit, the last 7, 21 and 30 days and all time each as met of scheduled with a percentage, the tier totals and weekly tier table, the weekday and weekday by time-of-day tables with a time-not-recorded row, the raw logs newest first grouped by local day with each day's total (paged fifty rows at a time), and Export CSV / Export JSON of the days, logs and weekly tiers through the existing data-export file path. Covered by frontend/e2e/habit-ledger.browser.e2e.test.ts, which seeds ten kept days through the real POST /goal_completions/, opens the Ledger, asserts the all-time denominator line and today's log row at the time and amount GET /habits/{habit_id}/story returned, and completes a CSV download whose rows carry that log. Subtractive tier labels, untimed days, pagination and the JSON export are pinned by Jest beside the screen.",
+    "crosses": {
+      "screen": "frontend/src/features/Habits/ledger/HabitLedger.tsx",
+      "client": ["habits", "goalCompletions"],
+      "routes": ["POST /goal_completions/", "GET /habits/{habit_id}/story"],
+      "tables": ["habit", "goal", "goalcompletion", "goallogevent"]
+    },
+    "status": "covered",
+    "coveredBy": "frontend/e2e/habit-ledger.browser.e2e.test.ts"
   }
 ]

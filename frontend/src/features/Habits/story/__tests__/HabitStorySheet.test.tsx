@@ -166,7 +166,7 @@ describe('HabitStorySheet', () => {
     expect(labels.some((label) => label.includes('Most often on Thu Dawn.'))).toBe(true);
   });
 
-  it('opens the Ledger stub from Everything and returns', () => {
+  it('opens the Ledger from Everything and returns', () => {
     const tree = renderSheet();
     fireEvent.press(tree.getByTestId('habit-story-everything'));
     const ledger = tree.getByTestId('habit-ledger');
@@ -182,7 +182,7 @@ describe('HabitStorySheet', () => {
     mockRead = read({ story: habitStoryFixture({ logs: [] }) });
     const tree = renderSheet();
     fireEvent.press(tree.getByTestId('habit-story-everything'));
-    expect(tree.getByText('No logs with a time yet.')).toBeTruthy();
+    expect(tree.getByText('No logs yet.')).toBeTruthy();
   });
 
   it('holds the previous story dimmed while it re-reads, without a skeleton', () => {

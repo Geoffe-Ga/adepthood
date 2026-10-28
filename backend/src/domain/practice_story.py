@@ -5,12 +5,19 @@ The router supplies both the lifetime rows and the known stage window (or an
 adoption fallback); no database or ownership decision lives in this module.
 """
 
+import dataclasses
 from collections import Counter, defaultdict
 from collections.abc import Iterable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import date, datetime
 
 from domain.dates import ensure_aware, to_user_date, today_in_tz
+from domain.observations import (
+    Milestone,
+    PracticeFacts,
+    practice_milestones,
+    practice_observations,
+)
 from domain.practice_insights import (
     WEEKLY_HISTORY_WEEKS,
     WEEKLY_TARGET_SESSIONS,
@@ -65,6 +72,8 @@ class PracticeStory:
     last_insight_timestamp: datetime | None
     mode_totals: dict[str, float]
     first_session_on: date | None
+    observations: list[str] = dataclasses.field(default_factory=list)
+    milestones: list[Milestone] = dataclasses.field(default_factory=list)
 
 
 def _weekly(sessions: list[PracticeSession], tz: str | None) -> list[WeeklyCount]:
@@ -178,9 +187,42 @@ def build_practice_story(
     tz: str | None,
     stage_ask_minutes: float,
     stage_scope: PracticeStageScope,
+    stage_name: str | None = None,
 ) -> PracticeStory:
     """Describe one practice's lifetime, its recent cadence, and the requested stage."""
     counted = _counted_sits(sessions)
+    story = _figures(counted, tz=tz, stage_ask_minutes=stage_ask_minutes, stage_scope=stage_scope)
+    return _with_observations(story, counted, tz=tz, stage_name=stage_name)
+
+
+def _with_observations(
+    story: PracticeStory, counted: list[PracticeSession], *, tz: str | None, stage_name: str | None
+) -> PracticeStory:
+    """Add the sentences and dated milestones (#3525) the figures support."""
+    facts = PracticeFacts(
+        total_minutes=story.total_minutes,
+        total_sessions=story.total_sessions,
+        stage_ask_minutes=story.stage_ask_minutes,
+        stage_average_minutes=story.stage_average_minutes,
+        time_of_day=story.time_of_day,
+        stage_name=stage_name,
+    )
+    sits = [(row.timestamp, row.duration_minutes) for row in counted]
+    return replace(
+        story,
+        observations=practice_observations(facts),
+        milestones=practice_milestones(sits, tz=tz),
+    )
+
+
+def _figures(
+    counted: list[PracticeSession],
+    *,
+    tz: str | None,
+    stage_ask_minutes: float,
+    stage_scope: PracticeStageScope,
+) -> PracticeStory:
+    """Every figure the Story draws, over the counted sits."""
     totals = compute_practice_stats(counted)
     insight_count, last_insight, last_insight_timestamp = _insights(counted)
     stage = _stage_sits(counted, stage_scope)

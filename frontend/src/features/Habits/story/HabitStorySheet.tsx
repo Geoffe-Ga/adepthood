@@ -10,9 +10,7 @@ import {
   type HabitStoryStyles,
 } from './HabitStory.styles';
 import { HabitStoryBody } from './HabitStoryBody';
-import { logLines } from './habitStoryPresentation';
 
-import type { ApiHabitStory } from '@/api';
 import { decorativeHidden } from '@/components/a11yHidden';
 import { ErrorFallback } from '@/components/ErrorFallback';
 import { ContentContainer } from '@/components/layout/ContentContainer';
@@ -21,7 +19,7 @@ import { useResponsive } from '@/design/useResponsive';
 import { STORY_CLOSE_LABEL } from '@/features/Habits/components/modalCloseLabels';
 import type { Habit } from '@/features/Habits/Habits.types';
 import { useHabitStory } from '@/features/Habits/hooks/useHabitStory';
-import { formatTimeInTZ } from '@/utils/dateUtils';
+import { HabitLedger } from '@/features/Habits/ledger/HabitLedger';
 
 export interface HabitStorySheetProps {
   visible: boolean;
@@ -83,34 +81,6 @@ function SheetHeader({ title, styles, view, menuOpen, canTabulate, ...on }: Head
   );
 }
 
-/** The Ledger's first floor: every raw log, newest first (the Ledger issue fills the rest). */
-function LedgerStub({
-  story,
-  timezone,
-  styles,
-}: {
-  story: ApiHabitStory;
-  timezone: string;
-  styles: HabitStoryStyles;
-}) {
-  const lines = logLines(story, (timestamp) => formatTimeInTZ(new Date(timestamp), timezone));
-  return (
-    <View testID="habit-ledger" style={styles.section}>
-      <Text style={styles.sectionTitle}>Every log</Text>
-      {lines.length === 0 ? <Text style={styles.caption}>No logs with a time yet.</Text> : null}
-      {lines.map((line) => (
-        <View key={line.key} style={styles.logRow} accessible>
-          <View style={styles.shrink}>
-            <Text style={styles.logWhen}>{line.when}</Text>
-            <Text style={styles.caption}>{line.detail}</Text>
-          </View>
-          <Text style={styles.logAmount}>{line.amount}</Text>
-        </View>
-      ))}
-    </View>
-  );
-}
-
 interface ContentProps {
   habit: Habit;
   read: ReturnType<typeof useHabitStory>;
@@ -149,7 +119,12 @@ function SheetContent({ habit, read, view, tables, styles, onOpenLedger }: Conte
     >
       <View style={styles.stack}>
         {view === 'ledger' ? (
-          <LedgerStub story={read.story} timezone={read.timezone} styles={styles} />
+          <HabitLedger
+            story={read.story}
+            habitName={habit.name}
+            timezone={read.timezone}
+            styles={styles}
+          />
         ) : (
           <HabitStoryBody
             story={read.story}

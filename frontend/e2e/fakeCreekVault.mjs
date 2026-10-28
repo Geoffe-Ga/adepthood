@@ -56,6 +56,11 @@ import { fileURLToPath } from 'node:url';
  * vault breaking the content-free promise would. Neither is ever recorded in
  * the ledger: they are reads of the audit, not traffic adepthood sent.
  *
+ * `POST /__lane/fail-upload` arms one refusal for the upload whose content
+ * digest it names: that `POST /v1/uploads` is answered 503 and stores nothing,
+ * and is recorded with `action: 'failed'`, so the folder-import journey can
+ * fail one document of several and prove its retry keeps the same identity.
+ *
  * `GET /__lane/uploads` reports what actually arrived: every `/v1` request in
  * order, and the fragments the ledger holds. Requests are recorded by shape and
  * by a digest of the bytes, never by the bytes -- which is what lets a spec
@@ -166,6 +171,13 @@ const received = [];
 /** Fragments this vault holds, keyed by the consumer's own stable id. */
 const fragments = new Map();
 
+/**
+ * Content digests whose next upload this vault refuses once, armed only by the
+ * folder-import journey (#3557) so one named document fails while its siblings
+ * land. A digest, never the bytes: the journey computes it from its own fixture.
+ */
+const uploadFailuresArmed = new Set();
+
 /** One deterministic transport fault, armed only by the withdrawal journey. */
 let voiceDraftDeleteFailuresRemaining = 0;
 /** Held until a journey releases it, so retained copies can be observed directly. */
@@ -195,6 +207,12 @@ const pipelineJobs = new Map();
 let requestKeysRejected = false;
 /** Handles whose keyed pass the vendor refused. Opaque ids only. */
 const rejectedJobs = new Set();
+/**
+ * A journey can model Creek's managed rules floor (#3577, Creek-Vault#1982): an
+ * `llm` classification admitted meanwhile finishes `complete: true` with
+ * `method: 'rules'`, which the server must read as a sort not yet finished.
+ */
+let classifyWithRules = false;
 /** The vendors a managed Creek vault spends a writer's own key for. */
 const REQUEST_KEY_PROVIDERS = ['anthropic', 'openai'];
 const PROVIDER_HEADER = 'x-creek-provider';
@@ -304,6 +322,21 @@ async function uploads(request, response) {
     return;
   }
   const digest = digestOf(body.content_base64);
+  if (uploadFailuresArmed.delete(digest)) {
+    // Recorded as an attempt that stored nothing, so a journey can prove the
+    // retry that follows addressed this same external id.
+    received.push({
+      method: 'POST',
+      path: '/v1/uploads',
+      externalId: body.external_id,
+      tier: body.tier,
+      ceiling: request.headers[CEILING_HEADER] ?? null,
+      digest,
+      action: 'failed',
+    });
+    refuse(response, HTTP_SERVICE_UNAVAILABLE, 'temporarily_unavailable');
+    return;
+  }
   const { fragment, action } = store('upload', body.external_id, digest);
   received.push({
     method: 'POST',
@@ -698,13 +731,14 @@ async function pipelineCall(request, response, pathname) {
     return true;
   }
   const handle = randomUUID();
+  const answeredMethod = classifyWithRules ? 'rules' : method;
   if (requestKeysRejected && typeof request.headers[PROVIDER_KEY_HEADER] === 'string') {
     rejectedJobs.add(handle);
   }
   pipelineJobs.set(handle, {
     status: 'ok',
     tier_ceiling: 'personal',
-    method,
+    method: answeredMethod,
     total: 1,
     classified: 1,
     preserved_manual: 0,
@@ -865,6 +899,15 @@ const server = createServer((request, response) => {
     }
     if (
       request.method === 'POST' &&
+      ['/__lane/classify-with-rules', '/__lane/classify-with-llm'].includes(pathname)
+    ) {
+      request.resume();
+      classifyWithRules = pathname === '/__lane/classify-with-rules';
+      send(response, HTTP_OK, { status: 'ok' });
+      return;
+    }
+    if (
+      request.method === 'POST' &&
       ['/__lane/advertise-readings', '/__lane/withdraw-readings'].includes(pathname)
     ) {
       request.resume();
@@ -898,6 +941,16 @@ const server = createServer((request, response) => {
     if (request.method === 'POST' && pathname === '/__lane/escalate-next-letter') {
       request.resume();
       letterEscalationArmed = true;
+      send(response, HTTP_OK, { status: 'ok' });
+      return;
+    }
+    if (request.method === 'POST' && pathname === '/__lane/fail-upload') {
+      const body = await readJson(request);
+      if (typeof body?.digest !== 'string' || !/^[0-9a-f]{64}$/u.test(body.digest)) {
+        refuse(response, HTTP_BAD_REQUEST, 'invalid_request');
+        return;
+      }
+      uploadFailuresArmed.add(body.digest);
       send(response, HTTP_OK, { status: 'ok' });
       return;
     }

@@ -26,10 +26,10 @@ export const STORY_OBSERVATIONS_SHOWN = 3;
 
 const DAYS_PER_WEEK = 7;
 const TOP_HEAT_LEVEL = 3;
-const MINUS = '−';
+export const MINUS = '−';
 
-const SINGULAR: Record<StoryUnit, string> = { days: 'day', weeks: 'week', months: 'month' };
-const WITH_LABEL: Record<StoryUnit, string> = {
+export const SINGULAR: Record<StoryUnit, string> = { days: 'day', weeks: 'week', months: 'month' };
+export const WITH_LABEL: Record<StoryUnit, string> = {
   days: 'Days with',
   weeks: 'Weeks with',
   months: 'Months with',
@@ -45,7 +45,7 @@ const TIER_NAME: Record<NonNullable<StoryDay['tier']>, string> = {
   stretch: 'Stretch',
 };
 export const TIME_OF_DAY_LABELS = ['Dawn', 'Day', 'Dusk', 'Night'] as const;
-const WEEKDAY_NAMES = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'] as const;
+export const WEEKDAY_NAMES = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'] as const;
 
 /** A server calendar key already names the user's day; never re-zone UTC midnight. */
 const calendar = (date: string, options: Intl.DateTimeFormatOptions): string =>
@@ -62,7 +62,7 @@ export const countIn = (count: number, unit: StoryUnit): string =>
   `${count} ${count === 1 ? SINGULAR[unit] : unit}`;
 
 /** Format a whole or fractional amount without trailing zeros. */
-const amount = (value: number): string => String(Math.round(value * 100) / 100);
+export const amount = (value: number): string => String(Math.round(value * 100) / 100);
 
 /** Signed change against the previous thirty days, with a true minus sign. */
 export const signedDelta = (delta: number): string => {
@@ -133,7 +133,7 @@ function dayState(day: StoryDay, unit: string): string {
   return day.scheduled ? 'Quiet' : 'Not scheduled';
 }
 
-const dayCell = (day: StoryDay, unit: string): HeatCell => ({
+export const dayCell = (day: StoryDay, unit: string): HeatCell => ({
   label: `${formatStoryLongDate(day.date)} · ${dayState(day, unit)}`,
   level: day.tier ? TIER_LEVEL[day.tier] : 0,
   hollow: day.logged && day.tier === null,
@@ -303,13 +303,6 @@ export const datedMilestones = (story: ApiHabitStory): DatedMilestone[] =>
     return text === null ? [] : [{ date: formatStoryDate(milestone.reached_on), text }];
   });
 
-export interface StoryLogLine {
-  key: string;
-  when: string;
-  amount: string;
-  detail: string;
-}
-
 /** How a log arrived, in words; an unknown source is named as logged. */
 const SOURCE_WORDS: Record<string, string> = {
   manual: 'logged by hand',
@@ -318,17 +311,5 @@ const SOURCE_WORDS: Record<string, string> = {
   practice_link: 'from a practice sit',
   backfill: 'added for an earlier day',
 };
-const sourceWords = (source: string, viaTimer: boolean): string =>
+export const sourceWords = (source: string, viaTimer: boolean): string =>
   viaTimer ? SOURCE_WORDS.timer! : (SOURCE_WORDS[source] ?? 'logged');
-
-/** The Ledger stub's raw log list, newest first as the server sends it. */
-export const logLines = (
-  story: ApiHabitStory,
-  formatTime: (_timestamp: string) => string,
-): StoryLogLine[] =>
-  story.logs.map((log, index) => ({
-    key: `${log.timestamp}-${index}`,
-    when: `${formatStoryDate(log.local_day)} · ${formatTime(log.timestamp)}`,
-    amount: `${log.delta_units > 0 ? '+' : log.delta_units < 0 ? MINUS : ''}${amount(Math.abs(log.delta_units))} ${story.unit}`,
-    detail: sourceWords(log.source, log.via_timer),
-  }));

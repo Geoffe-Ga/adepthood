@@ -120,6 +120,8 @@ async def test_ready_managed_address_equals_the_authorized_resource(
         "vault_url": None,
         "mcp_address": expected,
         "classification_key_rejected": False,
+        "classification_state": "not_run",
+        "classification_message": None,
     }
     assert expected == _RESOURCE
     assert len(boundary.requests) == 1
@@ -155,6 +157,8 @@ async def test_missing_or_mismatched_discovery_keeps_the_address_unavailable(
         "vault_url": None,
         "mcp_address": None,
         "classification_key_rejected": False,
+        "classification_state": "not_run",
+        "classification_message": None,
     }
 
 
@@ -198,6 +202,8 @@ async def test_a_rolled_allocation_acquires_an_address_without_a_new_handoff(
         "vault_url": None,
         "mcp_address": _RESOURCE,
         "classification_key_rejected": False,
+        "classification_state": "not_run",
+        "classification_message": None,
     }
     assert len(boundary.requests) == 2
 
@@ -219,6 +225,8 @@ async def test_unreachable_discovery_keeps_the_managed_binding_connected(
         "vault_url": None,
         "mcp_address": None,
         "classification_key_rejected": False,
+        "classification_state": "not_run",
+        "classification_message": None,
     }
 
 
@@ -278,6 +286,8 @@ async def test_self_connected_address_does_not_require_managed_discovery(
         "vault_url": _VAULT,
         "mcp_address": _RESOURCE,
         "classification_key_rejected": False,
+        "classification_state": "not_run",
+        "classification_message": None,
     }
     assert not boundary.requests
 
@@ -315,6 +325,8 @@ async def test_repeated_connection_reads_back_off_unavailable_discovery(
             "vault_url": None,
             "mcp_address": None,
             "classification_key_rejected": False,
+            "classification_state": "not_run",
+            "classification_message": None,
         }
     )
     assert len(boundary.requests) == 1
@@ -380,6 +392,8 @@ async def test_optional_discovery_cancels_slow_dns_off_the_database_pool(
         "vault_url": None,
         "mcp_address": None,
         "classification_key_rejected": False,
+        "classification_state": "not_run",
+        "classification_message": None,
     }
     assert cancelled.is_set()
     assert not boundary.requests
@@ -404,6 +418,8 @@ async def test_optional_discovery_cancels_slow_handshake_off_the_database_pool(
         "vault_url": None,
         "mcp_address": None,
         "classification_key_rejected": False,
+        "classification_state": "not_run",
+        "classification_message": None,
     }
     assert boundary.cancelled
     assert len(boundary.requests) == 1
@@ -513,6 +529,8 @@ async def test_binding_change_uses_only_the_new_owned_resource(
         "vault_url": None,
         "mcp_address": new_resource,
         "classification_key_rejected": False,
+        "classification_state": "not_run",
+        "classification_message": None,
     }
     assert str(boundary.requests[-1].url) == new_vault + "/capabilities"
     assert len(boundary.requests) == 2
