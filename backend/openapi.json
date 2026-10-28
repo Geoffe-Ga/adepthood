@@ -3794,7 +3794,7 @@
             "type": "string"
           },
           "is_carryover": {
-            "description": "Stored carryover or a birth before the known current-cycle anchor's local day.",
+            "description": "The person's explicit bring-along choice.",
             "title": "Is Carryover",
             "type": "boolean"
           },
@@ -3815,6 +3815,13 @@
             ],
             "title": "Stage Number"
           },
+          "unit_histories": {
+            "items": {
+              "$ref": "#/components/schemas/HabitUnitHistory"
+            },
+            "title": "Unit Histories",
+            "type": "array"
+          },
           "week": {
             "anyOf": [
               {
@@ -3826,7 +3833,7 @@
                 "type": "null"
               }
             ],
-            "description": "Week in this 36-week arc; null for carryovers, unknown anchors, or births after week 36.",
+            "description": "Week in this 36-week arc; null for carryovers, unknown anchors, or births after week 36. Regular births before the anchor use week 1.",
             "title": "Week"
           }
         },
@@ -4581,6 +4588,49 @@
           "week_start"
         ],
         "title": "HabitStoryWeek",
+        "type": "object"
+      },
+      "HabitUnitHistory": {
+        "description": "One measure over the current programme; unlike units stay separate.",
+        "properties": {
+          "days": {
+            "items": {
+              "$ref": "#/components/schemas/HabitUnitsDay"
+            },
+            "title": "Days",
+            "type": "array"
+          },
+          "unit": {
+            "title": "Unit",
+            "type": "string"
+          }
+        },
+        "required": [
+          "unit",
+          "days"
+        ],
+        "title": "HabitUnitHistory",
+        "type": "object"
+      },
+      "HabitUnitsDay": {
+        "description": "Actual units logged on one user-local day, including quiet zero days.",
+        "properties": {
+          "date": {
+            "format": "date",
+            "title": "Date",
+            "type": "string"
+          },
+          "units": {
+            "minimum": 0.0,
+            "title": "Units",
+            "type": "number"
+          }
+        },
+        "required": [
+          "date",
+          "units"
+        ],
+        "title": "HabitUnitsDay",
         "type": "object"
       },
       "HabitWithGoals": {
