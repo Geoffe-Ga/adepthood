@@ -1369,15 +1369,15 @@
   },
   {
     "id": "map.progress-door",
-    "description": "The private progress overview API is available for the Map's optional Your progress door. The raw progress client reaches that authenticated endpoint with a pinned credential; the current Map surface does not yet call it. Uncovered until #3528 connects the door, validates the response, and drives the ribbon, rhythm, cycles and deliberate energy ledger through a real browser at phone and desktop widths.",
+    "description": "The Map's drawer offers a 'Your progress' door (#3528), hidden when both the habits and practice rings are off, that opens the Progress screen drawn entirely from GET /progress/overview (#3522): the 36-week ribbon of ten labelled stage blocks with habit births as dots, carryovers listed as brought with you and a you-are-here rule; the unnamed 14-day rhythm wave with its end value, stage swatches and a factual caption (served observations, or the fullest fortnight, longest rest and rising-since facts worded locally); per-stage dumbbells from cycle 2 on; and the weekly net-energy columns with their formula printed beside the title. Covered by frontend/e2e/map-progress-door.browser.e2e.test.ts, which anchors an account twenty-two weeks back (tests.e2e.program_anchor, the one out-of-band arrange), logs a month of real check-ins through POST /goal_completions/, opens the door from the Map drawer, and asserts the week-23 you-are-here line, the ribbon, and the energy formula and columns at phone and desktop widths. The ring-toggle gate, the 28-day rhythm gate, the cycles-from-cycle-2 rule and the held-while-reloading render are pinned by Jest beside the screen.",
     "crosses": {
       "screen": "frontend/src/features/Map/MapScreen.tsx",
-      "client": ["progress"],
-      "routes": ["GET /progress/overview"],
+      "client": ["progress", "habits", "goalCompletions"],
+      "routes": ["POST /habits/", "POST /goal_completions/", "GET /progress/overview"],
       "tables": ["stageprogress", "habit", "goal", "goalcompletion", "practicesession"]
     },
-    "status": "uncovered",
-    "issue": 3528
+    "status": "covered",
+    "coveredBy": "frontend/e2e/map-progress-door.browser.e2e.test.ts"
   },
   {
     "id": "map.advance-stage",

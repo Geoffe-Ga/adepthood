@@ -9,6 +9,7 @@ import JournalPhotographScreen from '../features/Journal/JournalPhotographScreen
 import NotificationCenterScreen from '../features/Journal/NotificationCenterScreen';
 import PromotedQuotesScreen from '../features/Journal/PromotedQuotesScreen';
 import VoiceDraftsShelfScreen from '../features/Journal/VoiceDraftsShelfScreen';
+import { ProgressScreen } from '../features/Map/progress/ProgressScreen';
 import { CreatePracticeWizard } from '../features/Practice/screens/CreatePracticeWizard';
 import { PracticeCatalogScreen } from '../features/Practice/screens/PracticeCatalogScreen';
 import { PracticeDetailScreen } from '../features/Practice/screens/PracticeDetailScreen';
@@ -62,6 +63,8 @@ export type RootStackParamList = {
   VaultActivation: undefined;
   SharePreview: { token: string };
   PracticeDetail: { practiceId: number; assignError?: string };
+  /** The Map's Progress screen (#3528): a place, not a query. */
+  Progress: undefined;
   CreatePractice: { prefill?: CreatePracticePrefill } | undefined;
   Catalog: { stageNumber?: number } | undefined;
   /**
@@ -288,6 +291,7 @@ const RootStack = (): React.JSX.Element => (
       component={SharePreviewScreen}
       options={{ title: 'Shared practice' }}
     />
+    <Stack.Screen name="Progress" component={ProgressScreen} options={{ title: 'Your progress' }} />
     <Stack.Screen
       name="PracticeDetail"
       component={PracticeDetailScreen}

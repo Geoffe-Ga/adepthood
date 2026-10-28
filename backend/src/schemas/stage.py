@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import date, datetime
+from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -153,6 +154,9 @@ class PracticeHistoryItem(BaseModel):
     last_session: datetime | None
 
 
+CadenceUnit = Literal["days", "weeks", "months"]
+
+
 class HabitHistoryItem(BaseModel):
     """A habit's aggregated history within a stage."""
 
@@ -160,6 +164,10 @@ class HabitHistoryItem(BaseModel):
     icon: str
     goals_achieved: dict[str, bool]
     best_streak: int
+    cadence_unit: CadenceUnit = Field(
+        default="days",
+        description="The unit ``best_streak`` is counted in: a weekly habit's run is in weeks.",
+    )
     total_completions: int
 
 

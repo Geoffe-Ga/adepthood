@@ -23,7 +23,23 @@ const HISTORY: StageHistoryResponse = {
       icon: '🏃',
       goals_achieved: { low: true, clear: true, stretch: false },
       best_streak: 14,
+      cadence_unit: 'days',
       total_completions: 45,
+    },
+  ],
+};
+
+const WEEKLY: StageHistoryResponse = {
+  stage_number: 1,
+  practices: HISTORY.practices,
+  habits: [
+    {
+      name: 'Long run',
+      icon: '🏃',
+      goals_achieved: { low: true },
+      best_streak: 2,
+      cadence_unit: 'weeks',
+      total_completions: 4,
     },
   ],
 };
@@ -63,9 +79,23 @@ describe('unlockTimeline', () => {
 });
 
 describe('progressionSentence', () => {
-  it('reads as one sentence with sessions and a streak', () => {
+  it('reads as one sentence with sessions and a run, never a streak', () => {
     const sentence = progressionSentence(HISTORY);
-    expect(sentence).toBe('You logged 15 sessions across 2 practices and held a 14-day streak.');
+    expect(sentence).toBe('You logged 15 sessions across 2 practices and kept a run of 14 days.');
+    expect(sentence).not.toMatch(/streak/i);
+  });
+
+  it("counts a weekly habit's run in weeks (#3528)", () => {
+    expect(progressionSentence(WEEKLY)).toBe(
+      'You logged 15 sessions across 2 practices and kept a run of 2 weeks.',
+    );
+  });
+
+  it('treats a history from before cadence_unit as days', () => {
+    const legacy = structuredClone(WEEKLY);
+    delete (legacy.habits[0] as { cadence_unit?: string }).cadence_unit;
+    legacy.habits[0]!.best_streak = 1;
+    expect(progressionSentence(legacy)).toContain('kept a run of 1 day.');
   });
 
   it('falls back to a beginning-of-story line when empty', () => {
@@ -74,11 +104,19 @@ describe('progressionSentence', () => {
 });
 
 describe('rankedStats', () => {
-  it('ranks headline stats largest-first and drops zeros', () => {
+  it('keeps a fixed order, never sorting figures by size (ADR 0003)', () => {
     const stats = rankedStats(HISTORY);
-    // 15 sessions, 3 hours (210 min → 4 rounded), 14-day streak; all > 0.
-    expect(stats.map((s) => s.key)).toEqual(['sessions', 'streak', 'minutes']);
-    expect(stats[0]).toEqual({ key: 'sessions', label: 'Sessions', value: 15 });
+    // 15 sessions, 210 min → 4 hours, a 14-day run: the order is fixed, not by size.
+    expect(stats).toEqual([
+      { key: 'sessions', label: 'Sessions', value: 15 },
+      { key: 'minutes', label: 'Hours', value: 4 },
+      { key: 'run', label: 'Longest run (days)', value: 14 },
+    ]);
+    expect(rankedStats(WEEKLY).at(-1)).toEqual({
+      key: 'run',
+      label: 'Longest run (weeks)',
+      value: 2,
+    });
   });
 
   it('returns nothing for an empty history', () => {
