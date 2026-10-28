@@ -1,10 +1,9 @@
 """All-time per-practice totals: how many sits, and how many minutes.
 
-Sibling of :mod:`domain.habit_stats` -- a pure function over ORM rows, no
-session, no query -- so the counting rule is cheap to test and lives in exactly
-one place.  The router fetches the rows and hands them here, the way
-``GET /habits/{habit_id}/stats`` hands its completions to
-:func:`domain.habit_stats.compute_habit_stats`.
+A pure function over ORM rows -- no session, no query -- so the counting rule
+is cheap to test and lives in exactly one place.  ``GET
+/practice-sessions/story`` (:mod:`domain.practice_story`) and the progress
+overview (:mod:`domain.progress_overview`) build their totals on it.
 
 Which sessions count
 --------------------
@@ -29,9 +28,9 @@ A total cannot honour both.  It follows the insights rule --
    bar would read as one of them being broken.  ``week-count`` is the odd one
    out and is already only the *fallback* path in ``useWeeklyProgress``, taken
    when the insights request fails.
-2. *It is the precedent the Habits stats path set.*  ``_additive_stats``
-   filters ``completed_units > 0`` for exactly this reason (#781): the stats
-   endpoint and the list endpoint must not report different numbers about the
+2. *It is the precedent the Habits path set.*  The Habit Story's runs
+   ignore ``completed_units == 0`` rows for exactly this reason (#781): the
+   Story and the list endpoint must not report different numbers about the
    same rows.
 3. *It keeps the two fields describing one population.*  ``total_minutes /
    total_sessions`` is a real average sitting length only if the rows counted
@@ -60,8 +59,8 @@ MIN_COUNTED_DURATION_MINUTES = 0.0
 class PracticeStats:
     """All-time totals for one practice.
 
-    Mirrors the wire schema in :class:`schemas.practice.PracticeStatsResponse`
-    so the router re-shapes with a single ``model_validate``.
+    The Story's ``total_sessions`` / ``total_minutes`` are these two figures
+    (:func:`domain.practice_story.build_practice_story`).
     """
 
     total_sessions: int
@@ -76,7 +75,7 @@ def compute_practice_stats(sessions: Iterable[PracticeSession]) -> PracticeStats
     on ownership -- that is the router's job, and keeping it out of here means
     a caller cannot accidentally rely on this to be a security boundary.
 
-    Deliberately not windowed, matching ``GET /habits/{habit_id}/stats``
+    Deliberately not windowed, matching ``GET /habits/{habit_id}/story``
     (#294): "how much have I put into this" is a lifetime question.
     """
     counted = [s for s in sessions if s.duration_minutes > MIN_COUNTED_DURATION_MINUTES]

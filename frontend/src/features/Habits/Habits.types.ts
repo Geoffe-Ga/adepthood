@@ -67,17 +67,6 @@ export interface Completion {
   completed_units: number;
 }
 
-export interface HabitStatsData {
-  values: number[];
-  completionsByDay: number[];
-  dayLabels: string[];
-  longestStreak: number;
-  currentStreak: number;
-  totalCompletions: number;
-  completionRate: number;
-  completionDates: string[];
-}
-
 export interface OnboardingHabit {
   id: string;
   name: string;

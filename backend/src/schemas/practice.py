@@ -395,21 +395,6 @@ class PracticeInsightsResponse(BaseModel):
     last_insight: str | None = None
 
 
-class PracticeStatsResponse(BaseModel):
-    """All-time totals returned by ``GET /practice-sessions/stats``.
-
-    Mirrors :class:`domain.practice_stats.PracticeStats` field for field so the
-    router re-shapes with one ``model_validate``.  ``extra="forbid"`` for the
-    same reason ``WeekCountResponse`` sets it: the wire shape stays exactly
-    these two keys.
-    """
-
-    model_config = ConfigDict(extra="forbid")
-
-    total_sessions: int
-    total_minutes: float
-
-
 class PracticeStorySit(BaseModel):
     """One of the last thirty counted sits, in chronological order."""
 

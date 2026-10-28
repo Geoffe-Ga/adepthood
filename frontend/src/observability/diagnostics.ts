@@ -78,7 +78,7 @@ const ROUTES = [
   '/journal/{entry_id}/reflect',
   '/habits/',
   '/habits/{habit_id}',
-  '/habits/{habit_id}/stats',
+  '/habits/{habit_id}/story',
   '/goals/{goal_id}',
   '/goal_completions/',
   '/users/me',
@@ -121,7 +121,7 @@ export function diagnosticRoute(path: string): DiagnosticRoute {
     [/^\/journal\/\d+\/notes\/?$/, '/journal/{entry_id}/notes'],
     [/^\/journal\/\d+\/reflect\/?$/, '/journal/{entry_id}/reflect'],
     [/^\/habits\/\d+\/?$/, '/habits/{habit_id}'],
-    [/^\/habits\/\d+\/stats\/?$/, '/habits/{habit_id}/stats'],
+    [/^\/habits\/\d+\/story\/?$/, '/habits/{habit_id}/story'],
     [/^\/goals\/\d+\/?$/, '/goals/{goal_id}'],
   ];
   return matches.find(([pattern]) => pattern.test(pathname))?.[1] ?? 'unknown_route';

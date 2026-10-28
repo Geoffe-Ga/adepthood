@@ -21,7 +21,6 @@ from domain.constants import STAGE_START_WEEKS, WEEKS_PER_STAGE
 from domain.dates import ensure_aware
 from domain.practice_insights import build_insights
 from domain.practice_resolution import effective_config, effective_duration_minutes
-from domain.practice_stats import compute_practice_stats
 from domain.practice_story import PracticeStageScope, build_practice_story
 from domain.program_calendar import program_week_bounds
 from domain.stage_progress import get_user_progress, is_stage_unlocked
@@ -38,7 +37,6 @@ from schemas.practice import (
     PracticeInsightsResponse,
     PracticeSessionCreate,
     PracticeSessionResponse,
-    PracticeStatsResponse,
     PracticeStoryResponse,
     WeekCountResponse,
 )
@@ -448,9 +446,9 @@ async def _sessions_for_practice(
       current_user``, so neither predicate is load-bearing on its own.
 
     Rows are fetched and aggregated in Python rather than summed in SQL to match
-    ``GET /habits/{habit_id}/stats``, which hands its rows to
-    :func:`domain.habit_stats.compute_habit_stats`: keeping the counting rule in
-    one pure function is what makes it testable without a database, and a single
+    ``GET /habits/{habit_id}/story``, which hands its rows to
+    :func:`domain.habit_story.build_habit_story`: keeping the counting rule in
+    pure functions is what makes it testable without a database, and a single
     practice's lifetime history is a bounded set (hundreds of rows for a daily
     practitioner over years), not a table scan.
     """
@@ -465,36 +463,6 @@ async def _sessions_for_practice(
         )
     )
     return list(result.scalars().all())
-
-
-@router.get("/stats", response_model=PracticeStatsResponse)
-async def get_practice_stats(
-    current_user: Annotated[int, Depends(get_current_user)],
-    session: Annotated[AsyncSession, Depends(get_session)],
-    response: Response,
-    user_practice: Annotated[UserPractice, Depends(require_owned_user_practice_from_query)],
-) -> PracticeStatsResponse:
-    """Return all-time totals — sessions and minutes — for one practice.
-
-    Ownership of the query-carried ``user_practice_id`` runs through
-    :func:`dependencies.ownership.require_owned_user_practice_from_query`, the
-    same dependency ``GET /practice-sessions/`` uses, so a missing row is 404
-    and another user's row is 403 with a ``resource_access_denied`` audit line —
-    never an empty-looking 200 that doubles as an existence oracle.
-
-    Which sessions count is settled in :mod:`domain.practice_stats`: rows with a
-    positive duration, agreeing with the insights rollup a practitioner already
-    reads and diverging from the unfiltered legacy ``week-count`` route.  That
-    module's docstring carries the reasoning.
-
-    The response is ``private, no-store`` for the reason #2654 established: this
-    total is read from a screen one tap away from the player that writes the
-    rows it counts, so a freshness lifetime would let the browser answer the
-    post-save re-read with the pre-save number out of its own cache.
-    """
-    _mark_uncacheable(response)
-    rows = await _sessions_for_practice(session, user_practice, current_user)
-    return PracticeStatsResponse.model_validate(compute_practice_stats(rows), from_attributes=True)
 
 
 async def _practice_stage_scope(

@@ -1,6 +1,6 @@
 """A weekly habit's streak counts met weeks on every endpoint (#2819).
 
-``GET /habits``, ``GET /habits/{id}``, ``GET /habits/{id}/stats`` and the
+``GET /habits``, ``GET /habits/{id}``, ``GET /habits/{id}/story`` and the
 check-in response must agree: a rest day inside a three-sessions-a-week habit
 does not break its streak, and the still-open week is grace.
 """
@@ -101,12 +101,12 @@ async def test_weekly_streak_agrees_across_endpoints_and_survives_rest_days(
 
     [listed] = (await async_client.get("/habits/", headers=headers)).json()
     detail = (await async_client.get(f"/habits/{habit_id}", headers=headers)).json()
-    stats = (await async_client.get(f"/habits/{habit_id}/stats", headers=headers)).json()
+    story = (await async_client.get(f"/habits/{habit_id}/story", headers=headers)).json()
 
     assert listed["streak"] == _CLOSED_WEEKS_MET
     assert detail["streak"] == _CLOSED_WEEKS_MET
-    assert stats["current_streak"] == _CLOSED_WEEKS_MET
-    assert stats["longest_streak"] == _CLOSED_WEEKS_MET
+    assert story["continuity"]["current_run"] == _CLOSED_WEEKS_MET
+    assert story["continuity"]["longest_run"] == _CLOSED_WEEKS_MET
 
     # One session today leaves the open week unmet: still grace, not a break.
     check_in = await async_client.post(

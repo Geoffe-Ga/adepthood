@@ -12,7 +12,6 @@ jest.mock('../../../api', () => ({
     create: jest.fn(() => Promise.resolve({})),
     update: jest.fn(() => Promise.resolve({})),
     delete: jest.fn(() => Promise.resolve({})),
-    getStats: jest.fn(() => Promise.resolve({})),
   },
   goalCompletions: {
     create: jest.fn(() => Promise.resolve({})),
