@@ -219,7 +219,10 @@ ALLOWED_HEADERS = [
 # ``expose_headers`` the trace-id echoed by ``CorrelationIdMiddleware``
 # is silently dropped by every cross-origin browser client and the PR's
 # end-to-end correlation contract is broken (BUG-APP-001 follow-up).
-EXPOSED_HEADERS = ["X-Request-ID"]
+# ``Retry-After`` is on every 429 (``rate_limit.rate_limit_exceeded_response``)
+# and is not CORS-safelisted either, so without it a web client paced by a
+# refusal -- a folder import (#3556) -- cannot read how long it was asked to wait.
+EXPOSED_HEADERS = ["X-Request-ID", "Retry-After"]
 
 
 _LOOPBACK_HOSTNAMES = frozenset({"localhost", "127.0.0.1", "::1"})
