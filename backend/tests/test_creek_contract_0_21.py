@@ -12,11 +12,15 @@ Every expectation below is a literal rather than a value derived from
 what the pin should be passes whatever the pin is, which is exactly the
 vacuity this suite exists to avoid.
 
-The 0.19 fields are **parsed and ignored** on purpose. Labelling each use from
-``inference_source`` and refusing a mismatched route as the existing ``409``
-are Creek-Vault#1903 steps 3 and 4 -- product decisions, not part of a pin move.
-What *is* part of a pin move is proving that those fields cannot change what
-adepthood does with an answer, which is what the ``ignored`` tests pin.
+0.19's handshake field ``inference_pool`` is **parsed and ignored** on purpose:
+what *is* part of a pin move is proving it cannot change what adepthood does
+with a handshake, which is what the ``ignored`` test pins.
+
+0.19's ``inference_source`` on a reflection or letter is consumed since #3483:
+it is the vault's own receipt for the route that answered, and
+``request_key:<vendor>`` is the only evidence that the writer's relayed key paid
+(``services.inference_provenance``). Here it is pinned only as surfaced on the
+parsed answer, and an unreadable value as dropped rather than guessed at.
 
 0.20's ``keyless_inference`` is the exception: since #3501 (the owner's decision
 of 2026-10-21) it is consumed, and a pool-less vault's keyless pass is refused
@@ -76,7 +80,7 @@ _PRE_021_WINDOW: Final = ("0.20", "0.19", "0.18")
 #: ``keyless_inference`` is consumed (#3501), so it is not listed here.
 _HANDSHAKE_ADDITIONS: Final = ("inference_pool",)
 
-#: The field 0.19 added to every model-backed answer, which adepthood ignores.
+#: The field 0.19 added to every model-backed answer: the vault's route receipt (#3483).
 _PROVENANCE_FIELD: Final = "inference_source"
 
 #: Creek 0.21's answer at the model-call cap on either model-backed route.
@@ -310,8 +314,8 @@ async def test_a_vault_reporting_no_keyless_inference_is_read_through() -> None:
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("state", ["success.json", "empty.json"])
-async def test_a_reflections_inference_source_is_ignored(state: str) -> None:
-    """The published 0.21 reflection projects exactly as it would without the label."""
+async def test_a_reflections_inference_source_is_surfaced(state: str) -> None:
+    """The published 0.21 reflection carries its route, and nothing else about it moves (#3483)."""
     published = _example("reflections", state)
     assert _PROVENANCE_FIELD in published
     labelled = _client(_ScriptedVault(body=published))
@@ -319,14 +323,17 @@ async def test_a_reflections_inference_source_is_ignored(state: str) -> None:
     await labelled.handshake()
     await unlabelled.handshake()
 
-    assert await labelled.reflect(_CONTENT, VaultTierCeiling.PERSONAL) == await unlabelled.reflect(
-        _CONTENT, VaultTierCeiling.PERSONAL
-    )
+    answered = await labelled.reflect(_CONTENT, VaultTierCeiling.PERSONAL)
+    bare = await unlabelled.reflect(_CONTENT, VaultTierCeiling.PERSONAL)
+
+    assert answered.inference_source == published[_PROVENANCE_FIELD]
+    assert bare.inference_source is None
+    assert replace(answered, inference_source=None) == bare
 
 
 @pytest.mark.asyncio
-async def test_a_letters_inference_source_is_ignored() -> None:
-    """The published 0.21 letter projects exactly as it would without the label."""
+async def test_a_letters_inference_source_is_surfaced() -> None:
+    """The published 0.21 letter carries its route, and nothing else about it moves (#3483)."""
     published = _example("letters", "success.json")
     assert _PROVENANCE_FIELD in published
     labelled = _client(_ScriptedVault(body=published))
@@ -334,6 +341,39 @@ async def test_a_letters_inference_source_is_ignored() -> None:
     await labelled.handshake()
     await unlabelled.handshake()
 
-    assert await labelled.write_letter(_letter_request()) == await unlabelled.write_letter(
-        _letter_request()
-    )
+    answered = await labelled.write_letter(_letter_request())
+    bare = await unlabelled.write_letter(_letter_request())
+
+    assert answered.inference_source == published[_PROVENANCE_FIELD]
+    assert bare.inference_source is None
+    assert replace(answered, inference_source=None) == bare
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("raw", "surfaced"),
+    [
+        ("request_key:anthropic", "request_key:anthropic"),
+        ("request_key:openai", "request_key:openai"),
+        ("local", "local"),
+        ("pool:attested:privatemode", "pool:attested:privatemode"),
+        ("request_key:", None),
+        ("request_key:Anthropic", None),
+        ("REQUEST_KEY:openai", None),
+        ("request_key:openai\n", None),
+        ("pool:somewhere-else", None),
+        (42, None),
+        (None, None),
+    ],
+)
+async def test_an_unreadable_inference_source_is_dropped_not_guessed(
+    raw: object, surfaced: str | None
+) -> None:
+    """Only the published vocabulary is surfaced; anything else reads as no receipt at all."""
+    published = _example("reflections", "success.json") | {_PROVENANCE_FIELD: raw}
+    client = _client(_ScriptedVault(body=published))
+    await client.handshake()
+
+    answered = await client.reflect(_CONTENT, VaultTierCeiling.PERSONAL)
+
+    assert answered.inference_source == surfaced

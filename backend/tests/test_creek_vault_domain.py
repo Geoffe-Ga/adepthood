@@ -60,6 +60,7 @@ _REFLECTION_FIELDS = (
     "routed_tier",
     "related_praxis",
     "related_eddies",
+    "inference_source",
 )
 
 # The ``$defs`` of that same schema which the two related-page value objects and

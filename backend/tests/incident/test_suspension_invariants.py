@@ -68,6 +68,11 @@ AI_EXCLUSIONS: Final[dict[Route, str]] = {
         "(corpus_backfill._offer_one), leaving every entry unmarked for the next grant; "
         "the consent decision itself is recorded"
     ),
+    Route("POST", "/corpus/sweep"): (
+        "the same backfill sweep, resumed under the standing grant (#3498): it stops "
+        "before its first dial while suspended (corpus_backfill._offer_one), leaving "
+        "every entry unmarked for the next pass, and the response is a count"
+    ),
 }
 
 

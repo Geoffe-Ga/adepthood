@@ -231,7 +231,7 @@
   },
   {
     "id": "habits.demo-tile-stays-local",
-    "description": "In a build explicitly configured with EXPO_PUBLIC_HABIT_DEMO_MODE=true, with the habits fetch failing and no real cache, the app seeds ten demo placeholder tiles carrying fabricated ids 1-10, and those numbers are also the ids of whatever real rows the caller happens to own. A successful empty response never enters this mode. Every action on such a tile is local: revealing, reordering, renaming, changing the icon, moving the start date in the reorder modal, editing a goal or its shared units, logging a unit, opening stats, and -- the destructive one -- deleting. The tile changes or disappears in the store and nothing goes out, so a placeholder delete cannot become a DELETE against the user's own habit 3, and no \"Couldn't sync\" alert appears for something the user did only to themselves. Covered by frontend/e2e/habits-demo-tile.browser.e2e.test.ts, which boots its own Expo web server on port 8080 (the other DEV_ORIGINS port, so no backend change) with EXPO_PUBLIC_HABIT_DEMO_MODE=true -- the flag is inlined at bundle time, so the shared lane's server stays non-demo, which frontend/e2e/frontendEnv.ts enforces fail-closed and the lane guard confines to that one spec. It signs up for real, aborts exactly GET /habits/ on the API origin from the harness, clears the on-device habit cache, and asserts the error state beside every HABIT_DEFAULTS tile, unlocked. It then locks and unlocks all, drags a tile and moves the first habit's start date in the reorder modal, renames, changes an icon, edits a low target and the shared unit, logs a unit (seeing the sample-habits notice), opens stats (rendered locally, never stuck loading) and deletes a tile -- recording every request and asserting none of PUT/DELETE /habits/{id}, DELETE /habits/{id}/completions, PUT /habits/{id}/goals/units, PUT /goals/{id}, POST /goal_completions/ or GET /habits/{id}/stats went out (the classifier is pinned by __tests__/demoTileBrowserSupport.test.ts). RN-web's Alert is a no-op, so that request log, not the screen, is the proof no sync alert was raised. After a reload with the list still failing, every placeholder is back as seeded: today's discard behaviour, pinned as current and not decided (#2465). One control is not reachable on web: the habit settings' start-date picker renders nothing there, so the start date is moved through the reorder modal's \"First habit start date\". DELETE /habits/{id}/completions has no client caller and stays in the asserted-absent list only as a demo-tile guard. The same local-only rule covers every client-minted row, not just the demo family: onboarding scaffold rows and pre-sync added rows are marked hasClientMintedIds and may not put their provisional ids on the wire. A client-minted row is the user's real data, so it reaches the on-disk cache while a demo tile never does; that half, and the mixed store where the one real row still syncs, stay pinned by unit tests in src/features/Habits/services/__tests__/serverIds.test.ts, src/features/Habits/services/__tests__/habitManager.test.ts, and src/features/Habits/hooks/__tests__/useHabitActions.test.tsx.",
+    "description": "In a build explicitly configured with EXPO_PUBLIC_HABIT_DEMO_MODE=true, with the habits fetch failing and no real cache, the app seeds ten demo placeholder tiles carrying fabricated ids 1-10, and those numbers are also the ids of whatever real rows the caller happens to own. A successful empty response never enters this mode. Every action on such a tile is local: revealing, reordering, renaming, changing the icon, moving the start date in the reorder modal, editing a goal or its shared units, logging a unit, opening its Story, and -- the destructive one -- deleting. The tile changes or disappears in the store and nothing goes out, so a placeholder delete cannot become a DELETE against the user's own habit 3, and no \"Couldn't sync\" alert appears for something the user did only to themselves. Covered by frontend/e2e/habits-demo-tile.browser.e2e.test.ts, which boots its own Expo web server on port 8080 (the other DEV_ORIGINS port, so no backend change) with EXPO_PUBLIC_HABIT_DEMO_MODE=true -- the flag is inlined at bundle time, so the shared lane's server stays non-demo, which frontend/e2e/frontendEnv.ts enforces fail-closed and the lane guard confines to that one spec. It signs up for real, aborts exactly GET /habits/ on the API origin from the harness, clears the on-device habit cache, and asserts the error state beside every HABIT_DEFAULTS tile, unlocked. It then locks and unlocks all, drags a tile and moves the first habit's start date in the reorder modal, renames, changes an icon, edits a low target and the shared unit, logs a unit (seeing the sample-habits notice), opens a tile's Story from its glyph (a sample-habit notice, rendered locally, never a read) and deletes a tile -- recording every request and asserting none of PUT/DELETE /habits/{id}, DELETE /habits/{id}/completions, PUT /habits/{id}/goals/units, PUT /goals/{id}, POST /goal_completions/, GET /habits/{id}/stats or GET /habits/{id}/story went out (the classifier is pinned by __tests__/demoTileBrowserSupport.test.ts). RN-web's Alert is a no-op, so that request log, not the screen, is the proof no sync alert was raised. After a reload with the list still failing, every placeholder is back as seeded: today's discard behaviour, pinned as current and not decided (#2465). One control is not reachable on web: the habit settings' start-date picker renders nothing there, so the start date is moved through the reorder modal's \"First habit start date\". DELETE /habits/{id}/completions has no client caller and stays in the asserted-absent list only as a demo-tile guard. The same local-only rule covers every client-minted row, not just the demo family: onboarding scaffold rows and pre-sync added rows are marked hasClientMintedIds and may not put their provisional ids on the wire. A client-minted row is the user's real data, so it reaches the on-disk cache while a demo tile never does; that half, and the mixed store where the one real row still syncs, stay pinned by unit tests in src/features/Habits/services/__tests__/serverIds.test.ts, src/features/Habits/services/__tests__/habitManager.test.ts, and src/features/Habits/hooks/__tests__/useHabitActions.test.tsx.",
     "crosses": {
       "screen": "frontend/src/features/Habits/HabitsScreen.tsx",
       "client": ["habits", "goals", "goalCompletions"],
@@ -242,7 +242,7 @@
         "PUT /habits/{habit_id}/goals/units",
         "PUT /goals/{goal_id}",
         "POST /goal_completions/",
-        "GET /habits/{habit_id}/stats"
+        "GET /habits/{habit_id}/story"
       ],
       "tables": ["habit", "goal", "goalcompletion"]
     },
@@ -1486,6 +1486,18 @@
     "issue": 3229
   },
   {
+    "id": "seed.import-a-folder",
+    "description": "On the web, a person chooses a whole folder -- an Obsidian vault, say -- from 'Bring in what you've written' and reviews it before anything is sent (#3555). The browser's directory input hands over each file's path under the chosen folder; the manifest is built from names and sizes alone, so no file is read until it is sent. Notes (.md, .markdown, .txt, .text) start selected; every other type Creek ingests through /v1/uploads is one optional attachments switch; app settings (.obsidian, .git, .trash, __MACOSX), hidden files, unreadable types, unsendable names, files past the 10 MB cap and two spellings of one path are counted by reason and never sent. The review shows the editable import name (the folder's own name by default), the selected paths and their total size under the existing privacy choice; putting it aside sends nothing, and starting refuses an empty selection, more than 250 MB, or a name the server would refuse. Each document then goes through the existing sequential sender with its filename plus source_namespace and source_relative_path, so Work/Index.md and Home/Index.md land as two fragments (#3554). Pinned by SeedCorpusScreenFolder, useSeedFolder, folderManifest, pickSeedFolder and importDocument tests; uncovered across the seam until #3557's browser journey selects a nested folder and reads the vault back. The run paces itself under the endpoint's UPLOAD_RATE_LIMIT (20/minute, a moving window measured from each answer), shows a held document as a calm 'waiting' row, waits out a 429 for exactly its Retry-After (now CORS-exposed) up to three times before settling it as rate_limited, and offers 'Try again' for only the documents that did not go over, under the same identity and tier, at most twice each (#3556). Pinned by useSeedRunPacing, seedUploadPacing and uploadRateDrift tests.",
+    "crosses": {
+      "screen": "frontend/src/features/Seed/SeedCorpusScreen.tsx",
+      "client": ["auth", "setTokenGetter", "corpus"],
+      "routes": ["POST /auth/login", "POST /corpus/import"],
+      "tables": ["user"]
+    },
+    "status": "uncovered",
+    "issue": 3557
+  },
+  {
     "id": "corpus.import-without-a-vault",
     "description": "Someone the server finds no vault for brings in a document they wrote elsewhere. A corpus lives in a vault (owner ruling on #3015), so since #3016 the answer is vault_required and nothing else happens: the document is not read, consent is not consulted, no provider is called and nothing is stored -- destination corpus, stored false, fragment_id null, vault fields null. The spec proves the document was never looked at by sending each thing the retired local import used to answer differently -- a .md with no consent, a .pdf, the same .md after turning the switch for documents on, an Intimate document, and a neighbour who agreed to nothing -- and getting the same answer every time. It still crosses PUT /corpus/consent/{source} on purpose: flipping the switch is how it proves the switch now lets nothing in.",
     "crosses": {
@@ -1595,6 +1607,23 @@
     },
     "status": "covered",
     "coveredBy": "frontend/e2e/corpus-consent.e2e.test.ts"
+  },
+  {
+    "id": "corpus.sort-the-rest-of-your-writing",
+    "description": "Someone who journalled before turning sorting on opens Settings and, under Your writing, finds a 'Sort the rest of your writing' row saying how much is still unsorted (#3499). The row is there only while it can do something: it is absent without a standing yes for what is written here, absent while nothing is unsorted, and absent while the count is unknown. It opens a screen with the count, what sorting does in the consent screen's own words, and a 'Sort the next N' confirm that runs one bounded pass and then reports what it did -- offering the next pass on request and never looping on its own, because a pass can sort nothing and leave the remainder where it was. Sorting is free (#3495), so the screen carries no price and no credit language, and the shipped POST takes no body. The spec drives both verbs through the production client: a fresh account's count is zero; the count is the account's own writing apart from Intimate entries and nobody else's; a pass without consent is a 200 that sorts nothing and leaves the remainder unchanged (the case the screen must not read as success); and under a standing yes the pass's entries_pending and entries_remaining agree with each other and with the next GET. The lane has no classification provider, so how many entries a granted pass sorts is not observed here, and its server runs with rate limiting off, so the per-account 429 the screen meets with a retry-later line is pinned by backend/tests and CorpusSweepScreen.test.tsx instead.",
+    "crosses": {
+      "screen": "frontend/src/features/Settings/CorpusSweepScreen.tsx",
+      "client": ["auth", "setTokenGetter", "journal", "corpusConsent", "corpus"],
+      "routes": [
+        "GET /corpus/sweep",
+        "POST /corpus/sweep",
+        "POST /journal/",
+        "PUT /corpus/consent/{source}"
+      ],
+      "tables": ["journalentry", "corpusconsentevent", "corpusfragment"]
+    },
+    "status": "covered",
+    "coveredBy": "frontend/e2e/corpus-sweep.e2e.test.ts"
   },
   {
     "id": "corpus.settings-share-confirmed-decisions",
@@ -2900,7 +2929,7 @@
   },
   {
     "id": "journal.managed-vault-own-key",
-    "description": "A vault-bound writer with their own Anthropic or OpenAI key, whose managed vault advertises request_key_providers (Creek contract 0.18, Creek-Vault ADR-0015), asks for a reading (#3437, ADR 0009 2026-10-16 amendment). The browser spec saves the key in Settings and sees the managed-vault sentence in the key disclosure; the price line before the reading says \"Your vault will write this reading with your own Anthropic key\" and the receipt after it says \"Paid by your own Anthropic key, through your vault\"; the real server answers paid_by own_key with own_key_vendor anthropic and draws nothing from the wallet; and the lane vault's ledger shows the key arrived by digest on POST /v1/reflections and on no other call. The managed-vault offer's notice, reached through the real Settings -> vault -> create path with only activation availability controlled, says what happens to the key and the writing. The backend matrix (backend/tests/security/test_ai_boundary_network_matrix.py) pins the rest: the writer dials only their vault, the key rides only reflections, letters and the classification pass, a self-connected vault is never sent it and still takes a credit, an intimate entry dials nothing, and a canary key never reaches a response, a log record or a table.",
+    "description": "A vault-bound writer with their own Anthropic or OpenAI key, whose managed vault advertises request_key_providers (Creek contract 0.18, Creek-Vault ADR-0015), asks for a reading (#3437, ADR 0009 2026-10-16 amendment). The browser spec saves the key in Settings and sees the managed-vault sentence in the key disclosure; the price line before the reading says \"Your vault will write this reading with your own Anthropic key\" and the receipt after it says \"Paid by your own Anthropic key, through your vault\"; the real server answers paid_by own_key with own_key_vendor anthropic and draws nothing from the wallet; and the lane vault's ledger shows the key arrived by digest on POST /v1/reflections and on no other call. The managed-vault offer's notice, reached through the real Settings -> vault -> create path with only activation availability controlled, says what happens to the key and the writing. The backend matrix (backend/tests/security/test_ai_boundary_network_matrix.py) pins the rest: the writer dials only their vault, the key rides only reflections, letters and the classification pass, a self-connected vault is never sent it and still takes a credit, an intimate entry dials nothing, and a canary key never reaches a response, a log record or a table. Since #3483 own_key is decided from the vault's inference_source receipt (request_key:<vendor>), which the lane vault stamps on every model-backed answer; the matrix also pins that a local or pool fallback, a forged key on a vault with a local model, and a handshake that changes between probe and dial each answer 503 with nothing kept or charged.",
     "crosses": {
       "screen": "frontend/src/features/Journal/JournalEntryScreen.tsx",
       "client": ["botmasonUsage", "vaultRequestKeys", "resonance", "journal"],
@@ -3158,15 +3187,32 @@
     "coveredBy": "frontend/e2e/journal-byok-classification.e2e.test.ts"
   },
   {
+    "id": "settings.managed-vault-rejected-writer-key",
+    "description": "A writer saves a personal journal page with their own provider key while their managed vault's vendor refuses that key (#3595, Creek contract 0.26, Creek-Vault#1877). The lane vault, armed to reject request keys, lists 0.26 in supported_contract_minors and ends the keyed classification job failed, naming failure_code request_key_rejected only to a status poll that declares 0.26. The live server polls that job at 0.26 because the handshake listed it (every other call stays on the 0.22 pin, and a vault below 0.26 keeps hearing 0.22), lands the classification row failed with failure_code request_key_rejected after exactly one admission -- the doomed pass is never re-submitted -- and the production vault client reads classification_key_rejected: true off GET /vault/connection. That boolean is what the Settings hub's API key row and the API key screen render a calm replace-your-key note from; the rendering itself is pinned by the Jest suites ApiKeySettingsScreenKeyRejected.test.tsx and SettingsHubScreen.test.tsx, the negotiation by backend/tests/test_creek_contract_0_26.py, and the no-retry ladder by backend/tests/test_creek_vault_key_rejection.py. No key or vendor text reaches any response, log or row: the vault records the key only by digest.",
+    "crosses": {
+      "screen": "frontend/src/features/Settings/ApiKeySettingsScreen.tsx",
+      "client": ["auth", "setTokenGetter", "setLlmApiKeyGetter", "journal", "vault"],
+      "routes": [
+        "POST /auth/login",
+        "GET /user/vault-key-vendors",
+        "POST /journal/",
+        "GET /vault/connection"
+      ],
+      "tables": ["user", "journalentry", "vaultpipelinerun"]
+    },
+    "status": "covered",
+    "coveredBy": "frontend/e2e/vault-rejected-key-classification.e2e.test.ts"
+  },
+  {
     "id": "habits.habit-story",
-    "description": "The Habit Story foundation reads owned lifetime history, native-cadence rates and known timing through the new endpoint. The Habits screen entry, client method and real-wire UI coverage are implemented in #3526; this registration declares that gap while the read API lands.",
+    "description": "One tap on a habit tile's Story glyph opens the Habit Story sheet (#3526), drawn entirely from GET /habits/{habit_id}/story (#3524): the four Glance figures (current run, longest run, returns, days with, in the habit's cadence unit), the day-by-day heat grid, the scheduled-day rate for the last 21 days and all time with its denominator, the tier tiles and weekly tier stack, the weekday by time-of-day grid once there are 28 days, observations and dated milestones, and an Everything door to the raw log list. Covered by frontend/e2e/habit-story.browser.e2e.test.ts, which seeds twenty scheduled days (seventeen kept, rests three and five days back) through the real POST /goal_completions/, opens the sheet from the tile, asserts every Glance figure and the exact denominator line the server computed, walks Everything and back, and checks the tile chip reads as a run. The early-days thresholds, the all-tables view, the held-while-reloading render and the error fallback are pinned by Jest beside the sheet.",
     "crosses": {
       "screen": "frontend/src/features/Habits/HabitsScreen.tsx",
-      "client": ["habits"],
-      "routes": ["GET /habits/{habit_id}/story"],
+      "client": ["habits", "goalCompletions"],
+      "routes": ["POST /goal_completions/", "GET /habits/{habit_id}/story"],
       "tables": ["habit", "goal", "goalcompletion", "goallogevent"]
     },
-    "status": "uncovered",
-    "issue": 3526
+    "status": "covered",
+    "coveredBy": "frontend/e2e/habit-story.browser.e2e.test.ts"
   }
 ]

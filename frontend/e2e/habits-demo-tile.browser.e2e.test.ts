@@ -2,7 +2,7 @@ import type { ChildProcess } from 'node:child_process';
 
 import { expect, test, type Locator, type Page } from '@playwright/test';
 
-import { STATS_CLOSE_LABEL } from '../src/features/Habits/components/modalCloseLabels';
+import { STORY_CLOSE_LABEL } from '../src/features/Habits/components/modalCloseLabels';
 import { HABIT_DEFAULTS } from '../src/features/Habits/HabitDefaults';
 
 import { BOOT_TIMEOUT_MS, launchFrontend, waitForFrontend } from './browserGlobalSetup';
@@ -11,7 +11,7 @@ import {
   DEMO_SEED_TOAST,
   HABITS_CACHE_PREFIX,
   HABITS_UNREACHABLE,
-  LOADING_STATS,
+  SAMPLE_STORY,
   SYNC_FAILURE_TITLE,
   forbiddenDemoRequests,
   isHabitsListGet,
@@ -84,15 +84,13 @@ const LOGGED_TILE = 'Sangha';
  */
 const LOGGED_SESSIONS = '3';
 /** What a met weekly tile says; the logged sample tile is not met until the units land. */
-const ACHIEVED_THIS_WEEK = 'ACHIEVED THIS WEEK';
+const ACHIEVED_THIS_WEEK = 'KEPT THIS WEEK';
 /** Every success toast a real check-in raises: a milestone, or a plain log. */
 const MILESTONE_OR_LOGGED = new RegExp(`(?:achieved|Logged \\d+) for ${LOGGED_TILE}`, 'u');
-const STATS_TILE = 'Scrolling';
+const STORY_TILE = 'Scrolling';
 const DELETED_TILE = 'Limit Caffeine';
 /** Any past day the first habit's start date can be moved to. */
 const NEW_START_DATE = '2026-01-05';
-/** The stats sheet's totals line, drawn once there are stats to draw. */
-const STATS_CONTENT = 'Total Completions:';
 
 /** How long the habit list must go unasked before the journey acts. */
 const LIST_READS_QUIET_MS = 1500;
@@ -300,19 +298,14 @@ test('a demo placeholder tile stays local: no action puts its fabricated id on t
 
   nothingSent('check-in');
 
-  // --- Stats render locally rather than waiting on a read that never comes. ---
-  await fromMenu(page, 'Stats');
-  await tile(page, STATS_TILE).click();
-  await expect(page.getByText(STATS_CONTENT)).toBeVisible();
-  await expect(page.getByText(LOADING_STATS)).toHaveCount(0);
-  await page
-    .getByRole('dialog')
-    .getByRole('button', { name: STATS_CLOSE_LABEL, exact: true })
-    .click();
-  await expect(page.getByText(STATS_CONTENT)).toHaveCount(0);
-  await exitMode(page);
+  // --- The Story renders locally, as a sample, rather than reading a row that is not there. ---
+  await tile(page, STORY_TILE).getByRole('button', { name: 'Story', exact: true }).click();
+  const story = page.getByTestId('habit-story-sheet');
+  await expect(story.getByText(SAMPLE_STORY, { exact: false })).toBeVisible();
+  await story.getByRole('button', { name: STORY_CLOSE_LABEL, exact: true }).click();
+  await expect(page.getByTestId('habit-story-sheet')).toHaveCount(0);
 
-  nothingSent('stats');
+  nothingSent('story');
 
   // --- Delete: the destructive one. ---
   const deleting = await openSettings(page, DELETED_TILE);

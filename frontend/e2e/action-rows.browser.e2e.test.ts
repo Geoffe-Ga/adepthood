@@ -101,6 +101,13 @@ const SKIPPED_ROUTES: readonly { name: string; reason: string }[] = [
       'headless Chromium has no camera or picker to feed it, and a page it did read ' +
       'would be a paid transcription',
   },
+  {
+    name: 'CorpusSweep',
+    reason:
+      'its Settings row shows only under a standing yes to sorting with writing still ' +
+      'unsorted (#3499); the walking account has neither, and granting would send its ' +
+      'writing to the provider -- the screen is pinned by CorpusSweepScreen.test.tsx',
+  },
 ];
 
 /**

@@ -27,8 +27,8 @@ export const HABITS_UNREACHABLE = "We couldn't reach the server.";
 /** The title every habit write-failure alert carries (`SYNC_FAILURE_TITLE` in habitManager.ts). */
 export const SYNC_FAILURE_TITLE = "Couldn't sync";
 
-/** What the stats modal shows while it waits on the server. */
-export const LOADING_STATS = 'Loading stats...';
+/** What the Story sheet says in place of a story for a sample tile (#3526). */
+export const SAMPLE_STORY = 'This is a sample habit.';
 
 /** Every on-device habit cache key starts with this (`HABITS_KEY_BASE` in habitStorage.ts). */
 export const HABITS_CACHE_PREFIX = '@adepthood/habits';
@@ -65,6 +65,7 @@ export const FORBIDDEN_DEMO_WIRE: readonly ForbiddenWire[] = [
   { method: 'PUT', path: /^\/goals\/\d+$/u, route: 'PUT /goals/{goal_id}' },
   { method: 'POST', path: /^\/goal_completions\/$/u, route: 'POST /goal_completions/' },
   { method: 'GET', path: /^\/habits\/\d+\/stats$/u, route: 'GET /habits/{habit_id}/stats' },
+  { method: 'GET', path: /^\/habits\/\d+\/story$/u, route: 'GET /habits/{habit_id}/story' },
 ];
 
 /** A request as the spec records it: enough to classify, nothing more. */

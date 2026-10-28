@@ -405,7 +405,12 @@ async def test_no_vault_has_no_address(async_client: AsyncClient) -> None:
 
     response = await async_client.get(_CONNECTION, headers=headers)
 
-    assert response.json() == {"connected": False, "vault_url": None, "mcp_address": None}
+    assert response.json() == {
+        "connected": False,
+        "vault_url": None,
+        "mcp_address": None,
+        "classification_key_rejected": False,
+    }
 
 
 @pytest.mark.asyncio
@@ -427,4 +432,9 @@ async def test_a_managed_vault_without_oauth_readiness_has_no_agent_address(
 
     response = await async_client.get(_CONNECTION, headers=headers)
 
-    assert response.json() == {"connected": True, "vault_url": None, "mcp_address": None}
+    assert response.json() == {
+        "connected": True,
+        "vault_url": None,
+        "mcp_address": None,
+        "classification_key_rejected": False,
+    }

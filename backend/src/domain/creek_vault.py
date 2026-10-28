@@ -42,7 +42,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass, field
 from datetime import datetime
 from http import HTTPStatus
-from typing import NoReturn, Protocol
+from typing import Final, NoReturn, Protocol
 from uuid import UUID
 
 # Semantic contract version adepthood presents at handshake and compares against
@@ -68,11 +68,11 @@ from uuid import UUID
 #      carrying `VaultErrorCode.RATE_LIMITED` -- rather than being downgraded to
 #      `503 temporarily_unavailable` (Creek-Vault#1903 step 6).
 #    - `inference_source` (0.19) on reflection, letter and classification
-#      answers and `inference_pool` (0.19) on the handshake. Parsed and ignored:
-#      labelling each use from the route and refusing a mismatched route as the
-#      existing `409` are Creek-Vault#1903 steps 3-4, not part of a pin move.
-#      `tests/test_creek_contract_0_21.py` pins that neither changes what
-#      adepthood does with an answer.
+#      answers. Consumed on reflections and letters (#3483): it is the vault's
+#      receipt for the route that answered, and `request_key:<vendor>` is the
+#      only evidence that a relayed writer key paid (:func:`spent_request_key`).
+#      `inference_pool` (0.19) on the handshake is parsed and ignored;
+#      `tests/test_creek_contract_0_21.py` pins both.
 #    - `keyless_inference` (0.20) on the handshake. Consumed (#3501, owner
 #      decision 2026-10-21): a vault-bound pass carrying no key its vault will
 #      spend, against a vault reporting `false`, is refused `402
@@ -82,6 +82,12 @@ from uuid import UUID
 #      Settings "Recent activity" list (#3535) through
 #      `CreekVaultClient.agent_activity`; `tests/test_creek_contract_0_22.py`
 #      pins the move.
+# 3. Optional later minors are declared per call, never by moving this pin:
+#    `reading-recommendations` declares 0.25 (`_READING_CALL`), and the job
+#    status poll declares 0.26 -- whose failed job names `failure_code`
+#    `request_key_rejected` (Creek-Vault#1877, #3595) -- only to a vault whose
+#    handshake lists 0.26 (`JOB_FAILURE_CODE_SINCE_MINOR`); an older vault keeps
+#    hearing 0.22. `tests/test_creek_contract_0_26.py` pins that negotiation.
 CONTRACT_VERSION = "0.22.0"
 
 
@@ -609,6 +615,35 @@ class VaultKeyProvider(enum.StrEnum):
     OPENAI = "openai"
 
 
+#: Creek's published ``inference_source`` vocabulary (contract 0.19,
+#: Creek-Vault ADR-0016): the shared pool, an attested pool vendor, a writer's
+#: request key, or the vault's own local model. Matched whole, so a trailing newline is no value.
+INFERENCE_SOURCE_PATTERN: Final = re.compile(
+    r"(?:local|pool:creek|pool:attested:[a-z0-9](?:[a-z0-9-]*[a-z0-9])?"
+    r"|request_key:[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)"
+)
+
+#: The prefix of the one receipt that says a writer's relayed key paid.
+REQUEST_KEY_SOURCE_PREFIX: Final = "request_key:"
+
+
+def spent_request_key(inference_source: str | None) -> VaultKeyProvider | None:
+    """Return the vendor whose writer key the vault reports spending, else ``None`` (#3483).
+
+    ``request_key:<vendor>`` is the vault's own receipt that the request-scoped
+    key it was handed paid for this answer. Every other route -- the shared
+    pool, an attested pool, a local model, no receipt at all, or a vendor this
+    app never relays -- spent no writer key, so it answers ``None``. A key's
+    prefix and a handshake's advertisement are *not* this evidence: both are
+    known before the dial, and neither says the key was used.
+    """
+    if inference_source is None or not inference_source.startswith(REQUEST_KEY_SOURCE_PREFIX):
+        return None
+    vendor = inference_source.removeprefix(REQUEST_KEY_SOURCE_PREFIX)
+    known = {provider.value: provider for provider in VaultKeyProvider}
+    return known.get(vendor)
+
+
 #: What every rendering of a :class:`VaultProviderKey` shows in place of the key.
 REDACTED_KEY = "<redacted>"
 
@@ -691,6 +726,15 @@ class HandshakeResult:
     #: Optional authenticated discovery extension (0.24). Content stays pinned
     #: independently; absent or malformed metadata leaves the address unconfirmed.
     agent_mcp: AgentMcpDiscovery | None = None
+    #: Every ``major.minor`` the vault says it will answer
+    #: (``supported_contract_minors``). Kept so a call that can use a newer
+    #: optional field declares that minor only to a vault that serves it. Empty
+    #: on every degraded handshake.
+    supported_contract_minors: frozenset[str] = frozenset()
+
+    def serves_minor(self, minor: str) -> bool:
+        """Whether this usable vault listed ``minor`` among the ones it answers."""
+        return self.available and minor in self.supported_contract_minors
 
     def accepts_key(self, provider: VaultKeyProvider) -> bool:
         """Whether this usable vault will spend a writer's ``provider`` key."""
@@ -944,6 +988,9 @@ class VaultLetter:
     letter: str = field(repr=False)
     vault_ref: str
     action: VaultIngestAction
+    #: The route the vault says wrote it (contract 0.19), or ``None`` when it
+    #: named none -- including an ``unchanged`` letter re-read without a model call.
+    inference_source: str | None = None
 
 
 @dataclass(frozen=True)
@@ -1094,6 +1141,9 @@ class VaultReflection:
     routed_tier: VaultTierCeiling
     related_praxis: tuple[VaultRelatedPraxis, ...] = ()
     related_eddies: tuple[VaultRelatedEddy, ...] = ()
+    #: The route the vault says answered (contract 0.19), or ``None`` when it
+    #: named none or named one outside the published vocabulary.
+    inference_source: str | None = None
 
 
 @dataclass(frozen=True)
@@ -1194,6 +1244,31 @@ class VaultPipelineJobState(enum.StrEnum):
     FAILED = "failed"
 
 
+#: The first Creek minor whose ``GET /v1/jobs/{job_id}`` carries ``failure_code``
+#: (Creek-Vault#1877, ``JOB_FAILURE_CODE_SINCE_MINOR`` upstream). Declared on the
+#: job-status poll only, and only to a vault whose handshake lists it: the pin
+#: above stays where the deployed vaults are, and Creek refuses an unlisted minor.
+JOB_FAILURE_CODE_SINCE_MINOR: Final = "0.26"
+
+
+class VaultJobFailureCode(enum.StrEnum):
+    """Why a ``failed`` pipeline job failed, when the writer can remedy it (contract 0.26).
+
+    Creek's closed ``JobFailureCode`` vocabulary, member for member. A code is
+    published only for a failure the *caller* can act on; any other failure,
+    and every answer from a vault below 0.26, carries no code. Values are
+    persisted on :class:`~models.vault_pipeline_run.VaultPipelineRun`, so they
+    must not be reworded without a migration.
+
+    Attributes:
+        REQUEST_KEY_REJECTED: The writer's own provider key, relayed for the
+            pass, was refused by its vendor with ``401``/``403``. Retrying with
+            the same key fails the same way: the writer has to replace it.
+    """
+
+    REQUEST_KEY_REJECTED = "request_key_rejected"
+
+
 @dataclass(frozen=True)
 class VaultPipelineJob:
     """An opaque, consumer-bound handle for one durable Creek pipeline pass.
@@ -1201,11 +1276,16 @@ class VaultPipelineJob:
     ``stage`` is Adepthood-owned correlation metadata, not a value read from the
     job-status document. Keeping it beside the opaque UUID ensures a successful
     result is parsed as exactly the operation that was admitted.
+
+    ``failure_code`` is set only on a ``FAILED`` job whose vault published a
+    reason adepthood knows (:class:`VaultJobFailureCode`); ``None`` means the
+    vault gave none, gave one this build cannot name, or is older than 0.26.
     """
 
     job_id: UUID
     stage: VaultPipelineStage
     state: VaultPipelineJobState
+    failure_code: VaultJobFailureCode | None = None
 
 
 @dataclass(frozen=True)

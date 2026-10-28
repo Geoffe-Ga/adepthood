@@ -2,7 +2,7 @@
 // Type Definitions
 //------------------
 
-export type HabitScreenMode = 'normal' | 'stats' | 'quickLog' | 'edit';
+export type HabitScreenMode = 'normal' | 'quickLog' | 'edit';
 
 export interface Habit {
   // --- Fields from API (matches backend HabitWithGoals schema) ---
@@ -166,13 +166,6 @@ export interface GoalModalProps {
   onUpdateHabit: (_updatedHabit: Habit) => void;
 }
 
-export interface StatsModalProps {
-  visible: boolean;
-  habit: Habit | null;
-  stats: HabitStatsData | null;
-  onClose: () => void;
-}
-
 export interface HabitTileProps {
   habit: Habit;
   locked?: boolean;
@@ -183,6 +176,8 @@ export interface HabitTileProps {
   onOpenGoals?: (_habit: Habit) => void;
   onLongPress?: (_habit: Habit) => void;
   onIconPress?: (_index: number) => void;
+  /** Opens the habit's Story sheet from the tile's info glyph (#3526). */
+  onOpenStory?: (_habit: Habit) => void;
   onUnlockHabit?: (_habitId: number) => void;
   /** Long-press-a-star fill logging; ``date`` backfills a past day (omit for today). */
   onLogUnit?: (_habitId: number, _amount: number, _date?: Date) => void;

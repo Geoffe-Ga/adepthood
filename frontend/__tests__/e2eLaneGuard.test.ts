@@ -82,6 +82,7 @@ const EXPECTED_BROWSER_JOURNEYS = [
   'habit-reorder.browser.e2e.test.ts',
   'habit-reveal-without-course.browser.e2e.test.ts',
   'habit-same-owner-reauth.browser.e2e.test.ts',
+  'habit-story.browser.e2e.test.ts',
   'habit-subtractive-streak.browser.e2e.test.ts',
   DEMO_TILE_JOURNEY,
   'habits-day-rollover.browser.e2e.test.ts',
@@ -172,6 +173,7 @@ const EXPECTED_JOURNEYS = [
   'corpus-consent.e2e.test.ts',
   'corpus-import.e2e.test.ts',
   'corpus-invitation.e2e.test.ts',
+  'corpus-sweep.e2e.test.ts',
   'course-read-next.e2e.test.ts',
   'course.e2e.test.ts',
   'data-export.e2e.test.ts',
@@ -208,6 +210,7 @@ const EXPECTED_JOURNEYS = [
   'vault-agent-consent.e2e.test.ts',
   'vault-agent-openclaw.e2e.test.ts',
   'vault-connection.e2e.test.ts',
+  'vault-rejected-key-classification.e2e.test.ts',
   'voice-drafts-shelf.e2e.test.ts',
   'voice-readiness.e2e.test.ts',
 ];

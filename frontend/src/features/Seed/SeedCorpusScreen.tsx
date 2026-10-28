@@ -45,9 +45,13 @@ import {
   SEED_VAULT_INVITATION,
   SEED_VAULT_INVITATION_LINK_LABEL,
   seedProgressLine,
+  seedRetryLabel,
   seedSummaryLine,
 } from './seedCopy';
+import { SEED_CHOOSE_FOLDER_LABEL } from './seedFolderCopy';
+import { SeedFolderReview } from './SeedFolderReview';
 import type { SeedItem } from './seedRun';
+import { useSeedFolder, type SeedFolderController } from './useSeedFolder';
 import { useSeedLeaveGuard } from './useSeedLeaveGuard';
 import { useSeedRun, type SeedRunController } from './useSeedRun';
 
@@ -87,26 +91,63 @@ const SeedItemRow = ({ item }: { item: SeedItem }): React.JSX.Element => {
   );
 };
 
-/** The picker button, inert while a batch is still going over. */
+/** A picker button, inert while a batch is still going over. */
 const ChooseButton = ({
   onPress,
   disabled,
+  label = SEED_CHOOSE_LABEL,
+  testID = 'seed-choose-button',
 }: {
   onPress: () => void;
   disabled: boolean;
+  label?: string;
+  testID?: string;
 }): React.JSX.Element => (
   <TouchableOpacity
     style={[styles.chooseButton, disabled ? styles.chooseButtonDisabled : null]}
     onPress={onPress}
     disabled={disabled}
     accessibilityRole="button"
-    accessibilityLabel={SEED_CHOOSE_LABEL}
+    accessibilityLabel={label}
     accessibilityState={{ disabled }}
-    testID="seed-choose-button"
+    testID={testID}
   >
-    <Text style={styles.chooseButtonText}>{SEED_CHOOSE_LABEL}</Text>
+    <Text style={styles.chooseButtonText}>{label}</Text>
   </TouchableOpacity>
 );
+
+/**
+ * The folder half of the picker: a "choose a folder" button where the browser
+ * can choose one, its notice, and the review a chosen folder waits in. Nothing
+ * at all on a platform with no folder picker, which keeps the file picker.
+ */
+const SeedFolderSection = ({
+  folder,
+  isSending,
+}: {
+  folder: SeedFolderController;
+  isSending: boolean;
+}): React.JSX.Element | null => {
+  if (!folder.supported) return null;
+  return (
+    <>
+      <ChooseButton
+        onPress={() => void folder.chooseFolder()}
+        disabled={isSending || folder.review !== null}
+        label={SEED_CHOOSE_FOLDER_LABEL}
+        testID="seed-choose-folder-button"
+      />
+      {folder.notice ? (
+        <Text style={styles.notice} testID="seed-folder-notice">
+          {folder.notice}
+        </Text>
+      ) : null}
+      {folder.review ? (
+        <SeedFolderReview folder={folder} review={folder.review} isSending={isSending} />
+      ) : null}
+    </>
+  );
+};
 
 /**
  * How far along the run is, while it is going over.
@@ -215,6 +256,23 @@ const SeedInvitation = ({
   </View>
 );
 
+/**
+ * The offer to send again the documents that did not go over (#3556): only
+ * once the run is idle, only while there is something a retry may send, and
+ * counting exactly that. Anything that landed is never part of it.
+ */
+const RetryButton = ({ run }: { run: SeedRunController }): React.JSX.Element | null => {
+  if (run.isSending || run.retryableCount === 0) return null;
+  return (
+    <ChooseButton
+      onPress={() => void run.retryFailed()}
+      disabled={false}
+      label={seedRetryLabel(run.retryableCount)}
+      testID="seed-retry-button"
+    />
+  );
+};
+
 /** The chosen documents and how far each one got. */
 const SeedRunList = ({ items }: { items: readonly SeedItem[] }): React.JSX.Element | null => {
   if (items.length === 0) {
@@ -231,6 +289,7 @@ const SeedRunList = ({ items }: { items: readonly SeedItem[] }): React.JSX.Eleme
 
 interface SeedCorpusBodyProps {
   run: SeedRunController;
+  folder: SeedFolderController;
   onOpenConsent: () => void;
 }
 
@@ -258,7 +317,7 @@ const SeedVaultFirst = ({ onOpenVault }: { onOpenVault: () => void }): React.JSX
 );
 
 /** The screen body, given a run to read and drive. */
-const SeedCorpusBody = ({ run, onOpenConsent }: SeedCorpusBodyProps): React.JSX.Element => {
+const SeedCorpusBody = ({ run, folder, onOpenConsent }: SeedCorpusBodyProps): React.JSX.Element => {
   const summary = seedSummaryLine(run.tally);
   return (
     <>
@@ -268,7 +327,8 @@ const SeedCorpusBody = ({ run, onOpenConsent }: SeedCorpusBodyProps): React.JSX.
         <PrivacyTierControl value={run.classification} onChange={run.chooseClassification} />
       </EditorialSection>
       <ChooseButton onPress={run.choose} disabled={run.isSending} />
-      <SeedProgress line={seedProgressLine(run.tally)} />
+      <SeedFolderSection folder={folder} isSending={run.isSending} />
+      <SeedProgress line={seedProgressLine(run.tally, run.isPaused)} />
       {run.notice ? (
         <Text style={styles.notice} testID="seed-notice">
           {run.notice}
@@ -288,6 +348,7 @@ const SeedCorpusBody = ({ run, onOpenConsent }: SeedCorpusBodyProps): React.JSX.
           linkTestID="seed-consent-link"
         />
       ) : null}
+      <RetryButton run={run} />
       <SeedRunList items={run.items} />
     </>
   );
@@ -296,6 +357,7 @@ const SeedCorpusBody = ({ run, onOpenConsent }: SeedCorpusBodyProps): React.JSX.
 /** The corpus-seeding screen. */
 function SeedCorpusScreen(): React.JSX.Element {
   const run = useSeedRun();
+  const folder = useSeedFolder(run.sendDocuments);
   const navigation = useNavigation<NativeStackNavigationProp<RootStackParamList>>();
   const openConsent = useCallback(() => navigation.navigate('CorpusConsent'), [navigation]);
   const openVault = useCallback(() => navigation.navigate('VaultSettings'), [navigation]);
@@ -309,7 +371,7 @@ function SeedCorpusScreen(): React.JSX.Element {
       {vaultComesFirst(vault) ? (
         <SeedVaultFirst onOpenVault={openVault} />
       ) : (
-        <SeedCorpusBody run={run} onOpenConsent={openConsent} />
+        <SeedCorpusBody run={run} folder={folder} onOpenConsent={openConsent} />
       )}
     </ScreenScaffold>
   );

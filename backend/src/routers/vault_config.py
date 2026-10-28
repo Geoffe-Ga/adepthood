@@ -73,6 +73,7 @@ from services.user_vault_config import (
     managed_vault_owns_connection,
     store_vault_config,
 )
+from services.vault_classification_status import classification_key_rejected
 
 router = build_router(prefix="/vault", tags=["vault"], extra_statuses=(status.HTTP_409_CONFLICT,))
 
@@ -180,6 +181,7 @@ async def get_vault_connection(
     """
     config = await load_vault_config(session, user_id)
     response = _to_response(config)
+    response.classification_key_rejected = await classification_key_rejected(session, user_id)
     if config is not None and config.provisioned:
         response.mcp_address = await managed_agent_address(session, user_id, config)
     return response
@@ -214,7 +216,9 @@ async def put_vault_connection(
     config = await store_vault_config(
         session, user_id, vault_url=payload.vault_url, api_key=payload.api_key
     )
-    return _to_response(config)
+    response = _to_response(config)
+    response.classification_key_rejected = await classification_key_rejected(session, user_id)
+    return response
 
 
 @router.delete("/connection", status_code=status.HTTP_204_NO_CONTENT)

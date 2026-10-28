@@ -55,7 +55,12 @@ const mockUiFlagsGet = jest.fn(() =>
 // (#3017); each test that cares says what the server answers. The default is a
 // vault at an address, so every other suite here renders the hub as before.
 const mockVaultConnection = jest.fn<
-  Promise<{ connected: boolean; vault_url: string | null; mcp_address: string | null }>,
+  Promise<{
+    connected: boolean;
+    vault_url: string | null;
+    mcp_address: string | null;
+    classification_key_rejected?: boolean;
+  }>,
   []
 >(() => Promise.resolve({ connected: true, vault_url: 'https://v.example', mcp_address: null }));
 
@@ -67,11 +72,18 @@ const mockCorpusSet = jest.fn<Promise<ConsentState>, [string, boolean]>((source,
   Promise.resolve({ source, granted, decided_at: '2026-10-02T09:00:00Z' }),
 );
 
+// The sort-the-rest row asks how much is unsorted; the default is nothing, so
+// the other suites see no such row.
+const mockSweepEstimate = jest.fn<Promise<{ entries_pending: number }>, []>(() =>
+  Promise.resolve({ entries_pending: 0 }),
+);
+
 jest.mock('@/api', () => {
   const actual = jest.requireActual<Record<string, unknown>>('@/api');
   return {
     ...actual,
     adminFeedback: { capabilities: () => mockCapabilities() },
+    corpus: { sweepEstimate: () => mockSweepEstimate() },
     corpusConsent: {
       list: () => mockCorpusList(),
       set: (source: string, granted: boolean) => mockCorpusSet(source, granted),
@@ -89,6 +101,7 @@ jest.mock('@/storage/writingOfferStorage', () => ({
 }));
 
 import { BYOK_HUB_DISCLOSURE } from '../byokDisclosure';
+import { KEY_REJECTED_HUB_DESCRIPTION } from '../byokOnlyCopy';
 import { LEGAL_DOCUMENTS } from '../legalLinks';
 import SettingsHubScreen from '../SettingsHubScreen';
 
@@ -714,6 +727,84 @@ describe('SettingsHubScreen — the sorting switches under Your writing', () => 
 });
 
 // ---------------------------------------------------------------------------
+// Sort the rest of your writing (#3499): offered only when it can do something.
+// ---------------------------------------------------------------------------
+
+describe('SettingsHubScreen — sort the rest of your writing', () => {
+  const JOURNAL_ON: ConsentState = {
+    source: 'journal',
+    granted: true,
+    decided_at: '2026-10-01T09:00:00Z',
+  };
+  const JOURNAL_OFF: ConsentState = { source: 'journal', granted: false, decided_at: null };
+  const UPLOAD_ON: ConsentState = { ...JOURNAL_ON, source: 'upload' };
+
+  test('with sorting on and writing unsorted, offers the row after the way in, before the switches', async () => {
+    mockCorpusList.mockResolvedValueOnce([JOURNAL_ON]);
+    mockSweepEstimate.mockResolvedValue({ entries_pending: 412 });
+    const { findByTestId, getByText, toJSON } = render(<SettingsHubScreen />);
+
+    const row = await findByTestId('settings-row-corpus-sweep');
+
+    expect(row).toBeTruthy();
+    expect(getByText('Sort the rest of your writing')).toBeTruthy();
+    expect(getByText('412 entries still unsorted')).toBeTruthy();
+    const tree = JSON.stringify(toJSON());
+    const order = [
+      'settings-row-seed-corpus',
+      'settings-row-corpus-sweep',
+      'settings-corpus-sorting-lead',
+      'corpus-consent-switch-journal',
+    ].map((id) => tree.indexOf(id));
+    expect(order.every((index) => index > -1)).toBe(true);
+    expect(order).toEqual([...order].sort((a, b) => a - b));
+  });
+
+  test('tapping it opens the sort-the-rest screen', async () => {
+    mockCorpusList.mockResolvedValueOnce([JOURNAL_ON]);
+    mockSweepEstimate.mockResolvedValue({ entries_pending: 3 });
+    const { findByTestId } = render(<SettingsHubScreen />);
+
+    fireEvent.press(await findByTestId('settings-row-corpus-sweep'));
+
+    expect(mockNavigate).toHaveBeenCalledWith('CorpusSweep');
+  });
+
+  test('is absent when nothing is unsorted: a control that can do nothing is not shown', async () => {
+    mockCorpusList.mockResolvedValueOnce([JOURNAL_ON]);
+    mockSweepEstimate.mockResolvedValue({ entries_pending: 0 });
+    const { getByTestId, queryByTestId } = render(<SettingsHubScreen />);
+
+    await waitFor(() => expect(mockSweepEstimate).toHaveBeenCalled());
+    await waitFor(() => expect(getByTestId('corpus-consent-switch-journal')));
+
+    expect(queryByTestId('settings-row-corpus-sweep')).toBeNull();
+  });
+
+  test('is absent without consent to sort what is written here, however much waits', async () => {
+    mockCorpusList.mockResolvedValueOnce([JOURNAL_OFF, UPLOAD_ON]);
+    mockSweepEstimate.mockResolvedValue({ entries_pending: 412 });
+    const { getByTestId, queryByTestId } = render(<SettingsHubScreen />);
+
+    await waitFor(() => expect(getByTestId('corpus-consent-switch-journal')));
+
+    expect(queryByTestId('settings-row-corpus-sweep')).toBeNull();
+    expect(mockSweepEstimate).not.toHaveBeenCalled();
+  });
+
+  test('is absent when the count does not load: unknown is not something to offer', async () => {
+    mockCorpusList.mockResolvedValueOnce([JOURNAL_ON]);
+    mockSweepEstimate.mockRejectedValue(new Error('offline'));
+    const { getByTestId, queryByTestId } = render(<SettingsHubScreen />);
+
+    await waitFor(() => expect(mockSweepEstimate).toHaveBeenCalled());
+    await waitFor(() => expect(getByTestId('corpus-consent-switch-journal')));
+
+    expect(queryByTestId('settings-row-corpus-sweep')).toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
 // The Digital Sangha's front door, mounted in the hub.
 // ---------------------------------------------------------------------------
 
@@ -900,5 +991,33 @@ describe('SettingsHubScreen — opened on the writing-habit row (#3006)', () => 
     });
     expect(queryByTestId('writing-habit-picker')).toBeNull();
     expect(scrollTo).not.toHaveBeenCalled();
+  });
+});
+
+describe('SettingsHubScreen — a refused writer key (#3595)', () => {
+  test('the API key row says the provider turned the key down, on the same read', async () => {
+    mockVaultConnection.mockImplementationOnce(() =>
+      Promise.resolve({
+        connected: true,
+        vault_url: null,
+        mcp_address: null,
+        classification_key_rejected: true,
+      }),
+    );
+    const { getByTestId } = render(<SettingsHubScreen />);
+
+    await waitFor(() =>
+      expect(getByTestId('settings-row-api-key').props.accessibilityHint).toBe(
+        KEY_REJECTED_HUB_DESCRIPTION,
+      ),
+    );
+    expect(mockVaultConnection).toHaveBeenCalledTimes(1);
+  });
+
+  test('without a refusal the row keeps its standing disclosure', async () => {
+    const { getByTestId } = render(<SettingsHubScreen />);
+
+    await waitFor(() => expect(mockVaultConnection).toHaveBeenCalled());
+    expect(getByTestId('settings-row-api-key').props.accessibilityHint).toBe(BYOK_HUB_DISCLOSURE);
   });
 });

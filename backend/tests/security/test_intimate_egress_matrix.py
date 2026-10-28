@@ -78,6 +78,7 @@ from domain.creek_vault import VaultPipelineStage
 from domain.frequencies import Frequency
 from domain.reading_recommendations import ReadingRequest
 from main import app
+from models.corpus_consent import ConsentDecision, CorpusConsentEvent
 from models.course_stage import CourseStage
 from models.goal import Goal
 from models.habit import Habit
@@ -482,6 +483,25 @@ async def _act_consent(h: Harness, _entry_id: int) -> None:
     _ok(await h.consent(granted=True))
 
 
+async def _act_sweep(h: Harness, _entry_id: int) -> None:
+    """Resume the backfill under a grant already standing, as ``POST /corpus/sweep`` does.
+
+    The grant is recorded directly rather than through ``PUT /corpus/consent``,
+    whose own sweep would reach the entry first and leave this door nothing to
+    carry -- so the Personal twin's words can only have left by this route.
+    """
+    async with h.factory() as session:
+        session.add(
+            CorpusConsentEvent(
+                user_id=h.user_id,
+                source=_JOURNAL_SOURCE,
+                decision=ConsentDecision.GRANTED.value,
+            )
+        )
+        await session.commit()
+    _ok(await h.client.post("/corpus/sweep", headers=h.headers))
+
+
 async def _act_ladder(h: Harness, _entry_id: int) -> None:
     run_id = await _seed_attempted_run(h)
     await continue_ladder_body(
@@ -621,6 +641,17 @@ ROWS: Final[tuple[Row, ...]] = (
         ("PUT", "/corpus/consent/{source}"),
         "",
         _act_consent,
+        {
+            Recorder.CLASSIFIER: Expect.CARRIES,
+            Recorder.CORPUS: Expect.CARRIES,
+            Recorder.PROVIDER: Expect.CARRIES,
+        },
+        preconsent=False,
+    ),
+    Row(
+        ("POST", "/corpus/sweep"),
+        "",
+        _act_sweep,
         {
             Recorder.CLASSIFIER: Expect.CARRIES,
             Recorder.CORPUS: Expect.CARRIES,
