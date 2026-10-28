@@ -2,9 +2,11 @@
 /* global describe, test, expect */
 import {
   EMPTY_SEED_RUN,
+  isRetryableSeedStatus,
   seedRunReducer,
   seedRunTally,
   selectNextQueued,
+  type SeedItemStatus,
   type SeedRunState,
 } from '../seedRun';
 
@@ -220,5 +222,102 @@ describe('cancelling a run that is still going', () => {
       refused: 3,
       unconfirmed: 0,
     });
+  });
+});
+
+describe('a document held for a moment (#3556)', () => {
+  test('a queued document can wait its pace, and holds the run while it does', () => {
+    const state = seedRunReducer(withThreeQueued(), { type: 'wait', id: 'a' });
+
+    expect(state.items.a?.status).toBe('waiting');
+    expect(selectNextQueued(state)).toBeNull();
+  });
+
+  test('a document refused with a 429 waits instead of settling', () => {
+    let state = seedRunReducer(withThreeQueued(), { type: 'start', id: 'a' });
+    state = seedRunReducer(state, { type: 'wait', id: 'a' });
+
+    expect(state.items.a?.status).toBe('waiting');
+    expect(seedRunTally(state)).toMatchObject({ waiting: 3, refused: 0 });
+  });
+
+  test('a waiting document goes over again once its wait is up', () => {
+    let state = seedRunReducer(withThreeQueued(), { type: 'wait', id: 'a' });
+    state = seedRunReducer(state, { type: 'start', id: 'a' });
+
+    expect(state.items.a?.status).toBe('uploading');
+  });
+
+  test('a settled document never waits', () => {
+    let state = seedRunReducer(withThreeQueued(), { type: 'settle', id: 'a', status: 'failed' });
+    state = seedRunReducer(state, { type: 'wait', id: 'a' });
+
+    expect(state.items.a?.status).toBe('failed');
+  });
+
+  test('stopping the run cancels a waiting document, since nothing of it is in flight', () => {
+    let state = seedRunReducer(withThreeQueued(), { type: 'wait', id: 'a' });
+    state = seedRunReducer(state, { type: 'cancel' });
+
+    expect(state.items.a?.status).toBe('cancelled');
+  });
+});
+
+describe('sending the ones that did not go again (#3556)', () => {
+  function settledRun(): SeedRunState {
+    let state = withThreeQueued();
+    state = seedRunReducer(state, { type: 'settle', id: 'a', status: 'ingested' });
+    state = seedRunReducer(state, { type: 'settle', id: 'b', status: 'failed' });
+    return seedRunReducer(state, { type: 'settle', id: 'c', status: 'rate_limited' });
+  }
+
+  test('requeues only the documents that can be sent again', () => {
+    const state = seedRunReducer(settledRun(), { type: 'requeue', ids: ['a', 'b', 'c'] });
+
+    expect(state.order.map((id) => state.items[id]?.status)).toEqual([
+      'ingested',
+      'queued',
+      'queued',
+    ]);
+  });
+
+  test('never requeues a document still on its way', () => {
+    const state = seedRunReducer(withThreeQueued(), { type: 'start', id: 'a' });
+
+    expect(seedRunReducer(state, { type: 'requeue', ids: ['a'] }).items.a?.status).toBe(
+      'uploading',
+    );
+  });
+
+  test('ignores an id the run does not hold', () => {
+    const state = settledRun();
+
+    expect(seedRunReducer(state, { type: 'requeue', ids: ['zz'] })).toEqual(state);
+  });
+
+  test.each<SeedItemStatus>([
+    'failed',
+    'rate_limited',
+    'offline',
+    'unconfirmed',
+    'degraded',
+    'vault_unavailable',
+  ])('%s can be sent again', (status) => {
+    expect(isRetryableSeedStatus(status)).toBe(true);
+  });
+
+  test.each<SeedItemStatus>([
+    'ingested',
+    'in_corpus',
+    'queued',
+    'uploading',
+    'waiting',
+    'too_large',
+    'unsupported_format',
+    'consent_required',
+    'tier_refused',
+    'cancelled',
+  ])('%s is not sent again by a retry', (status) => {
+    expect(isRetryableSeedStatus(status)).toBe(false);
   });
 });

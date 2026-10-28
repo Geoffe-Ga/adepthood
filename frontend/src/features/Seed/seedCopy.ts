@@ -23,6 +23,9 @@ import { VAULT_ROW_LABEL } from '@/features/Settings/vaultCopy';
 /** The line shown beneath each document's name, keyed by where it got to. */
 export const SEED_STATUS_LINES: Record<SeedItemStatus, string> = {
   queued: 'Waiting its turn.',
+  // Paced to keep a big folder from being turned away, or waiting out the
+  // pause the server asked for (#3556). Nothing is wrong, and it goes next.
+  waiting: 'Pausing a moment so everything goes over at a steady pace. This one is next.',
   uploading: 'Going over now…',
   ingested: 'In your vault. It will show up in reflections from here on.',
   vault_unavailable: "Your vault didn't answer. Check that it's running, then send this again.",
@@ -98,6 +101,12 @@ export const SEED_STATUS_LINES: Record<SeedItemStatus, string> = {
   // Only a 4xx answer to the one attempt there was: the server turned the
   // document away, so nothing was kept (#3239).
   failed: "This didn't get through, and nothing was stored. You can send it again.",
+  // The server kept asking for a pause after the run had waited it out more
+  // than once (#3556). Not a judgement of the document: nothing was stored, and
+  // it can go again in a minute or two.
+  rate_limited:
+    'Too many went over at once, so nothing was stored for this one yet. Give it a minute, ' +
+    'then send it again.',
   // The request left the device and its answer was lost on the way back: a
   // timeout, a dropped connection, a server error, or a reply this app could
   // not read. The server may already have kept it, so this says only what is
@@ -174,12 +183,30 @@ export function seedSummaryLine(tally: SeedRunTally): string | null {
  * would be a count of something nobody can see. Says "sending" and names no
  * destination — which of the two answered is the server's word per request.
  */
-export function seedProgressLine(tally: SeedRunTally): string | null {
+export function seedProgressLine(tally: SeedRunTally, paused = false): string | null {
   if (tally.waiting === 0) {
     return null;
   }
+  if (paused) {
+    return SEED_PAUSED_PROGRESS_LINE;
+  }
   const settled = tally.total - tally.waiting;
   return `Sending ${settled + 1} of ${tally.total}…`;
+}
+
+/**
+ * The progress line while the next document is held for a moment (#3556), so
+ * a run waiting out its pace does not claim to be sending.
+ */
+export const SEED_PAUSED_PROGRESS_LINE =
+  'Pausing a moment between documents so they all go over at a steady pace…';
+
+/**
+ * The offer to send again the documents that did not go over (#3556), counting
+ * exactly what it will send. Only those: anything that landed stays as it is.
+ */
+export function seedRetryLabel(count: number): string {
+  return count === 1 ? 'Try that one again' : `Try those ${count} again`;
 }
 
 /** What the question about leaving a run in flight is called. */

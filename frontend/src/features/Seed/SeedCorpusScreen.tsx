@@ -45,6 +45,7 @@ import {
   SEED_VAULT_INVITATION,
   SEED_VAULT_INVITATION_LINK_LABEL,
   seedProgressLine,
+  seedRetryLabel,
   seedSummaryLine,
 } from './seedCopy';
 import { SEED_CHOOSE_FOLDER_LABEL } from './seedFolderCopy';
@@ -255,6 +256,23 @@ const SeedInvitation = ({
   </View>
 );
 
+/**
+ * The offer to send again the documents that did not go over (#3556): only
+ * once the run is idle, only while there is something a retry may send, and
+ * counting exactly that. Anything that landed is never part of it.
+ */
+const RetryButton = ({ run }: { run: SeedRunController }): React.JSX.Element | null => {
+  if (run.isSending || run.retryableCount === 0) return null;
+  return (
+    <ChooseButton
+      onPress={() => void run.retryFailed()}
+      disabled={false}
+      label={seedRetryLabel(run.retryableCount)}
+      testID="seed-retry-button"
+    />
+  );
+};
+
 /** The chosen documents and how far each one got. */
 const SeedRunList = ({ items }: { items: readonly SeedItem[] }): React.JSX.Element | null => {
   if (items.length === 0) {
@@ -310,7 +328,7 @@ const SeedCorpusBody = ({ run, folder, onOpenConsent }: SeedCorpusBodyProps): Re
       </EditorialSection>
       <ChooseButton onPress={run.choose} disabled={run.isSending} />
       <SeedFolderSection folder={folder} isSending={run.isSending} />
-      <SeedProgress line={seedProgressLine(run.tally)} />
+      <SeedProgress line={seedProgressLine(run.tally, run.isPaused)} />
       {run.notice ? (
         <Text style={styles.notice} testID="seed-notice">
           {run.notice}
@@ -330,6 +348,7 @@ const SeedCorpusBody = ({ run, folder, onOpenConsent }: SeedCorpusBodyProps): Re
           linkTestID="seed-consent-link"
         />
       ) : null}
+      <RetryButton run={run} />
       <SeedRunList items={run.items} />
     </>
   );
