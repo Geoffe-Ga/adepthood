@@ -87,7 +87,10 @@ jest.mock('../components/GoalModal', () => ({ __esModule: true, default: () => n
 jest.mock('../components/HabitSettingsModal', () => ({ __esModule: true, default: () => null }));
 jest.mock('../components/OnboardingModal', () => ({ __esModule: true, default: () => null }));
 jest.mock('../components/ReorderHabitsModal', () => ({ __esModule: true, default: () => null }));
-jest.mock('../components/StatsModal', () => ({ __esModule: true, default: () => null }));
+jest.mock('../story/HabitStorySheet', () => ({
+  __esModule: true,
+  HabitStorySheet: jest.fn(() => null),
+}));
 
 import { touchTarget, type } from '../../../design/tokens';
 import HabitsScreen, { EnergyCTA, ErrorBanner, ModeBar } from '../HabitsScreen';
@@ -172,7 +175,6 @@ describe('habits footer band layout', () => {
 describe('habits pagination stays operable while a mode is active', () => {
   const modes: [string, string][] = [
     ['Quick Log', 'Quick Log Mode'],
-    ['Stats', 'Stats Mode'],
     ['Edit', 'Edit Mode'],
   ];
 

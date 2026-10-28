@@ -1,11 +1,11 @@
 import { useCallback, useState } from 'react';
 
 export type ModalName =
-  'goal' | 'stats' | 'settings' | 'reorder' | 'onboarding' | 'addHabit' | 'emojiPicker';
+  'goal' | 'story' | 'settings' | 'reorder' | 'onboarding' | 'addHabit' | 'emojiPicker';
 
 interface ModalState {
   goal: boolean;
-  stats: boolean;
+  story: boolean;
   settings: boolean;
   reorder: boolean;
   onboarding: boolean;
@@ -15,7 +15,7 @@ interface ModalState {
 
 const INITIAL_STATE: ModalState = {
   goal: false,
-  stats: false,
+  story: false,
   settings: false,
   reorder: false,
   onboarding: false,
@@ -35,7 +35,7 @@ export const useModalCoordinator = (): ModalCoordinator => {
   const open = useCallback((name: ModalName) => {
     // BUG-FE-HABIT-008: previously this resolved to ``{ [name]: true }``
     // -- which silently closed every other open modal.  ``onboarding``
-    // raising the ``stats`` modal mid-flow would dismiss onboarding,
+    // raising the ``story`` sheet mid-flow would dismiss onboarding,
     // and the count-warning toast inside ``OnboardingModal`` would
     // close its host.  Preserving prior flags lets the screen stack
     // modals when the UX requires it; callers that need exclusivity

@@ -25,7 +25,10 @@ jest.mock('../src/features/Habits/components/GoalModal', () => () => null);
 jest.mock('../src/features/Habits/components/HabitSettingsModal', () => () => null);
 jest.mock('../src/features/Habits/components/OnboardingModal', () => () => null);
 jest.mock('../src/features/Habits/components/ReorderHabitsModal', () => () => null);
-jest.mock('../src/features/Habits/components/StatsModal', () => () => null);
+jest.mock('../src/features/Habits/story/HabitStorySheet', () => ({
+  __esModule: true,
+  HabitStorySheet: jest.fn(() => null),
+}));
 jest.mock('../src/features/Journal/CapturePagesStrip', () => ({
   __esModule: true,
   CapturePagesStrip: () => null,

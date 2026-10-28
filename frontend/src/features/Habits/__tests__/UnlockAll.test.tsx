@@ -22,7 +22,10 @@ jest.mock('../components/GoalModal', () => ({ __esModule: true, default: () => n
 jest.mock('../components/HabitSettingsModal', () => ({ __esModule: true, default: () => null }));
 jest.mock('../components/OnboardingModal', () => ({ __esModule: true, default: () => null }));
 jest.mock('../components/ReorderHabitsModal', () => ({ __esModule: true, default: () => null }));
-jest.mock('../components/StatsModal', () => ({ __esModule: true, default: () => null }));
+jest.mock('../story/HabitStorySheet', () => ({
+  __esModule: true,
+  HabitStorySheet: jest.fn(() => null),
+}));
 
 import HabitsDrawer from '../components/HabitsDrawer';
 

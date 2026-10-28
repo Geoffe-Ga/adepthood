@@ -51,7 +51,10 @@ jest.mock('../components/OnboardingModal', () =>
     return null;
   },
 );
-jest.mock('../components/StatsModal', () => () => null);
+jest.mock('../story/HabitStorySheet', () => ({
+  __esModule: true,
+  HabitStorySheet: jest.fn(() => null),
+}));
 
 jest.mock('react-native-draggable-flatlist', () => 'DraggableFlatList');
 jest.mock('@react-native-community/datetimepicker', () => 'DateTimePicker');

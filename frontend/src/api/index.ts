@@ -1691,9 +1691,18 @@ export interface GoalCompletionPayload {
   completed_on?: string;
 }
 
+/** A run threshold a check-in crossed (``schemas/milestone.py``). */
+export interface CheckInMilestone {
+  threshold: number;
+  kind?: 'streak_started' | 'streak_milestone' | 'personal_best' | 'comeback';
+  /** Server-written copy; shown verbatim when present. */
+  label?: string | null;
+  achieved_at?: string | null;
+}
+
 export interface CheckInResult {
   streak: number;
-  milestones: Array<{ threshold: number }>;
+  milestones: CheckInMilestone[];
   reason_code: string;
   /** Authoritative sum across every tier row for the affected habit/day. */
   day_units: number;
@@ -2221,6 +2230,18 @@ function toDocumentUploadError(err: unknown): DocumentUploadError {
   return new DocumentUploadError('unknown', status, err);
 }
 
+/**
+ * Where a folder-imported document sat (#3554): the import's name and the
+ * path from that folder's root to the file. Identity metadata only; the
+ * server hashes it into the document's upload identity and keeps neither.
+ */
+export interface ImportDocumentSource {
+  /** The import's stable name; by default, the chosen folder's own name. */
+  namespace: string;
+  /** `/`-separated path under that folder, ending in `filename`. */
+  relativePath: string;
+}
+
 /** One document handed over: its own name, its bytes, and its tier. */
 export interface ImportDocumentInput {
   /** The document's own name; its extension selects how it is read. */
@@ -2229,6 +2250,17 @@ export interface ImportDocumentInput {
   contentBase64: string;
   /** The privacy tier the uploader chose, honored end to end. */
   classification: JournalClassification;
+  /** Set for a document from a folder import, so same-named notes stay distinct. */
+  source?: ImportDocumentSource;
+}
+
+/** The request's optional folder pair, sent together or not at all. */
+function importSourceFields(
+  source: ImportDocumentSource | undefined,
+): { source_namespace: string; source_relative_path: string } | Record<string, never> {
+  return source === undefined
+    ? {}
+    : { source_namespace: source.namespace, source_relative_path: source.relativePath };
 }
 
 /**
@@ -2266,7 +2298,7 @@ export const corpus = {
    * error message or a log line.
    */
   async importDocument(
-    { filename, contentBase64, classification }: ImportDocumentInput,
+    { filename, contentBase64, classification, source }: ImportDocumentInput,
     token?: string,
   ): Promise<DocumentImportT> {
     const scope = captureAuthScope();
@@ -2281,7 +2313,12 @@ export const corpus = {
       const headers = vendors === null ? undefined : onboardingKeyHeaders(vendors);
       return await request<DocumentImportT>('/corpus/import', {
         method: 'POST',
-        body: { filename, content_base64: contentBase64, classification },
+        body: {
+          filename,
+          content_base64: contentBase64,
+          classification,
+          ...importSourceFields(source),
+        },
         headers,
         token,
         timeoutMs: UPLOAD_DOCUMENT_TIMEOUT_MS,
