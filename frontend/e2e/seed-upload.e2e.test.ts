@@ -69,6 +69,13 @@ const SEED_TEXT = '# Field notes\n\nA paragraph worth keeping, and keeping once.
 const INTIMATE_FILENAME = 'diary.md';
 const INTIMATE_TEXT = 'Only for me, and only ever here.';
 
+/** One basename, three places: alone, and under two folders of one import (#3554). */
+const FOLDER_BASENAME = 'Index.md';
+const FOLDER_NAMESPACE = 'Lane Vault';
+const FOLDER_SINGLE_TEXT = 'An index picked on its own.';
+const FOLDER_WORK_TEXT = 'work sentinel: the index of the Work folder.';
+const FOLDER_HOME_TEXT = 'home sentinel: the index of the Home folder.';
+
 const lane = readLaneState();
 
 function encode(text: string): string {
@@ -177,6 +184,47 @@ describe('seeding a document into a connected vault, against a live server', () 
     expect(uploads[1]?.action).toBe(UNCHANGED);
     expect(uploadedFragments).toHaveLength(1);
     expect(uploadedFragments[0]?.writes).toBe(2);
+  });
+
+  it('gives a folder note its own identity, apart from a single file of the same name', async () => {
+    // #3554 through the production client: the same basename in two folders,
+    // and once more picked on its own, addresses three fragments -- and the
+    // single file keeps the identity a filename-only upload has always had.
+    const before = await vaultLedger();
+    const single = await importDocument(FOLDER_BASENAME, FOLDER_SINGLE_TEXT);
+    const work = await corpus.importDocument({
+      filename: FOLDER_BASENAME,
+      contentBase64: encode(FOLDER_WORK_TEXT),
+      classification: 'personal',
+      source: { namespace: FOLDER_NAMESPACE, relativePath: `Work/${FOLDER_BASENAME}` },
+    });
+    const home = await corpus.importDocument({
+      filename: FOLDER_BASENAME,
+      contentBase64: encode(FOLDER_HOME_TEXT),
+      classification: 'personal',
+      source: { namespace: FOLDER_NAMESPACE, relativePath: `Home/${FOLDER_BASENAME}` },
+    });
+    const singleAgain = await importDocument(FOLDER_BASENAME, FOLDER_SINGLE_TEXT);
+
+    for (const result of [single, work, home, singleAgain]) {
+      expect(result.vault_status).toBe(ACCEPTED);
+    }
+    expect(new Set([single.vault_ref, work.vault_ref, home.vault_ref]).size).toBe(3);
+    expect(singleAgain.vault_ref).toBe(single.vault_ref);
+
+    const after = await vaultLedger();
+    const uploads = after.received
+      .filter((entry) => entry.path === '/v1/uploads')
+      .slice(before.received.filter((entry) => entry.path === '/v1/uploads').length);
+    expect(uploads.map((entry) => entry.digest)).toEqual([
+      digestOf(FOLDER_SINGLE_TEXT),
+      digestOf(FOLDER_WORK_TEXT),
+      digestOf(FOLDER_HOME_TEXT),
+      digestOf(FOLDER_SINGLE_TEXT),
+    ]);
+    expect(new Set(uploads.slice(0, 3).map((entry) => entry.externalId)).size).toBe(3);
+    expect(uploads[3]?.externalId).toBe(uploads[0]?.externalId);
+    expect(uploads[3]?.action).toBe(UNCHANGED);
   });
 
   it('withholds an Intimate document from the vault entirely', async () => {

@@ -78,6 +78,16 @@ export interface LaneState {
   emailCaptureFile: string;
   /** The `https://` origin the server builds the links in outbound mail from. */
   webBaseUrl: string;
+  /** Per-run directory holding only the server's captured output, removed at teardown. */
+  serverLogDir: string;
+  /**
+   * Everything the server wrote to stdout and stderr, appended as it runs.
+   *
+   * The log a deployment would ship, kept for the run so a journey can read it
+   * back: proving a privacy promise about logs takes the log, not the code that
+   * is supposed to keep it clean.
+   */
+  serverLogFile: string;
 }
 
 /** Repository root, three levels up from `frontend/e2e`. */
