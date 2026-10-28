@@ -410,6 +410,8 @@ async def test_no_vault_has_no_address(async_client: AsyncClient) -> None:
         "vault_url": None,
         "mcp_address": None,
         "classification_key_rejected": False,
+        "classification_state": None,
+        "classification_message": None,
     }
 
 
@@ -437,4 +439,6 @@ async def test_a_managed_vault_without_oauth_readiness_has_no_agent_address(
         "vault_url": None,
         "mcp_address": None,
         "classification_key_rejected": False,
+        "classification_state": "not_run",
+        "classification_message": None,
     }

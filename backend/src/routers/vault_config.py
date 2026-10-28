@@ -47,11 +47,13 @@ from fastapi import Depends, Response, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from database import get_session
+from dependencies.creek_vault import deployment_vault_belongs_to
 from error_responses import build_router
 from errors import conflict, unprocessable
 from models.user_vault_config import UserVaultConfig
 from routers.auth import get_current_user
 from schemas.vault_config import (
+    VAULT_CLASSIFICATION_MESSAGES,
     VaultConnectionRequest,
     VaultConnectionResponse,
     credential_is_usable,
@@ -73,7 +75,7 @@ from services.user_vault_config import (
     managed_vault_owns_connection,
     store_vault_config,
 )
-from services.vault_classification_status import classification_key_rejected
+from services.vault_classification_status import classification_status
 
 router = build_router(prefix="/vault", tags=["vault"], extra_statuses=(status.HTTP_409_CONFLICT,))
 
@@ -167,6 +169,25 @@ def _to_response(config: UserVaultConfig | None) -> VaultConnectionResponse:
     )
 
 
+async def _attach_classification(
+    response: VaultConnectionResponse, session: AsyncSession, user_id: int, *, has_vault: bool
+) -> None:
+    """Fill in what the account's classification rows say, from one read.
+
+    ``has_vault`` is the stored connection; the deployment-wide vault's owner
+    has none and is added here, because the pipeline writes their journal to
+    that vault and so their rows describe a vault they really have (#3577). The
+    refused-key flag ignores it, as it always has (#3595).
+    """
+    rows = await classification_status(session, user_id)
+    state = rows.state(has_vault=has_vault or deployment_vault_belongs_to(user_id))
+    response.classification_key_rejected = rows.key_rejected
+    response.classification_state = state
+    response.classification_message = (
+        None if state is None else VAULT_CLASSIFICATION_MESSAGES[state]
+    )
+
+
 @router.get("/connection", response_model=VaultConnectionResponse)
 async def get_vault_connection(
     user_id: Annotated[int, Depends(get_current_user)],
@@ -181,7 +202,7 @@ async def get_vault_connection(
     """
     config = await load_vault_config(session, user_id)
     response = _to_response(config)
-    response.classification_key_rejected = await classification_key_rejected(session, user_id)
+    await _attach_classification(response, session, user_id, has_vault=config is not None)
     if config is not None and config.provisioned:
         response.mcp_address = await managed_agent_address(session, user_id, config)
     return response
@@ -217,7 +238,7 @@ async def put_vault_connection(
         session, user_id, vault_url=payload.vault_url, api_key=payload.api_key
     )
     response = _to_response(config)
-    response.classification_key_rejected = await classification_key_rejected(session, user_id)
+    await _attach_classification(response, session, user_id, has_vault=True)
     return response
 
 
