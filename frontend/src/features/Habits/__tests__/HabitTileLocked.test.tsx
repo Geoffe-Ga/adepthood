@@ -95,7 +95,7 @@ describe('HabitTile locked state', () => {
 
     // Should NOT contain streak text
     const hasStreakText = textContents.some(
-      (t: string) => typeof t === 'string' && t.includes('DAYS'),
+      (t: string) => typeof t === 'string' && t.includes('RUN'),
     );
     expect(hasStreakText).toBe(false);
   });

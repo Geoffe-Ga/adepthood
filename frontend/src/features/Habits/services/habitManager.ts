@@ -81,6 +81,7 @@ import {
   isNotCarryoverHabit,
   logHabitUnits,
   stageAtIndex,
+  streakPeriodKind,
   unitsInCurrentPeriod,
 } from '../HabitUtils';
 import { updateHabitNotifications, cancelForHabit } from '../hooks/useHabitNotifications';
@@ -104,6 +105,7 @@ import {
   rebasePendingLogUnitRollbacks,
   takeLogUnitRollbackBaseline,
 } from './logUnitOrder';
+import { milestoneLine } from './milestoneCopy';
 import { ReplayCalendarRegistry } from './replayCalendarRegistry';
 import type { ReplayCalendar } from './replayCalendarRegistry';
 import { classifyReplayFailure, hasExhaustedRetries, nextHeadState } from './replayPolicy';
@@ -248,6 +250,24 @@ const buildMilestoneToast = (
     };
   }
   return null;
+};
+
+/**
+ * Name a run milestone the server says this check-in crossed (D18), as one
+ * line under whatever the log's own toast already says.
+ */
+const withRunMilestone = (
+  toast: ToastConfig,
+  ctx: LogUnitContext,
+  result: CheckInResult | undefined,
+): ToastConfig => {
+  const habit = ctx.next.find((candidate) => candidate.id === ctx.habitId);
+  const line = milestoneLine(
+    result?.milestones,
+    ctx.habitName,
+    habit ? streakPeriodKind(habit) : 'day',
+  );
+  return line === null ? toast : { ...toast, message: `${toast.message}\n${line}` };
 };
 
 /**
@@ -2321,7 +2341,11 @@ export const habitManager = {
       ctx.currentGoal,
       ctx.nextGoal,
     );
-    return milestone ?? buildLogConfirmationToast(ctx.habitName, ctx.amount);
+    return withRunMilestone(
+      milestone ?? buildLogConfirmationToast(ctx.habitName, ctx.amount),
+      ctx,
+      result,
+    );
   },
 
   /**

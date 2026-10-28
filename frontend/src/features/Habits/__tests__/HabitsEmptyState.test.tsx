@@ -23,7 +23,10 @@ jest.mock('../components/GoalModal', () => () => null);
 jest.mock('../components/HabitSettingsModal', () => () => null);
 jest.mock('../components/OnboardingModal', () => () => null);
 jest.mock('../components/ReorderHabitsModal', () => () => null);
-jest.mock('../components/StatsModal', () => () => null);
+jest.mock('../story/HabitStorySheet', () => ({
+  __esModule: true,
+  HabitStorySheet: jest.fn(() => null),
+}));
 
 describe('HabitsEmptyState', () => {
   it('names the gain of beginning one habit without guessing the current stage duration', () => {
