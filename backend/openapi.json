@@ -9897,6 +9897,34 @@
             "minLength": 1,
             "title": "Filename",
             "type": "string"
+          },
+          "source_namespace": {
+            "anyOf": [
+              {
+                "maxLength": 128,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Folder imports only: the stable name of this import, by default the chosen folder's name. Sent together with source_relative_path.",
+            "title": "Source Namespace"
+          },
+          "source_relative_path": {
+            "anyOf": [
+              {
+                "maxLength": 1024,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Folder imports only: the '/'-separated path from the chosen folder's root to this file, ending in its filename. Sent together with source_namespace.",
+            "title": "Source Relative Path"
           }
         },
         "required": [

@@ -130,7 +130,7 @@ from services.corpus_ingest import INGEST_SOURCE
 from services.corpus_invitation import InvitationOffer, dismiss_invitation, load_invitation
 from services.creek_vault_pipeline import VaultPipelineTrigger, drive_vault_pipeline
 from services.creek_vault_relay import forwarding_provider_key
-from services.creek_vault_upload import UploadedDocument
+from services.creek_vault_upload import FolderSource, UploadedDocument
 from services.voice_readiness import VoiceReadiness, load_voice_readiness
 
 router = build_router(
@@ -452,6 +452,19 @@ def _to_import_response(result: DocumentImportResult) -> DocumentImportResponse:
     return _corpus_response(result)
 
 
+def _folder_source(payload: UploadDocumentRequest) -> FolderSource | None:
+    """Carry the request's validated folder identity into the service's vocabulary.
+
+    The schema has already required both fields or neither (#3554), so a
+    single absent field here means a single-file upload, exactly as before.
+    """
+    if payload.source_namespace is None or payload.source_relative_path is None:
+        return None
+    return FolderSource(
+        namespace=payload.source_namespace, relative_path=payload.source_relative_path
+    )
+
+
 @router.post(
     "/import",
     response_model=DocumentImportResponse,
@@ -505,6 +518,7 @@ async def import_corpus_document(
                 content_base64=payload.content_base64,
                 classification=payload.classification,
                 created_at=datetime.now(UTC),
+                source=_folder_source(payload),
             ),
         )
         await session.commit()
