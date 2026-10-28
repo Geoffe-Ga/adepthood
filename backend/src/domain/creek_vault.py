@@ -1333,8 +1333,8 @@ class VaultAgentActivityRow:
     """One call against the vault, reduced to who, what, when and whether.
 
     ``consumer`` is the vault's audit stamp, verbatim: the static bearer's
-    consumer name, or a JWT agent's ``sub`` -- which names the *person*, not the
-    agent, until Creek-Vault#1976 stamps the agent's ``client_id`` instead.
+    consumer name, or a JWT agent's ``client_id`` (Creek-Vault#1976); a row
+    stamped before #1976 carries the agent's ``sub``, which names the *person*.
     ``tool`` is the tool name the entry was written under. Neither is copy:
     both are identifiers a caller maps onto its own words before anyone reads
     them. ``at`` is timezone-aware UTC.

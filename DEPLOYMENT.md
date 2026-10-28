@@ -175,6 +175,8 @@ In the backend service's **Variables** tab, add:
 | `TRUSTED_PROXY_CIDRS` | *(Railway's ingress range)* | Recommended — without it every client shares one rate-limit bucket and https redirects break; the per-client 600/minute ceiling then becomes a site-wide 600/minute across the whole API |
 | `GOOGLE_OAUTH_CLIENT_IDS` | *(comma-separated Google client IDs)* | Only for Google sign-in — unset means every Google token is rejected |
 | `APPLE_OAUTH_CLIENT_IDS` | *(the iOS bundle identifier)* | Only for Apple sign-in — unset means every Apple token is rejected |
+| `OAUTH_ISSUER_URL` | `https://api.yourdomain.example` | Yes, for vault agents — the public https origin of this API, with no trailing slash. It is the `iss` of every agent token and the issuer in `/.well-known/oauth-authorization-server`, and is read from configuration, never from the request's Host header. Unset in production means the agent OAuth endpoints answer 503 |
+| `OAUTH_SIGNING_KEYS` | *(see below)* | Yes, for vault agents — ES256 (P-256) PEM private keys, newest first; the first signs and all are published at `/.well-known/jwks.json`. Unset in production means the token endpoint and the key set answer 503 and nothing is signed |
 
 **Generate a SECRET_KEY:**
 ```bash
@@ -190,6 +192,20 @@ python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().d
 This encrypts journal entry text at rest. A production boot without it **fails**
 — see [Journal Encryption at Rest](#journal-encryption-at-rest) below for what
 that protects and how rotation works.
+
+**Generate an OAUTH_SIGNING_KEYS value:**
+```bash
+openssl genpkey -algorithm EC -pkeyopt ec_paramgen_curve:P-256
+```
+The value is a list of unencrypted PEM P-256 private keys (PKCS#8 or SEC1),
+**newest first**, separated by commas or newlines; a one-line platform value
+may write the PEM's newlines as `\n`. The first key signs vault-agent access
+tokens; every key is published at `/.well-known/jwks.json`, where each vault
+fetches it. Rotate by prepending a new key (see
+[Rotate the agent signing key (90 days)](#rotate-the-agent-signing-key-90-days)).
+Never log, paste or commit a value. Once set with `OAUTH_ISSUER_URL`, both
+`/.well-known/oauth-authorization-server` and `/.well-known/jwks.json` should
+answer 200.
 
 **About PROD_DOMAIN:**
 This controls CORS (which origins can call your API). Set it to the URL where
@@ -209,6 +225,25 @@ missing one makes the browser block all responses and the app falsely report
 - `DATABASE_URL` — auto-injected by Railway from the linked PostgreSQL
 - `PORT` — auto-injected by Railway
 - `RAILWAY_*` — auto-injected by Railway
+
+#### Rotate the agent signing key (90 days)
+
+Rotate `OAUTH_SIGNING_KEYS` every 90 days (owner decision R3-3,
+`prompts/claude-comms/2026-10-27-release-decisions.md`). The key stays a
+platform variable.
+
+1. Generate a new key with the `openssl genpkey` command above.
+2. **Prepend** it to `OAUTH_SIGNING_KEYS`, keeping the current key after it.
+   The new key now signs; the old one is still published, so tokens it signed
+   still verify.
+3. Redeploy the backend.
+4. Wait at least 10 minutes (the access-token lifetime) **plus** the vaults'
+   5-minute key-set cache, so every token the old key signed has expired and
+   every vault has fetched the new key set.
+5. Drop the old key from `OAUTH_SIGNING_KEYS` and redeploy again.
+
+Never remove the old key before step 4 has elapsed: a token the old key signed
+would stop verifying while it is still live.
 
 ### 3e. Deploy and verify
 

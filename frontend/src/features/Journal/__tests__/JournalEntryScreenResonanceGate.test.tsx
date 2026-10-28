@@ -23,6 +23,7 @@ const mockList = jest.fn() as jest.MockedFunction<(_id: number) => Promise<{ ite
 jest.mock('@/context/AuthContext', () => require('./authContextTestKit'));
 
 jest.mock('@/api', () => ({
+  ...require('./journalUiFlagsTestKit'),
   journal: {
     get: (...a: unknown[]) => (mockGet as unknown as (...x: unknown[]) => unknown)(...a),
     create: jest.fn(),

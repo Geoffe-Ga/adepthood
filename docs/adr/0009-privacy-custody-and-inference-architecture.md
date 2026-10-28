@@ -50,6 +50,13 @@
   Creek-Vault ADR-0016 Decision 5 is untouched, exactly as decided: INTIMATE
   content never reaches the pool, by any route, including the `default` rescue
   path.
+- **Amended 2026-10-27 by the owner (`owner:2026-10-27#reviewer-gates-waived`),
+  release decision R5-1 in
+  [`prompts/claude-comms/2026-10-27-release-decisions.md`](../../prompts/claude-comms/2026-10-27-release-decisions.md).**
+  The four independent reviews in "Reviewers" stop being phase gates; see
+  "Amendment 2026-10-27: reviewer gates waived by owner" below. No review has
+  happened, every claim boundary stands, and this record still unlocks no
+  public claim.
 
 ## Context
 
@@ -930,6 +937,35 @@ phase (scorecard `reviewers`):
   changes any user-facing promise;
 - a Creek maintainer, before phase (d) moves a feature into the vault.
 
+## Amendment 2026-10-27: reviewer gates waived by owner
+
+- **Decider:** Geoff (owner decision `owner:2026-10-27#reviewer-gates-waived`,
+  release decision R5-1, recorded in
+  [`prompts/claude-comms/2026-10-27-release-decisions.md`](../../prompts/claude-comms/2026-10-27-release-decisions.md)).
+  The "Reviewers" text above is kept as decided on 2026-10-14.
+
+**The decision.** The owner waives the four independent-review gates listed
+above as phase gates. Phases (b)-(d) may proceed on adversarial AI review plus
+owner review, the same reviews the 2026-10-14 answer chose. The owner's
+rationale: they trust the architecture built together, and budget and scope do
+not justify outside review now.
+
+**What this does not change.** Waiving a gate is not doing the review. The four
+reviews are still not consulted (scorecard `reviewers` keeps each one
+`not_yet_consulted`), so:
+
+- no public copy may say that an independent, external or outside party has
+  checked or will check this design;
+- the stronger claim, that Adepthood cannot read your journal, is not yet
+  certified and stays uncertified under B24
+  ([#3076](https://github.com/Geoffe-Ga/adepthood/issues/3076));
+- no copy may claim "end-to-end" or "operator-blind", on the strength of this
+  amendment or of the phases it lets proceed.
+
+**Re-entry trigger.** Revisit when there are real paying users or budget
+allows. An independent review that then happens is recorded against the
+matching `reviewers` entry as consulted, with name and date.
+
 ## Rejected alternatives
 
 - **The status quo:** the operator reads every entry, which contradicts the
@@ -1094,6 +1130,10 @@ The B13 epic body that carries this plan is drafted at
   inference leg; the 2026-10-21 half names the vendor and records the three
   waivers with their substitutes. Creek-Vault ADR-0016 holds the vault's half,
   and takes effect only once this amendment merges.
+- **2026-10-27 (release decision R5-1):** the "Reviewers" section's four
+  independent reviews stop being phase gates, by the "Amendment 2026-10-27:
+  reviewer gates waived by owner" section appended after it, with the original
+  text kept. The reviews stay owed and every claim boundary stands.
 
 ## Reopen triggers
 

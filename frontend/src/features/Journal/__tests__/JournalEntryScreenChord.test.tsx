@@ -35,6 +35,7 @@ const mockStagesCorrespondence = jest.fn() as jest.MockedFunction<() => Promise<
 jest.mock('@/context/AuthContext', () => require('./authContextTestKit'));
 
 jest.mock('@/api', () => ({
+  ...require('./journalUiFlagsTestKit'),
   stages: {
     listAll: (...a: unknown[]) => mockStagesListAll(...a),
     correspondence: () => mockStagesCorrespondence(),

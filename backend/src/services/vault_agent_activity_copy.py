@@ -12,13 +12,12 @@ reads this module back and holds every string here to that section's bans, so a
 label added on this side is swept the day it is added.
 
 **Who asked, honestly.** Creek stamps each call with the bearer's consumer name
-or, for an agent, the token's ``sub`` -- which names the *person*, not the
-agent, until Creek-Vault#1976 stamps the agent's ``client_id`` instead. So a row
-is named after an agent only when its stamp is one of the account's own grant
-client ids; the person's own ``sub`` is said for what it is ("one of your
-agents"), and on a managed vault, where the app's own calls carry that same
-stamp, for what it might be. When #1976 lands, the first rule names every
-agent and the others simply stop matching.
+or, for an agent, the agent's ``client_id`` (Creek-Vault#1976). Before #1976 an
+agent's calls carried the token's ``sub``, which names the *person*, not the
+agent. So a row is named after an agent only when its stamp is one of the
+account's own grant client ids; a row stamped with the person's own ``sub`` is
+said for what it is ("one of your agents"), and on a managed vault, where the
+app's own calls carry that same stamp, for what it might be.
 
 **What it asked for.** Each tool name the vault audits gets one past-tense
 phrase. A tool with no phrase yet is "Other" rather than its name, so a person
@@ -36,7 +35,7 @@ ACTIVITY_ADEPTHOOD: Final = "Adepthood"
 #: The person's own agent subject: an agent of theirs, though not which one.
 ACTIVITY_ONE_OF_YOUR_AGENTS: Final = "One of your agents"
 
-#: A managed vault's one stamp, which the app and every agent share today.
+#: A managed vault's one stamp: the app's, and every agent's before Creek-Vault#1976.
 ACTIVITY_ADEPTHOOD_OR_AN_AGENT: Final = "Adepthood or one of your agents"
 
 #: An agent this person approved and later stopped.
