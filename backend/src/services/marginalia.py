@@ -17,12 +17,13 @@ passing both bodies by keyword so the two strings cannot be silently swapped.
 from __future__ import annotations
 
 from collections.abc import Iterable, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Protocol
 
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import col, select
 
+from domain.creek_vault import VaultKeyProvider
 from domain.marginalia_anchoring import reanchor_one
 from domain.resonance import split_resonance_prompt
 from models.completion_suggestion import CompletionSuggestion, SuggestionStatus
@@ -119,6 +120,10 @@ class InferenceReceipt:
     source: MarginaliaSource
     provider: InferenceProvider | None
     model: str | None
+    #: The vendor whose writer key the vault reported spending on this answer
+    #: (``inference_source: request_key:<vendor>``, #3483), else ``None``. Only a
+    #: vault receipt ever carries one; it is a vendor word, never the key.
+    spent_key: VaultKeyProvider | None = None
 
 
 #: The receipt for an operation the caller's vault answered. The vault's reflect
@@ -126,6 +131,11 @@ class InferenceReceipt:
 VAULT_RECEIPT = InferenceReceipt(
     source=MarginaliaSource.CREEK_VAULT, provider=InferenceProvider.CREEK, model=None
 )
+
+
+def vault_receipt(spent_key: VaultKeyProvider | None = None) -> InferenceReceipt:
+    """Return the vault's receipt, naming the writer key it reported spending, if any (#3483)."""
+    return VAULT_RECEIPT if spent_key is None else replace(VAULT_RECEIPT, spent_key=spent_key)
 
 
 def _known_provider(name: str) -> InferenceProvider | None:

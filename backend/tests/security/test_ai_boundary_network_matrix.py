@@ -60,7 +60,7 @@ import enum
 import json
 import logging
 from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import date
 from http import HTTPStatus
 from pathlib import Path
@@ -147,6 +147,10 @@ _MANAGED_HANDSHAKE: Final[dict[str, object]] = {
     "request_key_providers": ["anthropic", "openai"],
 }
 _PROVIDER_KEY_HEADER: Final = "X-Creek-Provider-Key"
+_PROVIDER_HEADER: Final = "X-Creek-Provider"
+#: The model-backed answers a vault labels with the route that wrote them
+#: (contract 0.19 ``inference_source``), so the only ones this edge stamps.
+_LABELLED_PATHS: Final = (_REFLECTIONS_PATH, _LETTERS_PATH)
 #: The only vault routes that call a model, so the only ones a key may ride.
 _KEYED_PATHS: Final = (_REFLECTIONS_PATH, _LETTERS_PATH, "/v1/classifications")
 _REFLECTION: Final[dict[str, object]] = {
@@ -267,6 +271,16 @@ class NetworkEdge:
     #: A managed vault: its handshake advertises the vendors whose writer key it
     #: will spend (Creek contract 0.18, #3437). Off for every pre-#3437 row.
     managed: bool = False
+    #: How many capability answers advertise request keys before the vault stops
+    #: (#3483's handshake race); ``None`` keeps advertising for as long as
+    #: ``managed`` holds.
+    advertised_handshakes: int | None = None
+    #: The relayed key does not work at its vendor -- a forged, prefix-valid
+    #: string -- so the vault answers from its own route instead (#3483).
+    key_rejected_by_vendor: bool = False
+    #: The route a vault that did not spend a writer key names in its receipt:
+    #: the shared pool here, ``local`` for a vault with its own model.
+    keyless_route: str = "pool:creek"
 
     def keyed(self) -> list[Dial]:
         """Every dial that carried a writer's provider key."""
@@ -285,15 +299,33 @@ class NetworkEdge:
         self.dials.clear()
 
     async def answer(
-        self, name: str, address: str, path: str, provider_key: str | None = None
+        self,
+        name: str,
+        address: str,
+        path: str,
+        provider_key: str | None = None,
+        provider: str | None = None,
     ) -> _Answer:
         """Record the request, then answer it as the scripted network would."""
         self.dials.append(Dial(name=name, address=address, path=path, provider_key=provider_key))
         if name in _PROVIDER_HOSTS:
             return self._provider()
         if name in _ADDRESSES:
-            return await self._vault(path)
+            answer = await self._vault(path)
+            return self._labelled(answer, path, None if provider_key is None else provider)
         return _CONNECT_REFUSED
+
+    def _labelled(self, answer: _Answer, path: str, key_vendor: str | None) -> _Answer:
+        """Stamp a model-backed answer with the route that wrote it, as Creek does.
+
+        ``request_key:<vendor>`` only when a writer key arrived *and* worked;
+        every other answer names the vault's own route.
+        """
+        if not (path.startswith(_LABELLED_PATHS) and isinstance(answer.body, dict)):
+            return answer
+        spent = key_vendor is not None and not self.key_rejected_by_vendor
+        route = f"request_key:{key_vendor}" if spent else self.keyless_route
+        return replace(answer, body={**answer.body, "inference_source": route})
 
     def _provider(self) -> _Answer:
         if self.condition is Condition.PROVIDER_UNREACHABLE:
@@ -317,9 +349,16 @@ class NetworkEdge:
     def _capabilities(self) -> _Answer:
         if self.condition is Condition.MALFORMED_CAPABILITY:
             return _Answer(text="<html>not a capability document</html>")
-        if self.managed:
+        if self.managed and self._still_advertising():
             return _Answer(body=_MANAGED_HANDSHAKE)
         return _Answer(body=_HANDSHAKE)
+
+    def _still_advertising(self) -> bool:
+        """Spend one advertised handshake, if a count was scripted at all."""
+        if self.advertised_handshakes is None:
+            return True
+        self.advertised_handshakes -= 1
+        return self.advertised_handshakes >= 0
 
     async def _replaced(self) -> _Answer:
         """The writer reconnects while this call is in flight, then the old vault drops it."""
@@ -369,12 +408,16 @@ async def network_edge(monkeypatch: pytest.MonkeyPatch) -> AsyncIterator[Network
     async def _httpx(_transport: object, request: httpx.Request) -> httpx.Response:
         name, address = _dial_identity(request.url.host, dict(request.extensions))
         key = request.headers.get(_PROVIDER_KEY_HEADER)
-        return _httpx_response(await edge.answer(name, address, request.url.path, key), request)
+        vendor = request.headers.get(_PROVIDER_HEADER)
+        answer = await edge.answer(name, address, request.url.path, key, vendor)
+        return _httpx_response(answer, request)
 
     async def _httpx2(_transport: object, request: httpx2.Request) -> httpx2.Response:
         name, address = _dial_identity(request.url.host, dict(request.extensions))
         key = request.headers.get(_PROVIDER_KEY_HEADER)
-        return _httpx2_response(await edge.answer(name, address, request.url.path, key), request)
+        vendor = request.headers.get(_PROVIDER_HEADER)
+        answer = await edge.answer(name, address, request.url.path, key, vendor)
+        return _httpx2_response(answer, request)
 
     async def _resolve(host: str) -> tuple[str, ...]:
         return (_ADDRESSES[host],) if host in _ADDRESSES else ()
@@ -975,6 +1018,130 @@ async def test_a_managed_vault_letter_is_paid_by_the_key(harness: Harness) -> No
     assert _VAULT_LETTER in resp.text
     assert resp.json()["remaining_balance"] == 0
     assert [dial.path.startswith(_LETTERS_PATH) for dial in harness.edge.keyed()] == [True]
+
+
+# ── "Paid by your own key" is the vault's receipt, never adepthood's guess (#3483) ──
+
+#: A prefix-valid string no vendor issued: it passes every shape check adepthood
+#: can run, and is refused only where the vault spends it.
+_FORGED_KEY: Final = "sk-forgedforgedforgedforgedforged00"  # pragma: allowlist secret
+
+
+async def _wallet_of(session: AsyncSession, writer: Writer) -> tuple[int, int]:
+    """The writer's two wallet buckets as stored now: monthly used, offering balance."""
+    session.expire_all()
+    user = await session.get(User, writer.user_id)
+    assert user is not None
+    return user.monthly_messages_used, user.offering_balance
+
+
+async def _notes_on(session: AsyncSession, entry_id: int) -> list[Marginalia]:
+    """Every margin note persisted on ``entry_id``."""
+    rows = await session.execute(
+        select(Marginalia).where(col(Marginalia.journal_entry_id) == entry_id)
+    )
+    return list(rows.scalars().all())
+
+
+async def _keyed_reading(
+    harness: Harness, username: str, key: str
+) -> tuple[Writer, httpx.Response]:
+    """An empty-wallet writer on a managed vault asks for a reading with ``key``."""
+    writer = await _vault_bound_writer(harness, username)
+    await _arrange_entry(harness.client, harness.session, writer)
+    harness.edge.managed = True
+    await _exhaust_wallet(harness.session, writer)
+    harness.edge.forget()
+    resp = await harness.client.post(
+        f"/journal/{writer.target}/resonance", headers={**writer.headers, _BYOK_HEADER: key}
+    )
+    return writer, resp
+
+
+def _assert_refused_unpaid(resp: httpx.Response) -> None:
+    """The pass was refused as the retryable vault 503, with no vault prose in it."""
+    assert resp.status_code == HTTPStatus.SERVICE_UNAVAILABLE, resp.text
+    assert resp.json()["detail"] == REFLECTION_SOURCE_UNAVAILABLE
+    assert _VAULT_NOTE not in resp.text
+    assert _VAULT_LETTER not in resp.text
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("username", "key", "route"),
+    [
+        ("local_fallback", OPENAI_KEY, "local"),
+        ("pool_fallback", OPENAI_KEY, "pool:creek"),
+        ("forged_key_local_model", _FORGED_KEY, "local"),
+    ],
+)
+async def test_a_vault_that_answers_without_spending_the_key_gives_no_free_reading(
+    harness: Harness, username: str, key: str, route: str
+) -> None:
+    """The key rode to the vault, the vault answered from its own route: no free notes.
+
+    ``forged_key_local_model`` is Creek-Vault#1849's future: a managed vault with
+    a local model answers a prefix-valid key nobody issued. Before #3483 that was
+    an unlimited free reading labelled "your own key"; now the receipt names
+    ``local``, so the pass is refused unpaid and keeps nothing.
+    """
+    harness.edge.key_rejected_by_vendor = True
+    harness.edge.keyless_route = route
+
+    writer, resp = await _keyed_reading(harness, username, key)
+
+    assert [dial.provider_key for dial in harness.edge.keyed()] == [key]
+    _assert_refused_unpaid(resp)
+    assert await _wallet_of(harness.session, writer) == (10_000, 0)
+    assert await _notes_on(harness.session, writer.target) == []
+
+
+@pytest.mark.asyncio
+async def test_a_handshake_that_changes_between_probe_and_dial_gives_no_free_reading(
+    harness: Harness,
+) -> None:
+    """The probe saw request keys; the dial's own handshake did not, so no key rode it.
+
+    The admission probe decided "the key pays" and took no credit; the reflect
+    gate's handshake then stopped advertising, the relay omitted the header and
+    the vault answered from its pool. The receipt -- read after the answer, so
+    it cannot race -- says no key was spent, and the pass is refused unpaid.
+    """
+    harness.edge.advertised_handshakes = 1
+
+    writer, resp = await _keyed_reading(harness, "handshake_race", OPENAI_KEY)
+
+    assert harness.edge.keyed() == []
+    _assert_refused_unpaid(resp)
+    assert await _wallet_of(harness.session, writer) == (10_000, 0)
+    assert await _notes_on(harness.session, writer.target) == []
+
+
+@pytest.mark.asyncio
+async def test_a_forged_key_on_a_vault_with_a_local_model_buys_no_free_letter(
+    harness: Harness,
+) -> None:
+    """The essay route: the vault's local model wrote it, so no key paid and nothing is kept."""
+    harness.edge.key_rejected_by_vendor = True
+    harness.edge.keyless_route = "local"
+    writer = await _vault_bound_writer(harness, "forged_letter")
+    harness.edge.managed = True
+    await _arrange_note(harness.client, harness.session, writer)
+    await _exhaust_wallet(harness.session, writer)
+    harness.edge.forget()
+
+    resp = await harness.client.post(
+        f"/journal/marginalia/{writer.target}/essay",
+        json={},
+        headers={**writer.headers, _BYOK_HEADER: _FORGED_KEY},
+    )
+
+    assert [dial.path.startswith(_LETTERS_PATH) for dial in harness.edge.keyed()] == [True]
+    _assert_refused_unpaid(resp)
+    assert await _wallet_of(harness.session, writer) == (10_000, 0)
+    note = await harness.session.get(Marginalia, writer.target)
+    assert note is not None
+    assert note.essay is None
 
 
 @pytest.mark.asyncio

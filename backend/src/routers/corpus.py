@@ -69,6 +69,12 @@ asked is not a third :class:`models.corpus_consent.ConsentDecision` -- and the
 count the cooldown runs on never crosses this boundary. ``GET`` reads two rows
 and commits nothing; ``PUT`` is one upsert and one commit, fans out to nothing,
 and so is unrated like ``GET /voice-readiness``.
+
+``GET`` and ``POST /sweep`` are the backlog: how much of the account's own
+writing is still without a fragment, and one more bounded pass over it. The
+pass is the grant's own sweep run under the decision already standing, so it
+is the resume a repeated ``PUT /consent/journal`` used to be, with a door of its
+own and the same rate limit.
 """
 
 from __future__ import annotations
@@ -90,6 +96,7 @@ from domain.corpus_import import ImportDestination
 from error_responses import build_router
 from models.corpus_fragment import CorpusSource
 from rate_limit import limiter
+from rate_limit_keys import per_user_rate_limit_key
 from routers.auth import get_current_user
 from schemas.corpus import (
     CONSENT_RATE_LIMIT,
@@ -99,6 +106,7 @@ from schemas.corpus import (
     CorpusInvitationResponse,
     CorpusInvitationUpdate,
     CorpusSweepEstimateResponse,
+    CorpusSweepResponse,
 )
 from schemas.corpus_import import CORPUS_IMPORT_MESSAGES, DocumentImportResponse
 from schemas.journal_upload import UPLOAD_MESSAGES, UPLOAD_RATE_LIMIT, UploadDocumentRequest
@@ -106,13 +114,19 @@ from schemas.voice_readiness import VOICE_READINESS_MESSAGES, VoiceReadinessResp
 from services import corpus_backfill
 from services.account_egress_barrier import ensure_account_live, hold_account
 from services.corpus_backfill import backfill_after_consent
-from services.corpus_consent import ConsentState, load_every_consent, set_consent
+from services.corpus_consent import (
+    ConsentState,
+    load_every_consent,
+    set_consent,
+    standing_consent_change,
+)
 from services.corpus_import import (
     CorpusImportResult,
     DocumentImportResult,
     VaultImportResult,
     import_document,
 )
+from services.corpus_ingest import INGEST_SOURCE
 from services.corpus_invitation import InvitationOffer, dismiss_invitation, load_invitation
 from services.creek_vault_pipeline import VaultPipelineTrigger, drive_vault_pipeline
 from services.creek_vault_relay import forwarding_provider_key
@@ -291,6 +305,59 @@ async def get_corpus_sweep_estimate(
     """
     return CorpusSweepEstimateResponse(
         entries_pending=await corpus_backfill.count_pending_entries(session, user_id)
+    )
+
+
+@router.post("/sweep", response_model=CorpusSweepResponse)
+@limiter.limit(CONSENT_RATE_LIMIT, key_func=per_user_rate_limit_key)
+async def run_corpus_sweep(
+    request: Request,  # noqa: ARG001 — consumed by @limiter.limit decorator
+    user_id: Annotated[int, Depends(get_current_user)],
+    session: Annotated[AsyncSession, Depends(get_session)],
+) -> CorpusSweepResponse:
+    """Sort the next bounded share of this account's backlog, and say what is left.
+
+    Until this route the remainder of a bounded sweep was reachable only by
+    re-sending a consent decision already given. This is the same pass given a
+    door of its own: it runs
+    :func:`services.corpus_backfill.backfill_after_consent` -- the sweep itself,
+    not a copy of it -- under the decision already standing, so the consent
+    gate, the intimate-tier refusal, the per-entry clock, the deadline and the
+    one-receipt-per-reach rule are the ones the grant path ratified.
+
+    No second consent gate here, deliberately. The standing change of an
+    account that never said yes, or said it and withdrew it, is not a grant,
+    and the sweep's own ``_authorising_event_id`` already answers that with
+    "no sweep". So such an account is told it sorted nothing and how much is
+    still waiting -- a 200 rather than a refusal, because the request was
+    understood and the answer is a count, the contract ``GET /corpus/sweep``
+    keeps.
+
+    Resuming is not deciding: :func:`services.corpus_consent.standing_consent_change`
+    reads the decision and appends nothing, and no account barrier is held for
+    it. The sweep takes that hold per entry, re-reading consent inside each, so
+    a revocation or an erasure arriving mid-pass waits for the dial in flight
+    and nothing more -- the reasoning :func:`put_corpus_consent` gives.
+
+    Free, like every path that ontologizes an entry: nothing here is charged or
+    priced. Rate-limited per account at :data:`schemas.corpus.CONSENT_RATE_LIMIT`
+    because this is the resume that limit was sized for.
+
+    The remainder is counted after the commit rather than taken from the pass,
+    so an account the sweep declined to reach is told what is actually waiting
+    instead of the zero a sweep that never started reports.
+    """
+    change = await standing_consent_change(session, user_id=user_id, source=INGEST_SOURCE)
+    boundary = await resolve_reflection_boundary(session, user_id)
+    outcome = await backfill_after_consent(
+        session, user_id=user_id, change=change, boundary=boundary
+    )
+    await session.commit()
+    remaining = await corpus_backfill.count_pending_entries(session, user_id)
+    return CorpusSweepResponse(
+        entries_pending=remaining,
+        entries_sorted=outcome.fragments_added,
+        entries_remaining=remaining,
     )
 
 

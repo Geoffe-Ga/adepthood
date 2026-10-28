@@ -42,7 +42,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass, field
 from datetime import datetime
 from http import HTTPStatus
-from typing import NoReturn, Protocol
+from typing import Final, NoReturn, Protocol
 from uuid import UUID
 
 # Semantic contract version adepthood presents at handshake and compares against
@@ -68,11 +68,11 @@ from uuid import UUID
 #      carrying `VaultErrorCode.RATE_LIMITED` -- rather than being downgraded to
 #      `503 temporarily_unavailable` (Creek-Vault#1903 step 6).
 #    - `inference_source` (0.19) on reflection, letter and classification
-#      answers and `inference_pool` (0.19) on the handshake. Parsed and ignored:
-#      labelling each use from the route and refusing a mismatched route as the
-#      existing `409` are Creek-Vault#1903 steps 3-4, not part of a pin move.
-#      `tests/test_creek_contract_0_21.py` pins that neither changes what
-#      adepthood does with an answer.
+#      answers. Consumed on reflections and letters (#3483): it is the vault's
+#      receipt for the route that answered, and `request_key:<vendor>` is the
+#      only evidence that a relayed writer key paid (:func:`spent_request_key`).
+#      `inference_pool` (0.19) on the handshake is parsed and ignored;
+#      `tests/test_creek_contract_0_21.py` pins both.
 #    - `keyless_inference` (0.20) on the handshake. Consumed (#3501, owner
 #      decision 2026-10-21): a vault-bound pass carrying no key its vault will
 #      spend, against a vault reporting `false`, is refused `402
@@ -609,6 +609,35 @@ class VaultKeyProvider(enum.StrEnum):
     OPENAI = "openai"
 
 
+#: Creek's published ``inference_source`` vocabulary (contract 0.19,
+#: Creek-Vault ADR-0016): the shared pool, an attested pool vendor, a writer's
+#: request key, or the vault's own local model. Matched whole, so a trailing newline is no value.
+INFERENCE_SOURCE_PATTERN: Final = re.compile(
+    r"(?:local|pool:creek|pool:attested:[a-z0-9](?:[a-z0-9-]*[a-z0-9])?"
+    r"|request_key:[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)"
+)
+
+#: The prefix of the one receipt that says a writer's relayed key paid.
+REQUEST_KEY_SOURCE_PREFIX: Final = "request_key:"
+
+
+def spent_request_key(inference_source: str | None) -> VaultKeyProvider | None:
+    """Return the vendor whose writer key the vault reports spending, else ``None`` (#3483).
+
+    ``request_key:<vendor>`` is the vault's own receipt that the request-scoped
+    key it was handed paid for this answer. Every other route -- the shared
+    pool, an attested pool, a local model, no receipt at all, or a vendor this
+    app never relays -- spent no writer key, so it answers ``None``. A key's
+    prefix and a handshake's advertisement are *not* this evidence: both are
+    known before the dial, and neither says the key was used.
+    """
+    if inference_source is None or not inference_source.startswith(REQUEST_KEY_SOURCE_PREFIX):
+        return None
+    vendor = inference_source.removeprefix(REQUEST_KEY_SOURCE_PREFIX)
+    known = {provider.value: provider for provider in VaultKeyProvider}
+    return known.get(vendor)
+
+
 #: What every rendering of a :class:`VaultProviderKey` shows in place of the key.
 REDACTED_KEY = "<redacted>"
 
@@ -944,6 +973,9 @@ class VaultLetter:
     letter: str = field(repr=False)
     vault_ref: str
     action: VaultIngestAction
+    #: The route the vault says wrote it (contract 0.19), or ``None`` when it
+    #: named none -- including an ``unchanged`` letter re-read without a model call.
+    inference_source: str | None = None
 
 
 @dataclass(frozen=True)
@@ -1094,6 +1126,9 @@ class VaultReflection:
     routed_tier: VaultTierCeiling
     related_praxis: tuple[VaultRelatedPraxis, ...] = ()
     related_eddies: tuple[VaultRelatedEddy, ...] = ()
+    #: The route the vault says answered (contract 0.19), or ``None`` when it
+    #: named none or named one outside the published vocabulary.
+    inference_source: str | None = None
 
 
 @dataclass(frozen=True)
