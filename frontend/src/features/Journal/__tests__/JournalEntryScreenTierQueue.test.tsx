@@ -25,6 +25,7 @@ const mockList = jest.fn() as jest.MockedFunction<(_id: number) => Promise<{ ite
 jest.mock('@/context/AuthContext', () => require('./authContextTestKit'));
 
 jest.mock('@/api', () => ({
+  ...require('./journalUiFlagsTestKit'),
   // NetworkStatusProvider registers the client's online getter on mount.
   setNetworkOnlineGetter: jest.fn(),
   journal: {
