@@ -370,3 +370,25 @@ def test_energy_retains_negative_net_values() -> None:
     habit.energy_cost, habit.energy_return = 10, 2
     data = replace(_input(), habits=[habit], goals=[_goal()], completions=[_completion(START)])
     assert build_progress_overview(data).energy.weeks[-1].net == -8
+
+
+def test_overview_words_its_rhythm_facts_as_one_caption() -> None:
+    """The wave's caption (#3525) is built from the same three facts it carries."""
+    result = build_progress_overview(_input(300))
+    assert result.observations == ["You rested from 2 February to 13 September."]
+
+
+def test_a_kept_fortnight_is_named_in_the_caption() -> None:
+    """Once the wave rises, its fullest fortnight leads the caption."""
+    rows = [_completion(START + timedelta(days=n)) for n in range(14)]
+    result = build_progress_overview(
+        replace(_input(30), habits=[_habit()], goals=[_goal()], completions=rows)
+    )
+    assert result.observations[0].startswith("Your fullest fortnight was mid January.")
+
+
+def test_an_early_overview_says_when_the_rhythm_appears() -> None:
+    """Before four weeks the caption says the wave is still taking shape."""
+    assert build_progress_overview(_input(3)).observations == [
+        "Your rhythm takes shape after four weeks of days."
+    ]

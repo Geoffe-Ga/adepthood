@@ -7,12 +7,13 @@ from datetime import date, timedelta
 from typing import TYPE_CHECKING, Literal
 
 from domain.constants import STAGE_DURATIONS_DAYS
-from domain.habit_story_calendar import build_day_cells
+from domain.habit_story_calendar import build_day_cells, native_day
 from domain.habit_story_continuity import build_continuity
 from domain.habit_story_patterns import build_patterns, recent_logs
 from domain.habit_story_rollups import build_rates, build_tiers
+from domain.observations import habit_milestones, habit_observations
 from domain.streaks import sum_units_by_user_day
-from schemas.habit_story import HabitStoryResponse, HabitStoryStage
+from schemas.habit_story import HabitStoryMilestone, HabitStoryResponse, HabitStoryStage
 
 if TYPE_CHECKING:
     from domain.habit_story_types import GoalLogFact, HabitStoryContext
@@ -65,7 +66,7 @@ def build_habit_story(
     rows, recorded = _recorded_through_today(completions, logs, context)
     totals = sum_units_by_user_day(rows)
     days = build_day_cells(habit, totals, recorded, context)
-    return HabitStoryResponse(
+    story = HabitStoryResponse(
         polarity="subtractive" if context.subtractive else "additive",
         cadence=_cadence(context),
         unit=habit.goals[0].target_unit if habit.goals else "",
@@ -82,6 +83,23 @@ def build_habit_story(
         logs=recent_logs(recorded),
         observations=[],
         milestones=[],
+    )
+    return _with_observations(story, habit.name, context)
+
+
+def _with_observations(
+    story: HabitStoryResponse, name: str, context: HabitStoryContext
+) -> HabitStoryResponse:
+    """Fill the sentences and milestones (#3525) from the story's own figures."""
+    milestones = habit_milestones(story, period_of=lambda day: native_day(day, context))
+    return story.model_copy(
+        update={
+            "observations": habit_observations(story, name),
+            "milestones": [
+                HabitStoryMilestone(kind=m.kind, reached_on=m.reached_on, value=m.value)
+                for m in milestones
+            ],
+        }
     )
 
 
