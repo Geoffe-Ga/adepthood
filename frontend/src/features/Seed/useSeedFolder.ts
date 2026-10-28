@@ -94,6 +94,7 @@ function toReview(pending: PendingFolder): SeedFolderReview {
     count: selection.entries.length,
     withinBounds: selection.withinBounds,
     namespaceValid: isSafeSourceNamespace(pending.namespace),
+    includeAttachments: pending.includeAttachments,
   });
   return { ...pending, selection, blocker };
 }

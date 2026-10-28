@@ -13,6 +13,7 @@ import {
   SEED_FOLDER_NAMESPACE_INVALID,
   SEED_FOLDER_NOTHING_SELECTED,
   SEED_FOLDER_OVER_BYTES,
+  SEED_FOLDER_OVER_BYTES_WITH_ATTACHMENTS,
   SEED_FOLDER_TOO_MANY_NOTICE,
 } from '../seedFolderCopy';
 
@@ -79,23 +80,30 @@ describe('folder review copy', () => {
     expect(SEED_FOLDER_TOO_MANY_NOTICE).toContain(MAX_FOLDER_ENUMERATED_FILES.toLocaleString());
     expect(SEED_FOLDER_EMPTY_NOTICE).toMatch(/empty/);
     expect(SEED_FOLDER_OVER_BYTES).toContain('250 MB');
+    expect(SEED_FOLDER_OVER_BYTES_WITH_ATTACHMENTS).toContain('250 MB');
   });
 });
 
+const CAN_START = { count: 2, withinBounds: true, namespaceValid: true, includeAttachments: false };
+
 describe('folderStartBlocker', () => {
   test('is null when the import can start', () => {
-    expect(folderStartBlocker({ count: 2, withinBounds: true, namespaceValid: true })).toBeNull();
+    expect(folderStartBlocker({ ...CAN_START })).toBeNull();
   });
 
   test('names the first thing in the way', () => {
-    expect(folderStartBlocker({ count: 0, withinBounds: true, namespaceValid: true })).toBe(
-      SEED_FOLDER_NOTHING_SELECTED,
-    );
-    expect(folderStartBlocker({ count: 2, withinBounds: false, namespaceValid: true })).toBe(
-      SEED_FOLDER_OVER_BYTES,
-    );
-    expect(folderStartBlocker({ count: 2, withinBounds: true, namespaceValid: false })).toBe(
+    expect(folderStartBlocker({ ...CAN_START, count: 0 })).toBe(SEED_FOLDER_NOTHING_SELECTED);
+    expect(folderStartBlocker({ ...CAN_START, withinBounds: false })).toBe(SEED_FOLDER_OVER_BYTES);
+    expect(folderStartBlocker({ ...CAN_START, namespaceValid: false })).toBe(
       SEED_FOLDER_NAMESPACE_INVALID,
     );
+  });
+
+  test('suggests leaving attachments out only when they are in', () => {
+    expect(
+      folderStartBlocker({ ...CAN_START, withinBounds: false, includeAttachments: true }),
+    ).toBe(SEED_FOLDER_OVER_BYTES_WITH_ATTACHMENTS);
+    expect(SEED_FOLDER_OVER_BYTES_WITH_ATTACHMENTS).toMatch(/attachments out/);
+    expect(SEED_FOLDER_OVER_BYTES).not.toMatch(/attachment/);
   });
 });

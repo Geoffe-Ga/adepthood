@@ -49,9 +49,14 @@ export const SEED_FOLDER_NOTHING_SELECTED = 'Nothing is selected to bring in yet
 const BYTES_PER_KB = 1024;
 const BYTES_PER_MB = 1024 * 1024;
 
-export const SEED_FOLDER_OVER_BYTES =
-  `That's more than ${MAX_FOLDER_SELECTED_BYTES / BYTES_PER_MB} MB at once. ` +
-  'Leave the attachments out, or choose a folder inside this one.';
+const OVER_BYTES_LEAD = `That's more than ${MAX_FOLDER_SELECTED_BYTES / BYTES_PER_MB} MB at once.`;
+
+/** Past the byte bound with notes alone: only a smaller folder will do. */
+export const SEED_FOLDER_OVER_BYTES = `${OVER_BYTES_LEAD} Choose a folder inside this one.`;
+
+/** Past the byte bound with attachments in: leaving them out may be enough. */
+export const SEED_FOLDER_OVER_BYTES_WITH_ATTACHMENTS =
+  `${OVER_BYTES_LEAD} ` + 'Leave the attachments out, or choose a folder inside this one.';
 
 export const SEED_FOLDER_NAMESPACE_INVALID =
   'Give this import a name, without spaces at either end.';
@@ -122,13 +127,17 @@ export function folderStartBlocker({
   count,
   withinBounds,
   namespaceValid,
+  includeAttachments,
 }: {
   count: number;
   withinBounds: boolean;
   namespaceValid: boolean;
+  includeAttachments: boolean;
 }): string | null {
   if (count === 0) return SEED_FOLDER_NOTHING_SELECTED;
-  if (!withinBounds) return SEED_FOLDER_OVER_BYTES;
+  if (!withinBounds) {
+    return includeAttachments ? SEED_FOLDER_OVER_BYTES_WITH_ATTACHMENTS : SEED_FOLDER_OVER_BYTES;
+  }
   if (!namespaceValid) return SEED_FOLDER_NAMESPACE_INVALID;
   return null;
 }

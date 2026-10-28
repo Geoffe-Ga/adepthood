@@ -8,6 +8,7 @@ import { MAX_SEED_DOCUMENT_BYTES } from '../readSeedDocument';
 import {
   SEED_FOLDER_EMPTY_NOTICE,
   SEED_FOLDER_OVER_BYTES,
+  SEED_FOLDER_OVER_BYTES_WITH_ATTACHMENTS,
   SEED_FOLDER_PATHLESS_NOTICE,
   SEED_FOLDER_TOO_MANY_NOTICE,
 } from '../seedFolderCopy';
@@ -177,6 +178,18 @@ describe('useSeedFolder', () => {
       await hook.result.current.start();
     });
     expect(send).not.toHaveBeenCalled();
+  });
+
+  test('suggests leaving attachments out of an oversized selection once they are in', async () => {
+    const half = Math.floor(MAX_FOLDER_SELECTED_BYTES / MAX_SEED_DOCUMENT_BYTES / 2) + 1;
+    const heavy = Array.from({ length: half }, (_value, index) => [
+      file(`My Vault/${index}.md`, MAX_SEED_DOCUMENT_BYTES),
+      file(`My Vault/${index}.png`, MAX_SEED_DOCUMENT_BYTES),
+    ]).flat();
+    const { hook } = await reviewing(heavy);
+    expect(hook.result.current.review?.blocker).toBeNull();
+    act(() => hook.result.current.setIncludeAttachments(true));
+    expect(hook.result.current.review?.blocker).toBe(SEED_FOLDER_OVER_BYTES_WITH_ATTACHMENTS);
   });
 
   test('never reads a file while reviewing or dismissing', async () => {
