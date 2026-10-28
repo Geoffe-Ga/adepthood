@@ -1597,6 +1597,23 @@
     "coveredBy": "frontend/e2e/corpus-consent.e2e.test.ts"
   },
   {
+    "id": "corpus.sort-the-rest-of-your-writing",
+    "description": "Someone who journalled before turning sorting on opens Settings and, under Your writing, finds a 'Sort the rest of your writing' row saying how much is still unsorted (#3499). The row is there only while it can do something: it is absent without a standing yes for what is written here, absent while nothing is unsorted, and absent while the count is unknown. It opens a screen with the count, what sorting does in the consent screen's own words, and a 'Sort the next N' confirm that runs one bounded pass and then reports what it did -- offering the next pass on request and never looping on its own, because a pass can sort nothing and leave the remainder where it was. Sorting is free (#3495), so the screen carries no price and no credit language, and the shipped POST takes no body. The spec drives both verbs through the production client: a fresh account's count is zero; the count is the account's own writing apart from Intimate entries and nobody else's; a pass without consent is a 200 that sorts nothing and leaves the remainder unchanged (the case the screen must not read as success); and under a standing yes the pass's entries_pending and entries_remaining agree with each other and with the next GET. The lane has no classification provider, so how many entries a granted pass sorts is not observed here, and its server runs with rate limiting off, so the per-account 429 the screen meets with a retry-later line is pinned by backend/tests and CorpusSweepScreen.test.tsx instead.",
+    "crosses": {
+      "screen": "frontend/src/features/Settings/CorpusSweepScreen.tsx",
+      "client": ["auth", "setTokenGetter", "journal", "corpusConsent", "corpus"],
+      "routes": [
+        "GET /corpus/sweep",
+        "POST /corpus/sweep",
+        "POST /journal/",
+        "PUT /corpus/consent/{source}"
+      ],
+      "tables": ["journalentry", "corpusconsentevent", "corpusfragment"]
+    },
+    "status": "covered",
+    "coveredBy": "frontend/e2e/corpus-sweep.e2e.test.ts"
+  },
+  {
     "id": "corpus.settings-share-confirmed-decisions",
     "description": "The Settings hub keeps its inline sorting switches. Pushing What reflections draw on while the genuine consent GET is held reuses the same read; a real confirmed PUT grant appears in the detail and the retained hub. The hub withdrawal still asks, cancellation writes nothing, confirmation is retained after reload. Phone and desktop normal and targeted doubled rendered Settings text keep copy contained, keyboard grant reachable and withdrawal targets44px. This browser proof does not certify native text scaling, corpus classification providers or live vendor retention.",
     "crosses": {
