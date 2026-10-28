@@ -450,6 +450,17 @@ async def test_idor_habit_stats_returns_403(async_client: AsyncClient) -> None:
     assert resp.status_code == HTTPStatus.FORBIDDEN
 
 
+@pytest.mark.asyncio
+async def test_idor_habit_story_returns_403(async_client: AsyncClient) -> None:
+    """The lifetime Story read retains the owned-habit authorization boundary."""
+    alice_headers, _ = await _signup(async_client, "alice_story")
+    bob_headers, _ = await _signup(async_client, "bob_story")
+    created = await async_client.post("/habits/", json=_HABIT_PAYLOAD, headers=alice_headers)
+    habit_id = created.json()["id"]
+    response = await async_client.get(f"/habits/{habit_id}/story", headers=bob_headers)
+    assert response.status_code == HTTPStatus.FORBIDDEN
+
+
 # Journal entries are the deliberate exception to the 403-everywhere rule: GET,
 # DELETE, and PATCH all collapse a cross-user probe to 404 (enumeration-safe),
 # matching the goal/marginalia contract.
