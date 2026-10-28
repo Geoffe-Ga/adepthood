@@ -161,8 +161,8 @@ describe('useHabits', () => {
   it('setMode switches between modes', () => {
     const { result } = renderHook(() => useHabits());
 
-    act(() => result.current.setMode('stats'));
-    expect(result.current.mode).toBe('stats');
+    act(() => result.current.setMode('edit'));
+    expect(result.current.mode).toBe('edit');
 
     act(() => result.current.setMode('quickLog'));
     expect(result.current.mode).toBe('quickLog');

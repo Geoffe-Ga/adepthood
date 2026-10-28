@@ -72,11 +72,18 @@ const mockCorpusSet = jest.fn<Promise<ConsentState>, [string, boolean]>((source,
   Promise.resolve({ source, granted, decided_at: '2026-10-02T09:00:00Z' }),
 );
 
+// The sort-the-rest row asks how much is unsorted; the default is nothing, so
+// the other suites see no such row.
+const mockSweepEstimate = jest.fn<Promise<{ entries_pending: number }>, []>(() =>
+  Promise.resolve({ entries_pending: 0 }),
+);
+
 jest.mock('@/api', () => {
   const actual = jest.requireActual<Record<string, unknown>>('@/api');
   return {
     ...actual,
     adminFeedback: { capabilities: () => mockCapabilities() },
+    corpus: { sweepEstimate: () => mockSweepEstimate() },
     corpusConsent: {
       list: () => mockCorpusList(),
       set: (source: string, granted: boolean) => mockCorpusSet(source, granted),
@@ -716,6 +723,84 @@ describe('SettingsHubScreen — the sorting switches under Your writing', () => 
     expect(lead).toMatch(/sent once/);
     expect(lead).toMatch(/Intimate never/);
     expect(lead).toMatch(/Off unless you turn it on/);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Sort the rest of your writing (#3499): offered only when it can do something.
+// ---------------------------------------------------------------------------
+
+describe('SettingsHubScreen — sort the rest of your writing', () => {
+  const JOURNAL_ON: ConsentState = {
+    source: 'journal',
+    granted: true,
+    decided_at: '2026-10-01T09:00:00Z',
+  };
+  const JOURNAL_OFF: ConsentState = { source: 'journal', granted: false, decided_at: null };
+  const UPLOAD_ON: ConsentState = { ...JOURNAL_ON, source: 'upload' };
+
+  test('with sorting on and writing unsorted, offers the row after the way in, before the switches', async () => {
+    mockCorpusList.mockResolvedValueOnce([JOURNAL_ON]);
+    mockSweepEstimate.mockResolvedValue({ entries_pending: 412 });
+    const { findByTestId, getByText, toJSON } = render(<SettingsHubScreen />);
+
+    const row = await findByTestId('settings-row-corpus-sweep');
+
+    expect(row).toBeTruthy();
+    expect(getByText('Sort the rest of your writing')).toBeTruthy();
+    expect(getByText('412 entries still unsorted')).toBeTruthy();
+    const tree = JSON.stringify(toJSON());
+    const order = [
+      'settings-row-seed-corpus',
+      'settings-row-corpus-sweep',
+      'settings-corpus-sorting-lead',
+      'corpus-consent-switch-journal',
+    ].map((id) => tree.indexOf(id));
+    expect(order.every((index) => index > -1)).toBe(true);
+    expect(order).toEqual([...order].sort((a, b) => a - b));
+  });
+
+  test('tapping it opens the sort-the-rest screen', async () => {
+    mockCorpusList.mockResolvedValueOnce([JOURNAL_ON]);
+    mockSweepEstimate.mockResolvedValue({ entries_pending: 3 });
+    const { findByTestId } = render(<SettingsHubScreen />);
+
+    fireEvent.press(await findByTestId('settings-row-corpus-sweep'));
+
+    expect(mockNavigate).toHaveBeenCalledWith('CorpusSweep');
+  });
+
+  test('is absent when nothing is unsorted: a control that can do nothing is not shown', async () => {
+    mockCorpusList.mockResolvedValueOnce([JOURNAL_ON]);
+    mockSweepEstimate.mockResolvedValue({ entries_pending: 0 });
+    const { getByTestId, queryByTestId } = render(<SettingsHubScreen />);
+
+    await waitFor(() => expect(mockSweepEstimate).toHaveBeenCalled());
+    await waitFor(() => expect(getByTestId('corpus-consent-switch-journal')));
+
+    expect(queryByTestId('settings-row-corpus-sweep')).toBeNull();
+  });
+
+  test('is absent without consent to sort what is written here, however much waits', async () => {
+    mockCorpusList.mockResolvedValueOnce([JOURNAL_OFF, UPLOAD_ON]);
+    mockSweepEstimate.mockResolvedValue({ entries_pending: 412 });
+    const { getByTestId, queryByTestId } = render(<SettingsHubScreen />);
+
+    await waitFor(() => expect(getByTestId('corpus-consent-switch-journal')));
+
+    expect(queryByTestId('settings-row-corpus-sweep')).toBeNull();
+    expect(mockSweepEstimate).not.toHaveBeenCalled();
+  });
+
+  test('is absent when the count does not load: unknown is not something to offer', async () => {
+    mockCorpusList.mockResolvedValueOnce([JOURNAL_ON]);
+    mockSweepEstimate.mockRejectedValue(new Error('offline'));
+    const { getByTestId, queryByTestId } = render(<SettingsHubScreen />);
+
+    await waitFor(() => expect(mockSweepEstimate).toHaveBeenCalled());
+    await waitFor(() => expect(getByTestId('corpus-consent-switch-journal')));
+
+    expect(queryByTestId('settings-row-corpus-sweep')).toBeNull();
   });
 });
 

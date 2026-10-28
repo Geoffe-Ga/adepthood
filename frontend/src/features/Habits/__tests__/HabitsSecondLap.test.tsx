@@ -112,9 +112,9 @@ jest.mock('../components/GoalModal', () => () => null);
 jest.mock('../components/HabitSettingsModal', () => () => null);
 jest.mock('../components/OnboardingModal', () => () => null);
 jest.mock('../components/ReorderHabitsModal', () => () => null);
-jest.mock('../components/StatsModal', () => ({
+jest.mock('../story/HabitStorySheet', () => ({
   __esModule: true,
-  default: jest.fn(() => null),
+  HabitStorySheet: jest.fn(() => null),
 }));
 
 const { habits: habitsApi } = require('../../../api');

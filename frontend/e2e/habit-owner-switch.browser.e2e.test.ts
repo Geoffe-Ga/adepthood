@@ -77,7 +77,7 @@ for (const width of [390, 1280]) {
     await page.reload();
     await expect(page.getByTestId('habits-list')).toBeVisible();
     await expect(tile).toBeVisible();
-    await expect(tile).toContainText('1 DAYS');
+    await expect(tile).toContainText('1-DAY RUN');
     await page.screenshot({
       path: testInfo.outputPath('current-account-after-captured-renewal.png'),
       fullPage: true,

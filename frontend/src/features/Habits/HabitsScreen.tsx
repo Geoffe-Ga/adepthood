@@ -1,11 +1,10 @@
 // HabitsScreen.tsx
 
 import type { BottomTabScreenProps } from '@react-navigation/bottom-tabs';
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useMemo } from 'react';
 import { ActivityIndicator, FlatList, Text, TouchableOpacity, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
-import { habits as habitsApi } from '../../api';
 import { useAuth } from '../../context/AuthContext';
 import { useTheme } from '../../design/ThemeContext';
 import { spacing } from '../../design/tokens';
@@ -21,15 +20,12 @@ import { HabitsEmptyState } from './components/HabitsEmptyState';
 import HabitSettingsModal from './components/HabitSettingsModal';
 import OnboardingModal from './components/OnboardingModal';
 import ReorderHabitsModal from './components/ReorderHabitsModal';
-import StatsModal from './components/StatsModal';
 import { MAX_HABITS } from './constants';
 import { habitGridType } from './habitGridType';
 import styles from './Habits.styles';
-import type { AddHabitInput, Habit, HabitStatsData } from './Habits.types';
+import type { AddHabitInput, Habit } from './Habits.types';
 import HabitTile, { useTileLayout } from './HabitTile';
 import {
-  generateStatsForHabit,
-  toLocalHabitStats,
   buildPagedHabits,
   countCarryover,
   formatStageRange,
@@ -42,7 +38,7 @@ import { useHabits } from './hooks/useHabits';
 import { useModalCoordinator } from './hooks/useModalCoordinator';
 import { usePagination } from './hooks/usePagination';
 import { usePaginationBarVisibility } from './hooks/usePaginationBarVisibility';
-import { isServerBackedHabit } from './services/serverIds';
+import { HabitStorySheet } from './story/HabitStorySheet';
 
 import { DrawerNavSection, ScreenDrawer, useScreenDrawer } from '@/components/drawer';
 import { ContentContainer } from '@/components/layout/ContentContainer';
@@ -52,7 +48,6 @@ import type { RootTabParamList } from '@/navigation/BottomTabs';
 const HABITS_PER_PAGE = MAX_HABITS;
 
 const MODE_LABELS: Record<string, string> = {
-  stats: 'Stats Mode',
   edit: 'Edit Mode',
   quickLog: 'Quick Log Mode',
 };
@@ -80,8 +75,7 @@ const openModalForMode = (
   logUnit: ReturnType<typeof useHabits>['actions']['logUnit'],
   itemId: number,
 ) => {
-  if (mode === 'stats') open('stats');
-  else if (mode === 'edit') open('settings');
+  if (mode === 'edit') open('settings');
   else if (mode === 'quickLog') logUnit(itemId, 1);
   else open('goal');
 };
@@ -89,7 +83,6 @@ const openModalForMode = (
 interface HabitModalsProps {
   modals: ReturnType<typeof useModalCoordinator>;
   selectedHabit: Habit | null;
-  habitStats: HabitStatsData | null;
   habits: Habit[];
   actions: ReturnType<typeof useHabits>['actions'];
   onAddHabit: (_input: AddHabitInput) => Promise<void>;
@@ -99,7 +92,6 @@ interface HabitModalsProps {
 const HabitDataModals = ({
   modals,
   selectedHabit,
-  habitStats,
   actions,
 }: Omit<HabitModalsProps, 'habits' | 'onAddHabit' | 'userTimezone'>) => (
   <>
@@ -112,11 +104,10 @@ const HabitDataModals = ({
       onLogUnit={actions.logUnit}
       onUpdateHabit={actions.updateHabit}
     />
-    <StatsModal
-      visible={modals.stats}
+    <HabitStorySheet
+      visible={modals.story}
       habit={selectedHabit}
-      stats={habitStats}
-      onClose={() => modals.close('stats')}
+      onClose={() => modals.close('story')}
     />
   </>
 );
@@ -128,7 +119,7 @@ const HabitWriteModals = ({
   actions,
   onAddHabit,
   userTimezone,
-}: Omit<HabitModalsProps, 'habitStats'>) => (
+}: HabitModalsProps) => (
   <>
     <HabitSettingsModal
       visible={modals.settings}
@@ -176,7 +167,6 @@ const HabitModals = (props: HabitModalsProps) => (
     <HabitDataModals
       modals={props.modals}
       selectedHabit={props.selectedHabit}
-      habitStats={props.habitStats}
       actions={props.actions}
     />
     <HabitWriteModals
@@ -381,6 +371,7 @@ const EnergyFooter = ({
 
 interface TileHandlers {
   handleOpenGoals: (_item: Habit) => void;
+  handleOpenStory: (_item: Habit) => void;
   handleLongPress: (_item: Habit) => void;
   handleIconPress: (_index: number) => void;
 }
@@ -418,7 +409,14 @@ const useTileHandlers = (
     },
     [iconPress, open],
   );
-  return { handleOpenGoals, handleLongPress, handleIconPress };
+  const handleOpenStory = useCallback(
+    (item: Habit) => {
+      setSelectedHabit(item);
+      open('story');
+    },
+    [open, setSelectedHabit],
+  );
+  return { handleOpenGoals, handleOpenStory, handleLongPress, handleIconPress };
 };
 
 const useHabitTileRenderer = (
@@ -431,12 +429,8 @@ const useHabitTileRenderer = (
   colorIndices: number[],
 ) => {
   const { accent: activeAccent } = useTheme();
-  const { handleOpenGoals, handleLongPress, handleIconPress } = useTileHandlers(
-    mode,
-    modals.open,
-    actions,
-    setSelectedHabit,
-  );
+  const handlers = useTileHandlers(mode, modals.open, actions, setSelectedHabit);
+  const { handleOpenGoals, handleOpenStory, handleLongPress, handleIconPress } = handlers;
   const { unlockHabit, logUnit } = actions;
   return useCallback(
     ({ item, index }: { item: Habit; index: number }) => {
@@ -453,6 +447,7 @@ const useHabitTileRenderer = (
           achievedTextColor={slot < 0 ? activeAccent.onPrimary : undefined}
           globalIndex={flatIndices[index] ?? index}
           onOpenGoals={handleOpenGoals}
+          onOpenStory={handleOpenStory}
           onLongPress={handleLongPress}
           onIconPress={handleIconPress}
           onUnlockHabit={unlockHabit}
@@ -467,6 +462,7 @@ const useHabitTileRenderer = (
       activeAccent,
       tz,
       handleOpenGoals,
+      handleOpenStory,
       handleLongPress,
       handleIconPress,
       unlockHabit,
@@ -475,49 +471,9 @@ const useHabitTileRenderer = (
   );
 };
 
-const useHabitStats = (visible: boolean, habit: Habit | null): HabitStatsData | null => {
-  const { token, userTimezone } = useAuth();
-  const [stats, setStats] = useState<HabitStatsData | null>(null);
-
-  const fetchStats = useCallback(
-    (h: Habit) => {
-      if (!isServerBackedHabit(h)) {
-        // No server row answers to this id, so fall straight to the local
-        // generator. A bare return would leave the modal on its "Loading
-        // stats..." banner forever, since it reads in-flight as ``stats == null``.
-        setStats(generateStatsForHabit(h, userTimezone));
-        return;
-      }
-      // ``userTimezone`` flows from the auth-context value populated by
-      // /auth/login | signup | refresh -- closes BUG-FE-HABIT-002 / -207.
-      // The API path is preferred (server already buckets in user TZ);
-      // the local fallback path now also receives the user's zone so
-      // weekday charts and current-streak agree across both branches.
-      habitsApi
-        .getStats(h.id, token ?? undefined)
-        .then((apiStats) => setStats(toLocalHabitStats(apiStats)))
-        .catch(() => setStats(generateStatsForHabit(h, userTimezone)));
-    },
-    [token, userTimezone],
-  );
-
-  useEffect(() => {
-    if (visible && habit) {
-      fetchStats(habit);
-    } else {
-      setStats(null);
-    }
-  }, [visible, habit, fetchStats]);
-
-  return stats;
-};
-
-const useSelectMode = (
-  setMode: (_m: 'quickLog' | 'stats' | 'edit') => void,
-  closeAll: () => void,
-) =>
+const useSelectMode = (setMode: (_m: 'quickLog' | 'edit') => void, closeAll: () => void) =>
   useCallback(
-    (m: 'quickLog' | 'stats' | 'edit') => {
+    (m: 'quickLog' | 'edit') => {
       setMode(m);
       closeAll();
     },
@@ -662,7 +618,6 @@ const lapInviteRange = (page: number): { start?: number; end?: number } => {
 const useHabitsScreenState = () => {
   const habitsReturn = useHabits();
   const modals = useModalCoordinator();
-  const habitStats = useHabitStats(modals.stats, habitsReturn.selectedHabit);
   const responsive = useResponsive();
   const { userTimezone } = useAuth();
   const carryoverCount = countCarryover(habitsReturn.habits);
@@ -701,7 +656,6 @@ const useHabitsScreenState = () => {
   return {
     ...habitsReturn,
     modals,
-    habitStats,
     responsive,
     pagination,
     pagedHabits: paged.habits,
@@ -879,7 +833,6 @@ const HabitsScreen = ({
         <HabitModals
           modals={modals}
           selectedHabit={state.selectedHabit}
-          habitStats={state.habitStats}
           habits={habits}
           actions={actions}
           onAddHabit={state.handleAddHabit}

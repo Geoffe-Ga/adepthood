@@ -75,6 +75,23 @@ beforeEach(() => {
 });
 
 describe('picker to request body', () => {
+  test('names where a folder document sat, so same-named notes stay two documents', async () => {
+    mockFetch.mockReturnValueOnce(vaultReply('accepted'));
+
+    await importSeedDocument(
+      document({
+        name: 'Index.md',
+        source: { namespace: 'My Vault', relativePath: 'Work/Index.md' },
+      }),
+      'personal',
+    );
+
+    const body = JSON.parse(mockFetch.mock.calls[0][1].body);
+    expect(body.filename).toBe('Index.md');
+    expect(body.source_namespace).toBe('My Vault');
+    expect(body.source_relative_path).toBe('Work/Index.md');
+  });
+
   test('sends the picked file as base64 JSON under its own name and tier', async () => {
     mockFetch.mockReturnValueOnce(corpusReply('stored', 7));
 
