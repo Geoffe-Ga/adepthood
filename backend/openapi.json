@@ -7517,6 +7517,14 @@
           "energy": {
             "$ref": "#/components/schemas/ProgressEnergy"
           },
+          "observations": {
+            "description": "The rhythm wave's caption, worded from its facts; never a phase name.",
+            "items": {
+              "type": "string"
+            },
+            "title": "Observations",
+            "type": "array"
+          },
           "rhythm": {
             "$ref": "#/components/schemas/ProgressRhythm"
           }
