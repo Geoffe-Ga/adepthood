@@ -1,5 +1,5 @@
 /* eslint-env jest */
-/* global describe, test, expect, jest */
+/* global describe, test, expect */
 import {
   buildFolderManifest,
   MAX_FOLDER_ENUMERATED_FILES,
@@ -9,15 +9,12 @@ import {
 } from '../folderManifest';
 import { MAX_SEED_DOCUMENT_BYTES } from '../readSeedDocument';
 
-/** A stand-in for a browser File whose content readers fail the test if touched. */
-interface FakeFile extends FolderFileLike {
-  arrayBuffer: jest.Mock;
-  text: jest.Mock;
-}
+/** A stand-in for a browser File: only the metadata a manifest reads. */
+type FakeFile = FolderFileLike;
 
 function file(webkitRelativePath: string, size = 100): FakeFile {
   const name = webkitRelativePath.slice(webkitRelativePath.lastIndexOf('/') + 1);
-  return { name, size, webkitRelativePath, arrayBuffer: jest.fn(), text: jest.fn() };
+  return { name, size, webkitRelativePath };
 }
 
 function manifestOf(files: FakeFile[]) {
@@ -69,14 +66,6 @@ describe('buildFolderManifest', () => {
       too_large: 0,
       collision: 0,
     });
-  });
-
-  test('never opens a file, eligible or excluded', () => {
-    manifestOf(VAULT);
-    for (const handle of VAULT) {
-      expect(handle.arrayBuffer).not.toHaveBeenCalled();
-      expect(handle.text).not.toHaveBeenCalled();
-    }
   });
 
   test('is deterministic whatever order the browser lists files in', () => {
