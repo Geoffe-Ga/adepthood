@@ -65,6 +65,7 @@ import {
   STAGE_PERSONA_LADDER,
 } from './mapLayout';
 import type { MapRow, StageDisplay } from './mapLayout';
+import { ProgressDoor } from './progress/ProgressDoor';
 import {
   stageService,
   isStageUnlocked,
@@ -1487,6 +1488,7 @@ const MapScreenDrawer = ({
 }: MapScreenDrawerProps): React.JSX.Element => (
   <ScreenDrawer visible={drawer.isOpen} onClose={drawer.close} screenName="Map" title="Map">
     <DrawerNavSection currentScreen="Map" onNavigate={drawer.close} />
+    <ProgressDoor onOpen={drawer.close} />
     <MapDrawer
       lookup={lookup}
       currentStage={currentStage}

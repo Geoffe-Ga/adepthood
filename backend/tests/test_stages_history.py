@@ -243,6 +243,7 @@ async def test_history_returns_habit_aggregation(
     assert h["goals_achieved"]["low"] is True
     assert h["goals_achieved"]["clear"] is True
     assert h["goals_achieved"]["stretch"] is False
+    assert h["cadence_unit"] == "days"
 
 
 # ── User isolation ─────────────────────────────────────────────────────
@@ -315,3 +316,48 @@ async def test_history_only_returns_requesting_users_data(
     data = resp.json()
     assert len(data["practices"]) == 1
     assert len(data["habits"]) == 1
+
+
+@pytest.mark.asyncio
+async def test_history_names_each_habits_cadence_unit(
+    async_client: AsyncClient,
+    db_session: AsyncSession,
+) -> None:
+    """A weekly habit's run is counted in weeks, so the Map can say so (#3528)."""
+    headers, user_id = await _signup(async_client)
+    await _seed_stage(db_session, stage_number=1)
+    habits = {}
+    for name, unit in (("Long run", "per_week"), ("Budget review", "per_month"), ("Bare", None)):
+        habit = Habit(
+            name=name,
+            icon="*",
+            start_date=date(2026, 1, 1),
+            energy_cost=1,
+            energy_return=1,
+            user_id=user_id,
+            stage="1",
+            streak=2,
+        )
+        db_session.add(habit)
+        await db_session.commit()
+        await db_session.refresh(habit)
+        habits[name] = habit
+        if unit is not None:
+            db_session.add_all(
+                Goal(
+                    habit_id=habit.id,
+                    title=tier,
+                    tier=tier,
+                    target=1,
+                    target_unit="sessions",
+                    frequency=1,
+                    frequency_unit=unit,
+                )
+                for tier in ("low", "clear", "stretch")
+            )
+    await db_session.commit()
+
+    resp = await async_client.get("/stages/1/history", headers=headers)
+    assert resp.status_code == HTTPStatus.OK
+    units = {item["name"]: item["cadence_unit"] for item in resp.json()["habits"]}
+    assert units == {"Long run": "weeks", "Budget review": "months", "Bare": "days"}

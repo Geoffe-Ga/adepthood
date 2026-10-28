@@ -32,8 +32,6 @@ const CALLER_ALLOWLIST: Record<string, string> = {
     'The raw POST /auth/refresh, kept for the session-lifetime e2e spec, which rotates an explicit token and then proves the server refuses the one rotated away. Production refreshes go through refreshSessionToken (#3034), whose coalescer must be the only caller so a token the client knows was revoked is never refreshed again.',
   'habits.getStats':
     'The Habit Story sheet (#3526) replaced the Stats modal, its only screen caller. The wrapper stays for the e2e specs that still read GET /habits/{habit_id}/stats until #3530 retires that endpoint, its wrapper and this entry together.',
-  'progress.overview':
-    "The private GET /progress/overview series ships ahead of its consumer: the Map's Progress door is the planned caller and is declared uncovered as map.progress-door in the journey ledger. Remove this entry when that screen adopts the wrapper.",
   idempotencyKey:
     'Called inside the API layer to key suggestion-accept, invitation-dismiss and return-start; exported for unit coverage, and its caller-supplied seam on the habit check-in wrapper is still unadopted by any screen.',
 };

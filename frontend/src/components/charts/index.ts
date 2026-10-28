@@ -2,6 +2,8 @@ export { ChartTable } from './ChartFrame';
 export { Columns, columnTableRows } from './Columns';
 export type { ColumnsProps } from './Columns';
 export { DotStrip, pointTableRows } from './DotStrip';
+export { Dumbbells, dumbbellTableRows } from './Dumbbells';
+export type { Dumbbell, DumbbellsProps } from './Dumbbells';
 export type { DotStripProps } from './DotStrip';
 export { HBars, barTableRows } from './HBars';
 export type { HBarsProps, HBar } from './HBars';
