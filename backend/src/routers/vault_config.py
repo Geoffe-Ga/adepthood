@@ -179,9 +179,9 @@ async def _attach_classification(
     that vault and so their rows describe a vault they really have (#3577). The
     refused-key flag ignores it, as it always has (#3595).
     """
-    status = await classification_status(session, user_id)
-    state = status.state(has_vault=has_vault or deployment_vault_belongs_to(user_id))
-    response.classification_key_rejected = status.key_rejected
+    rows = await classification_status(session, user_id)
+    state = rows.state(has_vault=has_vault or deployment_vault_belongs_to(user_id))
+    response.classification_key_rejected = rows.key_rejected
     response.classification_state = state
     response.classification_message = (
         None if state is None else VAULT_CLASSIFICATION_MESSAGES[state]

@@ -79,7 +79,7 @@ class VaultClassificationStatus:
         return VaultClassificationState.INCOMPLETE
 
 
-def _newest_classify(user_id: int, outcomes: frozenset[str]) -> tuple[ColumnElement[bool], ...]:
+def _classify_rows_in(user_id: int, outcomes: frozenset[str]) -> tuple[ColumnElement[bool], ...]:
     """The filter selecting ``user_id``'s own classify rows whose outcome is in ``outcomes``."""
     return (
         col(VaultPipelineRun.user_id) == user_id,
@@ -93,14 +93,14 @@ async def classification_status(session: AsyncSession, user_id: int) -> VaultCla
     newest_first = col(VaultPipelineRun.id).desc()
     settled_code = (
         select(col(VaultPipelineRun.failure_code))
-        .where(*_newest_classify(user_id, _SETTLED))
+        .where(*_classify_rows_in(user_id, _SETTLED))
         .order_by(newest_first)
         .limit(1)
         .scalar_subquery()
     )
     landed_outcome = (
         select(col(VaultPipelineRun.outcome))
-        .where(*_newest_classify(user_id, _LANDED))
+        .where(*_classify_rows_in(user_id, _LANDED))
         .order_by(newest_first)
         .limit(1)
         .scalar_subquery()

@@ -43,6 +43,17 @@ _REJECTED: Final = "request_key_rejected"
 _INCOMPLETE_MESSAGE: Final = VAULT_CLASSIFICATION_MESSAGES[VaultClassificationState.INCOMPLETE]
 
 
+@pytest.fixture(autouse=True)
+def _no_deployment_vault(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Clear the deployment-wide vault so only what a test sets decides "has a vault".
+
+    A developer's own ``CREEK_VAULT_URL`` naming user 1 as its owner would
+    otherwise turn the null cases into ``not_run``.
+    """
+    monkeypatch.delenv(_VAULT_URL_ENV, raising=False)
+    monkeypatch.delenv(OWNER_ENV_VAR, raising=False)
+
+
 async def _signup(client: AsyncClient, name: str) -> tuple[dict[str, str], int]:
     """A fresh account's auth header and id."""
     response = await client.post(
