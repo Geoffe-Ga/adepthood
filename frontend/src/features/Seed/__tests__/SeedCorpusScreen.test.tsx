@@ -10,6 +10,7 @@ import { MAX_SEED_DOCUMENT_LABEL, SEED_DOCUMENT_READ_TIMEOUT_MS } from '../readS
 import {
   SEED_CHOOSE_LABEL,
   SEED_CONSENT_LINK_LABEL,
+  SEED_PAUSED_PROGRESS_LINE,
   SEED_LEAVE_WARNING,
   SEED_STATUS_LINES,
   SEED_VAULT_INVITATION,
@@ -624,5 +625,68 @@ describe('an account with nowhere to keep a document yet (#3017)', () => {
 
     expect(getByTestId('seed-choose-button')).toBeTruthy();
     expect(queryByTestId('seed-vault-invitation')).toBeNull();
+  });
+});
+
+describe('the ones that did not go over (#3556)', () => {
+  function refused(status: number, retryAfter: string | null = null) {
+    return Promise.resolve({
+      ok: false,
+      status,
+      headers: new Headers(retryAfter === null ? {} : { 'Retry-After': retryAfter }),
+      json: () => Promise.resolve({ detail: 'refused' }),
+    });
+  }
+
+  test('offers them again, counted, and sends only those', async () => {
+    getDocumentAsync.mockResolvedValue({
+      canceled: false,
+      assets: [asset('one.md'), asset('two.md')],
+    });
+    mockFetch
+      .mockReturnValueOnce(vaultReply('accepted'))
+      .mockReturnValueOnce(refused(422))
+      .mockReturnValue(vaultReply('accepted'));
+    const { getByTestId, queryByTestId } = render(<SeedCorpusScreen />);
+
+    expect(queryByTestId('seed-retry-button')).toBeNull();
+    await chooseFiles(getByTestId);
+    await waitFor(() => {
+      expect(getByTestId('seed-retry-button')).toBeTruthy();
+    });
+    expect(getByTestId('seed-retry-button').props.accessibilityLabel).toBe('Try that one again');
+
+    await act(async () => {
+      fireEvent.press(getByTestId('seed-retry-button'));
+    });
+
+    await waitFor(() => {
+      expect(queryByTestId('seed-retry-button')).toBeNull();
+    });
+    expect(mockFetch).toHaveBeenCalledTimes(3);
+    expect(JSON.parse(mockFetch.mock.calls[2][1].body).filename).toBe('two.md');
+    expect(getByTestId('seed-item-status-seed-1').props.children).toBe(SEED_STATUS_LINES.ingested);
+  });
+
+  test('a 429 shows a calm wait, then the document goes over', async () => {
+    jest.useFakeTimers();
+    getDocumentAsync.mockResolvedValue({ canceled: false, assets: [asset('one.md')] });
+    mockFetch.mockReturnValueOnce(refused(429, '5')).mockReturnValue(vaultReply('accepted'));
+    const { getByTestId, queryByTestId } = render(<SeedCorpusScreen />);
+
+    await chooseFiles(getByTestId);
+    await act(async () => {
+      await jest.advanceTimersByTimeAsync(0);
+    });
+
+    expect(getByTestId('seed-item-status-seed-0').props.children).toBe(SEED_STATUS_LINES.waiting);
+    expect(getByTestId('seed-progress-line').props.children).toBe(SEED_PAUSED_PROGRESS_LINE);
+    expect(queryByTestId('seed-retry-button')).toBeNull();
+
+    await act(async () => {
+      await jest.advanceTimersByTimeAsync(5_000);
+    });
+
+    expect(getByTestId('seed-item-status-seed-0').props.children).toBe(SEED_STATUS_LINES.ingested);
   });
 });

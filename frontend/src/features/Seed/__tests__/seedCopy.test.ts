@@ -18,7 +18,9 @@ import {
   SEED_VAULT_INVITATION_LINK_LABEL,
   VAULT_FIRST_CTA,
   VAULT_GATE_COPY,
+  SEED_PAUSED_PROGRESS_LINE,
   seedProgressLine,
+  seedRetryLabel,
   seedSummaryLine,
 } from '../seedCopy';
 import type { SeedItemStatus, SeedRunTally } from '../seedRun';
@@ -40,6 +42,7 @@ function tally(
 
 const EVERY_STATUS: readonly SeedItemStatus[] = [
   'queued',
+  'waiting',
   'uploading',
   'ingested',
   'vault_unavailable',
@@ -58,6 +61,7 @@ const EVERY_STATUS: readonly SeedItemStatus[] = [
   'too_large',
   'unreadable',
   'failed',
+  'rate_limited',
   'unconfirmed',
   'offline',
   'cancelled',
@@ -381,5 +385,44 @@ describe('the way in when there is nowhere to keep a document yet (#3017)', () =
     expect(line).not.toMatch(/creek/i);
     expect(line).not.toMatch(/https?|\burl\b|endpoint|server/i);
     expect(line).not.toMatch(/\bmust\b|have to|need to|\blose\b|\blost\b|missing out/i);
+  });
+});
+
+describe('a document held for a moment (#3556)', () => {
+  test('the wait reads as calm and as next, never as a failure', () => {
+    const line = SEED_STATUS_LINES.waiting;
+
+    expect(line).not.toBe(SEED_STATUS_LINES.queued);
+    expect(line).not.toBe(SEED_STATUS_LINES.failed);
+    expect(line.toLowerCase()).not.toMatch(/fail|error|refus/);
+    expect(ranksOrShames(line)).toBe(false);
+  });
+
+  test('a pause that ran out says nothing was stored and it can go again', () => {
+    const line = SEED_STATUS_LINES.rate_limited;
+
+    expect(line).not.toBe(SEED_STATUS_LINES.failed);
+    expect(line).toContain('nothing was stored');
+    expect(line.toLowerCase()).toContain('again');
+    expect(ranksOrShames(line)).toBe(false);
+  });
+
+  test('the progress line says the run is pausing, not sending, while it waits', () => {
+    expect(seedProgressLine(tally(30, 20, 10, 0), true)).toBe(SEED_PAUSED_PROGRESS_LINE);
+    expect(seedProgressLine(tally(30, 20, 10, 0), false)).toContain('21 of 30');
+    expect(seedProgressLine(tally(30, 30, 0, 0), true)).toBeNull();
+  });
+
+  test.each([SEED_PAUSED_PROGRESS_LINE, seedRetryLabel(1), seedRetryLabel(3)])(
+    'talks about writing, not plumbing: %s',
+    (line) => {
+      expect(ranksOrShames(line)).toBe(false);
+      expect(line).not.toMatch(/\bcorpus\b|\bbatch\b|429|rate.?limit/i);
+    },
+  );
+
+  test('the retry offer counts what it will send', () => {
+    expect(seedRetryLabel(1)).toBe('Try that one again');
+    expect(seedRetryLabel(3)).toBe('Try those 3 again');
   });
 });

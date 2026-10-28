@@ -182,6 +182,22 @@ def test_cors_exposes_x_request_id_header() -> None:
     assert TRACE_ID_HEADER.lower() in exposed.lower()
 
 
+def test_cors_exposes_retry_after_header() -> None:
+    """Browsers must be allowed to *read* ``Retry-After`` from a 429.
+
+    Every rate-limit refusal names its wait in ``Retry-After``, but the header
+    is not CORS-safelisted, so a cross-origin web client -- the only one that
+    can import a folder (#3556) -- sees no wait at all unless it is exposed,
+    and has to guess one instead of waiting exactly as long as it was asked.
+    """
+    response = client.get(
+        "/auth/login",
+        headers={"Origin": "http://localhost:3000"},
+    )
+    exposed = response.headers.get("access-control-expose-headers", "")
+    assert "retry-after" in exposed.lower()
+
+
 def test_request_logging_middleware_emits_one_record_per_request(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
