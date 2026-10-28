@@ -1599,15 +1599,15 @@
   },
   {
     "id": "account.local-model-coming-soon-stays-inert",
-    "description": "Someone opens API-key Settings and sees Adepthood's own model as a disabled coming-soon control, without a present-tense promise that their writing already stays on Adepthood infrastructure. Even if an older build left the local-model preference switched on in device storage, this unavailable option renders off, keeps the key controls usable, and cannot suppress the BYOK header on the person's next model request. Uncovered because the browser lane cannot yet seed that legacy device preference while mounting this Settings screen and then observe the request wire in one journey; the screen and context regressions pin the guard until that lane exists.",
+    "description": "Someone opens API-key Settings and sees Adepthood's own model as a disabled coming-soon control, without a present-tense promise that their writing already stays on Adepthood infrastructure. Even if an older build left the local-model preference switched on in device storage, this unavailable option renders off, keeps the key controls usable, and cannot suppress the BYOK header on the person's later model requests. The spec seeds that legacy preference (`@adepthood/local_model_preferred` = true) in the web build's storage before the app boots, then finds the control off, disabled and unmoved by a forced press, with the unavailable note under it; saves a key through the still-editable key area; and runs a real resonance pass that leaves the browser carrying `X-LLM-API-Key`, reaches the lane's loopback provider and comes back as an own-key receipt. A margin note's letter -- which passes no key and so reads the session getter the stale preference used to empty -- still carries the key; that one request is answered in the browser. The stale value is read back throughout, so every 'stayed off' is said of a device that still held it. The lane's provider fake answers this pass through its opt-in receipt path, so its attempt counters end as the spec found them.",
     "crosses": {
       "screen": "frontend/src/features/Settings/ApiKeySettingsScreen.tsx",
-      "client": ["resonance"],
+      "client": ["resonance", "setLlmApiKeyGetter"],
       "routes": ["POST /journal/{entry_id}/resonance"],
-      "tables": ["llmusagelog"]
+      "tables": ["journalentry", "marginalia", "llmusagelog"]
     },
-    "status": "uncovered",
-    "issue": 3032
+    "status": "covered",
+    "coveredBy": "frontend/e2e/api-key-local-model-inert.browser.e2e.test.ts"
   },
   {
     "id": "corpus.decide-what-may-be-sorted",
@@ -1652,15 +1652,15 @@
   },
   {
     "id": "corpus.sorting-switches-on-the-hub",
-    "description": "Someone who has just given their corpus a vault is told, on the vault screen, that creating one does not turn sorting on and that the yes is a switch under Your corpus in Settings. On the hub, that group now carries the sorting switches themselves -- one per kind of material the server names, under a one-line lead that says what sorting is for, what it sends and that Intimate is never sent -- between Bring in your writing and the What reflections draw on row that holds the full account. The switches are the same component the sub-screen mounts (CorpusConsentRows), so turning a source on records the decision over PUT /corpus/consent/{source} and shows only the state the server reported back, and turning one off asks first, naming the deletion, before anything is withdrawn. Uncovered because the browser lane presses the switches only on the sub-screen (corpus.decide-what-may-be-sorted); the hub mount is pinned by SettingsHubScreen.test.tsx (the switches' place in the group, the lead's three facts, the grant and the revoke question) and the vault copy by vaultCopy.test.ts.",
+    "description": "Someone who has just given their corpus a vault is told, on the vault screen, that creating one does not turn sorting on and that the yes is a switch under Your corpus in Settings. On the hub, that group now carries the sorting switches themselves -- one per kind of material the server names, under a one-line lead that says what sorting is for, what it sends and that Intimate is never sent -- between Bring in your writing and the What reflections draw on row that holds the full account. The switches are the same component the sub-screen mounts (CorpusConsentRows), so turning a source on records the decision over PUT /corpus/consent/{source} and shows only the state the server reported back, and turning one off asks first, naming the deletion, before anything is withdrawn. The spec never leaves the hub: a fresh account's journal switch inside settings-group-corpus reads off and undecided; one tap sends a single PUT granting it, the row reads 'On since', and GET /corpus/consent answers granted with a date; the next tap opens the inline revoke question and writes nothing while the server still reports the grant; confirming sends the withdrawal, the row reads 'Off since', and GET /corpus/consent answers a dated refusal distinct from the grant, which a reload of the hub shows again. Whether a withdrawal deleted collected copies is not observed here, since the lane has no classification provider to have written any; corpus.decide-what-may-be-sorted and the backend pin that. The vault copy is pinned by vaultCopy.test.ts.",
     "crosses": {
       "screen": "frontend/src/features/Settings/SettingsHubScreen.tsx",
       "client": ["corpusConsent"],
       "routes": ["GET /corpus/consent", "PUT /corpus/consent/{source}"],
       "tables": ["corpusconsentevent", "corpusfragment"]
     },
-    "status": "uncovered",
-    "issue": 3032
+    "status": "covered",
+    "coveredBy": "frontend/e2e/settings-hub-corpus-sorting.browser.e2e.test.ts"
   },
   {
     "id": "account.delete",
