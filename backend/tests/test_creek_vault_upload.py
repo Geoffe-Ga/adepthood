@@ -49,6 +49,7 @@ from domain.creek_vault import (
     VaultIngestResult,
     VaultReflection,
     VaultReflectionStatus,
+    VaultSendSuspendedError,
     VaultTierCeiling,
     VaultUploadRequest,
     VaultUploadResult,
@@ -65,9 +66,11 @@ from services.creek_vault_upload import (
 )
 from services.creek_vault_upload_limits import (
     MANAGED_UPLOAD_BODY_BYTES,
+    ManagedUploadTooLargeError,
     encoded_upload_body,
     guard_managed_upload_body,
 )
+from services.privacy_suspension import VAULT_SEND_SUSPEND_ENV_VAR
 from tests.test_creek_vault_http_client import Handler as _VaultHandler
 from tests.test_creek_vault_http_client import _handshake_payload as _vault_capability_payload
 from tests.vault_client_doubles import NoPipelineVaultDouble
@@ -1262,6 +1265,89 @@ class TestManagedUploadBodyLimit:
         else:
             assert (await client.upload(request)).stored
             assert len(routes.uploads[0].content) > 1024 * 1024
+
+
+# A document whose base64 alone overruns the managed replay ceiling, so its
+# encoded request is over the bound whatever the filename and metadata add.
+_OVERSIZE_CONTENT_B64 = "A" * (MANAGED_UPLOAD_BODY_BYTES + 4)
+
+
+def _oversize_document() -> UploadedDocument:
+    """Build a managed-bound-breaking document at an expressible tier."""
+    return UploadedDocument(
+        owner_user_id=_OWNER_ID,
+        filename=_FILENAME,
+        content_base64=_OVERSIZE_CONTENT_B64,
+        classification="personal",
+        created_at=_CREATED_AT,
+    )
+
+
+@pytest.mark.asyncio
+class TestManagedLimitUnderVaultSendSuspension:
+    """Pin which refusal wins where the size bound and the suspension meet (#3618).
+
+    Both stop the same document before the wire, so the choice is only about
+    which *reason* the caller hears. The operator's suspension wins: it is the
+    deployment-wide fact that nothing is being sent, and telling a user to
+    shrink a document that still could not go anywhere would be advice no
+    action of theirs can follow.
+    """
+
+    def _managed_client(
+        self, vault_http_clients: _VaultClientFactory, routes: _UploadRoutes
+    ) -> HttpCreekVaultClient:
+        """Build a managed-transport client over the scripted routes."""
+        return HttpCreekVaultClient(
+            _VAULT_URL, _VAULT_API_KEY, http_client=vault_http_clients(routes), managed=True
+        )
+
+    async def test_adapter_raises_the_suspension_not_the_size_refusal(
+        self, vault_http_clients: _VaultClientFactory, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Where both checks meet, an oversize managed upload is refused as suspended."""
+        monkeypatch.setenv(VAULT_SEND_SUSPEND_ENV_VAR, "true")
+        routes = _UploadRoutes(upload_payload=_stored_payload())
+        client = self._managed_client(vault_http_clients, routes)
+        await client.handshake()
+        request = VaultUploadRequest(
+            external_id=upload_external_id(_OWNER_ID, _FILENAME),
+            filename=_FILENAME,
+            content_base64=_OVERSIZE_CONTENT_B64,
+            tier=VaultTierCeiling.PERSONAL,
+            tier_ceiling=VaultTierCeiling.PERSONAL,
+            created_at=_CREATED_AT,
+        )
+
+        with pytest.raises(VaultSendSuspendedError):
+            await client.upload(request)
+        assert routes.uploads == []
+
+    async def test_store_upload_degrades_under_suspension(
+        self, vault_http_clients: _VaultClientFactory, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The service answers the suspension's outcome rather than raising the size refusal."""
+        monkeypatch.setenv(VAULT_SEND_SUSPEND_ENV_VAR, "true")
+        routes = _UploadRoutes(upload_payload=_stored_payload())
+        client = self._managed_client(vault_http_clients, routes)
+
+        outcome = await store_upload(client, _oversize_document())
+
+        assert outcome.status is VaultUploadStatus.DEGRADED
+        assert outcome.vault_ref is None
+        assert routes.uploads == []
+
+    async def test_store_upload_raises_the_size_refusal_when_sends_are_live(
+        self, vault_http_clients: _VaultClientFactory, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Without the suspension, the one refusal store_upload propagates is the size bound."""
+        monkeypatch.delenv(VAULT_SEND_SUSPEND_ENV_VAR, raising=False)
+        routes = _UploadRoutes(upload_payload=_stored_payload())
+        client = self._managed_client(vault_http_clients, routes)
+
+        with pytest.raises(ManagedUploadTooLargeError):
+            await store_upload(client, _oversize_document())
+        assert routes.uploads == []
 
 
 class TestManagedUploadEncoding:
