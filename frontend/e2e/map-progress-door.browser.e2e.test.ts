@@ -125,10 +125,14 @@ function verifyServedHistories(overview: ApiProgressOverview): void {
   const journalBirth = overview.arc.habit_births.find((birth) => birth.name === HABIT);
   expect(journalBirth).toMatchObject({ is_carryover: false, week: 1, stage_number: 1 });
   expect(journalBirth?.unit_histories?.[0]?.days.at(-1)?.units).toBe(MINUTES_PER_DAY);
+  // Dated week three, it joins when Purple opens in week four (adoption, not template start dates).
   expect(overview.arc.habit_births.find((birth) => birth.name === PURPLE_HABIT)).toMatchObject({
-    week: 3,
+    week: 4,
     stage_number: 2,
   });
+  const today = overview.rhythm.days.at(-1)!;
+  expect(today.window_days).toBe(7);
+  expect(today.rate).toBeCloseTo(today.window_met / today.window_scheduled, 10);
 }
 
 test('the Map door opens the arc, rhythm and energy ledger the server computed', async ({
@@ -158,19 +162,26 @@ test('the Map door opens the arc, rhythm and energy ledger the server computed',
     },
   });
   expect(purple.ok(), await purple.text()).toBe(true);
+  // A habit with nothing logged has no line to draw; one check-in gives it one.
+  const purpleGoal = ((await purple.json()) as { goals: Array<{ id: number }> }).goals[0]?.id;
+  const sat = await page.request.post(`${backendUrl()}/goal_completions/`, {
+    headers: bearer(token),
+    data: { goal_id: purpleGoal, completed_units: 5 },
+  });
+  expect(sat.ok(), await sat.text()).toBe(true);
   setProgramAnchorDaysAgo(email, ANCHOR_DAYS_AGO);
   await page.reload();
 
   const overview = await openProgressFromMap(page);
   verifyServedHistories(overview);
   const screen = page.getByTestId('progress-screen');
-  await expect(screen.getByTestId('progress-here')).toHaveText(
-    new RegExp(`^Week ${CURRENT_WEEK} · \\w+`),
+  await expect(screen.getByTestId('progress-ribbon')).toContainText(
+    new RegExp(`Week ${CURRENT_WEEK} · \\w+`),
   );
-  await expect(screen.getByTestId('progress-ribbon')).toBeVisible();
-  await expect(screen.getByTestId('progress-energy-formula')).toHaveText(
-    'sum(return - cost) over completions',
+  await expect(screen.getByTestId('progress-energy')).toContainText(
+    'Energy returned minus effort spent, by week',
   );
+  await expect(screen).not.toContainText(/sum\(return - cost\)|Hover or tap|Units logged/);
   await expect(screen.getByTestId('progress-energy-columns')).toBeVisible();
   await expect(screen).not.toContainText(/streak|broken|missed|lost|failed/i);
 
@@ -196,20 +207,20 @@ test('the Map door opens the arc, rhythm and energy ledger the server computed',
       .first();
     await expect(purple.getByTestId('history-line')).toHaveAttribute('stroke', '#a093c6');
     await inspectEnd(page, journal.locator('[data-testid$="-inspect"]'));
-    await expect(journal.locator('[data-testid$="-value"]')).toContainText('20 minutes logged');
+    await expect(journal.locator('[data-testid$="-value"]')).toContainText('20 logged that day');
     const wave = screen.getByTestId('progress-wave-inspect');
     await wave.scrollIntoViewIfNeeded();
     const waveBounds = await wave.boundingBox();
     await wave.hover({ position: { x: waveBounds!.width - 8, y: waveBounds!.height / 2 } });
     const hoverValue = await screen.getByTestId('progress-wave-value').textContent();
-    const percentage = Number(/· ([\d.,]+)/.exec(hoverValue ?? '')?.[1]?.replaceAll(',', ''));
-    expect(percentage).toBeCloseTo(overview.rhythm.days.at(-1)!.rate * 100, 5);
-    await inspectEnd(page, wave);
-    await expect(screen.getByTestId('progress-wave-value')).toContainText('14-day average');
-    await screen.getByTestId('progress-wave-inspect').press('Home');
-    await expect(screen.getByTestId('progress-wave-value')).toContainText(
-      '0 scheduled activities completed (%)',
+    const last = overview.rhythm.days.at(-1)!;
+    expect(hoverValue).toContain(
+      `· ${Math.round(last.rate * 100)}% · ${last.window_met} of ${last.window_scheduled} kept`,
     );
+    await inspectEnd(page, wave);
+    await expect(screen.getByTestId('progress-wave-value')).toContainText(' kept');
+    await screen.getByTestId('progress-wave-inspect').press('Home');
+    await expect(screen.getByTestId('progress-wave-value')).toContainText(' · 0% · 0 of ');
     for (const id of ['progress-ribbon', 'progress-wave', 'progress-energy-columns']) {
       const bounds = await screen.getByTestId(id).boundingBox();
       expect(bounds!.x).toBeGreaterThanOrEqual(0);
