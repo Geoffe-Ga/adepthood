@@ -1,6 +1,7 @@
 import { expect, test, type APIResponse, type Page } from '@playwright/test';
 
 import { backendUrl, bearer, frontendUrl } from './journalHabitsBrowserSupport';
+import { runBackendModule } from './laneDatabase';
 import { readLaneState } from './laneState';
 
 /**
@@ -28,6 +29,51 @@ import { readLaneState } from './laneState';
 // A routed read can still be awaiting `route.fetch()` when the test ends (#3481).
 test.afterEach(async ({ page }) => {
   await page.unrouteAll({ behavior: 'ignoreErrors' });
+});
+
+interface OwnerWallet {
+  monthly_messages_used: number;
+  offering_balance: number;
+}
+
+/** The bound owner's real wallet, read out of band (`tests.e2e.wallet_audit`). */
+function ownerWallet(): OwnerWallet {
+  return JSON.parse(
+    runBackendModule('tests.e2e.wallet_audit', ['show', '--email', lane().vaultOwnerEmail]),
+  ) as OwnerWallet;
+}
+
+/**
+ * The lane's one vault owner is shared with every other vault journey, and each
+ * pass here is charged to that owner's real monthly allowance. Record the wallet
+ * before the test and give back what it spent afterwards (on failure too), so
+ * these passes cannot leave a later spec facing a 402 it never earned. The
+ * restore only undoes spending; it never grants more than was recorded.
+ */
+let recordedWallet: OwnerWallet | undefined;
+
+test.beforeEach(() => {
+  recordedWallet = ownerWallet();
+});
+
+test.afterEach(() => {
+  const recorded = recordedWallet;
+  recordedWallet = undefined;
+  // A beforeEach that failed recorded nothing, so there is nothing to give back.
+  if (recorded !== undefined) {
+    runBackendModule('tests.e2e.restore_allowance', [
+      'restore',
+      '--email',
+      lane().vaultOwnerEmail,
+      '--monthly-messages-used',
+      String(recorded.monthly_messages_used),
+      '--offering-balance',
+      String(recorded.offering_balance),
+    ]);
+    const restored = ownerWallet();
+    expect(restored.monthly_messages_used).toBeLessThanOrEqual(recorded.monthly_messages_used);
+    expect(restored.offering_balance).toBeGreaterThanOrEqual(recorded.offering_balance);
+  }
 });
 
 const BAND = 'from-your-creek';

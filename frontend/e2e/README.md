@@ -210,7 +210,12 @@ recovery path is exercised over the socket rather than by replacing a client.
 cell -- one compiled praxis page and one eddy -- and `GET /__lane/related-pages`
 hands a spec those pages; every unarmed reflection relates none. That is what
 lets `journal-related-vault-pages.browser.e2e.test.ts` drive the "From your
-creek" band from a real vault answer.
+creek" band from a real vault answer. Its passes are charged to the bound
+owner's real monthly allowance, which every vault journey shares, so the spec
+records that wallet before each test and hands it back afterwards through
+`backend/tests/e2e/restore_allowance.py` — a counters-only arrange that can only
+undo spending, never grant more than was recorded — so a later spec in the same
+shard never meets a `402` it did not earn.
 
 The owner is provisioned by `globalSetup`, and the assertion that it worked is
 the point. `CREEK_VAULT_OWNER_USER_ID` is read from the server process's
