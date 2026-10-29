@@ -100,21 +100,27 @@ def first_logs(data: OverviewInput) -> dict[int, date]:
     return first
 
 
+def _ladder_stage(habit: Habit) -> int | None:
+    """The programme stage a regular habit waits on; carryovers wait on none."""
+    return None if habit.is_carryover else stage_number(habit.stage)
+
+
+def _unlocked_on(habit: Habit, timezone: str) -> date | None:
+    """The local day the person (or the programme) unlocked ``habit``, if stamped."""
+    stamp = habit.auto_revealed_at
+    return None if stamp is None else to_user_date(timezone, ensure_aware(stamp))
+
+
 def joined_on(
     habit: Habit, *, first_log: date | None, pass_start: date, timezone: str
 ) -> date | None:
     """The day ``habit`` entered the person's practice in a pass, or None while locked."""
     if not habit.revealed:
         return None
-    stage = None if habit.is_carryover else stage_number(habit.stage)
+    stage = _ladder_stage(habit)
     if stage is None:
         return habit.start_date
-    revealed = (
-        to_user_date(timezone, ensure_aware(habit.auto_revealed_at))
-        if habit.auto_revealed_at is not None
-        else None
-    )
-    earliest = [stage_opens_on(pass_start, stage), revealed, first_log]
+    earliest = [stage_opens_on(pass_start, stage), _unlocked_on(habit, timezone), first_log]
     return max(habit.start_date, min(day for day in earliest if day is not None))
 
 
@@ -128,21 +134,50 @@ def _totals(data: OverviewInput, goals: Sequence[Goal]) -> dict[date, float]:
     return dict(totals)
 
 
-def _track(
-    data: OverviewInput, habit: Habit, pass_start: date, first_log: date | None
-) -> HabitTrack | None:
-    """A joined habit with at least one named tier, or None."""
-    goals = [goal for goal in data.goals if goal.habit_id == habit.id]
-    joined = joined_on(habit, first_log=first_log, pass_start=pass_start, timezone=data.timezone)
-    if habit.id is None or joined is None or minimum_goal(goals) is None:
+@dataclass(frozen=True)
+class _PassFacts:
+    """What every habit's track in one pass reads, gathered once."""
+
+    pass_start: date
+    goals: dict[int, list[Goal]]
+    first_logs: dict[int, date]
+
+
+def _track(data: OverviewInput, habit: Habit, facts: _PassFacts) -> HabitTrack | None:
+    """A persisted, joined habit with at least one named tier, or None."""
+    habit_id = habit.id or 0
+    goals = facts.goals.get(habit_id, [])
+    joined = joined_on(
+        habit,
+        first_log=facts.first_logs.get(habit_id),
+        pass_start=facts.pass_start,
+        timezone=data.timezone,
+    )
+    if joined is None or minimum_goal(goals) is None:
         return None
     return HabitTrack(
         joined=joined,
         goals=goals,
-        context=data.habit_contexts.get(habit.id, OverviewHabitContext()),
+        context=data.habit_contexts.get(habit_id, OverviewHabitContext()),
         notification_days=habit.notification_days,
         totals=_totals(data, goals),
     )
+
+
+def _goals_by_habit(data: OverviewInput) -> dict[int, list[Goal]]:
+    """Group the bulk goal read once rather than per habit."""
+    grouped: dict[int, list[Goal]] = defaultdict(list)
+    for goal in data.goals:
+        grouped[goal.habit_id].append(goal)
+    return grouped
+
+
+def _tracks(data: OverviewInput, pass_start: date) -> list[HabitTrack]:
+    """Every joined habit's track; none when the habit ring is declined."""
+    if not data.enable_habits:
+        return []
+    facts = _PassFacts(pass_start, _goals_by_habit(data), first_logs(data))
+    return list(filter(None, (_track(data, habit, facts) for habit in data.habits)))
 
 
 def _practice_days(data: OverviewInput) -> set[date]:
@@ -156,13 +191,8 @@ def _practice_days(data: OverviewInput) -> set[date]:
 
 def build_population(data: OverviewInput, pass_start: date) -> Population:
     """Every joined habit's track for the pass anchored on ``pass_start``."""
-    logs = first_logs(data) if data.enable_habits else {}
-    tracks = [
-        _track(data, habit, pass_start, logs.get(habit.id) if habit.id else None)
-        for habit in (data.habits if data.enable_habits else ())
-    ]
     return Population(
-        tracks=[track for track in tracks if track is not None],
+        tracks=_tracks(data, pass_start),
         practice_days=_practice_days(data),
         enable_practices=data.enable_practices,
         today=data.today,
@@ -198,24 +228,33 @@ def _period_days(track: HabitTrack, day: date, unit: PeriodUnit) -> list[date]:
     return [first + timedelta(days=n) for n in range((day - first).days)]
 
 
+def _asked(low: Goal, unit: PeriodUnit) -> int:
+    """Occasions per period: Low's own frequency when it shares the habit's cadence."""
+    return max(1, math.ceil(low.frequency)) if low.frequency_unit == unit else 1
+
+
+def _finished(day: date, today: date, unit: PeriodUnit) -> bool:
+    """Whether ``day`` closes its period and that period is already over."""
+    return _ends_period(day, unit) and day < today
+
+
 def _occasion_count(track: HabitTrack, day: date, today: date, unit: PeriodUnit) -> DayCount:
     """Kept occasions on their day; the period's shortfall on its finished last day."""
     low = minimum_goal(track.goals)
     if low is None:
         return DayCount()
-    asked = max(1, math.ceil(low.frequency)) if low.frequency_unit == unit else 1
+    asked = _asked(low, unit)
     earlier = sum(
         _kept_on(track.totals.get(past, 0), low.target) for past in _period_days(track, day, unit)
     )
     kept = min(int(_kept_on(track.totals.get(day, 0), low.target)), max(0, asked - earlier))
-    finished = _ends_period(day, unit) and day < today
-    shortfall = max(0, asked - earlier - kept) if finished else 0
+    shortfall = max(0, asked - earlier - kept) * _finished(day, today, unit)
     return DayCount(kept, kept + shortfall)
 
 
 def _limit_count(track: HabitTrack, day: date, today: date, unit: PeriodUnit) -> DayCount:
     """A subtractive period is one ask, judged once its last day is over."""
-    if not (_ends_period(day, unit) and day < today):
+    if not _finished(day, today, unit):
         return DayCount()
     total = sum(track.totals.get(past, 0) for past in [*_period_days(track, day, unit), day])
     return DayCount(int(qualifies(track.goals, total, subtractive=True)), 1)
