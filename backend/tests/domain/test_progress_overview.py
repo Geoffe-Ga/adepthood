@@ -397,14 +397,36 @@ def test_rise_requires_seven_days_and_an_actual_increase() -> None:
     )
 
 
-def test_rest_excludes_first_four_weeks_and_rhythm_caps_at_one_cycle() -> None:
-    """Rest is factual only after day28; the live cycle has252 calendar slots."""
+def test_rhythm_caps_at_one_cycle_and_an_empty_account_names_no_rest() -> None:
+    """The live cycle has 252 calendar slots; with nothing ever asked, no day was a rest."""
     result = build_progress_overview(_input(300))
     assert len(result.rhythm.days) == 252
     assert result.arc.current_week == 36
-    assert result.rhythm.longest_rest is not None
-    assert result.rhythm.longest_rest.start == START + timedelta(days=28)
-    assert result.rhythm.longest_rest.end == START + timedelta(days=251)
+    assert result.rhythm.longest_rest is None
+    assert not any("rested" in sentence for sentence in result.observations)
+
+
+def test_no_rest_is_named_before_the_first_habit_began() -> None:
+    """Weeks before any habit existed had nothing to keep, so they are not a rest."""
+    begun = START + timedelta(days=100)
+    rows = [_completion(begun + timedelta(days=n)) for n in range(60)]
+    result = build_progress_overview(
+        replace(_input(160), habits=[_habit(start=begun)], goals=[_goal()], completions=rows)
+    )
+    assert result.rhythm.longest_rest is None
+
+
+def test_a_quiet_stretch_after_the_opening_weeks_is_a_rest() -> None:
+    """A habit kept daily, then left for three weeks, rests inside those weeks only."""
+    quiet = range(40, 61)
+    rows = [_completion(START + timedelta(days=n)) for n in range(90) if n not in quiet]
+    rest = build_progress_overview(
+        replace(_input(90), habits=[_habit()], goals=[_goal()], completions=rows)
+    ).rhythm.longest_rest
+    assert rest is not None
+    assert START + timedelta(days=40) <= rest.start
+    # The trailing week still reads quiet on the first day back, then lifts.
+    assert rest.end == START + timedelta(days=61)
 
 
 def test_unknown_past_anchor_is_omitted_without_guessing() -> None:
@@ -470,8 +492,17 @@ def test_energy_retains_negative_net_values() -> None:
 
 def test_overview_words_its_rhythm_facts_as_one_caption() -> None:
     """The wave's caption (#3525) is built from the same three facts it carries."""
-    result = build_progress_overview(_input(300))
-    assert result.observations == ["You rested from 2 February to 13 September."]
+    quiet = range(40, 61)
+    rows = [_completion(START + timedelta(days=n)) for n in range(90) if n not in quiet]
+    result = build_progress_overview(
+        replace(_input(90), habits=[_habit()], goals=[_goal()], completions=rows)
+    )
+    assert result.observations == [
+        (
+            "Your fullest week was mid January. You rested from 19 February to 7 March."
+            " You have been rising since 20 February."
+        )
+    ]
 
 
 def test_a_kept_week_is_named_in_the_caption() -> None:
@@ -587,3 +618,13 @@ def test_unit_history_carries_a_seven_day_average_and_omits_unlogged_measures() 
     assert days[6].average == 1
     assert days[7].average == 2
     assert days[8].average == 2
+
+
+def test_no_rise_is_dated_before_the_first_habit_began() -> None:
+    """Empty weeks before a habit existed are not the floor of a rise."""
+    begun = START + timedelta(days=20)
+    rows = [_completion(begun + timedelta(days=n)) for n in range(21)]
+    result = build_progress_overview(
+        replace(_input(41), habits=[_habit(start=begun)], goals=[_goal()], completions=rows)
+    )
+    assert result.rhythm.rising_since is None
