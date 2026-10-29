@@ -15,6 +15,20 @@ class ArcStage(BaseModel):
     practice_ask_minutes: float | None
 
 
+class HabitUnitsDay(BaseModel):
+    """Actual units logged on one user-local day, including quiet zero days."""
+
+    date: date
+    units: float = Field(ge=0)
+
+
+class HabitUnitHistory(BaseModel):
+    """One measure over the current programme; unlike units stay separate."""
+
+    unit: str
+    days: list[HabitUnitsDay]
+
+
 class HabitBirth(BaseModel):
     """A habit's provenance in this cycle, not a mutation of its stored flag."""
 
@@ -26,13 +40,12 @@ class HabitBirth(BaseModel):
         le=36,
         description=(
             "Week in this 36-week arc; null for carryovers, unknown anchors, "
-            "or births after week 36."
+            "or births after week 36. Regular births before the anchor use week 1."
         ),
     )
     stage_number: int | None = Field(ge=1, le=10)
-    is_carryover: bool = Field(
-        description="Stored carryover or a birth before the known current-cycle anchor's local day."
-    )
+    is_carryover: bool = Field(description="The person's explicit bring-along choice.")
+    unit_histories: list[HabitUnitHistory] = Field(default_factory=list)
 
 
 class ProgressArc(BaseModel):

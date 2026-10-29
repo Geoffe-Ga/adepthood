@@ -61,6 +61,7 @@ interface ChartFrameProps extends ChartBaseProps {
   rows: readonly ChartTableRow[];
   headers?: readonly string[];
   children: React.ReactNode;
+  interactive?: boolean;
   onLayout: (_event: LayoutChangeEvent) => void;
 }
 
@@ -73,6 +74,7 @@ export function ChartFrame({
   headers,
   children,
   onLayout,
+  interactive = false,
 }: ChartFrameProps) {
   const [showTable, setShowTable] = useState(false);
   const label = showTable ? 'Show chart' : 'Show as table';
@@ -82,7 +84,11 @@ export function ChartFrame({
       onLayout={onLayout}
       style={[chartStyles.frame, width === undefined ? undefined : { width }]}
     >
-      <View accessibilityRole="image" accessibilityLabel={summary} accessible>
+      <View
+        accessibilityRole={interactive ? undefined : 'image'}
+        accessibilityLabel={summary}
+        accessible={!interactive}
+      >
         {showTable ? null : children}
       </View>
       {showTable ? <ChartTable rows={rows} headers={headers} /> : null}

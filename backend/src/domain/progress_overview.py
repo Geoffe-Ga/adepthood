@@ -24,6 +24,7 @@ from domain.dates import ensure_aware, to_user_date, to_user_date_bucket
 from domain.frequencies import FREQUENCY_COLORS
 from domain.observations import RhythmFacts, rhythm_observations
 from domain.practice_stats import MIN_COUNTED_DURATION_MINUTES
+from domain.progress_units import habit_unit_histories
 from domain.streaks import PERIOD_UNITS, PeriodCadence, is_scheduled_on, period_start
 from schemas.progress import (
     ArcStage,
@@ -125,13 +126,13 @@ def _birth_week(habit: Habit, start: date | None, *, carryover: bool) -> int | N
     """Place a recorded birth only within the known thirty-six-week ribbon."""
     if start is None or carryover:
         return None
-    represented_week = (habit.start_date - start).days // DAYS_PER_WEEK + 1
+    represented_week = max(1, (habit.start_date - start).days // DAYS_PER_WEEK + 1)
     return represented_week if represented_week <= TOTAL_PROGRAM_WEEKS else None
 
 
 def _birth(habit: Habit, start: date | None) -> HabitBirth:
     """Project current-cycle provenance without changing pre-program storage."""
-    carryover = habit.is_carryover or (start is not None and habit.start_date < start)
+    carryover = habit.is_carryover
     return HabitBirth(
         habit_id=habit.id,
         name=habit.name,
@@ -169,12 +170,27 @@ def _current_week(data: OverviewInput, start: date | None) -> int | None:
     )
 
 
+def _overview_birth(data: OverviewInput, habit: Habit, start: date | None) -> HabitBirth:
+    """Keep the recorded adoption stage; dates fill only unknown provenance."""
+    birth = _birth(habit, start)
+    if birth.stage_number is None and birth.week is not None:
+        birth.stage_number = next(
+            stage.stage_number
+            for stage in _arc_stages(data, start)
+            if sum(STAGE_DURATIONS_DAYS[: stage.stage_number]) >= birth.week * DAYS_PER_WEEK
+        )
+    birth.unit_histories = habit_unit_histories(
+        habit.id, data.goals, data.completions, start=start, today=data.today
+    )
+    return birth
+
+
 def _births(data: OverviewInput, start: date | None) -> list[HabitBirth]:
     """Retained existing habits remain visible independently of reveal state."""
     if not data.enable_habits:
         return []
     return [
-        _birth(habit, start)
+        _overview_birth(data, habit, start)
         for habit in data.habits
         if habit.id is not None and habit.start_date <= data.today
     ]

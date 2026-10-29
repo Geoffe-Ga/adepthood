@@ -1,4 +1,6 @@
-import { expect, test, type APIRequestContext, type Page } from '@playwright/test';
+import { expect, test, type APIRequestContext, type Locator, type Page } from '@playwright/test';
+
+import type { ApiProgressOverview } from '../src/api';
 
 import {
   backendUrl,
@@ -21,7 +23,10 @@ import {
  * arrange: no request schema moves `program_started_at`.
  */
 
-const HABIT = 'Evening walk';
+test.use({ hasTouch: true });
+
+const HABIT = 'Journaling';
+const PURPLE_HABIT = 'Frequency practice';
 /** Twenty-two weeks back puts today in week 23 of the arc. */
 const ANCHOR_DAYS_AGO = 22 * 7;
 const CURRENT_WEEK = 23;
@@ -40,9 +45,10 @@ async function seedWalks(request: APIRequestContext, token: string): Promise<voi
     data: {
       name: HABIT,
       icon: '🚶',
-      energy_cost: 2,
-      energy_return: 5,
-      start_date: isoDaysAgo(LOGGED_SPAN_DAYS + 10),
+      energy_cost: 5,
+      energy_return: 2,
+      stage: '0',
+      start_date: isoDaysAgo(ANCHOR_DAYS_AGO + 1),
       revealed: true,
       goals: {
         target_unit: 'minutes',
@@ -70,7 +76,7 @@ async function seedWalks(request: APIRequestContext, token: string): Promise<voi
   }
 }
 
-async function openProgressFromMap(page: Page): Promise<void> {
+async function openProgressFromMap(page: Page): Promise<ApiProgressOverview> {
   await page.getByRole('button', { name: /^Open \w+ menu$/ }).click();
   await page.getByRole('dialog').getByRole('button', { name: 'Map', exact: true }).click();
   await page.getByRole('button', { name: 'Open Map menu' }).click();
@@ -81,11 +87,15 @@ async function openProgressFromMap(page: Page): Promise<void> {
     .getByRole('dialog')
     .getByRole('button', { name: 'Your progress', exact: true })
     .click();
-  expect((await read).status()).toBe(200);
+  const response = await read;
+  expect(response.status()).toBe(200);
+  return (await response.json()) as ApiProgressOverview;
 }
 
 async function scrollToEnergy(page: Page, viewport: { width: number; height: number }) {
-  const energyControl = page.getByTestId('progress-energy-columns').getByRole('button');
+  const energyControl = page
+    .getByTestId('progress-energy-columns')
+    .getByRole('button', { name: 'Show as table' });
   await page.mouse.move(viewport.width / 2, viewport.height / 2);
   // Wheel input is asynchronous. Keep paging as a person would until the final
   // control reaches the viewport, rather than racing one huge wheel event.
@@ -101,15 +111,58 @@ async function scrollToEnergy(page: Page, viewport: { width: number; height: num
   await expect(energyControl).toBeInViewport();
 }
 
+async function inspectEnd(page: Page, plot: Locator): Promise<void> {
+  await plot.scrollIntoViewIfNeeded();
+  const bounds = await plot.boundingBox();
+  expect(bounds).not.toBeNull();
+  const x = bounds!.x + bounds!.width - 8;
+  const y = bounds!.y + bounds!.height / 2;
+  await page.mouse.move(x, y);
+  await page.touchscreen.tap(x, y);
+}
+
+function verifyServedHistories(overview: ApiProgressOverview): void {
+  const journalBirth = overview.arc.habit_births.find((birth) => birth.name === HABIT);
+  expect(journalBirth).toMatchObject({ is_carryover: false, week: 1, stage_number: 1 });
+  expect(journalBirth?.unit_histories?.[0]?.days.at(-1)?.units).toBe(MINUTES_PER_DAY);
+  expect(overview.arc.habit_births.find((birth) => birth.name === PURPLE_HABIT)).toMatchObject({
+    week: 3,
+    stage_number: 2,
+  });
+}
+
 test('the Map door opens the arc, rhythm and energy ledger the server computed', async ({
   page,
 }, testInfo) => {
   const email = await signUp(page, 'map-progress');
-  await seedWalks(page.request, await tokenFor(page.request, email));
+  const token = await tokenFor(page.request, email);
+  await seedWalks(page.request, token);
+  const purple = await page.request.post(`${backendUrl()}/habits/`, {
+    headers: bearer(token),
+    data: {
+      name: PURPLE_HABIT,
+      icon: '🧘',
+      energy_cost: 0,
+      energy_return: 0,
+      stage: 'Purple',
+      start_date: isoDaysAgo(ANCHOR_DAYS_AGO - 14),
+      revealed: true,
+      goals: {
+        target_unit: 'minutes',
+        frequency: 1,
+        frequency_unit: 'per_day',
+        low: 1,
+        clear: 5,
+        stretch: 10,
+      },
+    },
+  });
+  expect(purple.ok(), await purple.text()).toBe(true);
   setProgramAnchorDaysAgo(email, ANCHOR_DAYS_AGO);
   await page.reload();
 
-  await openProgressFromMap(page);
+  const overview = await openProgressFromMap(page);
+  verifyServedHistories(overview);
   const screen = page.getByTestId('progress-screen');
   await expect(screen.getByTestId('progress-here')).toHaveText(
     new RegExp(`^Week ${CURRENT_WEEK} · \\w+`),
@@ -124,26 +177,53 @@ test('the Map door opens the arc, rhythm and energy ledger the server computed',
   for (const viewport of VIEWPORTS) {
     await page.setViewportSize({ width: viewport.width, height: viewport.height });
     await screen.evaluate((element) => element.scrollTo(0, 0));
-    const key = screen.getByTestId('ribbon-stage-key');
-    const rows = await key.evaluate((element) =>
-      Array.from(element.children).map((row) => {
-        const { left, right, top, bottom } = row.getBoundingClientRect();
-        return { left, right, top, bottom, text: row.textContent };
-      }),
+    await expect(screen.getByTestId('ribbon-stage-key')).toHaveCount(0);
+    await expect(screen.getByTestId('ribbon-birth-key')).toHaveCount(0);
+    await expect(screen.getByTestId('progress-arc')).not.toContainText('Brought with you');
+    const habitRows = screen
+      .locator('[data-testid^="progress-habit-"]')
+      .filter({ has: page.locator('[data-testid="history-line"]') });
+    expect(await habitRows.count()).toBeGreaterThan(0);
+    await expect(screen.getByText(HABIT, { exact: true })).toBeVisible();
+    const journal = screen
+      .locator('[data-testid^="progress-habit-"]')
+      .filter({ has: page.getByText(HABIT, { exact: true }) })
+      .first();
+    await expect(journal.getByTestId('history-line')).toHaveAttribute('stroke', '#d8cbb8');
+    const purple = screen
+      .locator('[data-testid^="progress-habit-"]')
+      .filter({ has: page.getByText(PURPLE_HABIT, { exact: true }) })
+      .first();
+    await expect(purple.getByTestId('history-line')).toHaveAttribute('stroke', '#a093c6');
+    await inspectEnd(page, journal.locator('[data-testid$="-inspect"]'));
+    await expect(journal.locator('[data-testid$="-value"]')).toContainText('20 minutes logged');
+    const wave = screen.getByTestId('progress-wave-inspect');
+    await wave.scrollIntoViewIfNeeded();
+    const waveBounds = await wave.boundingBox();
+    await wave.hover({ position: { x: waveBounds!.width - 8, y: waveBounds!.height / 2 } });
+    const hoverValue = await screen.getByTestId('progress-wave-value').textContent();
+    const percentage = Number(/· ([\d.,]+)/.exec(hoverValue ?? '')?.[1]?.replaceAll(',', ''));
+    expect(percentage).toBeCloseTo(overview.rhythm.days.at(-1)!.rate * 100, 5);
+    await inspectEnd(page, wave);
+    await expect(screen.getByTestId('progress-wave-value')).toContainText('14-day average');
+    await screen.getByTestId('progress-wave-inspect').press('Home');
+    await expect(screen.getByTestId('progress-wave-value')).toContainText(
+      '0 scheduled activities completed (%)',
     );
-    expect(rows).toHaveLength(10);
-    for (const [index, row] of rows.entries()) {
-      expect(row.left).toBeGreaterThanOrEqual(0);
-      expect(row.right).toBeLessThanOrEqual(viewport.width);
-      expect(row.text).toMatch(/Weeks \d+–\d+/);
-      if (index > 0) expect(row.top).toBeGreaterThanOrEqual(rows[index - 1]!.bottom);
+    for (const id of ['progress-ribbon', 'progress-wave', 'progress-energy-columns']) {
+      const bounds = await screen.getByTestId(id).boundingBox();
+      expect(bounds!.x).toBeGreaterThanOrEqual(0);
+      expect(bounds!.x + bounds!.width).toBeLessThanOrEqual(viewport.width);
     }
-    await expect(screen.getByTestId('ribbon-birth-key')).toContainText(`${HABIT} began`);
-    await expect(screen.getByTestId('ribbon-birth-key')).not.toContainText('🚶');
     await page.screenshot({ path: testInfo.outputPath(`map-progress-${viewport.name}.png`) });
 
     await scrollToEnergy(page, viewport);
     await expect.poll(() => screen.evaluate((element) => element.scrollTop)).toBeGreaterThan(0);
+    await inspectEnd(page, screen.getByTestId('progress-energy-columns-inspect'));
+    await expect(screen.getByTestId('progress-energy-columns-value')).toContainText(/· -\d+/);
+    await page.screenshot({
+      path: testInfo.outputPath(`map-progress-energy-${viewport.name}.png`),
+    });
 
     await screen.evaluate((element) => element.scrollTo(0, 0));
     const ribbon = screen.getByTestId('progress-ribbon');
@@ -151,6 +231,8 @@ test('the Map door opens the arc, rhythm and energy ledger the server computed',
     await expect(ribbon).toContainText('Weeks 1–3');
     await expect(ribbon).toContainText('Weeks 4–6');
     await expect(ribbon).toContainText('Weeks 31–36');
+    await expect(ribbon).toContainText(`${HABIT} began`);
+    await expect(ribbon).toContainText('Week 1');
     await expect(ribbon).toContainText('You are here');
     await expect(ribbon).toContainText(`Week ${CURRENT_WEEK}`);
     await expect(ribbon).not.toContainText('Weeks / week');

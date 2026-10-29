@@ -8,18 +8,15 @@ import {
   cycleCaption,
   cycleLabels,
   cycleRows,
-  energyColumns,
   energySummary,
-  ENERGY_COLORS,
-  ENERGY_SERIES,
+  energyPoints,
+  habitHistories,
   percent,
   ribbonBlocks,
   rhythmCaption,
   rhythmEnd,
   rhythmPoints,
   rhythmSummary,
-  rhythmSwatches,
-  rhythmTicks,
   rhythmVisible,
   RHYTHM_EARLY_LINE,
   youAreHere,
@@ -27,12 +24,12 @@ import {
 import { useProgressOverview } from './useProgressOverview';
 
 import type { ApiProgressOverview } from '@/api';
-import { Columns, Dumbbells, Ribbon, Wave } from '@/components/charts';
+import { Dumbbells, HistoryChart, Ribbon } from '@/components/charts';
 import { ErrorFallback } from '@/components/ErrorFallback';
 import { EditorialSection } from '@/components/layout/EditorialSection';
 import { ScreenHeader } from '@/components/layout/ScreenHeader';
 import { ScreenScaffold } from '@/components/layout/ScreenScaffold';
-import { ink, rhythm, type as typeRamp } from '@/design/tokens';
+import { ink, rhythm, SPACING, type as typeRamp } from '@/design/tokens';
 
 /** The opacity held figures are drawn at while their fresh copy is read. */
 export const HELD_OVERVIEW_OPACITY = 0.5;
@@ -66,18 +63,49 @@ function ArcSection({ overview }: { overview: Overview }) {
         currentWeek={overview.arc.current_week ?? undefined}
         markers={birthMarkers(overview)}
         summary={arcSummary(overview)}
+        showKey={false}
       />
+      <Text style={text.body}>Units logged</Text>
+      <HabitHistories overview={overview} carryover={false} />
       {brought.length > 0 ? (
         <View testID="progress-carryovers">
           <Text style={text.caption}>Brought with you</Text>
-          {brought.map((name, index) => (
-            <Text key={`${index}-${name}`} style={text.body}>
-              {name}
-            </Text>
-          ))}
+          <HabitHistories overview={overview} carryover />
         </View>
       ) : null}
     </EditorialSection>
+  );
+}
+
+function HabitHistories({ overview, carryover }: { overview: Overview; carryover: boolean }) {
+  const text = useText();
+  return (
+    <View style={styles.habitRows}>
+      {habitHistories(overview)
+        .filter((habit) => habit.carryover === carryover)
+        .map((habit) => (
+          <View key={habit.id} testID={`progress-habit-${habit.id}`} style={styles.habitRow}>
+            <Text style={[text.caption, styles.habitName]}>{habit.name}</Text>
+            <View style={styles.habitHistory}>
+              {habit.histories.length > 0 ? (
+                habit.histories.map((history) => (
+                  <HistoryChart
+                    key={history.unit}
+                    testID={`progress-habit-${habit.id}-${history.unit}`}
+                    points={history.points}
+                    measure={history.measure}
+                    color={habit.color}
+                    compact
+                    summary={`${habit.name}: daily ${history.measure} during this program.`}
+                  />
+                ))
+              ) : (
+                <Text style={text.caption}>No unit history yet.</Text>
+              )}
+            </View>
+          </View>
+        ))}
+    </View>
   );
 }
 
@@ -89,12 +117,11 @@ function RhythmSection({ overview }: { overview: Overview }) {
     <EditorialSection title="Your rhythm" testID="progress-rhythm">
       {rhythmVisible(overview) ? (
         <>
-          <Wave
+          <HistoryChart
             testID="progress-wave"
             points={rhythmPoints(overview)}
             max={PERCENT_MAX}
-            monthTicks={rhythmTicks(overview)}
-            swatches={rhythmSwatches(overview)}
+            measure="Scheduled activities completed (%)"
             summary={rhythmSummary(overview)}
           />
           {end ? <Text style={text.caption}>{end}</Text> : null}
@@ -140,11 +167,15 @@ function EnergySection({ overview }: { overview: Overview }) {
       <Text testID="progress-energy-formula" style={text.caption}>
         {overview.energy.formula}
       </Text>
-      <Columns
+      <Text style={text.caption}>
+        Energy returned minus effort spent on logged completions. Below zero means more effort spent
+        than energy returned.
+      </Text>
+      <HistoryChart
         testID="progress-energy-columns"
-        columns={energyColumns(overview)}
-        seriesLabels={ENERGY_SERIES}
-        seriesColors={ENERGY_COLORS}
+        points={energyPoints(overview)}
+        measure="Net energy (return − cost)"
+        variant="columns"
         summary={energySummary(overview)}
       />
     </EditorialSection>
@@ -197,4 +228,8 @@ const styles = StyleSheet.create({
   body: { color: ink.soft },
   caption: { color: ink.muted },
   error: { marginTop: rhythm.sectionGap },
+  habitRows: { gap: rhythm.sectionGap },
+  habitRow: { flexDirection: 'row', alignItems: 'center', gap: SPACING.md },
+  habitName: { flexBasis: '30%', flexShrink: 1 },
+  habitHistory: { flex: 1, minWidth: 0 },
 });

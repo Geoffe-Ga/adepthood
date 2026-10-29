@@ -27,6 +27,15 @@ const ARC: ApiProgressOverview['arc'] = {
       week: 1,
       stage_number: 1,
       is_carryover: false,
+      unit_histories: [
+        {
+          unit: 'pages',
+          days: [
+            { date: '2026-05-18', units: 0 },
+            { date: '2026-05-19', units: 2 },
+          ],
+        },
+      ],
     },
     {
       habit_id: 2,

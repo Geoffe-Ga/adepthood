@@ -60,6 +60,20 @@ describe('ProgressScreen', () => {
     );
   });
 
+  it('replaces both color keys with labeled, inspectable histories', () => {
+    const tree = render(<ProgressScreen />);
+    expect(tree.queryByTestId('ribbon-stage-key')).toBeNull();
+    expect(tree.queryByTestId('ribbon-birth-key')).toBeNull();
+    expect(tree.getByText('Units logged')).toBeTruthy();
+    expect(tree.getByText('Scheduled activities completed (%)')).toBeTruthy();
+    fireEvent.press(tree.getByTestId('progress-habit-1-pages-inspect'), {
+      nativeEvent: { locationX: 1000 },
+    });
+    expect(tree.getByTestId('progress-habit-1-pages-value')).toHaveTextContent(
+      '19 May 2026 · 2 pages logged',
+    );
+  });
+
   it('words the rhythm in facts, never a phase name', () => {
     const tree = render(<ProgressScreen />);
     expect(tree.getByTestId('progress-rhythm-caption')).toHaveTextContent(

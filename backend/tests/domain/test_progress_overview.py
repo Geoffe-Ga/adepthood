@@ -114,7 +114,7 @@ def test_a_future_birth_stays_absent_even_when_it_would_be_outside_the_ribbon() 
 
 @pytest.mark.parametrize(
     ("offset", "stored", "expected"),
-    [(-1, False, True), (0, False, False), (1, False, False), (0, True, True)],
+    [(-1, False, False), (0, False, False), (1, False, False), (0, True, True)],
 )
 def test_carryover_is_current_cycle_provenance(offset: int, stored: bool, expected: bool) -> None:
     """Retained prior-cycle habits remain visible without changing their stored flag."""
@@ -392,3 +392,82 @@ def test_an_early_overview_says_when_the_rhythm_appears() -> None:
     assert build_progress_overview(_input(3)).observations == [
         "Your rhythm takes shape after four weeks of days."
     ]
+
+
+def test_program_habit_at_zero_offset_is_week_one_beige_not_brought_along() -> None:
+    """Programme rows preceding a reconciled anchor still belong to the first stage."""
+    habit = _habit(start=START - timedelta(days=1))
+    habit.stage = "0"
+    birth = build_progress_overview(replace(_input(4), habits=[habit])).arc.habit_births[0]
+    assert not birth.is_carryover
+    assert birth.week == 1
+    assert birth.stage_number == 1
+
+
+def test_habit_history_uses_daily_logged_units_and_keeps_measures_separate() -> None:
+    """Tiers share units, while unlike measures must never be summed together."""
+    clear, minutes = _goal(2, tier="clear"), _goal(3, tier="stretch")
+    minutes.target_unit = "minutes"
+    data = replace(
+        _input(4),
+        habits=[_habit()],
+        goals=[_goal(), clear, minutes],
+        completions=[
+            _completion(START, 2),
+            _completion(START, 3, goal_id=2),
+            _completion(START + timedelta(days=2), 1.5),
+            _completion(START, 10, goal_id=3),
+            _completion(START - timedelta(days=1), 50),
+            _completion(START + timedelta(days=4), 50),
+            _completion(START, 50, goal_id=99),
+        ],
+    )
+    histories = build_progress_overview(data).arc.habit_births[0].unit_histories
+    assert [history.unit for history in histories] == ["pages", "minutes"]
+    assert [day.units for day in histories[0].days] == [5, 0, 1.5, 0]
+    assert [day.units for day in histories[1].days] == [10, 0, 0, 0]
+    assert histories[0].days[2].date == START + timedelta(days=2)
+    assert (
+        build_progress_overview(replace(data, progress=None)).arc.habit_births[0].unit_histories
+        == []
+    )
+    assert build_progress_overview(replace(data, enable_habits=False)).arc.habit_births == []
+
+
+@pytest.mark.parametrize(("offset", "stage"), [(0, 1), (20, 1), (21, 2), (168, 9), (210, 10)])
+def test_unknown_adoption_stage_falls_back_to_the_programme_date(offset: int, stage: int) -> None:
+    """Missing stage labels can still use a known date within the programme."""
+    habit = _habit(start=START + timedelta(days=offset))
+    habit.stage = ""
+    birth = build_progress_overview(replace(_input(252), habits=[habit])).arc.habit_births[0]
+    assert birth.stage_number == stage
+
+
+def test_unit_history_stops_at_the_programme_boundary_and_keeps_explicit_carryovers() -> None:
+    """Carryovers have histories too; neither series extends beyond this pass."""
+    habit = _habit(start=START - timedelta(days=20))
+    habit.is_carryover = True
+    data = replace(
+        _input(300),
+        habits=[habit],
+        goals=[_goal()],
+        completions=[
+            _completion(START + timedelta(days=251), 3),
+            _completion(START + timedelta(days=252), 50),
+        ],
+    )
+    birth = build_progress_overview(data).arc.habit_births[0]
+    assert birth.is_carryover
+    history = birth.unit_histories[0]
+    assert len(history.days) == 252
+    assert history.days[-1].units == 3
+    assert sum(day.units for day in history.days) == 3
+
+
+def test_recorded_adoption_stage_survives_an_offset_programme_anchor() -> None:
+    """Week-three Frequency Practice is still Purple when that is its stored stage."""
+    habit = _habit(start=START + timedelta(weeks=2))
+    habit.stage = "Purple"
+    birth = build_progress_overview(replace(_input(30), habits=[habit])).arc.habit_births[0]
+    assert birth.week == 3
+    assert birth.stage_number == 2

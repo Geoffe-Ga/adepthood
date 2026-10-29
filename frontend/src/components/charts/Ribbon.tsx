@@ -19,6 +19,7 @@ export interface RibbonProps extends ChartBaseProps {
   currentWeek?: number;
   markers?: readonly RibbonMarker[];
   secondaryBlocks?: readonly RibbonBlock[];
+  showKey?: boolean;
 }
 
 const weekPosition = (first: number, last = first): string =>
@@ -129,6 +130,7 @@ export function Ribbon({
   currentWeek,
   markers = [],
   secondaryBlocks = [],
+  showKey = true,
   ...base
 }: RibbonProps) {
   const size = useChartSize(base.width, base.height);
@@ -162,12 +164,14 @@ export function Ribbon({
           </G>
         </G>
       </Plot>
-      <RibbonKey
-        testID="ribbon-stage-key"
-        rows={stageRows}
-        blocks={[...blocks, ...secondaryBlocks]}
-      />
-      <RibbonKey testID="ribbon-birth-key" rows={markerRows} />
+      {showKey ? (
+        <RibbonKey
+          testID="ribbon-stage-key"
+          rows={stageRows}
+          blocks={[...blocks, ...secondaryBlocks]}
+        />
+      ) : null}
+      {showKey ? <RibbonKey testID="ribbon-birth-key" rows={markerRows} /> : null}
     </ChartFrame>
   );
 }
