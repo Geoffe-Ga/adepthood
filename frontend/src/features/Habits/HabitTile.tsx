@@ -1,4 +1,4 @@
-import { Info } from 'lucide-react-native';
+import { CalendarDays } from 'lucide-react-native';
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Animated, Easing, Text, TouchableOpacity, View, type DimensionValue } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -119,19 +119,29 @@ const NAME_IN_ROW = { flex: 1 as const };
 /** Under the name, the streak hugs its own text instead of stretching the column. */
 const STREAK_UNDER_NAME = { alignSelf: 'flex-start' as const };
 
+const storyHint = (name: string) => `Opens the story of ${name}`;
+
+/** The run chip; a second door to the Story when one opens, so the name keeps goals. */
 const StreakText = ({
+  name,
   streakText,
   streakStyle,
   fontSize,
   underName,
+  onStoryPress,
 }: {
+  name: string;
   streakText: string;
   streakStyle: object;
   fontSize: number;
   underName: boolean;
+  onStoryPress?: () => void;
 }) => (
   <Text
     testID="habit-streak"
+    accessibilityRole={onStoryPress ? 'button' : undefined}
+    accessibilityHint={onStoryPress ? storyHint(name) : undefined}
+    onPress={onStoryPress}
     style={[
       {
         fontSize,
@@ -152,6 +162,7 @@ interface NameAndStreakProps {
   streakStyle: object;
   gridType: HabitGridType;
   stacked: boolean;
+  onStoryPress?: () => void;
 }
 
 /**
@@ -162,25 +173,36 @@ interface NameAndStreakProps {
  * shrink, so a badge beside the name would squeeze a long single-word name
  * into a mid-word break, and on web the badge itself wraps.
  */
-const NameAndStreak = ({ name, streakText, streakStyle, gridType, stacked }: NameAndStreakProps) =>
+const NameAndStreak = ({
+  name,
+  streakText,
+  streakStyle,
+  gridType,
+  stacked,
+  onStoryPress,
+}: NameAndStreakProps) =>
   stacked ? (
     <View testID="habit-name-stack" style={NAME_IN_ROW}>
       <Text style={nameStyle(gridType.name)}>{name}</Text>
       <StreakText
+        name={name}
         streakText={streakText}
         streakStyle={streakStyle}
         fontSize={gridType.streak}
         underName
+        onStoryPress={onStoryPress}
       />
     </View>
   ) : (
     <>
       <Text style={[NAME_IN_ROW, nameStyle(gridType.name)]}>{name}</Text>
       <StreakText
+        name={name}
         streakText={streakText}
         streakStyle={streakStyle}
         fontSize={gridType.streak}
         underName={false}
+        onStoryPress={onStoryPress}
       />
     </>
   );
@@ -226,11 +248,11 @@ const StoryGlyph = ({ name, onPress }: { name: string; onPress?: () => void }) =
       testID="habit-story-glyph"
       accessibilityRole="button"
       accessibilityLabel="Story"
-      accessibilityHint={`Opens the story of ${name}`}
+      accessibilityHint={storyHint(name)}
       onPress={onPress}
       style={STORY_GLYPH_STYLE}
     >
-      <Info size={STORY_GLYPH_SIZE} color={ink.soft} {...decorativeHidden()} />
+      <CalendarDays size={STORY_GLYPH_SIZE} color={ink.soft} {...decorativeHidden()} />
     </TouchableOpacity>
   ) : null;
 
@@ -261,6 +283,7 @@ const InlineHeader = ({
       streakStyle={streakStyle}
       gridType={gridType}
       stacked={streakStacked}
+      onStoryPress={onStoryPress}
     />
     <StoryGlyph name={habit.name} onPress={onStoryPress} />
   </View>
@@ -309,6 +332,7 @@ const HabitHeader = ({
         streakText={streakText}
         streakStyle={streakStyle}
         gridType={gridType}
+        onStoryPress={onStoryPress}
       >
         <StoryGlyph name={habit.name} onPress={onStoryPress} />
       </HeaderRow>
