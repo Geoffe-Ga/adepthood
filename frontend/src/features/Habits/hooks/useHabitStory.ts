@@ -15,6 +15,9 @@ export type StoryTarget = Pick<Habit, 'isDemoSeed' | 'hasClientMintedIds'> & {
   id?: number | null;
 };
 
+/** What the Story sheet needs: a target to read and a name for its header. */
+export type StoryHabit = StoryTarget & Pick<Habit, 'name'>;
+
 const credentialOwner = (token: string | null | undefined): number | null =>
   token ? parseUserId(decodeJwtPayload(token)?.sub) : null;
 

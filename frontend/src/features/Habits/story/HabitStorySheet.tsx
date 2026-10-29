@@ -17,13 +17,12 @@ import { ContentContainer } from '@/components/layout/ContentContainer';
 import { ink } from '@/design/tokens';
 import { useResponsive } from '@/design/useResponsive';
 import { STORY_CLOSE_LABEL } from '@/features/Habits/components/modalCloseLabels';
-import type { Habit } from '@/features/Habits/Habits.types';
-import { useHabitStory } from '@/features/Habits/hooks/useHabitStory';
+import { useHabitStory, type StoryHabit } from '@/features/Habits/hooks/useHabitStory';
 import { HabitLedger } from '@/features/Habits/ledger/HabitLedger';
 
 export interface HabitStorySheetProps {
   visible: boolean;
-  habit: Habit | null;
+  habit: StoryHabit | null;
   onClose: () => void;
 }
 
@@ -82,7 +81,7 @@ function SheetHeader({ title, styles, view, menuOpen, canTabulate, ...on }: Head
 }
 
 interface ContentProps {
-  habit: Habit;
+  habit: StoryHabit;
   read: ReturnType<typeof useHabitStory>;
   view: SheetView;
   tables: boolean;

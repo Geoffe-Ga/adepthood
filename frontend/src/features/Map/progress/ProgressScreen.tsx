@@ -1,4 +1,5 @@
-import React from 'react';
+import { CalendarDays } from 'lucide-react-native';
+import React, { useState } from 'react';
 import { StyleSheet, Text, View, useWindowDimensions } from 'react-native';
 
 import {
@@ -32,6 +33,8 @@ import { ErrorFallback } from '@/components/ErrorFallback';
 import { EditorialSection } from '@/components/layout/EditorialSection';
 import { ScreenScaffold } from '@/components/layout/ScreenScaffold';
 import { ink, rhythm, type as typeRamp } from '@/design/tokens';
+import type { StoryHabit } from '@/features/Habits/hooks/useHabitStory';
+import { HabitStorySheet } from '@/features/Habits/story/HabitStorySheet';
 
 /** The opacity held figures are drawn at while their fresh copy is read. */
 export const HELD_OVERVIEW_OPACITY = 0.5;
@@ -67,11 +70,21 @@ function ArcSection({ overview }: { overview: Overview }) {
 
 type Habit = ReturnType<typeof habitHistories>[number];
 
-function HabitRows({ habits }: { habits: readonly Habit[] }) {
+type OpenStory = (_habit: StoryHabit) => void;
+
+/** The habit's first line carries the door to its Story: the heat map, the ledger. */
+const storyDoor = (habit: Habit, onOpenStory: OpenStory) => ({
+  label: 'Story',
+  hint: `Opens the story of ${habit.name}`,
+  icon: CalendarDays,
+  onPress: () => onOpenStory({ id: habit.id, name: habit.name }),
+});
+
+function HabitRows({ habits, onOpenStory }: { habits: readonly Habit[]; onOpenStory: OpenStory }) {
   return (
     <View style={styles.rows}>
       {habits.flatMap((habit) =>
-        habit.histories.map((history) => (
+        habit.histories.map((history, index) => (
           <HistoryChart
             key={`${habit.id}-${history.unit}`}
             testID={`progress-habit-${habit.id}-${history.unit}`}
@@ -81,6 +94,7 @@ function HabitRows({ habits }: { habits: readonly Habit[] }) {
             aside={history.now}
             color={habit.color}
             compact
+            door={index === 0 ? storyDoor(habit, onOpenStory) : undefined}
             summary={`${habit.name}: ${history.perDay}, as a 7-day average over this program. Now ${history.now}.`}
           />
         )),
@@ -89,7 +103,7 @@ function HabitRows({ habits }: { habits: readonly Habit[] }) {
   );
 }
 
-function HabitsSection({ overview }: { overview: Overview }) {
+function HabitsSection({ overview, onOpenStory }: { overview: Overview; onOpenStory: OpenStory }) {
   const text = useText();
   const habits = habitHistories(overview);
   const range = habitRange(overview);
@@ -98,11 +112,11 @@ function HabitsSection({ overview }: { overview: Overview }) {
   return (
     <EditorialSection title="Your habits" testID="progress-habits">
       <Text style={text.caption}>{range ?? 'Nothing logged yet.'}</Text>
-      <HabitRows habits={program} />
+      <HabitRows habits={program} onOpenStory={onOpenStory} />
       {brought.length > 0 ? (
         <View testID="progress-carryovers" style={styles.subsection}>
           <Text style={text.caption}>Brought with you</Text>
-          <HabitRows habits={brought} />
+          <HabitRows habits={brought} onOpenStory={onOpenStory} />
         </View>
       ) : null}
     </EditorialSection>
@@ -176,13 +190,15 @@ function EnergySection({ overview }: { overview: Overview }) {
 }
 
 function ProgressBody({ overview, held }: { overview: Overview; held: boolean }) {
+  const [story, setStory] = useState<StoryHabit | null>(null);
   return (
     <View testID="progress-content" style={held ? { opacity: HELD_OVERVIEW_OPACITY } : undefined}>
       <ArcSection overview={overview} />
       <RhythmSection overview={overview} />
       <CycleSection overview={overview} />
-      <HabitsSection overview={overview} />
+      <HabitsSection overview={overview} onOpenStory={setStory} />
       <EnergySection overview={overview} />
+      <HabitStorySheet visible={story !== null} habit={story} onClose={() => setStory(null)} />
     </View>
   );
 }

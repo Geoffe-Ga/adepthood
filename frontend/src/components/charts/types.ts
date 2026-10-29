@@ -1,8 +1,18 @@
+import type { LucideIcon } from 'lucide-react-native';
+
 export interface ChartBaseProps {
   summary: string;
   width?: number;
   height?: number;
   testID?: string;
+}
+
+/** A glyph on a chart's header row that opens somewhere else, named for where it goes. */
+export interface ChartDoor {
+  label: string;
+  hint: string;
+  icon: LucideIcon;
+  onPress: () => void;
 }
 
 export interface ChartTableRow {

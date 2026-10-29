@@ -1,5 +1,6 @@
-import { describe, expect, it } from '@jest/globals';
+import { describe, expect, it, jest } from '@jest/globals';
 import { fireEvent, render } from '@testing-library/react-native';
+import { CalendarDays } from 'lucide-react-native';
 import React from 'react';
 import { Circle, Text as SvgText } from 'react-native-svg';
 
@@ -10,6 +11,22 @@ const points = [
   { label: '6 Jan 2026', value: 2.5 },
   { label: '7 Jan 2026', value: 1 },
 ];
+
+describe('a chart door', () => {
+  it('opens elsewhere from a named glyph before the table toggle, and is absent unasked', () => {
+    const onPress = jest.fn();
+    const door = { label: 'Story', hint: 'Opens the story of Pages', icon: CalendarDays, onPress };
+    const base = { points, measure: 'Pages', summary: 'Pages over time.', width: 320 };
+    const tree = render(<HistoryChart {...base} door={door} />);
+    const buttons = tree.getAllByRole('button').map((button) => button.props.accessibilityLabel);
+    expect(buttons.indexOf('Story')).toBeLessThan(buttons.indexOf('Show as table'));
+    const glyph = tree.getByRole('button', { name: 'Story' });
+    expect(glyph.props.accessibilityHint).toBe('Opens the story of Pages');
+    fireEvent.press(glyph);
+    expect(onPress).toHaveBeenCalledTimes(1);
+    expect(render(<HistoryChart {...base} />).queryByRole('button', { name: 'Story' })).toBeNull();
+  });
+});
 
 describe('inspectable chart history', () => {
   it('heads with its measure, reads the latest point, and inspects by tap and adjustment', () => {
