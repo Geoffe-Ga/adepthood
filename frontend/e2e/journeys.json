@@ -1019,31 +1019,32 @@
   },
   {
     "id": "journal.see-related-vault-pages",
-    "description": "A writer asks for resonance and, when their connected Creek vault recognises a compiled praxis or a recurring eddy in the entry, finds those related pages offered in a collapsed, display-only band beside the journal page. Expanding it shows the page titles, quiet lifecycle or fragment context, and excerpts without turning a pattern into a task. Empty and pre-vault responses leave no band behind. The reflection provider is no longer what blocks this: the lane's default provider now answers a resonance ask with an anchored reading, which is what journal.ask-for-resonance drives. What is still missing is the other half of the response -- a Creek vault fake, connected to the account and seeded with compiled praxis and eddy pages, that answers the reflection with related collections. The activation journey's fake Creek control plane allocates a vault; it does not serve a corpus. The component, hook, and rendered-screen contracts are pinned by the Jest specs beside JournalEntryScreen, and #2408 stays open for this seeded-vault seam.",
+    "description": "A writer whose reflections are answered by a Creek vault asks for resonance and, when the vault recognises a compiled praxis or a recurring eddy in the entry, finds those related pages offered in a collapsed, display-only band beside the journal page. Expanding it shows the page titles, quiet lifecycle or fragment context, and excerpts without turning a pattern into a task. A reflection that names no pages leaves no band, including after one that did. Covered across the seam by frontend/e2e/journal-related-vault-pages.browser.e2e.test.ts (#2408): the lane's vault-bound owner (bound by the deployment-wide CREEK_VAULT_OWNER_USER_ID, so its pass is answered by the lane's Creek vault over the real POST /v1/reflections wire and by nothing else) logs in through the app; the vault is armed, through its authenticated POST /__lane/relate-next-reflection control, to publish beside its one anchored note the related_praxis and related_eddies of Creek's own vendored reflections success cell, consumed by that one reflection. The resonance response carries exactly those pages; the band renders on the journal screen, outside the margin column and the sheet, not overlapping the page's text, collapsed with its title and a page count and none of the pages; expanding shows the praxis title, its kind and status, its excerpt, and the eddy's title, description and fragment count; its toggle is its only control; collapsing hides them again. An unarmed reflection answers no pages and leaves no band, and a pass naming none after one that named some removes the band. Nothing is routed or rewritten at the browser: the journal screen never reads GET /vault/connection, which answers connected false for this deployment-bound owner (#3608). The component, hook and rendered-screen contracts are also pinned by the Jest specs beside JournalEntryScreen.",
     "crosses": {
       "screen": "frontend/src/features/Journal/JournalEntryScreen.tsx",
       "client": ["resonance"],
       "routes": ["POST /journal/{entry_id}/resonance"],
-      "tables": ["journalentry", "walletaudit"]
+      "tables": ["journalentry", "marginalia"]
     },
-    "status": "uncovered",
-    "issue": 2408
+    "status": "covered",
+    "coveredBy": "frontend/e2e/journal-related-vault-pages.browser.e2e.test.ts"
   },
   {
     "id": "journal.offered-the-corpus-after-a-first-reflection",
-    "description": "A writer who has never decided about their corpus asks for resonance on a finished page and, once the reflection has actually landed in the margin, finds beside the page -- never in it -- a quiet note saying reflections can draw on their own earlier writing, what agreeing sends where and how often, and that a yes also sorts what is already written. They can look at the decision, set it aside with Not now, or say Do not ask again; every one of those is one tap, none of them touches the pass, and the answer is kept on the server so it holds across devices and does not return on the next press. On a plain Not now the note returns only after both seven days and three further completed passes; on Do not ask again, or once consent is decided either way, never. The pass count the cooldown runs on never reaches the client. Uncovered as a rendered moment: this journey is about the note appearing beside the page after the pass, and the real-wire lane drives the production client, not the screen. The wire half -- a completed pass opening the offer, and the decline being the server's to remember -- is covered by corpus.decline-the-offer-and-be-left-alone; the rendered half is pinned by the Jest specs beside JournalEntryScreen (placement, one-tap decline, the pass never gated) and by backend/tests/test_resonance_endpoints.py::TestACompletedPassIsCounted for which passes count. The provider seam is no longer what blocks it -- journal.ask-for-resonance now drives a pass that keeps real notes against the default stub provider, and this journey's remaining gap is only the rendered moment, which needs a lane that can mount the screen. #2408 stays open for it rather than being closed by the spec that covered the pass.",
+    "description": "A writer who has never decided about their corpus asks for resonance on a finished page and, once the reflection has actually landed in the margin, finds beside the page -- never in it -- a quiet note saying reflections can draw on their own earlier writing, what agreeing sends where and how often, and that a yes also sorts what is already written. They can look at the decision, set it aside with Not now, or say Do not ask again; every one of those is one tap, none of them touches the pass, and the answer is kept on the server so it holds across devices and does not return on the next press. On a plain Not now the note returns only after both seven days and three further completed passes; on Do not ask again, or once consent is decided either way, never. The pass count the cooldown runs on never reaches the client. Covered across the seam by frontend/e2e/journal-corpus-invitation-offer.browser.e2e.test.ts (#2408): a lane account signed up in the app, with finished pages written through the server's own routes, reads GET /corpus/invitation as un-asked; opening a page asks nothing; a real pass against the lane's default provider is answered by the server and then held at the browser, and while it is held the server already offers yet no note renders and no invitation read is sent -- the note appears only once the reflection lands and its margin note renders, on the journal screen, outside the margin column and the sheet, not overlapping the page's text. Not now and Do not ask again are each one tap that removes the note at once, sends PUT /corpus/invitation with do_not_ask_again false or true, sends no further resonance request, and leaves the entry's margin notes on the page and on the server (GET /journal/{entry_id}/marginalia unchanged); GET /corpus/invitation reads back exactly what the write answered, and after a reload a pass on another page is answered offer false and shows no note. The one harness seam is the held resonance response; every answer is the server's own. Which passes count is pinned by backend/tests/test_resonance_endpoints.py::TestACompletedPassIsCounted, and the wire-only decline by corpus.decline-the-offer-and-be-left-alone.",
     "crosses": {
       "screen": "frontend/src/features/Journal/JournalEntryScreen.tsx",
-      "client": ["resonance", "corpusInvitation", "corpusConsent"],
+      "client": ["resonance", "corpusInvitation"],
       "routes": [
         "POST /journal/{entry_id}/resonance",
+        "GET /journal/{entry_id}/marginalia",
         "GET /corpus/invitation",
         "PUT /corpus/invitation"
       ],
-      "tables": ["corpusconsentevent", "corpusinvitationstate", "marginalia"]
+      "tables": ["corpusinvitationstate", "marginalia", "journalentry"]
     },
-    "status": "uncovered",
-    "issue": 2408
+    "status": "covered",
+    "coveredBy": "frontend/e2e/journal-corpus-invitation-offer.browser.e2e.test.ts"
   },
   {
     "id": "journal.offered-to-sort-the-rest-after-a-reflection",
