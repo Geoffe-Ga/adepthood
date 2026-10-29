@@ -35,23 +35,12 @@ describe('HabitTile Story door (#3526)', () => {
     ).toBeTruthy();
   });
 
-  it('opens the Story from the run chip too, leaving the name for goals', () => {
+  it('keeps one door: the run chip stays plain text beside the glyph', () => {
+    // One home per control (DESIGN.md), and a button on the header row must share the glyph's top.
     const onOpenStory = jest.fn();
-    const onOpenGoals = jest.fn();
-    const habit = storyHabit({ streak: 9 });
-    const { getByTestId } = render(
-      <HabitTile habit={habit} onOpenStory={onOpenStory} onOpenGoals={onOpenGoals} tz="UTC" />,
-    );
-    const chip = getByTestId('habit-streak');
-    expect(chip.props.accessibilityRole).toBe('button');
-    expect(chip.props.accessibilityHint).toBe(`Opens the story of ${habit.name}`);
-    fireEvent.press(chip);
-    expect(onOpenStory).toHaveBeenCalledWith(habit);
-    expect(onOpenGoals).not.toHaveBeenCalled();
-  });
-
-  it('leaves the run chip plain text when nothing opens the Story', () => {
-    const chip = render(<HabitTile habit={storyHabit()} tz="UTC" />).getByTestId('habit-streak');
+    const chip = render(
+      <HabitTile habit={storyHabit()} onOpenStory={onOpenStory} tz="UTC" />,
+    ).getByTestId('habit-streak');
     expect(chip.props.accessibilityRole).toBeUndefined();
     expect(chip.props.onPress).toBeUndefined();
   });
