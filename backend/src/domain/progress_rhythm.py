@@ -322,12 +322,23 @@ def fullest_week(days: Sequence[RhythmDay]) -> date | None:
     return max(complete, key=lambda day: day.rate).date if complete else None
 
 
+def _since_first_ask(days: Sequence[RhythmDay]) -> Sequence[RhythmDay]:
+    """Drop the leading days whose week asked nothing; no habit existed to keep."""
+    first = next((index for index, day in enumerate(days) if day.window_scheduled), len(days))
+    return days[first:]
+
+
+def _quiet(day: RhythmDay) -> bool:
+    """A day whose week asked something and kept less than the rest threshold."""
+    return day.window_scheduled > 0 and day.rate < REST_RATE
+
+
 def longest_rest(days: Sequence[RhythmDay]) -> RestWindow | None:
-    """The earliest longest below-threshold run after the opening four weeks."""
+    """The earliest longest below-threshold run after the first four weeks of asks."""
     longest: list[RhythmDay] = []
     current: list[RhythmDay] = []
-    for day in days[REST_START_DAYS:]:
-        current = [*current, day] if day.rate < REST_RATE else []
+    for day in _since_first_ask(days)[REST_START_DAYS:]:
+        current = [*current, day] if _quiet(day) else []
         if len(current) > len(longest):
             longest = current
     return RestWindow(start=longest[0].date, end=longest[-1].date) if longest else None
@@ -343,6 +354,7 @@ def _rise_start(days: Sequence[RhythmDay]) -> int:
 
 def rising_since(days: Sequence[RhythmDay]) -> date | None:
     """A current nondecreasing stretch needs seven days and one strict increase."""
+    days = _since_first_ask(days)
     if len(days) < RISING_MIN_DAYS:
         return None
     start = _rise_start(days)
