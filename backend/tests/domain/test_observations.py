@@ -390,16 +390,16 @@ def test_practice_milestones_use_the_local_calendar() -> None:
 # --- rhythm --------------------------------------------------------------------
 
 
-def test_your_fullest_fortnight_was_late_june_you_rested_and_have_been_rising() -> None:
+def test_your_fullest_week_was_late_june_you_rested_and_have_been_rising() -> None:
     facts = RhythmFacts(
-        fullest_fortnight_ending=date(2026, 6, 26),
+        fullest_week_ending=date(2026, 6, 26),
         longest_rest=(date(2026, 8, 3), date(2026, 8, 24)),
         rising_since=date(2026, 9, 14),
         series_days=150,
     )
     assert rhythm_observations(facts, today=TODAY) == [
         (
-            "Your fullest fortnight was late June. You rested from 3 August to 24 August. "
+            "Your fullest week was late June. You rested from 3 August to 24 August. "
             "You have been rising since 14 September."
         )
     ]
@@ -407,14 +407,12 @@ def test_your_fullest_fortnight_was_late_june_you_rested_and_have_been_rising() 
 
 def test_a_date_in_another_year_names_the_year() -> None:
     facts = RhythmFacts(
-        fullest_fortnight_ending=date(2025, 11, 5),
+        fullest_week_ending=date(2025, 11, 5),
         longest_rest=None,
         rising_since=None,
         series_days=400,
     )
-    assert rhythm_observations(facts, today=TODAY) == [
-        "Your fullest fortnight was early November 2025."
-    ]
+    assert rhythm_observations(facts, today=TODAY) == ["Your fullest week was early November 2025."]
 
 
 def test_a_young_rhythm_says_when_it_takes_shape() -> None:
