@@ -4,7 +4,7 @@ import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { ChartFrame, useChartSize } from './ChartFrame';
 import { chartStyles } from './chartStyles';
 import { formatHistoryValue, HistoryPlot, VALUE_AXIS_WIDTH } from './HistoryPlot';
-import type { ChartBaseProps, ChartPoint, ChartTableRow } from './types';
+import type { ChartBaseProps, ChartDoor, ChartPoint, ChartTableRow } from './types';
 import { useHistoryInspection } from './useHistoryInspection';
 
 import { accent, chartLayout, ink } from '@/design/tokens';
@@ -28,6 +28,8 @@ export interface HistoryChartProps extends ChartBaseProps {
    */
   compact?: boolean;
   variant?: 'line' | 'columns';
+  /** A header-row glyph that opens a fuller view, such as a habit's Story. */
+  door?: ChartDoor;
 }
 
 type Inspection = ReturnType<typeof useHistoryInspection>;
@@ -161,6 +163,7 @@ export function HistoryChart({
   max,
   compact = false,
   variant = 'line',
+  door,
   ...base
 }: HistoryChartProps) {
   const columns = variant === 'columns';
@@ -172,6 +175,7 @@ export function HistoryChart({
       interactive
       title={measure}
       aside={aside}
+      door={door}
       rows={tableRows(points, model.figure)}
       headers={[measure, 'Details']}
     >

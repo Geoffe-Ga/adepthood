@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, jest } from '@jest/globals';
 import { fireEvent, render, within } from '@testing-library/react-native';
 import React from 'react';
-import { ScrollView, StyleSheet } from 'react-native';
+import { Pressable, ScrollView, StyleSheet, Text } from 'react-native';
 
 import { HELD_OVERVIEW_OPACITY, ProgressScreen } from '../ProgressScreen';
 
@@ -21,6 +21,22 @@ jest.mock('react-native-safe-area-context', () => {
   const actual = jest.requireActual('react-native-safe-area-context') as object;
   return { ...actual, useSafeAreaInsets: () => ({ top: 0, bottom: 0, left: 0, right: 0 }) };
 });
+
+interface StoryProps {
+  visible: boolean;
+  habit: { id?: number | null; name: string } | null;
+  onClose: () => void;
+}
+/** Stands in for the sheet: proves which habit Progress opened, and that it closes. */
+const mockStorySheet = ({ visible, habit, onClose }: StoryProps) =>
+  visible && habit ? (
+    <Pressable testID="story-sheet" onPress={onClose}>
+      <Text>{`${habit.id} ${habit.name}`}</Text>
+    </Pressable>
+  ) : null;
+jest.mock('@/features/Habits/story/HabitStorySheet', () => ({
+  HabitStorySheet: (props: StoryProps) => mockStorySheet(props),
+}));
 
 const read = (overrides: Partial<Read> = {}): Read => ({
   overview: progressOverviewFixture(),
@@ -99,6 +115,18 @@ describe('ProgressScreen', () => {
     expect(tree.getByTestId('progress-habit-1-pages-value')).toHaveTextContent(
       '19 May 2026 · 1 pages a day · 2 logged that day',
     );
+  });
+
+  it("opens each habit's Story, with its heat map, from a glyph on its line", () => {
+    const tree = render(<ProgressScreen />);
+    expect(tree.queryByTestId('story-sheet')).toBeNull();
+    const line = within(tree.getByTestId('progress-habit-1-pages'));
+    const door = line.getByRole('button', { name: 'Story' });
+    expect(door.props.accessibilityHint).toBe('Opens the story of Morning pages');
+    fireEvent.press(door);
+    expect(tree.getByTestId('story-sheet')).toHaveTextContent('1 Morning pages');
+    fireEvent.press(tree.getByTestId('story-sheet'));
+    expect(tree.queryByTestId('story-sheet')).toBeNull();
   });
 
   it('keeps carryovers apart once they have a line to draw', () => {

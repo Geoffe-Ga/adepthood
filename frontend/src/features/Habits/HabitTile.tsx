@@ -1,4 +1,4 @@
-import { Info } from 'lucide-react-native';
+import { CalendarDays } from 'lucide-react-native';
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Animated, Easing, Text, TouchableOpacity, View, type DimensionValue } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -230,7 +230,7 @@ const StoryGlyph = ({ name, onPress }: { name: string; onPress?: () => void }) =
       onPress={onPress}
       style={STORY_GLYPH_STYLE}
     >
-      <Info size={STORY_GLYPH_SIZE} color={ink.soft} {...decorativeHidden()} />
+      <CalendarDays size={STORY_GLYPH_SIZE} color={ink.soft} {...decorativeHidden()} />
     </TouchableOpacity>
   ) : null;
 

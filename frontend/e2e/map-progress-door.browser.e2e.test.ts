@@ -121,6 +121,29 @@ async function inspectEnd(page: Page, plot: Locator): Promise<void> {
   await page.touchscreen.tap(x, y);
 }
 
+/** Each habit's line on Progress opens its Story, where the heat map lives (D06). */
+async function openStoryFromProgress(page: Page, screenshot: string): Promise<void> {
+  await page.setViewportSize({ width: 390, height: 844 });
+  const journal = page
+    .getByTestId('progress-screen')
+    .locator('[data-testid^="progress-habit-"]')
+    .filter({ has: page.getByText(HABIT, { exact: true }) })
+    .first();
+  await journal.scrollIntoViewIfNeeded();
+  const read = page.waitForResponse((response) =>
+    /^\/habits\/\d+\/story$/.test(new URL(response.url()).pathname),
+  );
+  await journal.getByRole('button', { name: 'Story', exact: true }).click();
+  expect((await read).status()).toBe(200);
+  const sheet = page.getByTestId('habit-story-sheet');
+  await expect(sheet).toContainText(HABIT);
+  await expect(sheet.getByTestId('habit-story-heat-grid')).toBeVisible();
+  await page.screenshot({ path: screenshot });
+  await page.getByRole('button', { name: 'Close story' }).click();
+  await expect(sheet).toHaveCount(0);
+  await expect(page.getByTestId('progress-screen')).toBeVisible();
+}
+
 function verifyServedHistories(overview: ApiProgressOverview): void {
   const journalBirth = overview.arc.habit_births.find((birth) => birth.name === HABIT);
   expect(journalBirth).toMatchObject({ is_carryover: false, week: 1, stage_number: 1 });
@@ -252,4 +275,6 @@ test('the Map door opens the arc, rhythm and energy ledger the server computed',
     await scrollToEnergy(page, viewport);
     await ribbon.getByRole('button', { name: 'Show chart' }).click();
   }
+
+  await openStoryFromProgress(page, testInfo.outputPath('map-progress-story-phone.png'));
 });

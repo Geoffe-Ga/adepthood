@@ -3,7 +3,7 @@ import React, { useState } from 'react';
 import { Text, Pressable, View, type LayoutChangeEvent } from 'react-native';
 
 import { chartStyles } from './chartStyles';
-import type { ChartBaseProps, ChartTableRow, LabelledSwatch } from './types';
+import type { ChartBaseProps, ChartDoor, ChartTableRow, LabelledSwatch } from './types';
 
 import { decorativeHidden } from '@/components/a11yHidden';
 import { accent, chartLayout, ink } from '@/design/tokens';
@@ -69,20 +69,29 @@ interface ChartFrameProps extends ChartBaseProps {
   title?: string;
   /** The chart's current figure, right-aligned before the toggle. */
   aside?: string;
+  /** A glyph before the table toggle that opens a fuller view of the same thing. */
+  door?: ChartDoor;
 }
 
 /** Glyph size for the chart/table toggle, inside a full touch target. */
 const TOGGLE_ICON_SIZE = 18;
 
-/** The table twin's door: a glyph, named for what it opens (glyph over word). */
-function TableToggle({ showTable, onPress }: { showTable: boolean; onPress: () => void }) {
-  const label = showTable ? 'Show chart' : 'Show as table';
-  const Glyph = showTable ? ChartLine : Table2;
+interface HeaderGlyphProps {
+  label: string;
+  hint?: string;
+  icon: ChartDoor['icon'];
+  expanded?: boolean;
+  onPress: () => void;
+}
+
+/** A header-row control: a glyph named for what it opens (glyph over word). */
+function HeaderGlyph({ label, hint, icon: Glyph, expanded, onPress }: HeaderGlyphProps) {
   return (
     <Pressable
       accessibilityRole="button"
       accessibilityLabel={label}
-      accessibilityState={{ expanded: showTable }}
+      accessibilityHint={hint}
+      accessibilityState={expanded === undefined ? undefined : { expanded }}
       onPress={onPress}
       style={chartStyles.control}
     >
@@ -94,6 +103,18 @@ function TableToggle({ showTable, onPress }: { showTable: boolean; onPress: () =
         />
       )}
     </Pressable>
+  );
+}
+
+/** The table twin's door. */
+function TableToggle({ showTable, onPress }: { showTable: boolean; onPress: () => void }) {
+  return (
+    <HeaderGlyph
+      label={showTable ? 'Show chart' : 'Show as table'}
+      icon={showTable ? ChartLine : Table2}
+      expanded={showTable}
+      onPress={onPress}
+    />
   );
 }
 
@@ -109,6 +130,7 @@ export function ChartFrame({
   interactive = false,
   title,
   aside,
+  door,
 }: ChartFrameProps) {
   const [showTable, setShowTable] = useState(false);
   return (
@@ -120,6 +142,7 @@ export function ChartFrame({
       <View style={chartStyles.header}>
         <Text style={[chartStyles.caption, chartStyles.headerTitle]}>{title ?? ''}</Text>
         {aside ? <Text style={chartStyles.aside}>{aside}</Text> : null}
+        {door ? <HeaderGlyph {...door} /> : null}
         <TableToggle showTable={showTable} onPress={() => setShowTable(!showTable)} />
       </View>
       <View

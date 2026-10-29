@@ -16,6 +16,7 @@ export type { WaveProps, WaveTick, WaveSwatch } from './Wave';
 export type {
   ChartBaseProps,
   ChartTableRow,
+  ChartDoor,
   ChartAsk,
   ChartPoint,
   ChartColumn,

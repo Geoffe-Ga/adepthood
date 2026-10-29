@@ -1,5 +1,6 @@
 import { describe, expect, it, jest } from '@jest/globals';
-import { fireEvent, render } from '@testing-library/react-native';
+import { fireEvent, render, within } from '@testing-library/react-native';
+import { CalendarDays } from 'lucide-react-native';
 import React from 'react';
 import { StyleSheet } from 'react-native';
 
@@ -23,6 +24,25 @@ describe('HabitTile Story door (#3526)', () => {
     fireEvent.press(glyph);
     expect(onOpenStory).toHaveBeenCalledWith(habit);
     expect(onOpenGoals).not.toHaveBeenCalled();
+  });
+
+  it('draws the door as the day-by-day calendar it opens, not an info mark', () => {
+    const { getByRole } = render(
+      <HabitTile habit={storyHabit()} onOpenStory={jest.fn()} tz="UTC" />,
+    );
+    expect(
+      within(getByRole('button', { name: 'Story' })).UNSAFE_getByType(CalendarDays),
+    ).toBeTruthy();
+  });
+
+  it('keeps one door: the run chip stays plain text beside the glyph', () => {
+    // One home per control (DESIGN.md), and a button on the header row must share the glyph's top.
+    const onOpenStory = jest.fn();
+    const chip = render(
+      <HabitTile habit={storyHabit()} onOpenStory={onOpenStory} tz="UTC" />,
+    ).getByTestId('habit-streak');
+    expect(chip.props.accessibilityRole).toBeUndefined();
+    expect(chip.props.onPress).toBeUndefined();
   });
 
   it('shows no door when nothing opens it, nor on a locked tile', () => {
