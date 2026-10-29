@@ -28,7 +28,7 @@ export const progressOverviewSchema = z.object({
           .array(
             z.object({
               unit: z.string(),
-              days: z.array(z.object({ date: z.string(), units: z.number() })),
+              days: z.array(z.object({ date: z.string(), units: z.number(), average: z.number() })),
             }),
           )
           .optional(),
@@ -42,10 +42,12 @@ export const progressOverviewSchema = z.object({
         rate: z.number(),
         daily_met: z.number(),
         daily_scheduled: z.number(),
+        window_met: z.number(),
+        window_scheduled: z.number(),
         window_days: z.number(),
       }),
     ),
-    fullest_fortnight_ending: z.string().nullable(),
+    fullest_week_ending: z.string().nullable(),
     longest_rest: z.object({ start: z.string(), end: z.string() }).nullable(),
     rising_since: z.string().nullable(),
   }),

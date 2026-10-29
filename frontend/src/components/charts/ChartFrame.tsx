@@ -1,10 +1,12 @@
+import { ChartLine, Table2 } from 'lucide-react-native';
 import React, { useState } from 'react';
 import { Text, Pressable, View, type LayoutChangeEvent } from 'react-native';
 
 import { chartStyles } from './chartStyles';
 import type { ChartBaseProps, ChartTableRow, LabelledSwatch } from './types';
 
-import { chartLayout } from '@/design/tokens';
+import { decorativeHidden } from '@/components/a11yHidden';
+import { accent, chartLayout, ink } from '@/design/tokens';
 import { useResponsive } from '@/design/useResponsive';
 
 /** Measures the actual parent, including sheets narrower than the viewport. */
@@ -63,6 +65,36 @@ interface ChartFrameProps extends ChartBaseProps {
   children: React.ReactNode;
   interactive?: boolean;
   onLayout: (_event: LayoutChangeEvent) => void;
+  /** What the chart shows, on the header row beside the table toggle. */
+  title?: string;
+  /** The chart's current figure, right-aligned before the toggle. */
+  aside?: string;
+}
+
+/** Glyph size for the chart/table toggle, inside a full touch target. */
+const TOGGLE_ICON_SIZE = 18;
+
+/** The table twin's door: a glyph, named for what it opens (glyph over word). */
+function TableToggle({ showTable, onPress }: { showTable: boolean; onPress: () => void }) {
+  const label = showTable ? 'Show chart' : 'Show as table';
+  const Glyph = showTable ? ChartLine : Table2;
+  return (
+    <Pressable
+      accessibilityRole="button"
+      accessibilityLabel={label}
+      accessibilityState={{ expanded: showTable }}
+      onPress={onPress}
+      style={chartStyles.control}
+    >
+      {({ pressed }) => (
+        <Glyph
+          size={TOGGLE_ICON_SIZE}
+          color={pressed ? accent.primary : ink.soft}
+          {...decorativeHidden()}
+        />
+      )}
+    </Pressable>
+  );
 }
 
 /** Static charts never introduce entrance motion, including under reduced motion. */
@@ -75,15 +107,21 @@ export function ChartFrame({
   children,
   onLayout,
   interactive = false,
+  title,
+  aside,
 }: ChartFrameProps) {
   const [showTable, setShowTable] = useState(false);
-  const label = showTable ? 'Show chart' : 'Show as table';
   return (
     <View
       testID={testID}
       onLayout={onLayout}
       style={[chartStyles.frame, width === undefined ? undefined : { width }]}
     >
+      <View style={chartStyles.header}>
+        <Text style={[chartStyles.caption, chartStyles.headerTitle]}>{title ?? ''}</Text>
+        {aside ? <Text style={chartStyles.aside}>{aside}</Text> : null}
+        <TableToggle showTable={showTable} onPress={() => setShowTable(!showTable)} />
+      </View>
       <View
         accessibilityRole={interactive ? undefined : 'image'}
         accessibilityLabel={summary}
@@ -92,17 +130,6 @@ export function ChartFrame({
         {showTable ? null : children}
       </View>
       {showTable ? <ChartTable rows={rows} headers={headers} /> : null}
-      <View style={chartStyles.controls}>
-        <Pressable
-          accessibilityRole="button"
-          accessibilityLabel={label}
-          accessibilityState={{ expanded: showTable }}
-          onPress={() => setShowTable(!showTable)}
-          style={chartStyles.control}
-        >
-          <Text style={chartStyles.controlLabel}>{label}</Text>
-        </Pressable>
-      </View>
     </View>
   );
 }

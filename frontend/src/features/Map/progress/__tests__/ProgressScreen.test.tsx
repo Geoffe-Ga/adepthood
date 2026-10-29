@@ -44,40 +44,85 @@ describe('ProgressScreen', () => {
     expect(within(scroller).getByTestId('progress-energy-columns')).toBeTruthy();
   });
 
-  it('runs arc, rhythm, cycles, energy, in that order', () => {
+  it('runs arc, rhythm, cycles, habits, energy, in that order', () => {
     const tree = render(<ProgressScreen />);
-    const order = ['progress-arc', 'progress-rhythm', 'progress-cycles', 'progress-energy'].map(
-      (id) => JSON.stringify(tree.toJSON()).indexOf(`"testID":"${id}"`),
-    );
+    const order = [
+      'progress-arc',
+      'progress-rhythm',
+      'progress-cycles',
+      'progress-habits',
+      'progress-energy',
+    ].map((id) => JSON.stringify(tree.toJSON()).indexOf(`"testID":"${id}"`));
     expect(order.every((at) => at >= 0)).toBe(true);
     expect([...order].sort((a, b) => a - b)).toEqual(order);
-    expect(tree.getByTestId('progress-here')).toHaveTextContent('Week 23 · Yellow');
-    const brought = within(tree.getByTestId('progress-carryovers'));
-    expect(brought.getByText('Brought with you')).toBeTruthy();
-    expect(brought.getByText('Water')).toBeTruthy();
-    expect(tree.getByTestId('progress-energy-formula')).toHaveTextContent(
-      'sum(return - cost) over completions',
-    );
+    expect(within(tree.getByTestId('progress-ribbon')).getByText('Week 23 · Yellow')).toBeTruthy();
   });
 
-  it('replaces both color keys with labeled, inspectable histories', () => {
+  it('says each thing once: no lead, no formula, no axis captions, no hover hints', () => {
+    const json = JSON.stringify(render(<ProgressScreen />).toJSON());
+    for (const gone of [
+      'Where you are in the arc',
+      'sum(return - cost)',
+      'Below zero means',
+      'Units logged',
+      'Hover or tap',
+      '"Date"',
+    ]) {
+      expect(json).not.toContain(gone);
+    }
+  });
+
+  it('opens every table twin from a named glyph', () => {
     const tree = render(<ProgressScreen />);
-    expect(tree.queryByTestId('ribbon-stage-key')).toBeNull();
-    expect(tree.queryByTestId('ribbon-birth-key')).toBeNull();
-    expect(tree.getByText('Units logged')).toBeTruthy();
-    expect(tree.getByText('Scheduled activities completed (%)')).toBeTruthy();
+    const toggles = tree.getAllByRole('button', { name: 'Show as table' });
+    expect(toggles.length).toBeGreaterThanOrEqual(4);
+    fireEvent.press(within(tree.getByTestId('progress-energy-columns')).getByRole('button'));
+    expect(
+      within(tree.getByTestId('progress-energy-columns')).getByRole('button', {
+        name: 'Show chart',
+      }),
+    ).toBeTruthy();
+  });
+
+  it('draws only logged habits, each with its current 7-day average', () => {
+    const tree = render(<ProgressScreen />);
+    const habits = within(tree.getByTestId('progress-habits'));
+    expect(habits.getByText('7-day averages, 18 May to 19 May.')).toBeTruthy();
+    expect(habits.getByText('Morning pages')).toBeTruthy();
+    expect(habits.getByText('1 pages a day')).toBeTruthy();
+    expect(habits.queryByText('Evening walk')).toBeNull();
+    expect(tree.queryByTestId('progress-carryovers')).toBeNull();
+    expect(tree.queryByTestId('progress-habit-1-pages-value')).toBeNull();
     fireEvent.press(tree.getByTestId('progress-habit-1-pages-inspect'), {
       nativeEvent: { locationX: 1000 },
     });
     expect(tree.getByTestId('progress-habit-1-pages-value')).toHaveTextContent(
-      '19 May 2026 · 2 pages logged',
+      '19 May 2026 · 1 pages a day · 2 logged that day',
     );
+  });
+
+  it('keeps carryovers apart once they have a line to draw', () => {
+    const overview = progressOverviewFixture();
+    overview.arc.habit_births[2]!.unit_histories = [
+      { unit: 'glasses', days: [{ date: '2026-05-18', units: 8, average: 8 }] },
+    ];
+    mockRead = read({ overview });
+    const brought = within(render(<ProgressScreen />).getByTestId('progress-carryovers'));
+    expect(brought.getByText('Brought with you')).toBeTruthy();
+    expect(brought.getByText('Water')).toBeTruthy();
+  });
+
+  it('heads the wave with its latest share and reads the latest point by default', () => {
+    const tree = render(<ProgressScreen />);
+    const wave = within(tree.getByTestId('progress-wave'));
+    expect(wave.getByText('Scheduled kept, last 7 days')).toBeTruthy();
+    expect(tree.getByTestId('progress-wave-value')).toHaveTextContent(/ · \d+% · 14 of 21 kept$/);
   });
 
   it('words the rhythm in facts, never a phase name', () => {
     const tree = render(<ProgressScreen />);
     expect(tree.getByTestId('progress-rhythm-caption')).toHaveTextContent(
-      /^Your fullest fortnight was late June\. You rested from 3 August to 24 August\./,
+      /^Your fullest week was late June\. You rested from 3 August to 24 August\./,
     );
     expect(JSON.stringify(tree.toJSON())).not.toMatch(
       /streak|broken|missed|lost|expansion|contraction|peak|trough/i,
@@ -118,8 +163,8 @@ describe('ProgressScreen', () => {
     for (const label of [
       /^The 36-week arc in ten stages\./,
       /^Your rhythm over 60 days/,
-      /^Per stage, the share of scheduled days kept in cycle 1 and cycle 2\./,
-      /^Net energy per week for 12 weeks/,
+      /^Per stage, the share of scheduled asks kept in cycle 1 and cycle 2\./,
+      /^Net energy for 12 weeks/,
     ]) {
       expect(tree.getAllByLabelText(label).length).toBeGreaterThan(0);
     }

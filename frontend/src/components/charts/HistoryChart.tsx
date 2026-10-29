@@ -3,47 +3,59 @@ import { Pressable, StyleSheet, Text, View } from 'react-native';
 
 import { ChartFrame, useChartSize } from './ChartFrame';
 import { chartStyles } from './chartStyles';
-import { pointTableRows } from './DotStrip';
-import { HistoryPlot } from './HistoryPlot';
-import type { ChartBaseProps, ChartPoint } from './types';
+import { formatHistoryValue, HistoryPlot, VALUE_AXIS_WIDTH } from './HistoryPlot';
+import type { ChartBaseProps, ChartPoint, ChartTableRow } from './types';
 import { useHistoryInspection } from './useHistoryInspection';
 
 import { accent, chartLayout, ink } from '@/design/tokens';
 
-const COMPACT_HEIGHT = 72;
+const COMPACT_HEIGHT = 56;
 export interface HistoryChartProps extends ChartBaseProps {
   points: readonly ChartPoint[];
+  /** What is plotted: the header row's title and the table's value column. */
   measure: string;
+  /** Spoken after each figure in the readout and the header, e.g. `sets a day`. */
+  unit?: string;
+  /** How a value is written on the axis, in the readout and in the table. */
+  format?: (_value: number) => string;
+  /** The current figure shown on the header row. */
+  aside?: string;
   color?: string;
   max?: number;
+  /**
+   * A sparkline for a list of rows that share one date range: no value axis,
+   * no date ticks, and a readout only while a point is selected.
+   */
   compact?: boolean;
   variant?: 'line' | 'columns';
 }
 
 type Inspection = ReturnType<typeof useHistoryInspection>;
-function HistoryLabels({
-  points,
+
+function DateTicks({ points }: { points: readonly ChartPoint[] }) {
+  return (
+    <View style={chartStyles.axis}>
+      <Text style={chartStyles.tick}>{points[0]?.label}</Text>
+      {points.length > 1 ? <Text style={chartStyles.tick}>{points.at(-1)?.label}</Text> : null}
+    </View>
+  );
+}
+
+/** The selected point, or the latest one until a reader picks another. */
+function Readout({
   compact,
   inspection,
   testID,
-}: Pick<HistoryChartProps, 'points' | 'compact' | 'testID'> & { inspection: Inspection }) {
+}: {
+  compact: boolean;
+  inspection: Inspection;
+  testID?: string;
+}) {
+  if (compact && inspection.selected === null) return null;
   return (
-    <>
-      <View style={chartStyles.axis}>
-        <Text style={chartStyles.tick}>{points[0]?.label}</Text>
-        {!compact ? <Text style={chartStyles.caption}>Date</Text> : null}
-        {points.length > 1 ? <Text style={chartStyles.tick}>{points.at(-1)?.label}</Text> : null}
-      </View>
-      {inspection.selected === null ? (
-        !compact ? (
-          <Text style={chartStyles.caption}>Hover or tap to explore values.</Text>
-        ) : null
-      ) : (
-        <Text testID={`${testID}-value`} style={[chartStyles.tick, styles.detail]}>
-          {inspection.detail}
-        </Text>
-      )}
-    </>
+    <Text testID={`${testID}-value`} style={[chartStyles.tick, styles.detail]}>
+      {inspection.detail}
+    </Text>
   );
 }
 
@@ -80,51 +92,105 @@ function HistoryInspector({
   );
 }
 
+const tableRows = (
+  points: readonly ChartPoint[],
+  format: (_value: number) => string,
+): ChartTableRow[] =>
+  points.map((point) => ({
+    label: point.label,
+    values: [format(point.value), ...(point.stateLabel ? [point.stateLabel] : [])],
+  }));
+
+interface HistoryModelInput {
+  points: readonly ChartPoint[];
+  unit?: string;
+  format: (_value: number) => string;
+  max?: number;
+  compact: boolean;
+  columns: boolean;
+  width?: number;
+  height?: number;
+}
+
+/** Geometry, domain and inspection for one history, independent of how it is framed. */
+function useHistoryModel({
+  points,
+  unit,
+  format,
+  max,
+  compact,
+  columns,
+  ...box
+}: HistoryModelInput) {
+  const size = useChartSize(
+    box.width,
+    box.height ?? (compact ? COMPACT_HEIGHT : chartLayout.height),
+  );
+  const axisWidth = compact ? 0 : VALUE_AXIS_WIDTH;
+  const figure = (value: number) => (unit ? `${format(value)} ${unit}` : format(value));
+  const values = points.map((point) => point.value);
+  const min = Math.min(0, ...values);
+  const maximum = Math.max(max ?? 0, ...values) || (min < 0 ? 0 : 1);
+  const inspection = useHistoryInspection(points, figure, {
+    width: size.width,
+    axisWidth,
+    columns,
+  });
+  return { size, axisWidth, figure, min, maximum, inspection };
+}
+
+type HistoryModel = ReturnType<typeof useHistoryModel>;
+
+const plotBounds = (model: HistoryModel) => ({
+  width: model.size.width,
+  height: model.size.height,
+  min: model.min,
+  max: model.maximum,
+  selected: model.inspection.selected,
+  axisWidth: model.axisWidth,
+});
+
 /** One inspectable timeline for native touch, web hover, keyboard and table readers. */
 export function HistoryChart({
   points,
   measure,
+  unit,
+  format = formatHistoryValue,
+  aside,
   color = accent.primary,
   max,
   compact = false,
   variant = 'line',
   ...base
 }: HistoryChartProps) {
-  const height = base.height ?? (compact ? COMPACT_HEIGHT : chartLayout.height);
-  const size = useChartSize(base.width, height);
-  const min = Math.min(0, ...points.map((point) => point.value));
-  const maximum = Math.max(max ?? 0, ...points.map((point) => point.value)) || (min < 0 ? 0 : 1);
-  const inspection = useHistoryInspection(points, measure, size.width, variant === 'columns');
-  const bounds = { width: size.width, height: size.height, min, max: maximum };
+  const columns = variant === 'columns';
+  const model = useHistoryModel({ ...base, points, unit, format, max, compact, columns });
   return (
     <ChartFrame
       {...base}
-      onLayout={size.onLayout}
+      onLayout={model.size.onLayout}
       interactive
-      rows={pointTableRows(points)}
+      title={measure}
+      aside={aside}
+      rows={tableRows(points, model.figure)}
       headers={[measure, 'Details']}
     >
-      <Text style={chartStyles.caption}>{measure}</Text>
       <HistoryInspector
         points={points}
         summary={base.summary}
         testID={base.testID}
-        inspection={inspection}
+        inspection={model.inspection}
       >
         <HistoryPlot
+          {...plotBounds(model)}
           points={points}
-          {...bounds}
           color={color}
           variant={variant}
-          selected={inspection.selected}
+          format={format}
         />
       </HistoryInspector>
-      <HistoryLabels
-        points={points}
-        compact={compact}
-        inspection={inspection}
-        testID={base.testID}
-      />
+      {compact ? null : <DateTicks points={points} />}
+      <Readout compact={compact} inspection={model.inspection} testID={base.testID} />
     </ChartFrame>
   );
 }

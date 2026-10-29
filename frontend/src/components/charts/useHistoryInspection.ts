@@ -1,10 +1,8 @@
 import { useState, type KeyboardEvent, type MouseEvent } from 'react';
 import { Platform } from 'react-native';
 
-import { formatHistoryValue, VALUE_AXIS_WIDTH } from './HistoryPlot';
+import { plotExtent } from './HistoryPlot';
 import type { ChartPoint } from './types';
-
-import { chartLayout } from '@/design/tokens';
 
 function webInspection(
   selectAt: (_location: number) => void,
@@ -26,19 +24,28 @@ function webInspection(
   };
 }
 
+/** How the readout names one point: its date, its figure, and its context. */
+export const pointDetail = (point: ChartPoint, figure: string): string =>
+  [point.label, figure, point.stateLabel].filter(Boolean).join(' · ');
+
+interface InspectionGeometry {
+  width: number;
+  axisWidth: number;
+  columns: boolean;
+}
+
 export function useHistoryInspection(
   points: readonly ChartPoint[],
-  measure: string,
-  width: number,
-  columns: boolean,
+  figure: (_value: number) => string,
+  { width, axisWidth, columns }: InspectionGeometry,
 ) {
   const [selected, setSelected] = useState<number | null>(null);
   const index = Math.min(selected ?? points.length - 1, points.length - 1);
   const point = points[index];
   const selectAt = (location: number) => {
     if (!Number.isFinite(location)) return;
-    const extent = Math.max(1, width - VALUE_AXIS_WIDTH - chartLayout.plotInset);
-    const ratio = Math.max(0, Math.min(1, (location - VALUE_AXIS_WIDTH) / extent));
+    const extent = plotExtent(width, axisWidth);
+    const ratio = Math.max(0, Math.min(1, (location - axisWidth) / extent));
     const next = columns
       ? Math.min(points.length - 1, Math.floor(ratio * points.length))
       : Math.round(ratio * Math.max(0, points.length - 1));
@@ -46,9 +53,7 @@ export function useHistoryInspection(
   };
   const move = (offset: number) =>
     setSelected(Math.max(0, Math.min(points.length - 1, index + offset)));
-  const detail = point
-    ? `${point.label} · ${formatHistoryValue(point.value)} ${measure.toLowerCase()}${point.stateLabel ? ` · ${point.stateLabel}` : ''}`
-    : 'No history yet.';
+  const detail = point ? pointDetail(point, figure(point.value)) : 'No history yet.';
   return {
     selected: selected === null ? null : index,
     index,
