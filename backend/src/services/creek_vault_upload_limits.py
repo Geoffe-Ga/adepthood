@@ -11,12 +11,23 @@ The body is measured exactly as the HTTP transport serializes it: httpx encodes
 :func:`encoded_upload_body` reproduces those settings. A regression test pins
 the two byte-for-byte, so a transport upgrade that changed its encoding fails
 loudly rather than letting this bound drift from the wire.
+
+**The operator's vault-send suspension outranks this bound** (#3618). Both stop
+the document before the wire, so the choice is only which reason the caller
+hears, and the suspension is the true one: nothing is being sent from this
+deployment at all, and "shrink the document" would be advice no action of the
+user's can follow. While ``PRIVACY_SUSPEND_VAULT_SEND`` is on the bound is
+therefore not measured, and the adapter's single request site refuses the call
+as suspended -- the one place that refusal is raised, so it is not restated
+here.
 """
 
 from __future__ import annotations
 
 import json
 from collections.abc import Mapping
+
+from services.privacy_suspension import vault_send_suspended
 
 # Fly replay bounds the entire JSON body, including base64 and metadata.
 MANAGED_UPLOAD_BODY_BYTES = 1024 * 1024
@@ -42,6 +53,10 @@ def guard_managed_upload_body(body: Mapping[str, object], *, managed: bool) -> N
 
     A self-hosted vault (``managed`` false) is not reached through the replay,
     so its uploads keep the application's own cap and are never measured here.
+    Nor is any body while vault sends are suspended: that refusal outranks this
+    one, and the request site raises it next (see the module docstring).
     """
-    if managed and len(encoded_upload_body(body)) > MANAGED_UPLOAD_BODY_BYTES:
+    if not managed or vault_send_suspended():
+        return
+    if len(encoded_upload_body(body)) > MANAGED_UPLOAD_BODY_BYTES:
         raise ManagedUploadTooLargeError

@@ -28,9 +28,9 @@ working under every switch; the draft incident runbook
 (``docs/ops/privacy-incident-response.md``) says what each refuses and what
 continues.
 
-This module imports nothing from ``services`` so the two leaves that consult it
-(:mod:`services.botmason` and :mod:`services.creek_vault_client`) can do so
-without an import cycle.
+This module imports nothing from ``services`` so the leaves that consult it
+(:mod:`services.botmason`, :mod:`services.creek_vault_client` and
+:mod:`services.creek_vault_upload_limits`) can do so without an import cycle.
 """
 
 from __future__ import annotations

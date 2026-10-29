@@ -494,7 +494,10 @@ async def import_corpus_document(
     undecodable document is refused as such whether or not the account has a
     vault. It is the only thing done with the document on the no-vault answer.
     A managed upload whose encoded request exceeds the replay body limit is
-    refused with 413 and managed_document_too_large before transmission.
+    refused with 413 and managed_document_too_large before transmission --
+    the one non-202 answer the vault branch gives -- unless the operator has
+    suspended vault sends, in which case the suspension wins and the document
+    degrades like any other unsent upload (#3618).
 
     The commit is here rather than in the service because the service commits
     nothing and the caller owns the transaction. The vault ontologization pass
