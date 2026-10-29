@@ -1,4 +1,4 @@
-import { StyleSheet } from 'react-native';
+import { StyleSheet, type TextStyle } from 'react-native';
 
 import {
   chartLayout,
@@ -9,6 +9,9 @@ import {
   surface,
   touchTarget,
 } from '@/design/tokens';
+
+/** Figures in a column line up digit for digit. */
+const TABULAR: TextStyle['fontVariant'] = ['tabular-nums'];
 
 export const chartStyles = StyleSheet.create({
   frame: { alignSelf: 'stretch', maxWidth: '100%', minWidth: 0, gap: SPACING.sm },
@@ -23,7 +26,7 @@ export const chartStyles = StyleSheet.create({
     fontFamily: fonts.sans,
     fontSize: chartLayout.labelSize,
     color: ink.muted,
-    fontVariant: ['tabular-nums'],
+    fontVariant: TABULAR,
     flexShrink: 1,
   },
   legend: { flexDirection: 'row', flexWrap: 'wrap', gap: SPACING.md },
@@ -59,7 +62,7 @@ export const chartStyles = StyleSheet.create({
   number: {
     fontFamily: fonts.sans,
     fontSize: chartLayout.labelSize,
-    fontVariant: ['tabular-nums'],
+    fontVariant: TABULAR,
     color: ink.soft,
   },
   barLine: { flexDirection: 'row', alignItems: 'center', gap: chartLayout.plotInset, minWidth: 0 },
@@ -71,16 +74,20 @@ export const chartStyles = StyleSheet.create({
     flexShrink: 1,
     maxWidth: '100%',
   },
-  controls: { alignSelf: 'flex-end' },
-  control: {
-    minHeight: touchTarget.minimum,
-    justifyContent: 'center',
-    paddingHorizontal: SPACING.sm,
-  },
-  controlLabel: {
-    color: ink.primary,
-    fontSize: INTERACTIVE_TEXT_MIN,
+  header: { flexDirection: 'row', alignItems: 'center', gap: SPACING.sm, minWidth: 0 },
+  headerTitle: { flex: 1 },
+  aside: {
     fontFamily: fonts.sans,
+    fontSize: INTERACTIVE_TEXT_MIN,
+    fontVariant: TABULAR,
+    color: ink.primary,
+  },
+  control: {
+    minWidth: touchTarget.minimum,
+    minHeight: touchTarget.minimum,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginRight: -SPACING.sm,
   },
   tooltip: {
     backgroundColor: surface.raised,

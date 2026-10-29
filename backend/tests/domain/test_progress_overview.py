@@ -6,7 +6,7 @@ from datetime import UTC, date, datetime, timedelta
 import pytest
 
 from domain.progress_overview import OverviewHabitContext, OverviewInput, build_progress_overview
-from domain.streaks import PeriodCadence, PeriodUnit
+from domain.streaks import PeriodCadence
 from models.goal import Goal
 from models.goal_completion import GoalCompletion
 from models.habit import Habit
@@ -28,17 +28,18 @@ def _input(days: int = 1) -> OverviewInput:
     )
 
 
-def _habit(identifier: int = 1, *, start: date = START) -> Habit:
-    """A retained habit with a canonical colour stage and positive energy."""
+def _habit(identifier: int = 1, *, start: date = START, stage: str = "Beige") -> Habit:
+    """An unlocked habit on the first stage, open from the anchor, with positive energy."""
     return Habit(
         id=identifier,
         user_id=1,
         name=f"Habit {identifier}",
         icon="pen",
         start_date=start,
-        stage="Blue",
+        stage=stage,
         energy_cost=2,
         energy_return=5,
+        revealed=True,
     )
 
 
@@ -80,8 +81,13 @@ def test_unknown_anchor_keeps_dates_unknown_and_read_only() -> None:
 
 
 def test_arc_uses_ten_native_durations_and_canonical_birth_stage() -> None:
-    """Week23 remains inside Teal; birth labels use colour identity."""
-    data = replace(_input(155), habits=[_habit()], aspects={4: "Community"}, practice_asks={4: 15})
+    """Week23 remains inside Teal; a Blue habit is born when Blue opens, in week ten."""
+    data = replace(
+        _input(155),
+        habits=[_habit(stage="Blue")],
+        aspects={4: "Community"},
+        practice_asks={4: 15},
+    )
     result = build_progress_overview(data)
     assert result.arc.current_week == 23
     assert [stage.weeks for stage in result.arc.stages] == [3] * 8 + [6, 6]
@@ -89,7 +95,7 @@ def test_arc_uses_ten_native_durations_and_canonical_birth_stage() -> None:
     assert result.arc.stages[3].practice_ask_minutes == 15
     assert result.arc.stages[-1].opens_on == START + timedelta(weeks=30)
     assert result.arc.habit_births[0].stage_number == 4
-    assert result.arc.habit_births[0].week == 1
+    assert result.arc.habit_births[0].week == 10
 
 
 @pytest.mark.parametrize(("offset", "week"), [(251, 36), (252, None), (294, None)])
@@ -150,8 +156,8 @@ def test_legacy_null_anchor_does_not_infer_dates_or_carryover(stored: bool) -> N
     assert result.rhythm.days == []
 
 
-def test_scheduled_days_and_mean_of_daily_fractions_have_raw_denominators() -> None:
-    """The rolling mean is not a ratio of pooled habit opportunities."""
+def test_rate_pools_the_trailing_week_of_scheduled_asks() -> None:
+    """The wave is kept asks over scheduled asks, both carried for the client."""
     first, second = _habit(), _habit(2)
     first.notification_days = ["Mon", "Wed", "Fri"]
     second.start_date = START + timedelta(days=1)
@@ -161,23 +167,142 @@ def test_scheduled_days_and_mean_of_daily_fractions_have_raw_denominators() -> N
         _input(2), habits=[first, second], goals=[_goal(), goal], completions=[_completion(START)]
     )
     days = build_progress_overview(data).rhythm.days
-    assert [(day.daily_met, day.daily_scheduled, day.window_days) for day in days] == [
-        (1, 1, 1),
-        (0, 1, 2),
-    ]
+    assert [
+        (day.daily_met, day.daily_scheduled, day.window_met, day.window_scheduled, day.window_days)
+        for day in days
+    ] == [(1, 1, 1, 1, 1), (0, 1, 1, 2, 2)]
     assert [day.rate for day in days] == [1, 0.5]
 
 
-def test_rolling_window_drops_old_values_and_fullest_requires_fourteen_days() -> None:
-    """Partial opening windows cannot claim the fullest fortnight."""
-    data = replace(_input(15), habits=[_habit()], goals=[_goal()], completions=[_completion(START)])
+def test_rolling_window_is_seven_days_and_fullest_requires_a_whole_week() -> None:
+    """Partial opening windows cannot claim the fullest week."""
+    data = replace(_input(8), habits=[_habit()], goals=[_goal()], completions=[_completion(START)])
     result = build_progress_overview(data)
-    assert result.rhythm.days[-1].rate == 0
-    assert result.rhythm.days[-1].window_days == 14
-    assert result.rhythm.fullest_fortnight_ending == START + timedelta(days=13)
-    assert (
-        build_progress_overview(replace(data, today=START)).rhythm.fullest_fortnight_ending is None
+    last = result.rhythm.days[-1]
+    assert (last.rate, last.window_days, last.window_met, last.window_scheduled) == (0, 7, 0, 7)
+    assert result.rhythm.days[-2].window_met == 1
+    assert result.rhythm.fullest_week_ending == START + timedelta(days=6)
+    assert build_progress_overview(replace(data, today=START)).rhythm.fullest_week_ending is None
+
+
+def test_a_locked_habit_is_never_scheduled() -> None:
+    """Twelve seeded habits are not twelve asks: only the unlocked ones are."""
+    locked = _habit(2)
+    locked.revealed = False
+    goal = _goal(2)
+    goal.habit_id = 2
+    data = replace(_input(), habits=[_habit(), locked], goals=[_goal(), goal])
+    assert build_progress_overview(data).rhythm.days[0].daily_scheduled == 1
+
+
+def test_a_laddered_habit_joins_when_its_stage_opens_not_at_a_stale_start_date() -> None:
+    """A template start date long before the anchor cannot make day one ask for it."""
+    habit = _habit(start=date(2025, 4, 1), stage="Purple")
+    data = replace(_input(23), habits=[habit], goals=[_goal()])
+    days = build_progress_overview(data).rhythm.days
+    assert [day.daily_scheduled for day in days] == [0] * 21 + [1, 1]
+    assert build_progress_overview(data).arc.habit_births[0].week == 4
+
+
+@pytest.mark.parametrize("early", ["unlocked", "logged"])
+def test_unlocking_or_logging_before_the_stage_opens_joins_that_day(early: str) -> None:
+    """The person may take a later habit on sooner than the ladder offers it."""
+    habit = _habit(start=date(2025, 4, 1), stage="Purple")
+    rows = []
+    if early == "unlocked":
+        habit.auto_revealed_at = datetime(2026, 1, 9, 12, tzinfo=UTC)
+    else:
+        rows = [_completion(START + timedelta(days=4))]
+    data = replace(_input(6), habits=[habit], goals=[_goal()], completions=rows)
+    days = build_progress_overview(data).rhythm.days
+    assert [day.daily_scheduled for day in days] == [0, 0, 0, 0, 1, 1]
+    assert build_progress_overview(data).arc.habit_births[0].week == 1
+
+
+def _weekly(target: float = 9, frequency: float = 2) -> Goal:
+    """Lifting: nine sets, twice a week."""
+    goal = _goal(target=target)
+    goal.target_unit, goal.frequency, goal.frequency_unit = "sets", frequency, "per_week"
+    return goal
+
+
+def _weekly_context(*, subtractive: bool = False) -> dict[int, OverviewHabitContext]:
+    """The canonical weekly cadence the router derives for habit 1."""
+    cadence = PeriodCadence(
+        unit="per_week", period_target=18, start_date=START, subtractive=subtractive
     )
+    return {1: OverviewHabitContext(cadence=cadence, subtractive=subtractive)}
+
+
+def test_a_twice_weekly_habit_asks_twice_a_week_not_every_day() -> None:
+    """Each kept occasion counts on its day; the shortfall lands on a finished Sunday."""
+    rows = [_completion(START + timedelta(days=1), 9), _completion(START + timedelta(days=8), 9)]
+    data = replace(
+        _input(15),
+        habits=[_habit()],
+        goals=[_weekly()],
+        completions=rows,
+        habit_contexts=_weekly_context(),
+    )
+    days = build_progress_overview(data).rhythm.days
+    pairs = [(day.daily_met, day.daily_scheduled) for day in days]
+    assert pairs[1] == pairs[8] == (1, 1)
+    assert pairs[6] == pairs[13] == (0, 1)
+    assert sum(pair[1] for pair in pairs) == 4
+    assert days[-1].window_scheduled == 2
+
+
+def test_a_big_day_keeps_one_occasion_and_a_short_day_keeps_none() -> None:
+    """An occasion is a day at Low; logging three sessions' worth is still one day."""
+    rows = [
+        _completion(START, 8),
+        _completion(START + timedelta(days=1), 27),
+    ]
+    data = replace(
+        _input(8),
+        habits=[_habit()],
+        goals=[_weekly()],
+        completions=rows,
+        habit_contexts=_weekly_context(),
+    )
+    pairs = [
+        (day.daily_met, day.daily_scheduled) for day in build_progress_overview(data).rhythm.days
+    ]
+    assert pairs[:2] == [(0, 0), (1, 1)]
+    assert pairs[6] == (0, 1)
+
+
+def test_the_current_week_has_no_shortfall_until_it_is_over() -> None:
+    """On Sunday itself there is still time; the ask lands on Monday's read."""
+    data = replace(
+        _input(7), habits=[_habit()], goals=[_weekly()], habit_contexts=_weekly_context()
+    )
+    assert build_progress_overview(data).rhythm.days[-1].daily_scheduled == 0
+    later = build_progress_overview(replace(data, today=START + timedelta(days=7)))
+    assert later.rhythm.days[6].daily_scheduled == 2
+    mixed = _weekly(frequency=3)
+    mixed.frequency_unit = "per_day"
+    daily_low = replace(data, goals=[mixed], today=START + timedelta(days=7))
+    assert build_progress_overview(daily_low).rhythm.days[6].daily_scheduled == 1
+
+
+@pytest.mark.parametrize(("units", "met"), [(3, 1), (40, 0)])
+def test_a_weekly_limit_is_one_ask_judged_when_the_week_ends(units: float, met: int) -> None:
+    """A subtractive week is kept when its total stays within any named tier."""
+    goal = _weekly(target=2, frequency=2)
+    goal.is_additive = False
+    data = replace(
+        _input(8),
+        habits=[_habit()],
+        goals=[goal],
+        completions=[_completion(START + timedelta(days=2), units)],
+        habit_contexts=_weekly_context(subtractive=True),
+    )
+    pairs = [
+        (day.daily_met, day.daily_scheduled) for day in build_progress_overview(data).rhythm.days
+    ]
+    assert pairs[6] == (met, 1)
+    assert sum(pair[1] for pair in pairs) == 1
 
 
 def test_practice_counts_positive_partial_once_per_local_day() -> None:
@@ -220,35 +345,6 @@ def test_disabled_rings_contribute_no_populations() -> None:
     assert result.rhythm.days[0].rate == 0
     assert result.arc.habit_births == []
     assert all(week.net == 0 for week in result.energy.weeks)
-
-
-@pytest.mark.parametrize("subtractive", [False, True])
-@pytest.mark.parametrize("unit", ["per_week", "per_month"])
-@pytest.mark.parametrize("units", [3, 5])
-def test_periods_use_whole_native_total_and_each_tiers_own_target(
-    unit: PeriodUnit, subtractive: bool, units: int
-) -> None:
-    """Daily grid observations mirror the containing period's outcome."""
-    low = _goal()
-    clear = _goal(2, tier="clear", target=1 if subtractive else 3)
-    for goal in [low, clear]:
-        goal.frequency_unit, goal.frequency, goal.is_additive = unit, 2, not subtractive
-    cadence = PeriodCadence(
-        unit=unit,
-        period_target=clear.target * clear.frequency,
-        start_date=START,
-        subtractive=subtractive,
-    )
-    data = replace(
-        _input(3),
-        habits=[_habit()],
-        goals=[low, clear],
-        completions=[_completion(START, 2), _completion(START + timedelta(days=2), units - 2)],
-        habit_contexts={1: OverviewHabitContext(cadence=cadence, subtractive=subtractive)},
-    )
-    days = build_progress_overview(data).rhythm.days
-    expected = units <= 4 if subtractive else units >= 4
-    assert [day.daily_met for day in days] == [int(expected)] * 3
 
 
 def test_daily_polarity_is_habit_wide_not_selected_tier() -> None:
@@ -378,13 +474,13 @@ def test_overview_words_its_rhythm_facts_as_one_caption() -> None:
     assert result.observations == ["You rested from 2 February to 13 September."]
 
 
-def test_a_kept_fortnight_is_named_in_the_caption() -> None:
-    """Once the wave rises, its fullest fortnight leads the caption."""
+def test_a_kept_week_is_named_in_the_caption() -> None:
+    """Once the wave rises, its fullest week leads the caption."""
     rows = [_completion(START + timedelta(days=n)) for n in range(14)]
     result = build_progress_overview(
         replace(_input(30), habits=[_habit()], goals=[_goal()], completions=rows)
     )
-    assert result.observations[0].startswith("Your fullest fortnight was mid January.")
+    assert result.observations[0].startswith("Your fullest week was mid January.")
 
 
 def test_an_early_overview_says_when_the_rhythm_appears() -> None:
@@ -465,9 +561,29 @@ def test_unit_history_stops_at_the_programme_boundary_and_keeps_explicit_carryov
 
 
 def test_recorded_adoption_stage_survives_an_offset_programme_anchor() -> None:
-    """Week-three Frequency Practice is still Purple when that is its stored stage."""
-    habit = _habit(start=START + timedelta(weeks=2))
-    habit.stage = "Purple"
+    """A Purple habit dated week three joins when Purple opens, in week four."""
+    habit = _habit(start=START + timedelta(weeks=2), stage="Purple")
     birth = build_progress_overview(replace(_input(30), habits=[habit])).arc.habit_births[0]
-    assert birth.week == 3
+    assert birth.week == 4
     assert birth.stage_number == 2
+
+
+def test_unit_history_carries_a_seven_day_average_and_omits_unlogged_measures() -> None:
+    """Spiky days are smoothed beside the raw amount; an unused measure is not drawn."""
+    unused = _goal(2, tier="clear")
+    unused.target_unit = "reps"
+    data = replace(
+        _input(9),
+        habits=[_habit()],
+        goals=[_goal(), unused],
+        completions=[_completion(START, 7), _completion(START + timedelta(days=7), 14)],
+    )
+    histories = build_progress_overview(data).arc.habit_births[0].unit_histories
+    assert [history.unit for history in histories] == ["pages"]
+    days = histories[0].days
+    assert [day.units for day in days[:2]] == [7, 0]
+    assert days[0].average == 7
+    assert days[1].average == 3.5
+    assert days[6].average == 1
+    assert days[7].average == 2
+    assert days[8].average == 2

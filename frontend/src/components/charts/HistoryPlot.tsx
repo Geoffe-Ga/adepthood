@@ -9,8 +9,18 @@ import { chartLayout, fonts, ink, SPACING, surface } from '@/design/tokens';
 
 /** Space for a signed value axis, independent of a phone's available width. */
 export const VALUE_AXIS_WIDTH = 48;
+/** At or above this magnitude a figure is shown whole; below it, to one decimal. */
+const WHOLE_FIGURE_FROM = 10;
+
+/**
+ * A figure a person can read at a glance: whole from ten, one decimal below.
+ * Six decimals of a 7-day mean (`1.285714`) is noise, and in the axis gutter
+ * its leading digits were clipped into a nonsense `285714`.
+ */
 export const formatHistoryValue = (value: number): string =>
-  new Intl.NumberFormat('en-GB', { maximumFractionDigits: 6 }).format(value);
+  new Intl.NumberFormat('en-GB', {
+    maximumFractionDigits: Math.abs(value) >= WHOLE_FIGURE_FROM ? 0 : 1,
+  }).format(value);
 
 interface HistoryPlotProps {
   points: readonly ChartPoint[];
@@ -21,6 +31,9 @@ interface HistoryPlotProps {
   color: string;
   variant: 'line' | 'columns';
   selected: number | null;
+  /** Gutter for the value axis; 0 draws a bare sparkline with only its baseline. */
+  axisWidth: number;
+  format: (_value: number) => string;
 }
 
 function ValueAxis({
@@ -28,7 +41,8 @@ function ValueAxis({
   max,
   width,
   height,
-}: Pick<HistoryPlotProps, 'min' | 'max' | 'width' | 'height'>) {
+  format,
+}: Pick<HistoryPlotProps, 'min' | 'max' | 'width' | 'height' | 'format'>) {
   return (
     <>
       {[...new Set([max, 0, min])].map((value) => (
@@ -50,7 +64,7 @@ function ValueAxis({
             fontFamily={fonts.sans}
             fill={ink.muted}
           >
-            {formatHistoryValue(value)}
+            {format(value)}
           </SvgText>
         </G>
       ))}
@@ -129,16 +143,39 @@ function Cursor({ points, width, height, min, max, color, variant, selected }: H
   );
 }
 
+function Baseline({
+  width,
+  height,
+  min,
+  max,
+}: Pick<HistoryPlotProps, 'width' | 'height' | 'min' | 'max'>) {
+  const y = domainY(0, min, max, height);
+  return (
+    <Line
+      x1={0}
+      x2={width}
+      y1={y}
+      y2={y}
+      stroke={surface.hairline}
+      strokeWidth={chartLayout.hairlineWidth}
+    />
+  );
+}
+
+/** Horizontal room the plot leaves for its axis gutter and right inset. */
+export const plotExtent = (width: number, axisWidth: number): number =>
+  Math.max(1, width - axisWidth - chartLayout.plotInset);
+
 export function HistoryPlot(props: HistoryPlotProps) {
   const plot = {
     ...props,
-    width: Math.max(1, props.width - VALUE_AXIS_WIDTH - chartLayout.plotInset),
+    width: plotExtent(props.width, props.axisWidth),
     height: Math.max(1, props.height - 2 * chartLayout.plotInset),
   };
   return (
     <Plot width={props.width} height={props.height}>
-      <G x={VALUE_AXIS_WIDTH} y={chartLayout.plotInset}>
-        <ValueAxis {...plot} />
+      <G x={props.axisWidth} y={chartLayout.plotInset}>
+        {props.axisWidth > 0 ? <ValueAxis {...plot} /> : <Baseline {...plot} />}
         <Series {...plot} />
         <Cursor {...plot} />
       </G>

@@ -31,8 +31,8 @@ const ARC: ApiProgressOverview['arc'] = {
         {
           unit: 'pages',
           days: [
-            { date: '2026-05-18', units: 0 },
-            { date: '2026-05-19', units: 2 },
+            { date: '2026-05-18', units: 0, average: 0 },
+            { date: '2026-05-19', units: 2, average: 1 },
           ],
         },
       ],
@@ -57,9 +57,11 @@ const rhythm = (): ApiProgressOverview['rhythm'] => ({
     rate: 0.4 + 0.3 * Math.sin(index / RHYTHM_PERIOD),
     daily_met: 2,
     daily_scheduled: 3,
-    window_days: 14,
+    window_met: 14,
+    window_scheduled: 21,
+    window_days: 7,
   })),
-  fullest_fortnight_ending: '2026-06-26',
+  fullest_week_ending: '2026-06-26',
   longest_rest: { start: '2026-08-03', end: '2026-08-24' },
   rising_since: '2026-09-14',
 });

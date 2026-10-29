@@ -16,10 +16,14 @@ class ArcStage(BaseModel):
 
 
 class HabitUnitsDay(BaseModel):
-    """Actual units logged on one user-local day, including quiet zero days."""
+    """Units logged on one user-local day and the trailing seven-day mean."""
 
     date: date
     units: float = Field(ge=0)
+    average: float = Field(
+        ge=0,
+        description="Mean daily units over this day and up to six before it in this pass.",
+    )
 
 
 class HabitUnitHistory(BaseModel):
@@ -60,25 +64,21 @@ class ProgressArc(BaseModel):
 
 
 class RhythmDay(BaseModel):
-    """A trailing mean of daily fractions, with the raw daily opportunity pair."""
+    """The trailing seven days' pooled share of scheduled asks kept."""
 
     date: date
-    rate: float = Field(ge=0, le=1)
+    rate: float = Field(ge=0, le=1, description="window_met / window_scheduled; 0 when none.")
     daily_met: int = Field(
         ge=0,
-        description=(
-            "Scheduled habits meeting Low, Clear, or Stretch plus at most one counted practice day."
-        ),
+        description="Asks kept this day: habits at Low or above, occasions, one counted sit.",
     )
     daily_scheduled: int = Field(
         ge=0,
-        description="Scheduled habit opportunities plus one when the practice ring is enabled.",
+        description="Asks this day from joined, unlocked habits plus one with the practice ring.",
     )
-    window_days: int = Field(
-        ge=1,
-        le=14,
-        description="Calendar days in this trailing mean; not a ratio of pooled counts.",
-    )
+    window_met: int = Field(ge=0, description="Asks kept over the trailing window.")
+    window_scheduled: int = Field(ge=0, description="Asks scheduled over the trailing window.")
+    window_days: int = Field(ge=1, le=7, description="Calendar days in the trailing window.")
 
 
 class RestWindow(BaseModel):
@@ -92,7 +92,7 @@ class ProgressRhythm(BaseModel):
     """The unnamed engagement wave and factual calendar observations."""
 
     days: list[RhythmDay]
-    fullest_fortnight_ending: date | None
+    fullest_week_ending: date | None
     longest_rest: RestWindow | None
     rising_since: date | None
 

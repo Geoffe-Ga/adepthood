@@ -93,7 +93,7 @@ class PracticeFacts:
 class RhythmFacts:
     """The overview's rhythm facts and how many days the series spans."""
 
-    fullest_fortnight_ending: date | None
+    fullest_week_ending: date | None
     longest_rest: tuple[date, date] | None
     rising_since: date | None
     series_days: int
@@ -379,9 +379,9 @@ def practice_milestones(
 
 
 def _fullest(facts: RhythmFacts, today: date) -> str | None:
-    """The fortnight that held the most, by its part of the month."""
-    when = facts.fullest_fortnight_ending
-    return f"Your fullest fortnight was {_part_of_month(when, today)}." if when else None
+    """The week that held the most, by its part of the month."""
+    when = facts.fullest_week_ending
+    return f"Your fullest week was {_part_of_month(when, today)}." if when else None
 
 
 def _rest(facts: RhythmFacts, today: date) -> str | None:
@@ -399,7 +399,7 @@ def _rising(facts: RhythmFacts, today: date) -> str | None:
 
 
 def rhythm_observations(facts: RhythmFacts, *, today: date) -> list[str]:
-    """One caption for the unnamed wave (D14): fullest fortnight, longest rest, rise."""
+    """One caption for the unnamed wave (D14): fullest week, longest rest, rise."""
     candidates = (_fullest(facts, today), _rest(facts, today), _rising(facts, today))
     parts = [part for part in candidates if part]
     if parts:

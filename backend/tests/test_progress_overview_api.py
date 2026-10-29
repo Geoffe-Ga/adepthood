@@ -20,6 +20,9 @@ from models.user_depth_preferences import UserDepthPreferences
 from models.user_practice import UserPractice
 from seed_practices import STAGE_TO_PRESET_NAME
 
+#: Index of the first period's last day in a programme anchored Monday 5 January 2026.
+_PERIOD_END = {"per_week": 6, "per_month": 26}
+
 
 async def _signup(client: AsyncClient, name: str) -> tuple[dict[str, str], int]:
     """Use a generated disposable credential, not a detector allowlist."""
@@ -38,9 +41,10 @@ async def _habit(session: AsyncSession, owner: int) -> tuple[Habit, Goal]:
         name=f"Owner {owner}",
         icon="pen",
         start_date=date(2026, 1, 5),
-        stage="Blue",
+        stage="Beige",
         energy_cost=1,
         energy_return=4,
+        revealed=True,
     )
     session.add(habit)
     await session.flush()
@@ -241,10 +245,13 @@ async def test_canonical_context_survives_public_mixed_polarity_goal_edits(
     )
     await db_session.commit()
     days = (await async_client.get("/progress/overview", headers=headers)).json()["rhythm"]["days"]
-    # Exceeding every tier's ceiling stays unmet across the canonical period.
-    assert [day["daily_met"] for day in days[:2]] == (
-        [0, 1] if frequency_unit == "per_day" else [0, 0]
-    )
+    # Exceeding every tier's ceiling stays unmet; a period limit is judged when it ends.
+    pairs = [(day["daily_met"], day["daily_scheduled"]) for day in days]
+    if frequency_unit == "per_day":
+        assert pairs[:2] == [(0, 1), (1, 1)]
+    else:
+        assert pairs[:2] == [(0, 0), (0, 0)]
+        assert pairs[_PERIOD_END[frequency_unit]] == (0, 1)
 
 
 @pytest.mark.asyncio
@@ -312,7 +319,8 @@ async def test_low_uses_its_own_edited_frequency_and_unit(
     days = response.json()["rhythm"]["days"]
     assert days[0]["daily_met"] == expected
     if clear_unit != "per_day":
-        assert days[1]["daily_met"] == expected
+        # An occasion counts on the day it was kept, not on every day of its period.
+        assert (days[1]["daily_met"], days[1]["daily_scheduled"]) == (0, 0)
 
 
 @dataclass(frozen=True)
@@ -360,9 +368,10 @@ async def test_any_qualifying_named_tier_counts_after_a_public_frequency_edit(
         name="Tier edits",
         icon="pen",
         start_date=date(2026, 1, 5),
-        stage="Blue",
+        stage="Beige",
         energy_cost=1,
         energy_return=2,
+        revealed=True,
     )
     db_session.add(habit)
     await db_session.flush()
@@ -410,8 +419,14 @@ async def test_any_qualifying_named_tier_counts_after_a_public_frequency_edit(
     await db_session.commit()
     response = await async_client.get("/progress/overview", headers=headers)
     assert response.status_code == HTTPStatus.OK, response.text
-    days = response.json()["rhythm"]["days"]
-    assert [(day["daily_met"], day["daily_scheduled"]) for day in days[:2]] == [(1, 1), (1, 1)]
+    pairs = [
+        (day["daily_met"], day["daily_scheduled"]) for day in response.json()["rhythm"]["days"]
+    ]
+    if case.additive:
+        assert pairs[:2] == [(1, 1), (0, 0)]
+    else:
+        assert pairs[:2] == [(0, 0), (0, 0)]
+        assert pairs[_PERIOD_END[unit]] == (1, 1)
 
 
 @pytest.mark.asyncio
@@ -424,7 +439,7 @@ async def test_moving_start_preserves_recorded_native_period_units(
     unit: str,
     same_period: bool,
 ) -> None:
-    """A public birth edit moves opportunities, never the actual recorded facts."""
+    """A log before the habit's moved start is neither an ask nor a kept occasion."""
     headers, owner = await _signup(async_client, f"overview_start_edit_{unit}_{same_period}")
     habit, goal = await _habit(db_session, owner)
     habit.start_date = date(2025, 12, 1)
@@ -461,11 +476,14 @@ async def test_moving_start_preserves_recorded_native_period_units(
             "stage": "Blue",
             "energy_cost": 1,
             "energy_return": 4,
+            "revealed": True,
         },
     )
     assert response.status_code == HTTPStatus.OK, response.text
     response = await async_client.get("/progress/overview", headers=headers)
     assert response.status_code == HTTPStatus.OK, response.text
-    days = response.json()["rhythm"]["days"]
-    assert (days[0]["daily_met"], days[0]["daily_scheduled"]) == (0, 0)
-    assert (days[1]["daily_met"], days[1]["daily_scheduled"]) == (int(same_period), 1)
+    pairs = [
+        (day["daily_met"], day["daily_scheduled"]) for day in response.json()["rhythm"]["days"]
+    ]
+    assert pairs[:2] == [(0, 0), (0, 0)]
+    assert pairs[_PERIOD_END[unit]] == (0, 1)

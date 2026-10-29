@@ -12,26 +12,66 @@ const points = [
 ];
 
 describe('inspectable chart history', () => {
-  it('labels its measure and dates, and reveals exact values by tap and accessible adjustment', () => {
+  it('heads with its measure, reads the latest point, and inspects by tap and adjustment', () => {
     const tree = render(
       <HistoryChart
         testID="history"
         points={points}
         measure="Pages completed"
+        unit="pages"
+        aside="1 pages"
         summary="Pages over time."
         width={320}
       />,
     );
     expect(tree.getByText('Pages completed')).toBeTruthy();
-    expect(tree.getByText('Date')).toBeTruthy();
+    expect(tree.getByText('1 pages')).toBeTruthy();
+    expect(tree.queryByText('Date')).toBeNull();
+    expect(tree.getByTestId('history-value')).toHaveTextContent('7 Jan 2026 · 1 pages');
     const plot = tree.getByTestId('history-inspect');
     fireEvent.press(plot, { nativeEvent: { locationX: 180 } });
-    expect(tree.getByTestId('history-value')).toHaveTextContent('6 Jan 2026 · 2.5 pages completed');
+    expect(tree.getByTestId('history-value')).toHaveTextContent('6 Jan 2026 · 2.5 pages');
     fireEvent(plot, 'accessibilityAction', { nativeEvent: { actionName: 'increment' } });
-    expect(tree.getByTestId('history-value')).toHaveTextContent('7 Jan 2026 · 1 pages completed');
+    expect(tree.getByTestId('history-value')).toHaveTextContent('7 Jan 2026 · 1 pages');
     fireEvent.press(tree.getByRole('button', { name: 'Show as table' }));
-    expect(tree.getAllByText('Pages completed')).toHaveLength(3);
-    expect(tree.getByText('2.5')).toBeTruthy();
+    expect(tree.getAllByText('Pages completed')).toHaveLength(4);
+    expect(tree.getByText('2.5 pages')).toBeTruthy();
+  });
+
+  it('writes a fractional maximum readably, so the axis never clips it to 285714', () => {
+    const tree = render(
+      <HistoryChart
+        testID="lifting"
+        points={[
+          { label: '5 Jan 2026', value: 0 },
+          { label: '6 Jan 2026', value: 9 / 7 },
+        ]}
+        measure="Lifting"
+        summary="Sets."
+        width={320}
+      />,
+    );
+    const labels = tree.UNSAFE_getAllByType(SvgText).map((node) => node.props.children);
+    expect(labels).toContain('1.3');
+    expect(labels.some((label) => String(label).includes('285714'))).toBe(false);
+  });
+
+  it('draws a compact sparkline without axis or ticks, and reads only when asked', () => {
+    const tree = render(
+      <HistoryChart
+        testID="spark"
+        points={points}
+        measure="Pages"
+        summary="Pages."
+        width={320}
+        compact
+      />,
+    );
+    expect(tree.UNSAFE_queryAllByType(SvgText)).toHaveLength(0);
+    expect(tree.queryByText('5 Jan 2026')).toBeNull();
+    expect(tree.queryByTestId('spark-value')).toBeNull();
+    fireEvent.press(tree.getByTestId('spark-inspect'), { nativeEvent: { locationX: 0 } });
+    expect(tree.getByTestId('spark-value')).toHaveTextContent('5 Jan 2026 · 0');
   });
 
   it('shows a negative domain and an honest signed value', () => {
@@ -52,7 +92,7 @@ describe('inspectable chart history', () => {
       true,
     );
     fireEvent.press(tree.getByTestId('energy-inspect'), { nativeEvent: { locationX: 50 } });
-    expect(tree.getByTestId('energy-value')).toHaveTextContent('Week 1 · -8 net energy');
+    expect(tree.getByTestId('energy-value')).toHaveTextContent('Week 1 · -8');
   });
 });
 

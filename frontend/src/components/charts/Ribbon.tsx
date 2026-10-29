@@ -8,7 +8,7 @@ import { positive, ribbonGeometry } from './geometry';
 import { Plot } from './Plot';
 import type { ChartBaseProps, ChartTableRow, RibbonBlock } from './types';
 
-import { accent, chartLayout, SPACING } from '@/design/tokens';
+import { accent, chartLayout, SPACING, surface } from '@/design/tokens';
 
 export interface RibbonMarker {
   week: number;
@@ -20,6 +20,8 @@ export interface RibbonProps extends ChartBaseProps {
   markers?: readonly RibbonMarker[];
   secondaryBlocks?: readonly RibbonBlock[];
   showKey?: boolean;
+  /** Shown on the frame's header row beside the table toggle. */
+  title?: string;
 }
 
 const weekPosition = (first: number, last = first): string =>
@@ -81,6 +83,8 @@ function RibbonBlocks({
           width={block.width}
           height={height}
           fill={blocks[index]!.color}
+          stroke={surface.hairline}
+          strokeWidth={chartLayout.hairlineWidth}
         />
       ))}
     </>
@@ -125,12 +129,21 @@ function RibbonMarks({
   );
 }
 
+const markerRow = (marker: RibbonMarker): ChartTableRow => ({
+  label: marker.label,
+  values: [weekPosition(marker.week)],
+});
+
+const hereRows = (currentWeek?: number): ChartTableRow[] =>
+  currentWeek === undefined ? [] : [{ label: 'You are here', values: [weekPosition(currentWeek)] }];
+
 export function Ribbon({
   blocks,
   currentWeek,
   markers = [],
   secondaryBlocks = [],
   showKey = true,
+  title,
   ...base
 }: RibbonProps) {
   const size = useChartSize(base.width, base.height);
@@ -138,19 +151,16 @@ export function Ribbon({
   const weeks = blocks.reduce((sum, block) => sum + positive(block.weeks), 0);
   const height = chartLayout.ribbonHeight + chartLayout.axisSpace;
   const stageRows = [...ribbonTableRows(blocks), ...ribbonTableRows(secondaryBlocks)];
-  const markerRows = markers.map((marker) => ({
-    label: marker.label,
-    values: [weekPosition(marker.week)],
-  }));
-  const rows = [
-    ...stageRows,
-    ...markerRows,
-    ...(currentWeek === undefined
-      ? []
-      : [{ label: 'You are here', values: [weekPosition(currentWeek)] }]),
-  ];
+  const markerRows = markers.map(markerRow);
+  const rows = [...stageRows, ...markerRows, ...hereRows(currentWeek)];
   return (
-    <ChartFrame {...base} onLayout={size.onLayout} rows={rows} headers={['Arc position']}>
+    <ChartFrame
+      {...base}
+      title={title}
+      onLayout={size.onLayout}
+      rows={rows}
+      headers={['Arc position']}
+    >
       <Plot width={size.width} height={height}>
         <G x={chartLayout.plotInset}>
           <RibbonBlocks blocks={blocks} width={width} height={chartLayout.ribbonHeight} />

@@ -23,7 +23,7 @@ describe('chart variants and accessible detail', () => {
     fireEvent(view.getByTestId('clamped'), 'layout', {
       nativeEvent: { layout: { width: 320, height: 160, x: 0, y: 0 } },
     });
-    expect(view.UNSAFE_getByType(Svg).props.viewBox).toBe('0 0 320 160');
+    expect(view.UNSAFE_getAllByType(Svg).at(-1)!.props.viewBox).toBe('0 0 320 160');
     expect(view.UNSAFE_getAllByType(Circle)[1]!.props.r).toBeGreaterThanOrEqual(4);
   });
   it.each([
@@ -86,12 +86,15 @@ describe('chart variants and accessible detail', () => {
     fireEvent(view.getByTestId('measured'), 'layout', {
       nativeEvent: { layout: { width: 320, height: 100, x: 0, y: 0 } },
     });
-    expect(view.UNSAFE_getByType(Svg).props.viewBox).toBe('0 0 320 100');
+    expect(view.UNSAFE_getAllByType(Svg).at(-1)!.props.viewBox).toBe('0 0 320 100');
     expect(view.UNSAFE_getAllByType(G).some((node) => node.props.opacity === 0.5)).toBe(true);
     expect(view.getByText('Ask')).toBeTruthy();
-    expect(view.UNSAFE_getAllByType(Path).every((node) => node.props.fill === chart.tier[0])).toBe(
-      true,
-    );
+    const plot = view.UNSAFE_getAllByType(Svg).at(-1)!;
+    expect(
+      plot
+        .findAllByType(Path)
+        .every((node: { props: { fill?: string } }) => node.props.fill === chart.tier[0]),
+    ).toBe(true);
   });
 
   it('keeps full sits filled and the strongest time-of-day bar emphasized', () => {

@@ -4,16 +4,18 @@ import {
   arcSummary,
   birthMarkers,
   carryovers,
-  cycleCaption,
   cycleLabels,
   cycleRows,
+  energyNow,
   energyPoints,
   habitHistories,
+  habitRange,
   energySummary,
   ribbonBlocks,
   rhythmCaption,
-  rhythmEnd,
+  rhythmNow,
   rhythmPoints,
+  rhythmSummary,
   rhythmVisible,
   RHYTHM_MIN_DAYS,
   youAreHere,
@@ -60,17 +62,14 @@ describe('the rhythm', () => {
     expect(rhythmVisible(young)).toBe(true);
   });
 
-  it('plots labeled percentages and daily context with a labelled end', () => {
+  it('plots the pooled weekly share with its counts, and says the latest once', () => {
     const overview = progressOverviewFixture();
     const points = rhythmPoints(overview);
-    expect(points[0]).toEqual({
-      label: '29 Aug 2026',
-      value: 40,
-      stateLabel: '14-day average; 2 of 3 scheduled activities completed that day',
-    });
-    expect(rhythmEnd(overview)).toMatch(/^Now \d+% over the last 14 days$/);
+    expect(points[0]).toEqual({ label: '29 Aug 2026', value: 40, stateLabel: '14 of 21 kept' });
+    expect(rhythmNow(overview)).toMatch(/^\d+%$/);
+    expect(rhythmSummary(overview)).toMatch(/seven days up to it\. Now \d+%: 14 of 21 kept\.$/);
     expect(
-      rhythmEnd(progressOverviewFixture({ rhythm: { ...overview.rhythm, days: [] } })),
+      rhythmNow(progressOverviewFixture({ rhythm: { ...overview.rhythm, days: [] } })),
     ).toBeNull();
   });
 
@@ -80,19 +79,19 @@ describe('the rhythm', () => {
     );
     expect(rhythmCaption(progressOverviewFixture({ observations: [] }))).toBeNull();
     expect(rhythmCaption(progressOverviewFixture())).toBe(
-      'Your fullest fortnight was late June. You rested from 3 August to 24 August. You have been rising since 14 September.',
+      'Your fullest week was late June. You rested from 3 August to 24 August. You have been rising since 14 September.',
     );
     const quiet = progressOverviewFixture();
     quiet.rhythm = {
       ...quiet.rhythm,
-      fullest_fortnight_ending: '2026-06-05',
+      fullest_week_ending: '2026-06-05',
       longest_rest: null,
       rising_since: null,
     };
-    expect(rhythmCaption(quiet)).toBe('Your fullest fortnight was early June.');
-    quiet.rhythm.fullest_fortnight_ending = '2026-06-15';
-    expect(rhythmCaption(quiet)).toBe('Your fullest fortnight was mid June.');
-    quiet.rhythm.fullest_fortnight_ending = null;
+    expect(rhythmCaption(quiet)).toBe('Your fullest week was early June.');
+    quiet.rhythm.fullest_week_ending = '2026-06-15';
+    expect(rhythmCaption(quiet)).toBe('Your fullest week was mid June.');
+    quiet.rhythm.fullest_week_ending = null;
     expect(rhythmCaption(quiet)).toBeNull();
   });
 });
@@ -105,7 +104,6 @@ describe('cycles and energy', () => {
       { label: 'Purple', from: 0.8, to: 0.6 },
     ]);
     expect(cycleLabels(overview)).toEqual({ from: 'Cycle 1', to: 'Cycle 2' });
-    expect(cycleCaption(overview)).toContain('Either direction is part of the shape.');
     overview.cycles = [
       { stage_number: 3, rates: [] },
       { stage_number: 4, rates: [{ cycle: 2, rate: 0.5, scheduled_days: 2, met_days: 1 }] },
@@ -119,20 +117,36 @@ describe('cycles and energy', () => {
     expect(columns[0]).toEqual({ label: 'Week of 10 Aug 2026', value: 4 });
     expect(columns[2]).toEqual({ label: 'Week of 24 Aug 2026', value: -2 });
     expect(energySummary(overview)).toBe(
-      'Net energy per week for 12 weeks, sum(return - cost) over completions. The latest week is 6.',
+      'Net energy for 12 weeks: energy returned minus effort spent on logged habits. The latest week is 6.',
     );
+    expect(energyNow(overview)).toBe('6');
   });
 });
 
-it('maps actual units to the adoption colour without a colour legend', () => {
-  const [journal] = habitHistories(progressOverviewFixture());
+it('draws each logged habit as its 7-day average in the adoption colour', () => {
+  const overview = progressOverviewFixture();
+  const histories = habitHistories(overview);
+  expect(histories.map((habit) => habit.name)).toEqual(['Morning pages']);
+  const [journal] = histories;
   expect(journal?.color).toBe(STAGE_COLORS.Beige);
   expect(journal?.histories[0]).toEqual({
     unit: 'pages',
-    measure: 'pages logged',
+    perDay: 'pages a day',
+    now: '1 pages a day',
     points: [
-      { label: '18 May 2026', value: 0 },
-      { label: '19 May 2026', value: 2 },
+      { label: '18 May 2026', value: 0, stateLabel: '0 logged that day' },
+      { label: '19 May 2026', value: 1, stateLabel: '2 logged that day' },
     ],
   });
+  expect(habitRange(overview)).toBe('7-day averages, 18 May to 19 May.');
+  overview.arc.habit_births = [];
+  expect(habitRange(overview)).toBeNull();
+});
+
+it('rounds a fractional average instead of printing six decimals', () => {
+  const overview = progressOverviewFixture();
+  overview.arc.habit_births[0]!.unit_histories = [
+    { unit: 'sets', days: [{ date: '2026-05-18', units: 9, average: 9 / 7 }] },
+  ];
+  expect(habitHistories(overview)[0]?.histories[0]?.now).toBe('1.3 sets a day');
 });

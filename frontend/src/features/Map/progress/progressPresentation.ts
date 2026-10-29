@@ -6,6 +6,7 @@
  */
 import type { ApiProgressOverview } from '@/api';
 import type { ChartPoint, Dumbbell, RibbonBlock, RibbonMarker } from '@/components/charts';
+import { formatHistoryValue } from '@/components/charts/HistoryPlot';
 import { chart, STAGE_COLORS, STAGE_ORDER } from '@/design/tokens';
 import { dayKeyToInstant } from '@/utils/dateUtils';
 
@@ -61,16 +62,19 @@ export const rhythmPoints = (overview: ApiProgressOverview): ChartPoint[] =>
   overview.rhythm.days.map((day) => ({
     label: format(day.date, { day: 'numeric', month: 'short', year: 'numeric' }),
     value: day.rate * PERCENT,
-    stateLabel: `${day.window_days}-day average; ${day.daily_met} of ${day.daily_scheduled} scheduled activities completed that day`,
+    stateLabel: `${day.window_met} of ${day.window_scheduled} kept`,
   }));
 
 export const rhythmVisible = (overview: ApiProgressOverview): boolean =>
   overview.rhythm.days.length >= RHYTHM_MIN_DAYS;
 
-export function rhythmEnd(overview: ApiProgressOverview): string | null {
+/** The wave's latest figure, for the header row: `62%`. */
+export function rhythmNow(overview: ApiProgressOverview): string | null {
   const last = overview.rhythm.days.at(-1);
-  return last ? `Now ${percent(last.rate)} over the last ${last.window_days} days` : null;
+  return last ? percent(last.rate) : null;
 }
+
+export const percentFigure = (value: number): string => `${Math.round(value)}%`;
 
 const partOfMonth = (date: string): string => {
   const day = instant(date).getUTCDate();
@@ -86,12 +90,12 @@ const dayMonth = (date: string): string => format(date, { day: 'numeric', month:
 export function rhythmCaption(overview: ApiProgressOverview): string | null {
   if (overview.observations !== undefined) return overview.observations[0] ?? null;
   const {
-    fullest_fortnight_ending: fullest,
+    fullest_week_ending: fullest,
     longest_rest: rest,
     rising_since: rising,
   } = overview.rhythm;
   const parts = [
-    fullest ? `Your fullest fortnight was ${partOfMonth(fullest)}.` : null,
+    fullest ? `Your fullest week was ${partOfMonth(fullest)}.` : null,
     rest ? `You rested from ${dayMonth(rest.start)} to ${dayMonth(rest.end)}.` : null,
     rising ? `You have been rising since ${dayMonth(rising)}.` : null,
   ].filter((part): part is string => part !== null);
@@ -99,8 +103,11 @@ export function rhythmCaption(overview: ApiProgressOverview): string | null {
 }
 
 export function rhythmSummary(overview: ApiProgressOverview): string {
-  const end = rhythmEnd(overview);
-  return `Your rhythm over ${overview.rhythm.days.length} days, each point the share of the last fourteen days kept.${end ? ` ${end}.` : ''}`;
+  const last = overview.rhythm.days.at(-1);
+  const now = last
+    ? ` Now ${percent(last.rate)}: ${last.window_met} of ${last.window_scheduled} kept.`
+    : '';
+  return `Your rhythm over ${overview.rhythm.days.length} days, each point the share of scheduled habits and practice kept in the seven days up to it.${now}`;
 }
 
 /** D15: per stage, the previous cycle to this one; absent before a second pass. */
@@ -117,26 +124,16 @@ export function cycleLabels(overview: ApiProgressOverview): { from: string; to: 
   return { from: `Cycle ${Math.max(1, cycle - 1)}`, to: `Cycle ${cycle}` };
 }
 
-export function cycleCaption(overview: ApiProgressOverview): string {
-  const { from, to } = cycleLabels(overview);
-  return `Each line runs from ${from.toLowerCase()} to ${to.toLowerCase()}: the share of scheduled days kept in that stage. Either direction is part of the shape.`;
-}
+export const CYCLE_CAPTION = 'Either direction is part of the shape.';
+
+/** What the energy columns show, said once, on the chart's header row. */
+export const ENERGY_MEASURE = 'Energy returned minus effort spent, by week';
 
 export function energySummary(overview: ApiProgressOverview): string {
   const weeks = overview.energy.weeks;
   const latest = weeks.at(-1);
-  return `Net energy per week for ${weeks.length} weeks, ${overview.energy.formula}.${latest ? ` The latest week is ${latest.net}.` : ''}`;
+  return `Net energy for ${weeks.length} weeks: energy returned minus effort spent on logged habits.${latest ? ` The latest week is ${latest.net}.` : ''}`;
 }
-
-/** Actual daily measures; the server keeps unrelated units in separate histories. */
-export const habitHistories = (overview: ApiProgressOverview) =>
-  overview.arc.habit_births.map((birth) => ({
-    id: birth.habit_id,
-    name: birth.name,
-    carryover: birth.is_carryover,
-    color: birth.stage_number === null ? chart.dim : stageColor(birth.stage_number),
-    histories: (birth.unit_histories ?? []).map(unitHistory),
-  }));
 
 export const energyPoints = (overview: ApiProgressOverview): ChartPoint[] =>
   overview.energy.weeks.map((week) => ({
@@ -144,13 +141,71 @@ export const energyPoints = (overview: ApiProgressOverview): ChartPoint[] =>
     value: week.net,
   }));
 
-function unitHistory(history: { unit: string; days: { date: string; units: number }[] }) {
+export const energyNow = (overview: ApiProgressOverview): string | null => {
+  const latest = overview.energy.weeks.at(-1);
+  return latest ? String(latest.net) : null;
+};
+
+interface ServedHistory {
+  unit: string;
+  days: { date: string; units: number; average: number }[];
+}
+
+export interface HabitHistory {
+  unit: string;
+  /** Spoken after a figure: `sets a day`. */
+  perDay: string;
+  /** The latest 7-day average, with its unit. */
+  now: string;
+  points: ChartPoint[];
+}
+
+const shortDate = (date: string): string =>
+  format(date, { day: 'numeric', month: 'short', year: 'numeric' });
+
+function unitHistory(history: ServedHistory): HabitHistory {
+  const unit = history.unit || 'units';
+  const perDay = `${unit} a day`;
+  const last = history.days.at(-1);
   return {
     unit: history.unit,
-    measure: `${history.unit || 'Units'} logged`,
+    perDay,
+    now: `${formatHistoryValue(last?.average ?? 0)} ${perDay}`,
     points: history.days.map((day) => ({
-      label: format(day.date, { day: 'numeric', month: 'short', year: 'numeric' }),
-      value: day.units,
+      label: shortDate(day.date),
+      value: day.average,
+      stateLabel: `${formatHistoryValue(day.units)} logged that day`,
     })),
   };
+}
+
+/**
+ * Each habit's logged measures as 7-day averages, in its adoption colour. A
+ * habit with nothing logged yet has no line to draw and is left out.
+ */
+export const habitHistories = (overview: ApiProgressOverview) =>
+  overview.arc.habit_births.flatMap((birth) => {
+    const histories = (birth.unit_histories ?? []).map(unitHistory);
+    return histories.length === 0
+      ? []
+      : [
+          {
+            id: birth.habit_id,
+            name: birth.name,
+            carryover: birth.is_carryover,
+            color: birth.stage_number === null ? chart.dim : stageColor(birth.stage_number),
+            histories,
+          },
+        ];
+  });
+
+/** The one date range every habit line shares, said once for the section. */
+export function habitRange(overview: ApiProgressOverview): string | null {
+  const days = overview.arc.habit_births.find((birth) => birth.unit_histories?.length)
+    ?.unit_histories?.[0]?.days;
+  const first = days?.[0];
+  const last = days?.at(-1);
+  if (!first || !last) return null;
+  const range = (date: string) => format(date, { day: 'numeric', month: 'short' });
+  return `7-day averages, ${range(first.date)} to ${range(last.date)}.`;
 }
