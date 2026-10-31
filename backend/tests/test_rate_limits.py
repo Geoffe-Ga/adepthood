@@ -860,6 +860,9 @@ _DECLARED_ROUTE_LIMITS: dict[str, tuple[str, ...]] = {
     # The content-free admission a device asks before a client-direct page read
     # (#3067) keeps the page-read budget it replaced.
     "routers.transcription.direct_admission": ("20 per 1 minute", "20 per 1 minute"),
+    # Every on-demand reachability check is a handshake that can wake a
+    # scale-to-zero vault, so it is budgeted per account (#3406).
+    "routers.vault_config.check_vault_connection": ("5 per 1 minute",),
 }
 
 # One sentinel for every ``{param}`` segment. The coverage guard below only

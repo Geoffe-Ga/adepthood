@@ -152,5 +152,6 @@
   "/vault/agents/activity",
   "/vault/agents/{agent_id}",
   "/vault/connection",
+  "/vault/connection/check",
   "/webhooks/gumroad/ping"
 ]

@@ -30,6 +30,7 @@ repairs and never raises, so it is not an echo path.
 from __future__ import annotations
 
 from collections.abc import Mapping
+from datetime import datetime
 from enum import StrEnum
 from types import MappingProxyType
 
@@ -187,3 +188,32 @@ class VaultConnectionResponse(OwnedResourcePublic):
     classification_key_rejected: bool = False
     classification_state: VaultClassificationState | None = None
     classification_message: str | None = None
+
+
+class VaultReachability(StrEnum):
+    """What one on-demand handshake found about the caller's vault (#3406).
+
+    Three states rather than a boolean, because "it did not answer" and "the
+    answer did not settle it" are different news to a writer: the first is an
+    outage they can wait out, the second is nothing they should read as one.
+    See :mod:`services.vault_reachability` for which handshake outcome lands
+    where.
+    """
+
+    REACHABLE = "reachable"
+    UNREACHABLE = "unreachable"
+    UNKNOWN = "unknown"
+
+
+class VaultReachabilityResponse(BaseModel):
+    """The whole answer to ``POST /vault/connection/check``: a state and when.
+
+    Two fields and no room for a third. No address, because a managed binding
+    keeps its address private; no error text or degrade reason, because those
+    are an operator's instruments and a response body is a place a client may
+    log; no provider identifier for the same reason. The client owns every
+    sentence it renders from ``state``.
+    """
+
+    state: VaultReachability
+    checked_at: datetime

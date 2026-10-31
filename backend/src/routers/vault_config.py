@@ -3,9 +3,10 @@
 Three verbs against one resource that always exists in the abstract and
 sometimes exists as a row: ``GET`` reports whether this account has connected a
 vault and where it points, ``PUT`` sets or replaces the connection, ``DELETE``
-removes it. The caller is resolved from their JWT, so no account identifier is
-accepted from a path or a body and no request can name a row that is not the
-caller's own.
+removes it. ``POST /vault/connection/check`` asks the connected vault, once,
+whether it answers right now (#3406). The caller is resolved from their JWT, so
+no account identifier is accepted from a path or a body and no request can name
+a row that is not the caller's own.
 
 The credential travels in one direction only. It arrives on the ``PUT`` body and
 is never carried on any response, which is a property of
@@ -41,21 +42,25 @@ caller. See :func:`~schemas.vault_config.credential_is_usable`.
 
 from __future__ import annotations
 
-from typing import Annotated
+from datetime import UTC, datetime
+from typing import Annotated, Final
 
-from fastapi import Depends, Response, status
+from fastapi import Depends, Request, Response, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from database import get_session
-from dependencies.creek_vault import deployment_vault_belongs_to
+from dependencies.creek_vault import deployment_vault_belongs_to, resolve_creek_vault_client
 from error_responses import build_router
 from errors import conflict, unprocessable
 from models.user_vault_config import UserVaultConfig
+from rate_limit import limiter
+from rate_limit_keys import per_user_rate_limit_key
 from routers.auth import get_current_user
 from schemas.vault_config import (
     VAULT_CLASSIFICATION_MESSAGES,
     VaultConnectionRequest,
     VaultConnectionResponse,
+    VaultReachabilityResponse,
     credential_is_usable,
 )
 from services.creek_vault_agent_connection import managed_agent_address
@@ -76,6 +81,7 @@ from services.user_vault_config import (
     store_vault_config,
 )
 from services.vault_classification_status import classification_status
+from services.vault_reachability import check_vault_reachability
 
 router = build_router(prefix="/vault", tags=["vault"], extra_statuses=(status.HTTP_409_CONFLICT,))
 
@@ -92,6 +98,15 @@ _URL_REFUSED_PREFIX = "vault_url_"
 # prose that used to carry this refusal arrived with the submitted value
 # attached -- and this is the one field on this request that is a secret.
 _KEY_REFUSED = "vault_key_unusable"
+
+# How many on-demand reachability checks one account may run per minute (#3406).
+# Every check is a real handshake, and against a scale-to-zero managed vault a
+# handshake can wake a stopped Machine, so a held-down button must not become a
+# wake loop. Five is more than a person pressing "Check now" ever needs and few
+# enough that no client can keep a vault awake with it. Keyed on the JWT
+# identity, so the budget follows the writer rather than their address.
+VAULT_REACHABILITY_CHECKS_PER_MINUTE: Final = 5
+_VAULT_REACHABILITY_RATE_LIMIT: Final = f"{VAULT_REACHABILITY_CHECKS_PER_MINUTE}/minute"
 
 
 async def _refuse_a_url_this_endpoint_must_not_store(session: AsyncSession, url: str) -> None:
@@ -255,3 +270,34 @@ async def delete_vault_connection(
     await _require_unmanaged_connection(session, user_id)
     await clear_vault_config(session, user_id)
     return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@router.post("/connection/check", response_model=VaultReachabilityResponse)
+@limiter.limit(_VAULT_REACHABILITY_RATE_LIMIT, key_func=per_user_rate_limit_key)
+async def check_vault_connection(
+    request: Request,
+    user_id: Annotated[int, Depends(get_current_user)],
+    session: Annotated[AsyncSession, Depends(get_session)],
+) -> VaultReachabilityResponse:
+    """Run one handshake against this account's own vault and say what it found (#3406).
+
+    Only ever on an explicit request. The Settings screen never calls this on
+    open; a writer presses "Check now". (``GET /vault/connection`` is not a
+    reachability probe: for a managed vault it reads agent discovery, and says
+    nothing about whether the vault is up.)
+
+    The client is resolved here, in the body, from the authenticated caller
+    alone -- no account, vault or address is read from the request -- and
+    deliberately not as a dependency: dependencies resolve before the limiter
+    runs, so a check refused for its budget would still have paid for a
+    resolution, while here it costs nothing past the token decode.
+
+    The answer is a state and a time and nothing else
+    (:class:`~schemas.vault_config.VaultReachabilityResponse`): an outage reads
+    as an outage without the body ever carrying an address, an error string or
+    a provider name.
+    """
+    del request  # Read by @limiter.limit, which keys the check budget on it.
+    client = await resolve_creek_vault_client(session, user_id)
+    state = await check_vault_reachability(client)
+    return VaultReachabilityResponse(state=state, checked_at=datetime.now(UTC))
