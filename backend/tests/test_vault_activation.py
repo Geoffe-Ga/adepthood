@@ -923,6 +923,7 @@ async def test_fleet_alert_delivers_only_sorted_closed_kind_counts(
                 "incomplete_create": 3,
                 "monthly_budget_departure": 4,
                 "orphan_resource": 5,
+                "provider_credential_expiring": 7,
                 "stuck_deletion": 6,
             },
         },
@@ -940,7 +941,7 @@ async def test_fleet_alert_delivers_only_sorted_closed_kind_counts(
                     "Managed vault fleet alerts:\ncontinuous_running: 1\n"
                     "duplicate_resource: 2\nincomplete_create: 3\n"
                     "monthly_budget_departure: 4\norphan_resource: 5\n"
-                    "stuck_deletion: 6\n"
+                    "provider_credential_expiring: 7\nstuck_deletion: 6\n"
                 ),
             ),
             None,

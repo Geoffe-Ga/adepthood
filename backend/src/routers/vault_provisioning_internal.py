@@ -88,6 +88,8 @@ class _FleetAlertKind(StrEnum):
     CONTINUOUS_RUNNING = "continuous_running"
     INCOMPLETE_CREATE = "incomplete_create"
     MONTHLY_BUDGET_DEPARTURE = "monthly_budget_departure"
+    # Creek #1867: the Fly org token nears or passes its recorded expiry.
+    PROVIDER_CREDENTIAL_EXPIRING = "provider_credential_expiring"
 
 
 class _FleetAlertPayload(BaseModel):
