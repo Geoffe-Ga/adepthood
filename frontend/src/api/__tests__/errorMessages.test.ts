@@ -78,6 +78,8 @@ describe('USER_FACING_ERROR_MESSAGES', () => {
       'vault_withdrawal_disconnected_vault',
       'vault_withdrawal_unrecorded_vault',
       'journal_entry_deletion_pending',
+      // promoted quotes (#3059, owner decision R5-2)
+      'quote_source_restricted',
       // wallet
       'payment_required',
       'insufficient_offerings',
