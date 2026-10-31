@@ -10,6 +10,7 @@ import {
   AGENTS_EMPTY,
   AGENTS_EYEBROW,
   AGENTS_HEADING,
+  AGENTS_MANAGED_ADDRESS_UNAVAILABLE,
   AGENTS_LOAD_FAILED,
   AGENTS_NOT_USED_YET,
   AGENTS_ON_THIS_COMPUTER,
@@ -73,6 +74,7 @@ const CONNECTED: VaultConnectionState = {
 const MANAGED: VaultConnectionState = { kind: 'managed' };
 const NONE: VaultConnectionState = { kind: 'none' };
 const UNKNOWN: VaultConnectionState = { kind: 'unknown' };
+const DEPLOYMENT: VaultConnectionState = { kind: 'deployment' };
 
 const OPENCLAW: ConnectedAgent = {
   id: 3,
@@ -216,6 +218,24 @@ describe('ConnectedAgentsSection — when it shows at all', () => {
     const { getByTestId } = await renderSection(NONE);
 
     expect(getByTestId('vault-agent-row-3')).toBeTruthy();
+  });
+
+  test('stays out of the way for the deployment-wide vault with no agents (#3608)', async () => {
+    // That vault is the operator's: Adepthood names no address for an agent to
+    // reach it by, so there is nothing to offer until an agent is listed.
+    mockAgents.mockResolvedValue([]);
+
+    const { queryByTestId } = await renderSection(DEPLOYMENT);
+
+    expect(queryByTestId('vault-agents-section')).toBeNull();
+  });
+
+  test('still lists agents for the deployment-wide vault, with no address to copy', async () => {
+    const { getByTestId, queryByTestId, queryByText } = await renderSection(DEPLOYMENT);
+
+    expect(getByTestId('vault-agent-row-3')).toBeTruthy();
+    expect(queryByTestId('vault-agents-address')).toBeNull();
+    expect(queryByText(AGENTS_MANAGED_ADDRESS_UNAVAILABLE)).toBeNull();
   });
 
   test('renders for a managed vault and for a read that could not tell', async () => {

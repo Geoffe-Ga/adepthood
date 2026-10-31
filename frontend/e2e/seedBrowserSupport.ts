@@ -3,7 +3,7 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync }
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 
-import { expect, test, type Locator, type Page, type Request, type Route } from '@playwright/test';
+import { expect, test, type Locator, type Page, type Request } from '@playwright/test';
 
 import { backendUrl, bearer, frontendUrl } from './journalHabitsBrowserSupport';
 import { readLaneState, type LaneState } from './laneState';
@@ -198,12 +198,8 @@ export function sourcePathOf(entry: SentRequest): string | null {
   return body.source_relative_path ?? null;
 }
 
-/** What the server said to each page's connection reads, before the rewrite. */
-const connectionReads = new WeakMap<Page, { serverSaid: boolean | null }>();
-
 /** Log the bound vault owner in through the real login screen. */
 export async function loginVaultOwner(page: Page): Promise<void> {
-  connectionReads.set(page, await showDeploymentVault(page));
   const state = lane();
   const response = await page.request.post(`${backendUrl()}/auth/login`, {
     data: { email: state.vaultOwnerEmail, password: state.vaultOwnerPassword },
@@ -223,47 +219,32 @@ export async function loginVaultOwner(page: Page): Promise<void> {
 }
 
 /**
- * Let the seeding screen see the vault the server will actually use.
- *
- * The lane's one vault-bound account is bound by the deployment-wide
- * `CREEK_VAULT_OWNER_USER_ID` (the pre-per-user path), and `GET
- * /vault/connection` reads only per-user connections, so for this account it
- * answers `connected: false` even though `POST /corpus/import` forwards its
- * documents to the lane vault. A per-user connection cannot stand in: a
- * user-supplied vault URL must be globally routable, and the lane vault is
- * loopback. So the real answer is fetched from the server and only its
- * `connected` bit is rewritten for the screen's vault-first gate (#3017);
- * every upload still goes to the real server and lands in the real vault
- * double. Answers what the server itself said, for the spec to pin.
+ * What `GET /vault/connection` answers the lane's vault-bound account, which is
+ * bound by the deployment-wide `CREEK_VAULT_OWNER_USER_ID` (the pre-per-user
+ * path) rather than by a connection of its own. Since #3608 the server reports
+ * that binding itself -- connected, from the deployment source, and with no
+ * address of any kind -- so the screen's vault-first gate (#3017) reads the real
+ * answer and nothing is rewritten at the browser.
  */
-async function showDeploymentVault(page: Page): Promise<{ serverSaid: boolean | null }> {
-  const observed: { serverSaid: boolean | null } = { serverSaid: null };
-  await page.route(`${backendUrl()}/vault/connection`, async (route: Route) => {
-    if (route.request().method() !== 'GET') {
-      await route.continue();
-    } else {
-      const response = await route.fetch();
-      const body = (await response.json()) as { connected: boolean };
-      observed.serverSaid = body.connected;
-      await route.fulfill({ response, json: { ...body, connected: true } });
-    }
-  });
-  return observed;
-}
+const DEPLOYMENT_VAULT_CONNECTION = {
+  connected: true,
+  source: 'deployment',
+  vault_url: null,
+  mcp_address: null,
+} as const;
 
 /** Open "Bring in what you've written" from Settings, as a person would. */
 export async function openSeedScreen(page: Page): Promise<void> {
-  const observed = connectionReads.get(page);
-  if (observed === undefined) throw new Error('log in before opening the seeding screen');
   const vaultRead = page.waitForResponse(
     (response) =>
       response.url().endsWith('/vault/connection') && response.request().method() === 'GET',
   );
   await page.goto(`${frontendUrl()}/settings`);
-  await vaultRead;
-  // Pinned so the rewrite above cannot outlive the gap it bridges: the day the
-  // server reports the deployment binding itself, this fails and it goes.
-  expect(observed.serverSaid).toBe(false);
+  const connection = await vaultRead;
+  // The real server's answer, unaltered: the binding is reported as the
+  // deployment source and the operator's vault address is never in it.
+  expect(connection.status()).toBe(200);
+  expect(await connection.json()).toMatchObject(DEPLOYMENT_VAULT_CONNECTION);
   await page.getByTestId(SETTINGS_ROW).click();
   await expect(page.getByTestId('seed-corpus-screen')).toBeVisible();
   await expect(page.getByTestId('seed-choose-folder-button')).toBeEnabled();

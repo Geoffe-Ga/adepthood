@@ -75,6 +75,7 @@ const FORM_KEYS = [
   'VAULT_CONNECTED_LABEL',
   'VAULT_NONE_CONNECTED',
   'VAULT_MANAGED_CONNECTED',
+  'VAULT_DEPLOYMENT_CONNECTED',
   'VAULT_CONNECTION_UNKNOWN',
   'VAULT_STATUS_CONNECTED',
   'VAULT_STATUS_DISCONNECTED',
@@ -300,6 +301,12 @@ describe('vaultCopy — the gain leads and the floor does not echo', () => {
 });
 
 describe('vaultCopy — the form deck, verbatim', () => {
+  it('VAULT_DEPLOYMENT_CONNECTED says whose vault it is and that there is nothing to undo here (#3608)', () => {
+    expect(vaultCopy.VAULT_DEPLOYMENT_CONNECTED).toBe(
+      'Your writing goes to the vault this Adepthood was set up with. Whoever runs this Adepthood looks after it, so there is nothing to disconnect here. This does not check whether it is reachable right now.',
+    );
+  });
+
   it('VAULT_ADD_HEADING reads "Connect your vault"', () => {
     expect(vaultCopy.VAULT_ADD_HEADING).toBe('Connect your vault');
   });

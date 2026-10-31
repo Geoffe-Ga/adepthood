@@ -17,8 +17,8 @@ import { readLaneState } from './laneState';
  * recurring eddy. Everything between that answer and the pixels is production:
  * the adapter's projection, the route's response, the Zod schema, the hook and
  * the band. Nothing is routed or rewritten at the browser: the journal screen
- * never reads `GET /vault/connection` (which answers `connected: false` for a
- * deployment-bound owner, #3608), so the band has no gate for the lane to fake.
+ * never reads `GET /vault/connection`, so the band has no gate for the lane to
+ * fake.
  *
  * The band is collapsed and display-only: one toggle, page titles with their
  * lifecycle and fragment context and excerpts once expanded, and no control
