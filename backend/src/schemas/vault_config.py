@@ -101,6 +101,26 @@ class VaultConnectionRequest(BaseModel):
         return value.strip()
 
 
+class VaultConnectionSource(StrEnum):
+    """Which of the three ways an account reaches its vault a read is reporting (#3608).
+
+    ``CONNECTED`` is a vault the account connected itself, ``MANAGED`` one the
+    lifecycle provisioned for it, and ``DEPLOYMENT`` the legacy deployment-wide
+    vault bound to this one account by ``CREEK_VAULT_OWNER_USER_ID``. The values
+    are the source names :mod:`dependencies.creek_vault` already folds into a
+    destination fingerprint, so changing one would re-key every recorded copy;
+    they are spelled once, here, and that module reads them from this enum.
+
+    A client tells the deployment source apart because it is the operator's
+    configuration rather than the account's row: there is nothing of the
+    account's own to disconnect, rotate or tear down.
+    """
+
+    CONNECTED = "connected"
+    MANAGED = "managed"
+    DEPLOYMENT = "deployment"
+
+
 class VaultClassificationState(StrEnum):
     """How far the account's vault sorting has got, from its latest landed pass (#3577).
 
@@ -173,17 +193,26 @@ class VaultConnectionResponse(OwnedResourcePublic):
     stand at once and do not contradict, because one is about the sort the
     writing has had and the other about why the latest attempt at more stopped.
     ``None`` when the account has no vault the pipeline writes to: neither a
-    stored connection nor the deployment-wide vault it owns. That owner reads
-    ``connected: false`` and still gets a state, for the reason
-    ``classification_key_rejected`` holds for them. ``classification_message``
+    stored connection nor the deployment-wide vault it owns. ``classification_message``
     is the server's sentence for the state, ``None`` except for ``incomplete``
     (:data:`VAULT_CLASSIFICATION_MESSAGES`). Neither carries a count or any
     content.
+
+    ``source`` says which kind of vault ``connected`` is about (#3608), and is
+    ``None`` exactly when ``connected`` is false. It follows the precedence the
+    pipeline routes by -- a stored connection first, then the deployment-wide
+    vault for its one bound owner -- so ``connected`` is true for that owner,
+    whose writing really is sent to that vault. The deployment source carries
+    no ``vault_url`` and no ``mcp_address``: that vault is the operator's
+    configuration, and its address and credential are never said to anyone.
+    Additive and defaulted, so a client from before the field reads the owner
+    as a vault with a private address, which is what it is.
     """
 
     connected: bool
     vault_url: str | None
     mcp_address: str | None
+    source: VaultConnectionSource | None = None
     classification_key_rejected: bool = False
     classification_state: VaultClassificationState | None = None
     classification_message: str | None = None

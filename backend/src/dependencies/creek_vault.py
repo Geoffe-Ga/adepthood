@@ -88,6 +88,7 @@ from models.journal_entry import VAULT_DESTINATION_WIDTH
 from models.user_vault_config import UserVaultConfig
 from models.vault_activation import VaultActivationState
 from routers.auth import get_current_user
+from schemas.vault_config import VaultConnectionSource
 from services.creek_provisioning import load_vault_activation
 from services.creek_vault_client import (
     LocalFallbackCreekVaultClient,
@@ -116,9 +117,6 @@ OWNER_ENV_VAR = "CREEK_VAULT_OWNER_USER_ID"
 _VAULT_URL_ENV_VAR = "CREEK_VAULT_URL"
 _DESTINATION_DOMAIN = "adepthood-vault-destination"
 _DESTINATION_SEPARATOR = "\x00"
-_SOURCE_MANAGED = "managed"
-_SOURCE_CONNECTED = "connected"
-_SOURCE_DEPLOYMENT = "deployment"
 
 # The two ways a configured vault ends up belonging to nobody, and the two static
 # messages that say so. Both name the variable that fixes it, because a record
@@ -398,15 +396,41 @@ _RESOLVED_DESTINATION: ContextVar[tuple[int, str | None] | None] = ContextVar(
 )
 
 
+def vault_connection_source(
+    connection: UserVaultConfig | None, current_user: int
+) -> VaultConnectionSource | None:
+    """Which vault one config read routes ``current_user`` to, or ``None`` for none.
+
+    The priority :func:`resolve_creek_vault_client` dials by, said once: the
+    caller's own stored row wins outright -- managed when the lifecycle
+    provisioned it, connected otherwise -- and only an account with no row
+    falls back to the deployment-wide vault, and only when it is that vault's
+    bound owner by :func:`deployment_vault_belongs_to`. The destination
+    fingerprint and ``GET /vault/connection`` both read it, so what a client is
+    told and where its writing is sent cannot come apart (#3608).
+
+    This is ownership, not reachability: a row whose host is currently
+    undialable, or a provisioned one still activating, still names its source.
+    Local only; never dials.
+    """
+    if connection is not None:
+        if connection.provisioned:
+            return VaultConnectionSource.MANAGED
+        return VaultConnectionSource.CONNECTED
+    if deployment_vault_belongs_to(current_user):
+        return VaultConnectionSource.DEPLOYMENT
+    return None
+
+
 def _fingerprint_of(connection: UserVaultConfig | None, current_user: int) -> str | None:
     """Fingerprint the destination one config read resolves to, by the resolver's priority."""
-    if connection is not None:
-        source = _SOURCE_MANAGED if connection.provisioned else _SOURCE_CONNECTED
-        return _destination_digest(current_user, source, connection.vault_url)
-    if deployment_vault_belongs_to(current_user):
-        deployment_url = os.getenv(_VAULT_URL_ENV_VAR, "")
-        return _destination_digest(current_user, _SOURCE_DEPLOYMENT, deployment_url)
-    return None
+    source = vault_connection_source(connection, current_user)
+    if source is None:
+        return None
+    if connection is None:
+        # Only the deployment source resolves with no row of the account's own.
+        return _destination_digest(current_user, source, os.getenv(_VAULT_URL_ENV_VAR, ""))
+    return _destination_digest(current_user, source, connection.vault_url)
 
 
 async def vault_destination_fingerprint(session: AsyncSession, current_user: int) -> str | None:
@@ -462,7 +486,7 @@ def detached_vaults() -> tuple[DetachedVault, ...]:
     if owner is None or not deployment_vault_belongs_to(owner):
         return ()
     deployment_url = os.getenv(_VAULT_URL_ENV_VAR, "")
-    destination = _destination_digest(owner, _SOURCE_DEPLOYMENT, deployment_url)
+    destination = _destination_digest(owner, VaultConnectionSource.DEPLOYMENT, deployment_url)
     return (DetachedVault(destination=destination, connect=lambda: deployment_vault_client(owner)),)
 
 
