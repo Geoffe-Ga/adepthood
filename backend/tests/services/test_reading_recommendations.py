@@ -18,7 +18,7 @@ from models.content_completion import ContentCompletion
 from models.corpus_consent import CorpusConsentEvent
 from models.course_stage import CourseStage
 from models.invitation_signal import InvitationSignal
-from models.journal_entry import JournalEntry
+from models.journal_entry import JournalClassification, JournalEntry
 from models.stage_content import StageContent
 from models.stage_progress import StageProgress
 from models.user import User
@@ -28,6 +28,7 @@ from routers.invitations import _choose_reading
 from services.content_repository import get_content_repository
 from services.creek_vault_client import LocalFallbackCreekVaultClient
 from services.reading_recommendations import available_readings, reading_invitation
+from tests.support.lineage_canaries import LINEAGE_SENTINEL, seed_folded_lineage
 from tests.support.outbound_boundary import assert_dialled_off_the_pool, observe_outbound_boundaries
 
 if TYPE_CHECKING:
@@ -339,3 +340,33 @@ async def test_recommendation_dials_with_no_request_connection_held(
         finally:
             app.dependency_overrides.pop(get_current_user, None)
             app.dependency_overrides.pop(get_creek_vault_client, None)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("source_tier", "carried"),
+    [(JournalClassification.INTIMATE, False), (JournalClassification.PERSONAL, True)],
+    ids=["intimate_source", "personal_twin"],
+)
+async def test_a_folded_intimate_passage_is_never_excerpted(
+    db_session: AsyncSession, source_tier: JournalClassification, *, carried: bool
+) -> None:
+    """A review's fold of an Intimate passage is masked before excerpting (#3059, R5-2).
+
+    The Personal twin shows the same review's fold does reach the vault when it may.
+    """
+    user_id, _, _ = await seed(db_session)
+    await seed_folded_lineage(db_session, user_id=user_id, source_classification=source_tier)
+    vault = ModelVault()
+    sent: list[ReadingRequest] = []
+
+    def _record(request: ReadingRequest) -> ReadingRecommendation | None:
+        sent.append(request)
+        return None
+
+    vault.reply = _record
+    await reading_invitation(db_session, user_id, 1, "UTC", vault)
+
+    assert sent, "the recommendation never dialled"
+    texts = [source.content for request in sent for source in request.sources]
+    assert any(LINEAGE_SENTINEL in text for text in texts) is carried

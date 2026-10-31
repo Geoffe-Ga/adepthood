@@ -1,19 +1,23 @@
-"""Folded-quote lineage: detected, counted content-free, and not yet enforced (#3059).
+"""Folded-quote lineage: counted content-free, and its Intimate text withheld (#3059).
 
 A promoted quote folded into a review carries its source's plaintext into a
-body with its own tier. Whether that passage inherits the source's restriction
-is owner decision D01, which the issue forbids assuming, so this slice only
-*observes*: a resolver counts restricted lineage, and every egress operation on
-a tainted entry logs one content-free shadow event. Nothing is blocked.
+body with its own tier. A resolver counts restricted lineage, and every egress
+operation on a tainted entry logs one content-free shadow event. Owner
+decision R5-2 settled one point of D01 -- Intimate text is excluded from folded
+quotes -- so the folded passage itself is withheld from every body that
+egresses (:mod:`services.folded_quote_privacy`). Whether the review as a whole
+inherits its source's tier is the rest of D01 and is still open: the review
+keeps its own tier and its own words still go where they did.
 
-The two strict ``xfail`` tests at the bottom pin today's leak. They are not
-suppression: ``strict=True`` turns them red the moment enforcement makes them
-pass, so the marker has to be removed by the change that closes the gap.
+The pins at the bottom were strict xfails that held the leak open until R5-2;
+they pass now, beside a test that drives every egress operation over the same
+tainted review and finds the canary at none of its sinks.
 """
 
 from __future__ import annotations
 
 import ast
+import dataclasses
 import json
 import logging
 from collections.abc import Iterator
@@ -28,6 +32,7 @@ import pytest
 from httpx import AsyncClient
 from sqlalchemy import event
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlmodel import col, select
 
 from dependencies.creek_vault import get_creek_vault_client
 from domain.creek_vault import (
@@ -42,9 +47,10 @@ from domain.creek_vault import (
     VaultVoiceDraftRequest,
     VaultVoiceDraftResult,
 )
+from domain.folded_passages import WITHHELD_MARK
 from domain.frequencies import Frequency
 from main import app
-from models.corpus_fragment import CorpusSource
+from models.corpus_fragment import CorpusFragment, CorpusSource
 from models.goal import Goal
 from models.habit import Habit
 from models.journal_entry import JournalClassification, JournalEntry
@@ -555,6 +561,137 @@ async def test_each_egress_operation_on_a_tainted_review_emits_its_shadow(
     _assert_no_canary_in_logs(caplog)
 
 
+def _recording_classifier(monkeypatch: pytest.MonkeyPatch) -> list[str]:
+    """Answer the corpus classifier like :func:`_fake_classifier`, recording what it was sent."""
+    sent: list[str] = []
+
+    async def classified(**kwargs: object) -> SimpleNamespace:
+        sent.append(repr(kwargs))
+        return SimpleNamespace(text=_CLASSIFIED_REPLY)
+
+    monkeypatch.setattr(frequency_classification, "generate_response", classified)
+    return sent
+
+
+async def _everything_sent(
+    session: AsyncSession,
+    *,
+    user_id: int,
+    prompts: list[str],
+    classified: list[str],
+    vault: _DiallingVault,
+) -> dict[str, list[str]]:
+    """What each sink received over the flow, as text, keyed by sink."""
+    fragments = await session.execute(
+        select(CorpusFragment).where(col(CorpusFragment.user_id) == user_id)
+    )
+    return {
+        "model": prompts,
+        "classifier": classified,
+        "vault_ingest": [repr(dataclasses.asdict(call)) for call in vault.ingest_calls],
+        "vault_drafts": [repr(dataclasses.asdict(draft)) for draft in vault.draft_upserts],
+        "corpus": [fragment.content for fragment in fragments.scalars().all()],
+    }
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "source_tier",
+    [JournalClassification.INTIMATE, JournalClassification.PERSONAL],
+    ids=["intimate_source", "personal_twin"],
+)
+async def test_every_egress_operation_withholds_a_folded_intimate_passage(
+    async_client: AsyncClient,
+    db_session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+    source_tier: JournalClassification,
+) -> None:
+    """Every egress operation sends the review without its Intimate fold (R5-2).
+
+    Resonance, detection, the vault write, corpus ingest and the letter; the
+    Personal twin shows each of them does carry the fold otherwise.
+    """
+    spy = _CapturingLLM()
+    monkeypatch.setattr(marginalia_service, "generate_response", spy)
+    classified = _recording_classifier(monkeypatch)
+    vault = _wire_dialling_vault()
+    headers, user_id = await _signup(async_client, f"lineage_withheld_{source_tier.value}")
+    await _grant_corpus_consent(async_client, headers)
+    await _seed_detection_candidate(db_session, user_id)
+    chain = await seed_folded_lineage(
+        db_session, user_id=user_id, source_classification=source_tier
+    )
+
+    await _drive_every_operation(async_client, db_session, (headers, user_id), chain)
+
+    sent = await _everything_sent(
+        db_session, user_id=user_id, prompts=spy.prompts, classified=classified, vault=vault
+    )
+    carrying = {sink for sink, texts in sent.items() if any(LINEAGE_SENTINEL in t for t in texts)}
+    if source_tier is JournalClassification.INTIMATE:
+        assert carrying == set()
+        assert any(WITHHELD_MARK * len(LINEAGE_SENTINEL) in prompt for prompt in spy.prompts)
+        review = await db_session.get(JournalEntry, chain.review_id)
+        assert review is not None
+        await db_session.refresh(review)
+        assert LINEAGE_SENTINEL in review.message, "the writer's own page must stay as written"
+    else:
+        assert {"model", "classifier", "vault_ingest", "corpus"} <= carrying
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "source_tier",
+    [JournalClassification.INTIMATE, JournalClassification.PERSONAL],
+    ids=["intimate_source", "personal_twin"],
+)
+async def test_a_note_anchored_in_a_folded_intimate_passage_gets_no_letter(
+    async_client: AsyncClient,
+    db_session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+    source_tier: JournalClassification,
+) -> None:
+    """A letter's prompt carries its note's anchor, so masking the body is not enough (R5-2).
+
+    The Personal twin shows the same note does get a letter that carries the passage.
+    """
+    spy = _CapturingLLM()
+    monkeypatch.setattr(marginalia_service, "generate_response", spy)
+    headers, user_id = await _signup(async_client, f"lineage_letter_{source_tier.value}")
+    chain = await seed_folded_lineage(
+        db_session, user_id=user_id, source_classification=source_tier
+    )
+    review = await db_session.get(JournalEntry, chain.review_id)
+    assert review is not None
+    start = review.message.index(LINEAGE_SENTINEL)
+    note = Marginalia(
+        journal_entry_id=chain.review_id,
+        user_id=user_id,
+        kind=MarginaliaKind.SYMBOL,
+        anchor_start=start,
+        anchor_end=start + len(LINEAGE_SENTINEL),
+        anchor_text=LINEAGE_SENTINEL,
+        note="A note on the quoted line.",
+    )
+    db_session.add(note)
+    await db_session.commit()
+    await db_session.refresh(note)
+
+    essay = await async_client.post(
+        f"/journal/marginalia/{note.id}/essay",
+        json={"price_acknowledged": True},
+        headers=headers,
+    )
+
+    assert essay.status_code == HTTPStatus.OK, essay.text
+    carried = [prompt for prompt in spy.prompts if LINEAGE_SENTINEL in prompt]
+    if source_tier is JournalClassification.INTIMATE:
+        assert spy.prompts == []
+        assert essay.json().get("essay") is None
+    else:
+        assert carried, "the twin's letter never carried the passage: the pin proves nothing"
+
+
 class _DegradingVault(_DiallingVault):
     """A vault that receives the body but does not confirm storing it."""
 
@@ -766,12 +903,12 @@ def test_every_lineage_operation_is_wired() -> None:
     assert _referenced_operations() == {op.name for op in LineageOperation}
 
 
-# --- the leak, pinned until D01 ---------------------------------------------------
+# --- the fold leak, closed by owner decision R5-2 ----------------------------------
 #
-# Each strict xfail below has a passing control that runs the identical flow
-# over a fixture whose review keeps the lineage link but not the spliced text.
-# The control proves the flow reaches the model and that the canary arrives
-# only through the fold, so the xfail is failing on the leak and nothing else.
+# Each pin below has a passing control that runs the identical flow over a
+# fixture whose review keeps the lineage link but not the spliced text. The
+# control proves the flow reaches the model and that the canary could arrive
+# only through the fold, so each pin passes on the withholding and nothing else.
 
 
 #: An unrelated page's own words: distinct from the review, so finding the
@@ -827,11 +964,10 @@ async def test_control_unfolded_review_grounds_an_unrelated_entry_without_the_ca
 
 
 @pytest.mark.asyncio
-@pytest.mark.xfail(strict=True, reason="D01 pending: lineage enforcement (#3059 AC9)")
 async def test_folded_intimate_quote_never_reaches_resonance_prompt(
     async_client: AsyncClient, db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """The Intimate source's words, folded into a Personal review, reach the model today."""
+    """The Intimate source's words, folded into a Personal review, never reach its model (R5-2)."""
     spy = _CapturingLLM()
     monkeypatch.setattr(marginalia_service, "generate_response", spy)
     headers, user_id = await _signup(async_client, "lineage_leak_direct")
@@ -844,11 +980,10 @@ async def test_folded_intimate_quote_never_reaches_resonance_prompt(
 
 
 @pytest.mark.asyncio
-@pytest.mark.xfail(strict=True, reason="D01 pending: lineage enforcement (#3059 AC9)")
 async def test_folded_intimate_quote_never_reaches_unrelated_entry_grounding(
     async_client: AsyncClient, db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Through the review, the Intimate source's words ground an unrelated entry's pass today."""
+    """Through the review, the Intimate source's words never ground an unrelated entry (R5-2)."""
     spy = _CapturingLLM()
     monkeypatch.setattr(marginalia_service, "generate_response", spy)
     headers, user_id = await _signup(async_client, "lineage_leak_prior")
