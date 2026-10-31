@@ -153,7 +153,10 @@ once:
    backend; ~8s when it reuses a receipt for an unchanged tree).
 3. **Git hooks** (automatic): `git commit` runs the pre-commit-stage hooks on
    your staged files; `git push` runs the pre-push-stage hooks (full suite +
-   coverage + complexity), ~5 min. All three hook types are installed by a bare
+   coverage + complexity), ~5 min. When a fresh check-all receipt covers the
+   unchanged, committed tree being pushed, the pre-push reuses its unit-suite
+   and coverage verdict and still runs the integration remainder (integration/
+   e2e-marked tests and the Postgres pass). All three hook types are installed by a bare
    `pre-commit install`, via `default_install_hook_types` in
    `.pre-commit-config.yaml`. On a checkout set up before that landed, run
    `pre-commit install` once to pick up the `pre-push` hook — `ls .git/hooks/`
