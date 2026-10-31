@@ -30,9 +30,10 @@ Three doors, each closed at the narrowest point that sees it:
   and making the source Personal again lets the passage go where the review
   goes.
 
-A quote's restriction is **transitive**: a quote lifted from a review counts as
-restricted when its text carries a passage that review holds from a restricted
-source, so a week review folded into a stage review does not launder it.
+A quote's restriction **follows it through re-quoting**: a quote lifted from a
+review counts as restricted when its text carries a passage that review holds
+from a restricted source, so a week review folded into a stage review does not
+launder it.
 
 Nothing here logs or returns text. Errors are not swallowed: a passage that
 cannot be decrypted fails the request rather than sending the body unredacted.
