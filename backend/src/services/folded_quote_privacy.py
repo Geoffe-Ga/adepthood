@@ -195,6 +195,28 @@ async def egress_body(session: AsyncSession, entry: JournalEntry, body: str) -> 
     return bodies[entry.id]
 
 
+async def letter_body(
+    session: AsyncSession, entry: JournalEntry, body: str, anchor_text: str
+) -> str | None:
+    """The body a letter on ``entry``'s note may be written from, or ``None`` if none may.
+
+    A letter's prompt carries the note's anchored passage as well as the body.
+    A note anchored inside a passage this entry holds from a restricted fold
+    (anchored before its source became Intimate) would carry that passage
+    however the body is masked, so no letter is written for it. Otherwise the
+    body comes back with its restricted folds masked.
+    """
+    if entry.id is None:
+        return body
+    passages = await restricted_folded_passages(
+        session, user_id=entry.user_id, entry_ids=(entry.id,)
+    )
+    held = passages.get(entry.id, ())
+    if carries_passage(anchor_text, held):
+        return None
+    return withhold_passages(body, held)
+
+
 def quote_is_foldable(source: JournalEntry, text: str, source_passages: tuple[str, ...]) -> bool:
     """Whether a quote of ``source`` with ``text`` may be folded into a review.
 

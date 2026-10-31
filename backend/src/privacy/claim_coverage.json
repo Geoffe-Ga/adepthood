@@ -209,6 +209,7 @@
       "backend/tests/test_folded_quote_privacy.py::test_promoting_a_span_over_a_restricted_fold_is_refused",
       "backend/tests/test_folded_quote_privacy.py::test_promoting_from_an_intimate_entry_is_refused_and_stores_nothing",
       "backend/tests/test_privacy_lineage.py::test_every_egress_operation_withholds_a_folded_intimate_passage",
+      "backend/tests/test_privacy_lineage.py::test_a_note_anchored_in_a_folded_intimate_passage_gets_no_letter",
       "backend/tests/security/test_privacy_guard_mutations.py::test_removing_a_guard_fails_its_claim_suite[egress_eligible_clause-C10]",
       "backend/tests/security/test_privacy_guard_mutations.py::test_removing_a_guard_fails_its_claim_suite[withhold_passages-C10]",
       "backend/tests/security/test_privacy_guard_mutations.py::test_removing_a_guard_fails_its_claim_suite[quote_is_foldable-C10]",

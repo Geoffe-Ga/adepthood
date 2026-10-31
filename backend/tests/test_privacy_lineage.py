@@ -639,6 +639,59 @@ async def test_every_egress_operation_withholds_a_folded_intimate_passage(
         assert {"model", "classifier", "vault_ingest", "corpus"} <= carrying
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "source_tier",
+    [JournalClassification.INTIMATE, JournalClassification.PERSONAL],
+    ids=["intimate_source", "personal_twin"],
+)
+async def test_a_note_anchored_in_a_folded_intimate_passage_gets_no_letter(
+    async_client: AsyncClient,
+    db_session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+    source_tier: JournalClassification,
+) -> None:
+    """A letter's prompt carries its note's anchor, so masking the body is not enough (R5-2).
+
+    The Personal twin shows the same note does get a letter that carries the passage.
+    """
+    spy = _CapturingLLM()
+    monkeypatch.setattr(marginalia_service, "generate_response", spy)
+    headers, user_id = await _signup(async_client, f"lineage_letter_{source_tier.value}")
+    chain = await seed_folded_lineage(
+        db_session, user_id=user_id, source_classification=source_tier
+    )
+    review = await db_session.get(JournalEntry, chain.review_id)
+    assert review is not None
+    start = review.message.index(LINEAGE_SENTINEL)
+    note = Marginalia(
+        journal_entry_id=chain.review_id,
+        user_id=user_id,
+        kind=MarginaliaKind.SYMBOL,
+        anchor_start=start,
+        anchor_end=start + len(LINEAGE_SENTINEL),
+        anchor_text=LINEAGE_SENTINEL,
+        note="A note on the quoted line.",
+    )
+    db_session.add(note)
+    await db_session.commit()
+    await db_session.refresh(note)
+
+    essay = await async_client.post(
+        f"/journal/marginalia/{note.id}/essay",
+        json={"price_acknowledged": True},
+        headers=headers,
+    )
+
+    assert essay.status_code == HTTPStatus.OK, essay.text
+    carried = [prompt for prompt in spy.prompts if LINEAGE_SENTINEL in prompt]
+    if source_tier is JournalClassification.INTIMATE:
+        assert spy.prompts == []
+        assert essay.json().get("essay") is None
+    else:
+        assert carried, "the twin's letter never carried the passage: the pin proves nothing"
+
+
 class _DegradingVault(_DiallingVault):
     """A vault that receives the body but does not confirm storing it."""
 
