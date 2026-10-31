@@ -160,6 +160,7 @@ DIAL_METHODS: Mapping[str, str] = {
     "classify_corpus": "domain.creek_vault.CreekVaultClient",
     "link_corpus": "domain.creek_vault.CreekVaultClient",
     "pipeline_job": "domain.creek_vault.CreekVaultPipelineClient",
+    "export_page": "domain.creek_vault.CreekVaultExportClient",
     "reflect": "domain.creek_vault.CreekVaultClient",
     "recommend_reading": "domain.reading_recommendations.ReadingRecommendationClient",
     "wheel": "domain.creek_vault.CreekVaultClient",

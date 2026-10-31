@@ -696,7 +696,7 @@ def test_state_status_table_matches_the_manifest() -> None:
 
 
 def test_capability_translation_table_matches_the_manifest() -> None:
-    """The translation table covers the base bundle and the pinned 0.25 extension.
+    """The translation table covers the base bundle and the pinned 0.25 and 0.27 extensions.
 
     Not some of them, and not some plus whatever the client invented: the set is
     read off the manifest, so a capability Creek publishes and the client cannot
@@ -704,8 +704,9 @@ def test_capability_translation_table_matches_the_manifest() -> None:
     injectivity half matters just as much -- two wire names collapsing onto one
     member would make ``supports`` answer for a capability nobody advertised.
     """
-    assert frozenset(_CAPABILITY_BY_CREEK_NAME) == _CAPABILITIES | {"reading-recommendations"}
-    assert len(frozenset(_CAPABILITY_BY_CREEK_NAME.values())) == CAPABILITY_COUNT + 1
+    extensions = {"reading-recommendations", "export"}
+    assert frozenset(_CAPABILITY_BY_CREEK_NAME) == _CAPABILITIES | extensions
+    assert len(frozenset(_CAPABILITY_BY_CREEK_NAME.values())) == CAPABILITY_COUNT + len(extensions)
 
 
 def test_the_capability_document_advertises_exactly_the_published_matrix_axis() -> None:
