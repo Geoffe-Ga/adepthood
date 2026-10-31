@@ -61,6 +61,7 @@
   "/health",
   "/health/live",
   "/health/ready",
+  "/internal/vault-provisioning/agent-token-status",
   "/internal/vault-provisioning/alerts",
   "/internal/vault-provisioning/completions",
   "/invitations",
