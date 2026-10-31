@@ -107,6 +107,7 @@ from services.classification_ceiling import (
 )
 from services.corpus_consent import load_consent
 from services.corpus_store import FragmentDraft, delete_fragments_for_entry, record_fragment
+from services.folded_quote_privacy import egress_body
 from services.frequency_classification import (
     IntimateContentRefusedError,
     classify_frequencies,
@@ -556,6 +557,9 @@ async def ingest_journal_entry(
     # is about to go to the classifier. ``_classify_and_record`` commits before
     # it dials, so this read is released with the rest.
     await observe_entry_lineage(session, LineageOperation.CORPUS_INGEST, entry)
+    # The classifier and the stored fragment get the body with any passage folded
+    # in from a quote of an Intimate source masked (#3059, owner decision R5-2).
+    body = await egress_body(session, entry, body)
     result = await ingest_content(
         session,
         user_id=entry.user_id,

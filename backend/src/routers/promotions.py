@@ -42,6 +42,7 @@ from schemas.promotion import (
     PromotionUpdate,
 )
 from security import TextTooLongError, sanitize_user_text
+from services.folded_quote_privacy import refuse_unfoldable_quote, refuse_unquotable_span
 from services.journal_withdrawal_obligation import refuse_if_deletion_pending
 
 logger = logging.getLogger(__name__)
@@ -99,9 +100,14 @@ async def promote_quote(
     Ownership is enforced by ``require_owned_journal_entry`` (a missing,
     soft-deleted, or foreign entry all resolve to 404). The span is sliced and
     snapshotted server-side, so the quote starts life pending (unfolded).
+
+    A source that may not egress (Intimate, or an unknown tier), or a span over
+    a passage the source holds from a restricted fold, is 409
+    ``quote_source_restricted`` and stores nothing (#3059, owner decision R5-2).
     """
     await refuse_if_deletion_pending(session, entry)
     anchor_text = _slice_anchor_text(entry, payload)
+    await refuse_unquotable_span(session, entry, payload.anchor_start, payload.anchor_end)
     quote = PromotedQuote(
         user_id=current_user,
         source_entry_id=cast("int", entry.id),
@@ -209,12 +215,16 @@ async def update_promotion(
     A missing or foreign promotion is 404. Setting ``included_in_entry_id``
     requires the target to be the caller's own live hierarchical reflection
     (404 / 422 otherwise); ``null`` clears the inclusion back to pending.
+    Folding a quote whose source has since become Intimate (or whose text
+    carries a passage restricted that way) is 409 ``quote_source_restricted``
+    (#3059, owner decision R5-2); returning one to pending is always allowed.
     """
     quote = await _load_owned_quote(session, promotion_id, current_user)
     if quote is None:
         raise not_found("promotion")
     if payload.included_in_entry_id is not None:
         await _validate_inclusion_target(session, payload.included_in_entry_id, current_user)
+        await refuse_unfoldable_quote(session, quote)
     quote.included_in_entry_id = payload.included_in_entry_id
     session.add(quote)
     await session.commit()

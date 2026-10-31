@@ -76,9 +76,11 @@ REAL_TEST: Final = (
     "backend/tests/security/test_telemetry_sentinels.py"
     "::test_route_raising_a_canary_ships_a_clean_but_diagnosable_event"
 )
+#: A strict xfail kept on purpose (census row 9 of the connection audit), so it
+#: outlives any one privacy gap being closed.
 XFAIL_TEST: Final = (
-    "backend/tests/test_privacy_lineage.py"
-    "::test_folded_intimate_quote_never_reaches_resonance_prompt"
+    "backend/tests/security/test_connection_never_held_across_an_outbound_call.py"
+    "::test_the_page_transcription_is_dialled_off_the_pool"
 )
 BOGUS_TEST: Final = (
     "backend/tests/security/test_telemetry_sentinels.py::test_that_was_never_written"

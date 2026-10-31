@@ -188,6 +188,7 @@ from services.essay_settlement import (
     keep_letter,
     log_settled_essay,
 )
+from services.folded_quote_privacy import egress_body
 from services.generation_access import (
     free_only_refusal,
     payer_refusal,
@@ -463,11 +464,14 @@ async def _record_vault_outcome(
     binding = await _bind_vault_destination(session, entry, vault_client)
     if binding is _Binding.WITHHOLD:
         return
+    # A passage folded in from a quote of an Intimate source never reaches the
+    # vault inside this entry (#3059, owner decision R5-2).
+    body = await egress_body(session, entry, entry.message)
     await session.commit()
     outcome = await store_and_classify(
         vault_client,
         entry_id=entry.id,
-        body=entry.message,
+        body=body,
         classification=entry.classification,
         created_at=entry.timestamp,
     )
@@ -1780,13 +1784,18 @@ async def _body_under_hold(
     A row that now sanitizes to nothing answers the route's own 422. The
     server-paid unit committed before the wait, so it is refunded first --
     the rollback inside the refund also leaves no connection held.
+
+    The body returned for the dials has every passage it holds from a folded
+    quote of an Intimate source masked (#3059, owner decision R5-2); the care
+    screen, which sends nothing, reads the whole page.
     """
     try:
         message = _sanitize_message(entry.message)
     except HTTPException:
         await _refund_failed_pass(session, entry.user_id, spent, trace=trace)
         raise
-    return message, care_response(care_for(message))
+    care = care_response(care_for(message))
+    return await egress_body(session, entry, message), care
 
 
 async def _pass_context_under_hold(
@@ -2874,11 +2883,12 @@ async def _detect_fresh_suggestions(
         # Shadow only (#3059): the pass will dial. Committed straight away so
         # the read holds no connection across that dial.
         await observe_entry_lineage(session, LineageOperation.DETECT, entry)
+        message = await egress_body(session, entry, _sanitize_message(entry.message))
         await session.commit()
         return await _detect_and_persist(
             session,
             entry=entry,
-            message=_sanitize_message(entry.message),
+            message=message,
             inputs=inputs,
             llm=llm,
         )
@@ -3577,7 +3587,12 @@ async def _cache_and_mirror_essay(
         # Shadow only (#3059). ``_cache_essay`` commits before it dials, so this
         # read is released with its own before anything leaves the process.
         await observe_entry_lineage(session, LineageOperation.ESSAY, entry)
-        written = await _write_first_letter(session, note=note, entry=entry, clients=clients)
+        # The body the letter is written from, with any passage folded in from
+        # a quote of an Intimate source masked (#3059, owner decision R5-2).
+        body = await egress_body(session, entry, _sanitize_message(entry.message))
+        written = await _write_first_letter(
+            session, note=note, entry=entry, body=body, clients=clients
+        )
     # A vault letter is kept by the vault itself and a care escalation stored
     # nothing, so only an app-provider letter is ever owed a mirror (#3380).
     if not isinstance(written, LetterToMirror):
@@ -3592,6 +3607,7 @@ async def _write_first_letter(
     *,
     note: Marginalia,
     entry: JournalEntry,
+    body: str,
     clients: _EssayClients,
 ) -> Marginalia | LetterEscalation | LetterToMirror:
     """Have the one source this writer's boundary allows write the letter; name what to mirror.
@@ -3607,11 +3623,13 @@ async def _write_first_letter(
     the :class:`LetterEscalation` the route answers with care (#3380).
     """
     if clients.boundary is ReflectionBoundary.VAULT_BOUND:
-        return await _cache_vault_letter(session, note=note, entry=entry, clients=clients)
+        return await _cache_vault_letter(
+            session, note=note, entry=entry, body=body, clients=clients
+        )
     cached = await _cache_essay(
         session,
         note,
-        _sanitize_message(entry.message),
+        body,
         api_key=clients.api_key,
         boundary=clients.boundary,
     )
@@ -3669,6 +3687,7 @@ async def _cache_vault_letter(
     *,
     note: Marginalia,
     entry: JournalEntry,
+    body: str,
     clients: _EssayClients,
 ) -> Marginalia | LetterEscalation:
     """Charge, have the vault write and keep the letter, then cache it (#3203).
@@ -3707,7 +3726,7 @@ async def _cache_vault_letter(
         answer = await settle_vault_letter(
             session,
             clients.vault_client,
-            letter_ask(note, entry, _sanitize_message(entry.message)),
+            letter_ask(note, entry, body),
             VaultLetterSettlement(entry=entry, destination=destination, keep=keep, refund=refund),
         )
     return await answer_vault_letter(session, note, answer)

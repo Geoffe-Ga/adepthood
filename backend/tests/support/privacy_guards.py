@@ -21,7 +21,7 @@ import builtins
 import dis
 import importlib
 import inspect
-from collections.abc import AsyncIterator, Callable
+from collections.abc import AsyncIterator, Callable, Iterable
 from dataclasses import dataclass
 from types import CodeType, FunctionType
 from typing import Final
@@ -30,6 +30,7 @@ from sqlalchemy import ColumnElement, SQLColumnExpression, or_
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from domain.creek_vault import CreekVaultClient, CreekVaultError
+from models.journal_entry import JournalEntry
 from services.marginalia import BotmasonResonanceLLM
 from services.reflection_boundary import ReflectionBoundary
 from services.restore_suppression import AccountTombstone, EntryTombstone
@@ -138,6 +139,27 @@ async def _assume_the_withdrawal_landed(client: CreekVaultClient, entry_id: int)
     return True
 
 
+def _withhold_nothing(body: str, passages: Iterable[str]) -> str:
+    """``withhold_passages`` that sends a folded Intimate passage as written."""
+    del passages
+    return body
+
+
+def _every_quote_is_foldable(
+    source: JournalEntry, text: str, source_passages: tuple[str, ...]
+) -> bool:
+    """``quote_is_foldable`` that offers and folds a quote of Intimate text."""
+    del source, text, source_passages
+    return True
+
+
+async def _every_span_is_quotable(
+    session: AsyncSession, entry: JournalEntry, start: int, end: int
+) -> None:
+    """``refuse_unquotable_span`` that promotes a span of an Intimate entry."""
+    del session, entry, start, end
+
+
 #: Every guard #3163 names, each against the claims whose suite must notice it.
 #:
 #: C10 is held to the SQL form of the predicate rather than to
@@ -222,6 +244,28 @@ PRIVACY_GUARDS: Final[tuple[GuardMutation, ...]] = (
         "_withdrawal_is_confirmed",
         ("C11", "C21"),
         _assume_the_withdrawal_landed,
+    ),
+    # Owner decision R5-2 (#3059): Intimate text is excluded from folded quotes.
+    GuardMutation(
+        "withhold_passages",
+        "domain.folded_passages",
+        "withhold_passages",
+        ("C10",),
+        _withhold_nothing,
+    ),
+    GuardMutation(
+        "quote_is_foldable",
+        "services.folded_quote_privacy",
+        "quote_is_foldable",
+        ("C10",),
+        _every_quote_is_foldable,
+    ),
+    GuardMutation(
+        "refuse_unquotable_span",
+        "services.folded_quote_privacy",
+        "refuse_unquotable_span",
+        ("C10",),
+        _every_span_is_quotable,
     ),
 )
 

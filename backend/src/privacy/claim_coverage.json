@@ -201,7 +201,18 @@
       "backend/tests/test_privacy_lineage.py::test_folded_intimate_quote_never_reaches_resonance_prompt",
       "backend/tests/test_privacy_lineage.py::test_folded_intimate_quote_never_reaches_unrelated_entry_grounding",
       "backend/tests/security/test_intimate_egress_matrix.py::test_reflecting_on_another_entry_carries_no_intimate_source",
-      "backend/tests/security/test_privacy_guard_mutations.py::test_removing_a_guard_fails_its_claim_suite[egress_eligible_clause-C10]"
+      "backend/tests/services/test_reading_recommendations.py::test_a_folded_intimate_passage_is_never_excerpted",
+      "backend/tests/test_reflections_api.py::test_sources_never_offers_a_quote_of_intimate_text",
+      "backend/tests/test_folded_quote_privacy.py::test_a_quote_of_a_quote_inherits_the_restriction",
+      "backend/tests/test_folded_quote_privacy.py::test_folding_a_requote_of_a_restricted_passage_is_refused",
+      "backend/tests/test_folded_quote_privacy.py::test_folding_a_quote_whose_source_became_intimate_is_refused",
+      "backend/tests/test_folded_quote_privacy.py::test_promoting_a_span_over_a_restricted_fold_is_refused",
+      "backend/tests/test_folded_quote_privacy.py::test_promoting_from_an_intimate_entry_is_refused_and_stores_nothing",
+      "backend/tests/test_privacy_lineage.py::test_every_egress_operation_withholds_a_folded_intimate_passage",
+      "backend/tests/security/test_privacy_guard_mutations.py::test_removing_a_guard_fails_its_claim_suite[egress_eligible_clause-C10]",
+      "backend/tests/security/test_privacy_guard_mutations.py::test_removing_a_guard_fails_its_claim_suite[withhold_passages-C10]",
+      "backend/tests/security/test_privacy_guard_mutations.py::test_removing_a_guard_fails_its_claim_suite[quote_is_foldable-C10]",
+      "backend/tests/security/test_privacy_guard_mutations.py::test_removing_a_guard_fails_its_claim_suite[refuse_unquotable_span-C10]"
     ],
     "sinks": [
       "net.openai",
@@ -218,7 +229,7 @@
       ]
     },
     "issue": 3059,
-    "gap": "folded quotes still carry Intimate text (strict xfail, owner decision D01 #3059); no lineage taint"
+    "gap": "rest of D01 open: a review holding a folded quote keeps its own tier (no lineage taint); earlier summaries and retyped prose are untraced"
   },
   "C11": {
     "status": "partial",
