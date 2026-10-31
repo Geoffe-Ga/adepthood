@@ -101,18 +101,38 @@ jobs:
 
           # Green + LGTM is not enough to clear a merge. The same two conditions
           # scripts/ralph/pr-ready.sh enforces apply here, or this job would clear
-          # the very lanes that helper refuses: a branch behind its base (whose
-          # green proves nothing about today's main) and one a human put on hold.
-          # A missing PR object yields no labels, so both fail closed.
-          PR_JSON=$(gh api "repos/$REPO/pulls/$PR" 2>/dev/null || echo '{}')
+          # the very lanes that helper refuses: one a human put on hold, and one
+          # that CONFLICTS with its base. Being BEHIND the base is deliberately
+          # not a blocker (owner rule, 2026-10-31): a PR that passed every other
+          # gate merges as long as GitHub reports no merge conflict.
+          #
+          # GitHub computes `mergeable` lazily and answers null until it has, so
+          # a null is re-polled a few times and, if still null, reported as "not
+          # yet known" - never read as clear. A PR object that cannot be read at
+          # all yields no labels and a null `mergeable`, so both checks fail
+          # closed; the read's own stderr is left visible in the step log so a
+          # transport failure stays distinguishable from a real answer.
+          MERGEABLE_POLLS=4
+          MERGEABLE_POLL_SECONDS=5
+          read_pr() {
+            if ! PR_JSON=$(gh api "repos/$REPO/pulls/$PR"); then
+              echo "::warning::could not read PR #$PR; hold and mergeability treated as unknown"
+              PR_JSON='{}'
+            fi
+            MERGEABLE=$(jq -r 'if .mergeable == null then "null" else (.mergeable | tostring) end' <<<"$PR_JSON")
+            MERGE_STATE=$(jq -r '.mergeable_state // "unknown"' <<<"$PR_JSON")
+          }
+          read_pr
+          POLL=1
+          while [ "$MERGEABLE" = "null" ] && [ "$POLL" -lt "$MERGEABLE_POLLS" ]; do
+            sleep "$MERGEABLE_POLL_SECONDS"
+            read_pr
+            POLL=$((POLL + 1))
+          done
           BASE=$(jq -r '.base.ref // empty' <<<"$PR_JSON")
           HELD=$(jq -r 'if .labels == null then "unknown"
                         elif ([.labels[].name] | index("do-not-auto-merge")) then "yes"
                         else "no" end' <<<"$PR_JSON")
-          # behind_by counts base commits the head lacks; anything but a literal
-          # 0 - including an empty answer from a failed or malformed compare - is
-          # "not current".
-          BEHIND=$(gh api "repos/$REPO/compare/$BASE...$SHA?per_page=1" --jq '.behind_by' 2>/dev/null || true)
 
           # COMMENTS is a sign-off with non-blocking findings: it never asks for
           # another iteration. Its findings become follow-up issues prioritized
@@ -121,12 +141,14 @@ jobs:
           if [ "$GREEN" = "$TOTAL" ] && { [ "$VERDICT" = "LGTM" ] || [ "$VERDICT" = "COMMENTS" ]; }; then
             if [ "$HELD" != "no" ]; then
               ACTION="NOT cleared to merge: the do-not-auto-merge hold is set on this PR (or its labels could not be read). A human owns this one - leave it alone."
-            elif [ "$BEHIND" != "0" ]; then
-              ACTION="NOT cleared to merge: this head is not current with ${BASE:-its base} (behind_by='${BEHIND}'). Sync main in and let CI re-run first."
+            elif [ "$MERGEABLE" = "false" ] || [ "$MERGE_STATE" = "dirty" ]; then
+              ACTION="NOT cleared to merge: this PR has a merge conflict with ${BASE:-its base} (mergeable=${MERGEABLE}, mergeable_state=${MERGE_STATE}). Merge ${BASE:-the base} in, resolve the conflict, and let CI re-run first."
+            elif [ "$MERGEABLE" != "true" ]; then
+              ACTION="NOT cleared to merge yet: GitHub has not finished computing whether this PR conflicts with ${BASE:-its base} (mergeable=${MERGEABLE}). Re-check mergeability before merging; being behind ${BASE:-its base} is not itself a blocker."
             elif [ "$VERDICT" = "COMMENTS" ]; then
-              ACTION="${FILE_FOLLOWUPS} Then you are cleared to squash merge, delete the branch, clean any worktrees, and unsubscribe from webhooks."
+              ACTION="${FILE_FOLLOWUPS} Then you are cleared to squash merge (no merge conflict with ${BASE:-its base}; being behind it is not a blocker), delete the branch, clean any worktrees, and unsubscribe from webhooks."
             else
-              ACTION="You are cleared to squash merge, delete the branch, clean any worktrees, and unsubscribe from webhooks. Please proceed."
+              ACTION="You are cleared to squash merge (no merge conflict with ${BASE:-its base}; being behind it is not a blocker), delete the branch, clean any worktrees, and unsubscribe from webhooks. Please proceed."
             fi
           elif [ "$VERDICT" = "COMMENTS" ]; then
             ACTION="${FILE_FOLLOWUPS} CI is not fully green yet - fix only the failing checks."

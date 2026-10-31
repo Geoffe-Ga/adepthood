@@ -17,9 +17,11 @@ it is.
 and every live refresh token under the grant is revoked
 (:func:`services.oauth_tokens.revoke_grant_tokens`). Either alone already stops
 the agent's next refresh at the token endpoint (#3533); both together leave
-nothing live to argue about. An access token already issued is not recalled --
-the vault verifies those offline -- so the agent stops within one access-token
-lifetime (ten minutes), which is the promise the epic makes.
+nothing live to argue about. An access token already issued is not stored and
+so cannot be recalled, but the vault asks whether its grant still stands on every
+call (R3-2, :func:`services.oauth_tokens.agent_token_active`, #3585), so the
+agent stops within the vault's short status cache; a vault that does not ask
+still stops it within one access-token lifetime (ten minutes).
 """
 
 from __future__ import annotations

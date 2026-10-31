@@ -272,3 +272,10 @@ path     = "/oauth/authorize"
 category = "shared_catalog"
 field    = "client_id"
 reason   = "client_id names the anonymous registry of public OAuth clients (#3532): an agent registers before anybody signs in, no client row belongs to any account, and naming another person's agent grants nothing -- the account-scoped part of the request is the resource, refused with invalid_target unless it is the caller's own vault (tests/security/test_idor.py)"
+
+[[route]]
+method   = "POST"
+path     = "/internal/vault-provisioning/agent-token-status"
+category = "admin_only"
+field    = "client_id"
+reason   = "gated on Creek's mounted handoff bearer, an operator credential no user session holds, so both probe identities are refused 401 before the body is read; client_id names the public OAuth client registry and is resolved only as a pair with sub, so another account's agent finds no grant and answers the uniform {active: false} (#3585, tests/security/test_idor.py)"

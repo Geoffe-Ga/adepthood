@@ -5,17 +5,22 @@
 # (ralph-tick.md Step 1). Prints exactly one status token and exits 0 (it is a
 # query — a non-zero exit means a usage/tooling error, never a PR verdict):
 #
-#   ready            LGTM (fresh) + CI green + verified current with main → merge now
+#   ready            LGTM (fresh) + CI green + no merge conflict (mergeStateStatus
+#                    CLEAN or BEHIND) → merge now. Being behind main is NOT a
+#                    blocker (owner rule, 2026-10-31); only a conflict is
 #   ready-unreviewed CI green (with real checks that actually passed) + verified
 #                    current with main, but this PR HAS no review gate: Dependabot
 #                    authored it AND pushed its HEAD commit, and `claude-review`
 #                    reported SKIPPED → the orchestrator decides (see below)
-#   ready-comments   COMMENTS (fresh) + CI green + verified current with main → the
+#   ready-comments   COMMENTS (fresh) + CI green + no merge conflict → the
 #                    reviewer signed off with non-blocking findings: file each as a
 #                    P0–P3 follow-up issue (address-feedback Step 1A), then merge.
 #                    NEVER a fix loop
-#   behind           LGTM/COMMENTS (fresh) + CI green but the branch is not current
-#                    → sync first
+#   behind           CI green but not clearable without a sync: a would-be
+#                    `ready-unreviewed` bump that is not verified current with main
+#                    (its review substitute is green CI against CURRENT main), or a
+#                    mergeStateStatus this helper does not recognise as mergeable
+#                    → sync first (always safe)
 #   unknown          GitHub has not finished computing mergeability (routine for a
 #                    few seconds after every push) → wait for a later wake; a sync
 #                    would merge nothing and push nothing
@@ -78,7 +83,7 @@
 # A scan that matches NOTHING is silence, not proof: it is filtered by the `dependencies`
 # label, which this repo has watched fail to stick — hence `ensure-issue-label.sh`. A
 # lane where NEITHER route resolved anything therefore classifies normally and is refused
-# only at the point of merge, so `behind` still prints `behind` (a sync is always safe,
+# only at the point of merge, so a `behind` lane still prints `behind` (a sync is always safe,
 # and re-linking the body is often what makes the hold provable again).
 #
 # An unresolvable hold on a bot PR that would otherwise merge is likewise one of those
@@ -117,7 +122,8 @@
 # normal `ready` path; this token covers only the residual case of a bump already
 # current and already green, where nothing of ours is ever pushed. It is a
 # SEPARATE token rather than a looser `ready` on purpose: `ready` keeps its full
-# four-part meaning (fresh LGTM + green CI + CLEAN + `behind_by == 0`), so the
+# meaning (fresh LGTM + green CI + conflict-free), and this token keeps the
+# stricter review substitute (green CI + CLEAN + `behind_by == 0`), so the
 # decision to merge something no reviewer ever saw is made visibly by the
 # orchestrator, never silently here.
 #
@@ -152,16 +158,22 @@
 # and a malformed freshness/flag field degrades to `awaiting-review`, never to
 # the new token.
 #
-# Freshness guard: `mergeStateStatus` is NOT a freshness signal. GitHub only
-# reports BEHIND when the base branch enforces strict/up-to-date status checks,
-# which this repo does not — so a branch many commits behind `main` reports
-# CLEAN, and its own green CI proves nothing about today's `main`. (A grouped pip
-# bump 17 commits behind carried a ruff major that lints 144 errors against
-# current `main`; merging its stale green would have turned `main` red.)
-# Freshness therefore comes from the compare API's `behind_by`, and CLEAN is kept
-# alongside it because DIRTY/CONFLICTING/BLOCKED/DRAFT/UNKNOWN are invisible to
-# `behind_by`. The probe is LAZY by design — only a lane that would otherwise
-# print `ready` pays for it, so the orchestrator never sync-thrashes.
+# Merge gate: a CONFLICT check, not a freshness check (owner rule, 2026-10-31:
+# "PRs don't need to be brought up to the current main before merging. If there
+# are no merge conflicts then it is fine to merge a pr that passed all other
+# gates."). A reviewed lane is mergeable when GitHub's `mergeStateStatus` is CLEAN
+# or BEHIND — both mean "no conflict"; BEHIND is only ever reported when the base
+# branch enforces strict up-to-date checks. DIRTY/CONFLICTING is `conflicted`
+# (merge main in and resolve first), and UNKNOWN — GitHub has not finished
+# computing mergeability, its `mergeable: null` — is `unknown`, never clear.
+#
+# The compare API's `behind_by` survives in exactly one place: `ready-unreviewed`.
+# That token has no review, and what stands in for one is "green CI against
+# CURRENT main" — so freshness there is part of the review gate, not a merge-
+# currency rule. (A grouped pip bump 17 commits behind carried a ruff major that
+# lints 144 errors against current `main`; with no reviewer to catch it, its stale
+# green alone must not merge it.) The probe is LAZY by design — only a lane that
+# would otherwise print `ready-unreviewed` pays for it.
 #
 # Usage:  pr-ready.sh <PR_NUMBER> [--repo <owner/repo>]
 set -euo pipefail
@@ -183,6 +195,11 @@ readonly FAILING_CONCLUSIONS_RE='FAILURE|ERROR|TIMED_OUT|CANCELLED|ACTION_REQUIR
 # be spelled out separately and a drift between them is invisible.
 readonly CONFLICT_MERGE_STATE_DIRTY="DIRTY"
 readonly CONFLICT_MERGE_STATE_CONFLICTING="CONFLICTING"
+
+# The `mergeStateStatus` values that mean the branch merges with NO conflict.
+# BEHIND is one of them: being behind the base is not a merge blocker.
+readonly MERGE_STATE_CLEAN="CLEAN"
+readonly MERGE_STATE_BEHIND="BEHIND"
 
 # The per-PR/per-issue human hold. `pick-next.sh` already excludes issues wearing
 # it from work entirely; this honours the same meaning on the PR side.
@@ -612,10 +629,25 @@ branch_is_current() {
   [[ "$behind" -eq 0 ]]
 }
 
-# CLEAN is kept as well as the freshness probe: it is the only signal for
-# DIRTY/CONFLICTING/BLOCKED/DRAFT/UNKNOWN, and short-circuiting on it keeps the
-# probe off every lane that is not already one step from merging.
-if [[ "$merge_state" == "CLEAN" ]] && branch_is_current; then
+# True when GitHub reports the PR merges into its base with no conflict. BEHIND
+# is in the set on purpose: being behind main is not a blocker, a conflict is.
+is_conflict_free() {
+  [[ "$merge_state" == "$MERGE_STATE_CLEAN" ||
+     "$merge_state" == "$MERGE_STATE_BEHIND" ]]
+}
+
+# True when the lane may merge. A reviewed lane needs only to be conflict-free;
+# `ready-unreviewed` additionally needs its review substitute — green CI proven
+# against CURRENT main (CLEAN + `behind_by == 0`) — and fails over to `behind`,
+# whose sync makes the real review runnable. `branch_is_current` is evaluated
+# last, so only a would-be-ready-unreviewed lane ever pays for the probe.
+merge_cleared() {
+  is_conflict_free || return 1
+  [[ "$ready_token" == "ready-unreviewed" ]] || return 0
+  [[ "$merge_state" == "$MERGE_STATE_CLEAN" ]] && branch_is_current
+}
+
+if merge_cleared; then
   # The deferred refusal sits HERE, at the only point where an unprovable hold
   # could do harm: every token above is a wait or a remedy no human reserving the
   # PR would object to, while these two merge it. Refusing earlier would wedge
@@ -624,7 +656,7 @@ if [[ "$merge_state" == "CLEAN" ]] && branch_is_current; then
     die "PR #$pr is Dependabot's, its body links no issue, and no open $BRIDGE_ISSUE_LABEL issue carries $PR_MARKER, so $OPTOUT_LABEL can be neither found nor ruled out; re-run the Dependabot-to-Ralph bridge reconciler (gh workflow run dependabot-to-ralph-issue.yml) to re-link the PR body, then retry"
   echo "$ready_token"
 else
-  # Not mergeable -- but `behind`'s remedy (fleet.sh sync) only helps one of the
+  # Not cleared -- but `behind`'s remedy (fleet.sh sync) only helps one of the
   # reasons why. These four each get their own token because a sync cannot
   # supply a missing check, un-draft a PR a human parked, resolve a conflict, or
   # hurry GitHub's mergeability computation. Collapsed together, every wake
@@ -641,7 +673,8 @@ else
       UNKNOWN) echo "unknown" ;;
       DRAFT) echo "draft" ;;
       BLOCKED) echo "blocked" ;;
-      # CLEAN-but-stale, BEHIND, and anything not enumerated above. The fallback
+      # A not-yet-current reviewless bump (CLEAN or BEHIND, see merge_cleared),
+      # and anything not enumerated above. The fallback
       # is deliberately `behind` rather than a new "unclassified" token: a sync is
       # always safe, so an unrecognised state costs one wasted sync instead of
       # wedging the lane on a token no caller knows how to route.

@@ -259,6 +259,21 @@
         "title": "AgentActivityStatus",
         "type": "string"
       },
+      "AgentTokenStatusResponse": {
+        "additionalProperties": false,
+        "description": "Whether the vault may serve the call: RFC 7662's ``active`` and nothing else.",
+        "properties": {
+          "active": {
+            "title": "Active",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "active"
+        ],
+        "title": "AgentTokenStatusResponse",
+        "type": "object"
+      },
       "AppleOAuthRequest": {
         "description": "Apple sign-in payload -- the shared shape plus the one-shot ``full_name``.\n\nApple never puts the name in the token.  It is handed to the client once,\nduring the very first authorization, and never sent again -- so the client\nforwards it here or it is lost.  That also makes it the one field on this\nroute the provider has *not* vouched for, which is why the ladder consults\nit only when creating a brand-new row: a later request carrying a different\nname can never relabel an account that already exists.\n\nBlank (or whitespace-only) means \"no name\", not an empty name, so the\ncolumn stays ``NULL`` and every reader's fallback keeps working.  The\nlength bound matches the column's, so an over-long name is a 422 here\nrather than a truncating write or a 500 from mid-transaction.",
         "properties": {
@@ -20029,6 +20044,164 @@
           }
         },
         "summary": "Readiness"
+      }
+    },
+    "/internal/vault-provisioning/agent-token-status": {
+      "post": {
+        "description": "Say whether a verified agent token's grant still stands; every no is the same no.",
+        "operationId": "agent_token_status_internal_vault_provisioning_agent_token_status_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "additionalProperties": false,
+                "description": "The claims of one verified access token: whose, which agent's, and when issued.",
+                "properties": {
+                  "client_id": {
+                    "maxLength": 2048,
+                    "minLength": 1,
+                    "title": "Client Id",
+                    "type": "string"
+                  },
+                  "iat": {
+                    "maximum": 32503680000,
+                    "minimum": 0,
+                    "title": "Iat",
+                    "type": "integer"
+                  },
+                  "sub": {
+                    "maxLength": 200,
+                    "minLength": 1,
+                    "title": "Sub",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "sub",
+                  "client_id",
+                  "iat"
+                ],
+                "title": "AgentTokenStatusRequest",
+                "type": "object"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AgentTokenStatusResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "The request body could not be parsed, or a value it carried was refused."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "No usable credential was presented."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "The caller is authenticated but does not own the resource."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "No such resource -- or none this caller is allowed to see."
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "The request conflicts with the resource's current state."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ValidationErrorResponse"
+                }
+              }
+            },
+            "description": "The request failed validation -- an array of rejected fields -- or a check applied after the schema refused it, as one snake_case code."
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "The caller went past a rate limit."
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "A required dependency is temporarily unusable."
+          }
+        },
+        "summary": "Agent Token Status",
+        "tags": [
+          "internal-vault-provisioning"
+        ]
       }
     },
     "/internal/vault-provisioning/alerts": {

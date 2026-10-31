@@ -2804,6 +2804,63 @@ async def test_idor_oauth_authorize_refuses_another_accounts_vault_and_writes_no
 
 
 @pytest.mark.asyncio
+async def test_idor_agent_token_status_never_pairs_one_subject_with_anothers_agent(
+    async_client: AsyncClient,
+    db_session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """Alice's ``sub`` named with an agent only Bob approved is never active (#3585).
+
+    The status lookup's body carries a ``client_id`` beside the subject, and the
+    grant is resolved by the pair, so naming Bob's agent with Alice's subject
+    finds no grant of Alice's: the answer is the uniform ``{"active": false}``,
+    Bob's own token still answers ``true`` (the control), and the lookup writes
+    nothing -- no grant is created or stamped.
+    """
+    monkeypatch.setenv(OAUTH_ISSUER_ENV_VAR, oauth_flow.ISSUER)
+    oauth_flow.install_signing_keys(monkeypatch)
+    bearer = oauth_flow.install_handoff_bearer(monkeypatch, tmp_path)
+    claims: dict[str, dict[str, object]] = {}
+    for name in ("alice_status", "bob_status"):
+        code, client_id, _resource, _user_id = await oauth_flow.approved_code(
+            async_client, db_session, name
+        )
+        minted = await oauth_flow.exchange(
+            async_client, oauth_flow.code_exchange_form(code, client_id)
+        )
+        claims[name] = oauth_flow.token_status_claims(minted.json()["access_token"])
+    grants_before = (
+        (await db_session.execute(select(AgentGrant).order_by(col(AgentGrant.id)))).scalars().all()
+    )
+    stamped_before = [(grant.id, grant.last_used_at) for grant in grants_before]
+
+    crossed = {**claims["alice_status"], "client_id": claims["bob_status"]["client_id"]}
+    attack = await async_client.post(
+        oauth_flow.AGENT_TOKEN_STATUS_PATH, json=crossed, headers=bearer
+    )
+    control = await async_client.post(
+        oauth_flow.AGENT_TOKEN_STATUS_PATH, json=claims["bob_status"], headers=bearer
+    )
+
+    assert attack.status_code == HTTPStatus.OK
+    assert attack.json() == {"active": False}
+    assert control.json() == {"active": True}
+    grants_after = (
+        (
+            await db_session.execute(
+                select(AgentGrant)
+                .order_by(col(AgentGrant.id))
+                .execution_options(populate_existing=True)
+            )
+        )
+        .scalars()
+        .all()
+    )
+    assert [(grant.id, grant.last_used_at) for grant in grants_after] == stamped_before
+
+
+@pytest.mark.asyncio
 async def test_idor_oauth_authorize_serves_each_account_only_its_own_vault(
     async_client: AsyncClient,
     db_session: AsyncSession,
