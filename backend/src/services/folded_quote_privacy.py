@@ -55,6 +55,7 @@ from domain.privacy_tier import admits_egress
 from errors import conflict
 from models.journal_entry import JournalEntry
 from models.promoted_quote import PromotedQuote
+from services.privacy_lineage import LineageOperation, observe_entry_lineage
 
 logger = logging.getLogger(__name__)
 
@@ -195,26 +196,29 @@ async def egress_body(session: AsyncSession, entry: JournalEntry, body: str) -> 
     return bodies[entry.id]
 
 
-async def letter_body(
-    session: AsyncSession, entry: JournalEntry, body: str, anchor_text: str
-) -> str | None:
+async def letter_body(session: AsyncSession, entry: JournalEntry, anchor_text: str) -> str | None:
     """The body a letter on ``entry``'s note may be written from, or ``None`` if none may.
 
-    A letter's prompt carries the note's anchored passage as well as the body.
-    A note anchored inside a passage this entry holds from a restricted fold
-    (anchored before its source became Intimate) would carry that passage
-    however the body is masked, so no letter is written for it. Otherwise the
-    body comes back with its restricted folds masked.
+    Read under the letter's account hold. A deleted row, or one that may not
+    egress, sends nothing. A letter's prompt carries the note's anchored
+    passage as well as the body, so a note anchored inside a passage this
+    entry holds from a restricted fold (anchored before its source became
+    Intimate) would carry that passage however the body is masked: no letter is
+    written for it. Otherwise the shadow lineage is observed and the body comes
+    back with its restricted folds masked.
     """
-    if entry.id is None:
-        return body
+    if entry.id is None or entry.deleted_at is not None or not admits_egress(entry.classification):
+        return None
     passages = await restricted_folded_passages(
         session, user_id=entry.user_id, entry_ids=(entry.id,)
     )
     held = passages.get(entry.id, ())
     if carries_passage(anchor_text, held):
         return None
-    return withhold_passages(body, held)
+    # Shadow only (#3059). The letter commits before it dials, so this read is
+    # released with its own before anything leaves the process.
+    await observe_entry_lineage(session, LineageOperation.ESSAY, entry)
+    return withhold_passages(entry.message, held)
 
 
 def quote_is_foldable(source: JournalEntry, text: str, source_passages: tuple[str, ...]) -> bool:

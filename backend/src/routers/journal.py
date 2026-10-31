@@ -3582,11 +3582,13 @@ async def _cache_and_mirror_essay(
             # purchase -- no charge, no dial, no overwrite (#623).
             _log_essay_cache_hit(note, _CACHE_HIT_IN_BARRIER)
             return note
-        body = await _letter_body_under_hold(session, entry, note)
+        # Nothing for a deleted or Intimate row, or a note anchored in a folded
+        # Intimate passage; else the body with such passages masked (#3059).
+        body = await letter_body(session, entry, note.anchor_text)
         if body is None:
             return note
         written = await _write_first_letter(
-            session, note=note, entry=entry, body=body, clients=clients
+            session, note=note, entry=entry, body=_sanitize_message(body), clients=clients
         )
     # A vault letter is kept by the vault itself and a care escalation stored
     # nothing, so only an app-provider letter is ever owed a mirror (#3380).
@@ -3595,23 +3597,6 @@ async def _cache_and_mirror_essay(
     return await _mirror_cached_essay(
         session, entry=entry, cached=written.cached, essay=written.essay, clients=clients
     )
-
-
-async def _letter_body_under_hold(
-    session: AsyncSession, entry: JournalEntry, note: Marginalia
-) -> str | None:
-    """The body a first letter may be written from, read under the hold; ``None`` if none may.
-
-    A row deleted or no longer egress-eligible sends nothing. Otherwise the
-    body carries its folded-quote passages from Intimate sources masked, and a
-    note anchored inside one gets no letter (#3059, owner decision R5-2).
-    """
-    if entry.deleted_at is not None or not admits_egress(entry.classification):
-        return None
-    # Shadow only (#3059). ``_cache_essay`` commits before it dials, so this
-    # read is released with its own before anything leaves the process.
-    await observe_entry_lineage(session, LineageOperation.ESSAY, entry)
-    return await letter_body(session, entry, _sanitize_message(entry.message), note.anchor_text)
 
 
 async def _write_first_letter(
