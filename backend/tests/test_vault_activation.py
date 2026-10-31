@@ -43,6 +43,7 @@ from services.managed_vault_rollout import (
     MANAGED_VAULT_ALERT_EMAIL_ENV_VAR,
     MANAGED_VAULT_ENABLED_ENV_VAR,
     MANAGED_VAULT_PILOT_USER_IDS_ENV_VAR,
+    MAX_PILOT_ACCOUNTS,
 )
 
 if TYPE_CHECKING:
@@ -170,7 +171,7 @@ def _encrypted_handoff(
     monkeypatch.setenv(MANAGED_VAULT_ENABLED_ENV_VAR, "true")
     monkeypatch.setenv(
         MANAGED_VAULT_PILOT_USER_IDS_ENV_VAR,
-        ",".join(str(i) for i in range(1, 101)),
+        ",".join(str(i) for i in range(1, MAX_PILOT_ACCOUNTS + 1)),
     )
     journal_encryption.reset_cache()
     yield

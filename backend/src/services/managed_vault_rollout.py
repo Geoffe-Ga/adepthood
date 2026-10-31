@@ -24,7 +24,10 @@ MANAGED_VAULT_ENABLED_ENV_VAR: Final[str] = (
 )
 MANAGED_VAULT_PILOT_USER_IDS_ENV_VAR: Final[str] = "CREEK_MANAGED_VAULT_PILOT_USER_IDS"
 MANAGED_VAULT_ALERT_EMAIL_ENV_VAR: Final[str] = "CREEK_MANAGED_VAULT_ALERT_EMAIL"
-MAX_PILOT_ACCOUNTS: Final[int] = 100
+# Creek admits at most this many managed vaults (release decision R2-3,
+# Creek-Vault#2017). Admitting more here would activate accounts Creek then
+# refuses with 503 activation_unavailable, so the two caps must move together.
+MAX_PILOT_ACCOUNTS: Final[int] = 15
 
 _EMAIL_ADAPTER: Final = TypeAdapter(EmailStr)
 

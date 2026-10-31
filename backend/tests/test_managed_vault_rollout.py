@@ -12,6 +12,7 @@ from services.managed_vault_rollout import (
     MANAGED_VAULT_ALERT_EMAIL_ENV_VAR,
     MANAGED_VAULT_ENABLED_ENV_VAR,
     MANAGED_VAULT_PILOT_USER_IDS_ENV_VAR,
+    MAX_PILOT_ACCOUNTS,
     ManagedVaultRolloutState,
     load_managed_vault_rollout,
 )
@@ -97,13 +98,41 @@ def test_fully_configured_rollout_is_bounded_to_account_ids(
     assert rollout.allows_new_activation(8) is False
 
 
+# Creek admits at most this many managed vaults (R2-3, Creek-Vault#2017). Pinned
+# here as a literal, not imported, so a drift in the production constant fails
+# this test instead of silently moving the boundary it asserts.
+CREEK_ADMISSION_CAP = 15
+
+
+def _allowlist_of(count: int) -> str:
+    return ",".join(map(str, range(1, count + 1)))
+
+
+def test_pilot_ceiling_matches_creek_admission_cap() -> None:
+    assert MAX_PILOT_ACCOUNTS == CREEK_ADMISSION_CAP
+
+
+def test_allowlist_at_the_pilot_ceiling_is_ready(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    _complete_provider(monkeypatch, tmp_path)
+    monkeypatch.setenv(MANAGED_VAULT_ENABLED_ENV_VAR, "true")
+    monkeypatch.setenv(MANAGED_VAULT_PILOT_USER_IDS_ENV_VAR, _allowlist_of(CREEK_ADMISSION_CAP))
+
+    rollout = load_managed_vault_rollout()
+
+    assert rollout.state is ManagedVaultRolloutState.READY
+    assert rollout.allows_new_activation(CREEK_ADMISSION_CAP) is True
+
+
 def test_allowlist_over_the_pilot_ceiling_fails_closed(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
     _complete_provider(monkeypatch, tmp_path)
     monkeypatch.setenv(MANAGED_VAULT_ENABLED_ENV_VAR, "true")
-    monkeypatch.setenv(MANAGED_VAULT_PILOT_USER_IDS_ENV_VAR, ",".join(map(str, range(1, 102))))
+    monkeypatch.setenv(MANAGED_VAULT_PILOT_USER_IDS_ENV_VAR, _allowlist_of(CREEK_ADMISSION_CAP + 1))
 
     rollout = load_managed_vault_rollout()
 

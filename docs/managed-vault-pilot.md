@@ -12,7 +12,7 @@ The backend records exactly one state at startup without logging bearer values:
 - `incomplete`: the switch is invalid/true but the allowlist, alert destination,
   Creek URL, or mounted bearer files are invalid, empty, missing, or insecure;
 - `ready`: the switch is true, both mounted bearers are readable, the Creek URL
-  and fleet-alert destination are usable, and 1–100 positive account ids are
+  and fleet-alert destination are usable, and 1–15 positive account ids are
   allowlisted.
 
 The container uses this same closed switch parser before startup. An unset or
@@ -109,7 +109,9 @@ vault on Creek contract 0.18 or later answers `GET /v1/capabilities` with
    Creek's bounded sender retries and reports the unhealthy reconciliation pass.
 5. Set `CREEK_MANAGED_VAULT_PILOT_USER_IDS` to the comma-separated Adepthood
    account ids approved for this cohort. Never use email addresses or a browser
-   flag. The parser rejects zero, negative, malformed, empty, and over-100 lists.
+   flag. The parser rejects zero, negative, malformed, empty, and over-15 lists:
+   the ceiling is Creek's managed-vault admission cap (release decision R2-3,
+   Creek-Vault#2017), so an account Adepthood admits is one Creek can provision.
 6. Set `CREEK_MANAGED_VAULT_ACTIVATION_ENABLED=true`, deploy, and confirm the
    startup record says `managed_vault_activation_config_state=ready` with only
    the expected cohort count.

@@ -70,6 +70,7 @@ from services.managed_vault_rollout import (
     MANAGED_VAULT_ALERT_EMAIL_ENV_VAR,
     MANAGED_VAULT_ENABLED_ENV_VAR,
     MANAGED_VAULT_PILOT_USER_IDS_ENV_VAR,
+    MAX_PILOT_ACCOUNTS,
 )
 from services.oauth_apple import APPLE_JWKS_URL
 from services.oauth_authorization import OAUTH_ISSUER_ENV_VAR
@@ -97,7 +98,7 @@ GUMROAD_HOST: Final = "api.gumroad.com"
 RESEND_HOST: Final = "api.resend.com"
 CONTRACT_HEADER: Final = "Creek-Provisioning-Version"
 CONTRACT_VERSION: Final = "2.0.0"
-PILOT_ACCOUNTS: Final = 100
+PILOT_ACCOUNTS: Final = MAX_PILOT_ACCOUNTS
 APP_BASE_URL: Final = "https://app.canary.invalid"
 ALERT_EMAIL: Final = "vault-alerts@example.com"
 
