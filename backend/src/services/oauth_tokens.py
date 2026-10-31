@@ -24,10 +24,17 @@ token presented after it was rotated away is refused and its whole family is
 revoked (section 4.3.1). Both moves are atomic conditional updates, so two
 racing requests cannot both spend one credential.
 
-**Revocation lands within one access-token lifetime.** Revoking a refresh token
+**Revocation lands on the vault's next lookup.** Revoking a refresh token
 (RFC 7009) or a grant (``agent_grant.revoked_at``, set from Settings in #3534)
-stops the next refresh. Access tokens are not looked up by the vault, so one
-already issued runs out its ten minutes; that is the bound the epic accepts.
+stops the next refresh. Access tokens are not stored, so none can be marked
+revoked; instead the vault asks on every call (owner decision R3-2, #3585):
+Creek's control plane sends a verified token's ``sub``, ``client_id`` and
+``iat`` to ``POST /internal/vault-provisioning/agent-token-status`` and
+:func:`agent_token_active` answers from the same grant and account rules the
+refresh applies. Creek caches an ``active`` answer briefly
+(``REVOCATION_CACHE_SECONDS``, Creek-Vault#2005), so a revocation lands within
+that window. A vault that does not ask -- one with no status credential --
+still has :data:`ACCESS_TOKEN_TTL` as its bound.
 
 **Who the token is about.** ``sub`` is the account's stable, opaque consumer
 identity. On a managed vault it is the ``consumer_identity`` provisioning handed
@@ -81,8 +88,10 @@ logger = logging.getLogger(__name__)
 
 # --- lifetimes and shapes ----------------------------------------------------
 
-#: How long an access token is good for. Short, because the vault never asks
-#: whether one was revoked: this is how long a revocation can take to land.
+#: How long an access token is good for. A vault that asks
+#: :func:`agent_token_active` on every call (R3-2, #3585) sees a revocation within
+#: its own short cache window; this lifetime is the backstop for one that does
+#: not ask, and the longest a revocation can take to land there.
 ACCESS_TOKEN_TTL: Final = timedelta(minutes=10)
 
 #: How long a refresh token waits to be used. The app's own session lifetime
@@ -625,3 +634,122 @@ async def revoke_token(
         await revoke_family(session, token.family_id, now)
         await session.commit()
     return None
+
+
+# --- the vault's per-call status lookup (R3-2, #3585) ------------------------------
+
+
+class TokenStatus(enum.StrEnum):
+    """Why a status lookup answered as it did: the closed vocabulary it is logged by.
+
+    Only :attr:`ACTIVE` reaches the caller as ``true``; every other member is the
+    same ``false`` on the wire, so which one applied is said to the log alone.
+    """
+
+    ACTIVE = "active"
+    EXPIRED = "expired"
+    UNKNOWN_SUBJECT = "unknown_subject"
+    NO_GRANT = "no_grant"
+    GRANT_WITHDRAWN = "grant_withdrawn"
+    ACCOUNT_INACTIVE = "account_inactive"
+
+
+_STATUS_EVENT: Final = "oauth_agent_token_status"
+
+#: ``iat`` is a JWT NumericDate -- whole seconds -- and :func:`mint_access_token`
+#: truncates, so a token stamped ``t`` was minted somewhere in ``[t, t + 1)``. The
+#: grant it was minted under may carry microseconds inside that same second, so
+#: coverage is judged against the last instant ``t`` can stand for.
+_IAT_LAST_INSTANT: Final = timedelta(seconds=1) - timedelta(microseconds=1)
+
+
+async def _managed_account(session: AsyncSession, subject: str) -> int | None:
+    """The account whose ready managed vault was provisioned with ``subject``, if any."""
+    result = await session.execute(
+        select(VaultActivation.user_id)
+        .join(UserVaultConfig, col(UserVaultConfig.user_id) == col(VaultActivation.user_id))
+        .where(
+            VaultActivation.consumer_identity == subject,
+            col(UserVaultConfig.provisioned).is_(True),
+            VaultActivation.state == VaultActivationState.READY.value,
+        )
+    )
+    return result.scalar_one_or_none()
+
+
+async def _derived_account(
+    session: AsyncSession, subject: str, client_id: str, secret: str
+) -> int | None:
+    """The account whose derived subject is ``subject``, among those that approved ``client_id``.
+
+    A derived subject is an HMAC and cannot be inverted, so the candidates are the
+    accounts that ever approved this agent -- revoked ones included, so the log
+    can tell a withdrawn grant from a stranger -- each compared in constant time.
+    An account with a managed vault signs with its consumer identity instead, so
+    its derived value names nothing.
+    """
+    if not subject.startswith(AGENT_SUBJECT_PREFIX):
+        return None
+    result = await session.execute(
+        select(AgentGrant.user_id).where(col(AgentGrant.client_id) == client_id)
+    )
+    for candidate in result.scalars().all():
+        if hmac.compare_digest(derived_subject(candidate, secret), subject):
+            managed = await managed_consumer_identity(session, candidate)
+            return candidate if managed is None else None
+    return None
+
+
+async def _grant_status(
+    session: AsyncSession, user_id: int, client_id: str, issued_at: datetime
+) -> TokenStatus:
+    """Whether ``user_id``'s grant to ``client_id`` still covers a token stamped ``issued_at``."""
+    grant = await _load_grant(
+        session, col(AgentGrant.user_id) == user_id, col(AgentGrant.client_id) == client_id
+    )
+    if grant is None:
+        return TokenStatus.NO_GRANT
+    if not _grant_covers(grant, ensure_aware(issued_at) + _IAT_LAST_INSTANT):
+        return TokenStatus.GRANT_WITHDRAWN
+    if not await account_may_authorize(session, user_id):
+        return TokenStatus.ACCOUNT_INACTIVE
+    return TokenStatus.ACTIVE
+
+
+@dataclass(frozen=True)
+class AgentTokenClaims:
+    """The three claims of a verified access token that decide whether it still stands."""
+
+    subject: str
+    client_id: str
+    issued_at: datetime
+
+
+async def agent_token_status(
+    session: AsyncSession, claims: AgentTokenClaims, *, secret: str, now: datetime
+) -> TokenStatus:
+    """Decide, from a token's own claims, whether the access it carries still stands.
+
+    The same rules the token endpoint applies at refresh: the token is within its
+    lifetime, ``sub`` is an account this server signs for, that account's grant
+    to ``client_id`` is unrevoked and not re-approved since ``iat``
+    (:func:`_grant_covers`), and the account may still authorize
+    (:func:`account_may_authorize`). Read-only: nothing is stamped or written.
+    """
+    if ensure_aware(claims.issued_at) + ACCESS_TOKEN_TTL <= ensure_aware(now):
+        return TokenStatus.EXPIRED
+    user_id = await _managed_account(session, claims.subject)
+    if user_id is None:
+        user_id = await _derived_account(session, claims.subject, claims.client_id, secret)
+    if user_id is None:
+        return TokenStatus.UNKNOWN_SUBJECT
+    return await _grant_status(session, user_id, claims.client_id, claims.issued_at)
+
+
+async def agent_token_active(
+    session: AsyncSession, claims: AgentTokenClaims, *, secret: str, now: datetime
+) -> bool:
+    """Whether a token with ``claims`` may still be served; logs the outcome, never the subject."""
+    outcome = await agent_token_status(session, claims, secret=secret, now=now)
+    logger.info(_STATUS_EVENT, extra={"outcome": outcome.value})
+    return outcome is TokenStatus.ACTIVE

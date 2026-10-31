@@ -1,12 +1,19 @@
-"""Credential-bearing Creek callback kept off the user-facing vault router."""
+"""Credential-bearing Creek callbacks kept off the user-facing vault router.
+
+Every route here is called by Creek's control plane with its mounted handoff
+bearer, never by a person: the one-time connection handoff, counts-only fleet
+alerts, and (R3-2, #3585) the per-call question of whether an agent's access
+token still stands, answered ``{"active": bool}`` and nothing more.
+"""
 
 from __future__ import annotations
 
 from datetime import UTC, datetime
 from enum import StrEnum, unique
-from typing import Annotated, Literal
+from typing import Annotated, Final, Literal
 
 from fastapi import Depends, Header, HTTPException, Request, Response, status
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import select
@@ -16,6 +23,9 @@ from error_responses import build_router
 from errors import bad_request, conflict, service_unavailable
 from models.user_vault_config import UserVaultConfig
 from models.vault_activation import VaultActivation, VaultActivationState
+from rate_limit import limiter
+from routers.auth import session_signing_secret
+from schemas.agent_token_status import AgentTokenStatusRequest, AgentTokenStatusResponse
 from schemas.vault_activation import CreekConnectionHandoff
 from schemas.vault_config import credential_is_usable
 from services.creek_provisioning_client import handoff_bearer_is_valid
@@ -27,6 +37,7 @@ from services.email import (
     get_email_sender,
 )
 from services.managed_vault_rollout import managed_vault_alert_destination
+from services.oauth_tokens import AgentTokenClaims, agent_token_active
 from services.user_vault_config import (
     load_vault_config,
     lock_vault_connection_owner,
@@ -46,6 +57,25 @@ _TERMINAL_HANDOFF_STATES = frozenset(
     }
 )
 _ALERT_EMAIL_SUBJECT = "Managed vault pilot alert"
+
+#: Status lookups one caller address may make. Creek caches an ``active`` answer
+#: per (sub, client) for ``REVOCATION_CACHE_SECONDS`` (Creek-Vault#2005), so this
+#: is one lookup a second across the fleet it fronts; no higher than the ambient
+#: per-path floor, which would cap it there anyway. A refused lookup is refused
+#: by Creek fail-closed, so the budget bounds load, never widens access.
+STATUS_LOOKUP_RATE_LIMIT: Final = "60/minute"
+_INVALID_STATUS_REQUEST: Final = "invalid_agent_token_status"
+_NO_STORE: Final = {"Cache-Control": "no-store", "Pragma": "no-cache"}
+# Published by hand because the body is read only after the bearer: a declared
+# body parameter would be parsed -- and refused with a 422 -- before it.
+_STATUS_REQUEST_BODY: Final = {
+    "requestBody": {
+        "required": True,
+        "content": {
+            "application/json": {"schema": AgentTokenStatusRequest.model_json_schema()},
+        },
+    }
+}
 
 
 @unique
@@ -221,3 +251,42 @@ async def receive_creek_fleet_alert(
     except EmailDeliveryError:
         raise service_unavailable("managed_vault_alert_delivery_unavailable") from None
     return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+async def _validated_status_request(
+    request: Request,
+    authorization: str | None,
+) -> AgentTokenStatusRequest:
+    """Parse the three-claim question after authenticating its bearer."""
+    _authenticate_handoff(authorization)
+    try:
+        return AgentTokenStatusRequest.model_validate(await request.json())
+    except (ValueError, ValidationError):
+        raise bad_request(_INVALID_STATUS_REQUEST) from None
+
+
+@router.post(
+    "/agent-token-status",
+    response_model=AgentTokenStatusResponse,
+    openapi_extra=_STATUS_REQUEST_BODY,
+)
+@limiter.limit(STATUS_LOOKUP_RATE_LIMIT)
+async def agent_token_status(
+    request: Request,
+    session: Annotated[AsyncSession, Depends(get_session)],
+    authorization: Annotated[str | None, Header()] = None,
+) -> JSONResponse:
+    """Say whether a verified agent token's grant still stands; every no is the same no."""
+    payload = await _validated_status_request(request, authorization)
+    active = await agent_token_active(
+        session,
+        AgentTokenClaims(
+            subject=payload.sub,
+            client_id=payload.client_id,
+            issued_at=datetime.fromtimestamp(payload.iat, UTC),
+        ),
+        secret=session_signing_secret(),
+        now=datetime.now(UTC),
+    )
+    body = AgentTokenStatusResponse(active=active)
+    return JSONResponse(body.model_dump(), headers=_NO_STORE)
