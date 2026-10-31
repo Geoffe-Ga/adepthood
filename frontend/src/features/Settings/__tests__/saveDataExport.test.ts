@@ -13,7 +13,11 @@ jest.mock('@/api', () => {
   const actual = jest.requireActual('@/api');
   return {
     ...actual,
-    users: { exportMyData: jest.fn(), exportMyJournalAsMarkdown: jest.fn() },
+    users: {
+      exportMyData: jest.fn(),
+      exportMyJournalAsMarkdown: jest.fn(),
+      exportMyVault: jest.fn(),
+    },
   };
 });
 
@@ -21,6 +25,7 @@ const mockExportMyData = users.exportMyData as jest.MockedFunction<typeof users.
 const mockExportMarkdown = users.exportMyJournalAsMarkdown as jest.MockedFunction<
   typeof users.exportMyJournalAsMarkdown
 >;
+const mockExportVault = users.exportMyVault as jest.MockedFunction<typeof users.exportMyVault>;
 
 const fs = FileSystem as unknown as {
   __createFile: jest.Mock;
@@ -40,6 +45,17 @@ const ARCHIVE: DataExportArchive = {
 };
 
 const MARKDOWN = '# Your Adepthood journal\n\n## 2026-01-02\n\nSomething true.\n';
+
+/** A vault export as the server streams it: items, then the trailer. */
+function vaultFile(complete: boolean, items: number): string {
+  const listed = Array.from({ length: items }, (_, index) => ({ kind: 'document', index }));
+  return JSON.stringify({
+    format: 'adepthood-vault-export',
+    items: listed,
+    complete,
+    incomplete_reason: complete ? null : 'vault_unavailable',
+  });
+}
 
 let shareSpy: jest.SpyInstance;
 const originalPlatform = Platform.OS;
@@ -127,6 +143,52 @@ describe('saveDataExport (JSON)', () => {
     mockExportMyData.mockRejectedValue(new Error('network_error'));
 
     await expect(saveDataExport('json')).rejects.toThrow('network_error');
+    expect(fs.__writeFile).not.toHaveBeenCalled();
+  });
+});
+
+describe('saveDataExport (vault)', () => {
+  test('writes the vault file verbatim and counts what is in it', async () => {
+    const body = vaultFile(true, 2);
+    mockExportVault.mockResolvedValue(body);
+
+    const saved = await saveDataExport('vault');
+
+    expect(saved.filename).toBe('adepthood-vault-2026-08-22.json');
+    expect(fs.__writeFile).toHaveBeenCalledWith(
+      'file:///documents/adepthood-vault-2026-08-22.json',
+      body,
+    );
+    expect(saved.records).toBeNull();
+    expect(saved.vault).toEqual({ items: 2, complete: true });
+  });
+
+  test('a file that says it stopped partway is saved and reported incomplete', async () => {
+    mockExportVault.mockResolvedValue(vaultFile(false, 1));
+
+    const saved = await saveDataExport('vault');
+
+    expect(fs.__writeFile).toHaveBeenCalled();
+    expect(saved.vault).toEqual({ items: 1, complete: false });
+  });
+
+  test('a file cut off mid-stream is kept but never reported complete', async () => {
+    const truncated = vaultFile(true, 1).slice(0, 40);
+    mockExportVault.mockResolvedValue(truncated);
+
+    const saved = await saveDataExport('vault');
+
+    expect(fs.__writeFile).toHaveBeenCalledWith(
+      'file:///documents/adepthood-vault-2026-08-22.json',
+      truncated,
+    );
+    expect(saved.vault).toEqual({ items: 0, complete: false });
+  });
+
+  test('a vault that cannot answer writes nothing at all', async () => {
+    mockExportVault.mockRejectedValue(new Error('vault_unavailable'));
+
+    await expect(saveDataExport('vault')).rejects.toThrow('vault_unavailable');
     expect(fs.__writeFile).not.toHaveBeenCalled();
   });
 });
