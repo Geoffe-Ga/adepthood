@@ -14,15 +14,23 @@ import pytest
 import pytest_asyncio
 from sqlalchemy import event
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlmodel import select
 
 from domain.creek_vault import CreekVaultPipelineClient
+from models.user_vault_config import UserVaultConfig
 from models.vault_activation import VaultActivation, VaultActivationState
 from services import creek_vault_agent_connection as agent_connection
 from services.creek_provisioning import load_vault_activation
 from services.creek_vault_client import HttpCreekVaultClient
 from services.oauth_authorization import OAUTH_ISSUER_ENV_VAR, account_vault_resource
 from services.user_vault_config import load_vault_config, store_vault_config
-from tests.helpers.oauth import ISSUER, VAULT_KEY, signup
+from tests.helpers.oauth import (
+    ISSUER,
+    VAULT_KEY,
+    authorize_params,
+    register_agent,
+    signup,
+)
 
 _BASE = Path(__file__).parent.parent / "fixtures" / "creek_discovery_0_24" / "agent-mcp-ready.json"
 _VAULT = "https://1.1.1.1/v1"
@@ -675,3 +683,168 @@ async def test_caller_cancellation_propagates_without_caching_a_failure(
     boundary.pause = None
     assert (await async_client.get(_CONNECTION, headers=headers)).json()["mcp_address"] == _RESOURCE
     assert len(boundary.requests) == 2
+
+
+# --- per-allocation resources (R3-1, adepthood#3584) ----------------------------
+
+
+def _allocation(owner: str) -> str:
+    """A Creek per-allocation resource on the shared edge, with a 32-character slug."""
+    slug = (owner + "_" * 32)[:32]
+    return f"https://1.1.1.1/a/{slug}/mcp"
+
+
+async def _stored_resource(session: AsyncSession, user_id: int) -> str | None:
+    """The adopted per-allocation resource, read fresh from storage."""
+    result = await session.execute(
+        select(UserVaultConfig.agent_mcp_resource)
+        .where(UserVaultConfig.user_id == user_id)
+        .execution_options(populate_existing=True)
+    )
+    stored: str | None = result.scalar_one()
+    return stored
+
+
+@pytest.mark.asyncio
+async def test_an_advertised_allocation_resource_is_adopted_as_the_accounts_audience(
+    async_client: httpx.AsyncClient, db_session: AsyncSession, boundary: DiscoveryBoundary
+) -> None:
+    """A vault reporting its own ``/a/<slug>/mcp`` gets that address and that audience."""
+    headers, user_id = await signup(async_client, "allocation_adopted")
+    await _managed(db_session, user_id)
+    allocation = _allocation("adopted")
+    boundary.metadata = {"resource": allocation, "authorization_server": ISSUER}
+
+    response = await async_client.get(_CONNECTION, headers=headers)
+
+    assert response.json()["mcp_address"] == allocation
+    assert await _stored_resource(db_session, user_id) == allocation
+    assert await account_vault_resource(db_session, user_id) == allocation
+
+
+@pytest.mark.asyncio
+async def test_two_accounts_on_one_edge_get_two_audiences(
+    async_client: httpx.AsyncClient, db_session: AsyncSession, boundary: DiscoveryBoundary
+) -> None:
+    """The shared edge stops being every managed account's audience once each is rolled."""
+    alice, alice_id = await signup(async_client, "allocation_alice")
+    bob, bob_id = await signup(async_client, "allocation_bob")
+    await _managed(db_session, alice_id)
+    await _managed(db_session, bob_id)
+    for headers, owner in ((alice, "alice"), (bob, "bob")):
+        boundary.metadata = {"resource": _allocation(owner), "authorization_server": ISSUER}
+        assert (await async_client.get(_CONNECTION, headers=headers)).json()[
+            "mcp_address"
+        ] == _allocation(owner)
+
+    assert await account_vault_resource(db_session, alice_id) == _allocation("alice")
+    assert await account_vault_resource(db_session, bob_id) == _allocation("bob")
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("boundary")
+async def test_a_vault_still_on_the_shared_edge_keeps_the_shared_audience(
+    async_client: httpx.AsyncClient, db_session: AsyncSession
+) -> None:
+    """Until Creek-Vault#2004 rolls it, a shared-edge vault is served exactly as before."""
+    headers, user_id = await signup(async_client, "allocation_not_rolled")
+    await _managed(db_session, user_id)
+
+    assert (await async_client.get(_CONNECTION, headers=headers)).json()["mcp_address"] == _RESOURCE
+    assert await _stored_resource(db_session, user_id) is None
+    assert await account_vault_resource(db_session, user_id) == _RESOURCE
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("later", [_RESOURCE, _allocation("other")])
+async def test_an_adopted_allocation_resource_is_never_replaced_by_discovery(
+    async_client: httpx.AsyncClient,
+    db_session: AsyncSession,
+    boundary: DiscoveryBoundary,
+    clock: list[float],
+    later: str,
+) -> None:
+    """No downgrade to the shared edge and no silent swap: only a new handoff resets it."""
+    headers, user_id = await signup(async_client, "allocation_sticky")
+    await _managed(db_session, user_id)
+    allocation = _allocation("sticky")
+    boundary.metadata = {"resource": allocation, "authorization_server": ISSUER}
+    await async_client.get(_CONNECTION, headers=headers)
+    boundary.metadata = {"resource": later, "authorization_server": ISSUER}
+    clock[0] += agent_connection.POSITIVE_DISCOVERY_TTL_SECONDS
+
+    response = await async_client.get(_CONNECTION, headers=headers)
+
+    assert response.json()["mcp_address"] is None
+    assert await _stored_resource(db_session, user_id) == allocation
+    assert await account_vault_resource(db_session, user_id) == allocation
+
+
+@pytest.mark.asyncio
+async def test_a_new_handoff_forgets_the_adopted_resource_and_a_repeat_keeps_it(
+    async_client: httpx.AsyncClient, db_session: AsyncSession, boundary: DiscoveryBoundary
+) -> None:
+    """A retried handoff is the same allocation; a new credential is a new one."""
+    headers, user_id = await signup(async_client, "allocation_rehandoff")
+    await _managed(db_session, user_id)
+    boundary.metadata = {"resource": _allocation("rehandoff"), "authorization_server": ISSUER}
+    await async_client.get(_CONNECTION, headers=headers)
+
+    await store_vault_config(
+        db_session, user_id, vault_url=_VAULT, api_key=VAULT_KEY, provisioned=True
+    )
+    assert await _stored_resource(db_session, user_id) == _allocation("rehandoff")
+
+    rotated = "rotated-vault-key-0123456789"  # pragma: allowlist secret
+    await store_vault_config(
+        db_session, user_id, vault_url=_VAULT, api_key=rotated, provisioned=True
+    )
+    assert await _stored_resource(db_session, user_id) is None
+    assert await account_vault_resource(db_session, user_id) == _RESOURCE
+
+
+@pytest.mark.asyncio
+async def test_a_probe_overtaken_by_a_new_allocation_adopts_nothing(
+    async_client: httpx.AsyncClient, db_session: AsyncSession, boundary: DiscoveryBoundary
+) -> None:
+    """The write is bound to the generation the probe started from, not the latest row."""
+    headers, user_id = await signup(async_client, "allocation_overtaken")
+    await _managed(db_session, user_id)
+    boundary.metadata = {"resource": _allocation("overtaken"), "authorization_server": ISSUER}
+    boundary.pause = asyncio.Event()
+    pending = asyncio.create_task(async_client.get(_CONNECTION, headers=headers))
+    await asyncio.wait_for(boundary.started.wait(), timeout=3.0)
+    activation = await load_vault_activation(db_session, user_id)
+    assert activation is not None
+    activation.creek_job_id = "replacement-job"
+    await db_session.commit()
+    boundary.pause.set()
+
+    response = await pending
+
+    assert response.json()["mcp_address"] is None
+    assert await _stored_resource(db_session, user_id) is None
+
+
+@pytest.mark.asyncio
+async def test_authorizing_for_a_newly_advertised_allocation_adopts_it_first(
+    async_client: httpx.AsyncClient, db_session: AsyncSession, boundary: DiscoveryBoundary
+) -> None:
+    """An agent told the new resource by the vault's challenge need not wait for Settings."""
+    headers, user_id = await signup(async_client, "allocation_on_authorize")
+    await _managed(db_session, user_id)
+    allocation = _allocation("on-authorize")
+    boundary.metadata = {"resource": allocation, "authorization_server": ISSUER}
+    client_id = await register_agent(async_client)
+
+    page = await async_client.get(
+        "/oauth/authorize", params=authorize_params(client_id, allocation), headers=headers
+    )
+
+    assert page.status_code == HTTPStatus.OK, page.text
+    assert await _stored_resource(db_session, user_id) == allocation
+    shared = await async_client.get(
+        "/oauth/authorize", params=authorize_params(client_id, _RESOURCE), headers=headers
+    )
+    assert shared.status_code == HTTPStatus.BAD_REQUEST
+    assert "invalid_target" in shared.text

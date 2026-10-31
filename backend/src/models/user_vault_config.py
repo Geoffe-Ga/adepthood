@@ -39,6 +39,16 @@ where a user's writing goes.
 manual connection flow. It is not an encryption switch: the credential is
 always encrypted, and a provisioned connection additionally remains inert until
 its activation reaches ``ready`` after Creek's authenticated provider-managed handoff.
+
+``agent_mcp_resource`` is a managed allocation's own MCP resource
+(``https://<edge>/a/<slug>/mcp``, Creek-Vault#2002), adopted from the vault's
+authenticated ``agent_mcp`` discovery because Creek's ``/v1`` handoff carries no
+such field. When set, it -- not the shared edge's ``/mcp`` -- is the only
+audience an agent token for this account may name (owner decision R3-1). It is
+unique: no two accounts can ever hold one audience, which is what makes a vault
+that advertises somebody else's resource unable to adopt it. A new handoff
+(a different credential or URL) clears it, since a new allocation has a new
+slug; ``NULL`` means the vault is still served at the shared edge.
 """
 
 from typing import TYPE_CHECKING
@@ -74,4 +84,7 @@ class UserVaultConfig(SQLModel, table=True):
     vault_url: str = Field(max_length=VAULT_URL_MAX_LENGTH)
     api_key: str = Field(sa_column=Column(EncryptedString(), nullable=False))
     provisioned: bool = Field(default=False, nullable=False)
+    agent_mcp_resource: str | None = Field(
+        default=None, max_length=VAULT_URL_MAX_LENGTH, nullable=True, index=True, unique=True
+    )
     user: "User" = Relationship(back_populates="vault_config")
