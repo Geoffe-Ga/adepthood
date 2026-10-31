@@ -88,6 +88,10 @@ class _FleetAlertKind(StrEnum):
     CONTINUOUS_RUNNING = "continuous_running"
     INCOMPLETE_CREATE = "incomplete_create"
     MONTHLY_BUDGET_DEPARTURE = "monthly_budget_departure"
+    # Creek #1867: the Fly org token nears or passes its recorded expiry.
+    PROVIDER_CREDENTIAL_EXPIRING = "provider_credential_expiring"
+    # Creek #1866: the Fly Machines API refused the org token (401/403).
+    PROVIDER_CREDENTIAL_REJECTED = "provider_credential_rejected"
 
 
 class _FleetAlertPayload(BaseModel):
