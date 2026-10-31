@@ -410,15 +410,23 @@ async def account_vault_resource(session: AsyncSession, user_id: int) -> str | N
     the allocation has enabled OAuth; authenticated ``agent_mcp`` discovery
     reports that separately (Creek contract 0.24).
 
+    Once that discovery has reported the allocation's own resource
+    (``/a/<slug>/mcp``, Creek-Vault#2002) and it was adopted, that resource is
+    the audience instead, and the shared edge is no longer one this account may
+    name (owner decision R3-1). A grant bound to the shared edge then fails the
+    exchange/refresh re-check and the agent must reconnect.
+
     The deployment-wide vault an operator configures by environment is not an
     account's vault in this sense and is never a resource here.
     """
     config = await load_vault_config(session, user_id)
     if config is None:
         return None
-    if config.provisioned and not await _activation_is_ready(session, user_id):
+    if not config.provisioned:
+        return vault_oauth_resource(config.vault_url)
+    if not await _activation_is_ready(session, user_id):
         return None
-    return vault_oauth_resource(config.vault_url)
+    return config.agent_mcp_resource or vault_oauth_resource(config.vault_url)
 
 
 async def account_may_authorize(session: AsyncSession, user_id: int) -> bool:

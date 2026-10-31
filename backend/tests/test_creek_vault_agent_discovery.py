@@ -12,7 +12,8 @@ import httpx
 import pytest
 from jsonschema import Draft202012Validator
 
-from domain.creek_vault import CONTRACT_VERSION, HandshakeResult
+from domain.creek_vault import CONTRACT_VERSION, AgentMcpDiscovery, HandshakeResult
+from services.creek_vault_agent_discovery import is_allocation_resource_of, owned_agent_resource
 from services.creek_vault_client import HttpCreekVaultClient
 
 _DISCOVERY = Path(__file__).parent / "fixtures" / "creek_discovery_0_24"
@@ -223,3 +224,84 @@ async def test_agent_discovery_preserves_the_separate_funding_declaration(
     assert result.agent_mcp.resource == _RESOURCE
     assert result.keyless_inference is keyless
     assert result.refuses_keyless_inference() is (keyless is False)
+
+
+# --- per-allocation resources (R3-1, Creek-Vault#2001/#2002) --------------------
+
+_SLUG = "alice" + "_" * 27
+_ALLOCATION = f"https://pilot.vaults.example/a/{_SLUG}/mcp"
+
+
+@pytest.mark.asyncio
+async def test_a_per_allocation_resource_is_read_verbatim() -> None:
+    """Creek 0.24+ may advertise ``/a/<32-char slug>/mcp`` as this allocation's resource."""
+    result, _ = await _handshake(
+        _payload({"resource": _ALLOCATION, "authorization_server": _ISSUER})
+    )
+    assert result.agent_mcp is not None
+    assert result.agent_mcp.resource == _ALLOCATION
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "path",
+    [
+        f"/a/{_SLUG[:-1]}/mcp",
+        f"/a/{_SLUG}x/mcp",
+        f"/a/{_SLUG}/mcp/",
+        f"/a/{_SLUG}/x/mcp",
+        f"/a/{_SLUG}",
+        "/a//mcp",
+        f"/b/{_SLUG}/mcp",
+        f"/x/a/{_SLUG}/mcp",
+        f"/a/{_SLUG[:-3]}%2F/mcp",
+        f"/a/{_SLUG[:-1]}=/mcp",
+        f"/a/{_SLUG[:-1]}./mcp",
+        f"/A/{_SLUG}/mcp",
+        f"/a/{_SLUG}/MCP",
+    ],
+)
+async def test_lookalike_allocation_paths_are_not_agent_resources(path: str) -> None:
+    """Only the exact allocation grammar Creek's router serves, never a nearby path."""
+    result, _ = await _handshake(
+        _payload(
+            {"resource": f"https://pilot.vaults.example{path}", "authorization_server": _ISSUER}
+        )
+    )
+    assert result.available
+    assert result.agent_mcp is None
+
+
+@pytest.mark.parametrize(
+    ("advertised", "issuer", "expected"),
+    [
+        (_RESOURCE, _ISSUER, _RESOURCE),
+        (_ALLOCATION, _ISSUER, _ALLOCATION),
+        (_RESOURCE, "https://other.issuer.example", None),
+        (_ALLOCATION, "https://other.issuer.example", None),
+        (f"https://other.vaults.example/a/{_SLUG}/mcp", _ISSUER, None),
+        (f"https://pilot.vaults.example:8443/a/{_SLUG}/mcp", _ISSUER, None),
+        ("https://other.vaults.example/mcp", _ISSUER, None),
+    ],
+)
+def test_owned_agent_resource_is_the_shared_edge_or_one_allocation_on_it(
+    advertised: str, issuer: str, expected: str | None
+) -> None:
+    """An allocation resource must sit on the same origin as the account's shared resource."""
+    discovery = AgentMcpDiscovery(resource=advertised, authorization_server=issuer)
+    assert owned_agent_resource(discovery, shared_resource=_RESOURCE, issuer=_ISSUER) == expected
+
+
+def test_no_discovery_owns_no_resource() -> None:
+    """An absent extension yields no address at all."""
+    assert owned_agent_resource(None, shared_resource=_RESOURCE, issuer=_ISSUER) is None
+
+
+def test_a_prefixed_shared_resource_has_no_allocation_resources() -> None:
+    """Creek's allocation path sits at the origin root, so a prefixed vault has none."""
+    shared = "https://pilot.vaults.example/tenant/mcp"
+    discovery = AgentMcpDiscovery(resource=_ALLOCATION, authorization_server=_ISSUER)
+    assert owned_agent_resource(discovery, shared_resource=shared, issuer=_ISSUER) is None
+    nested = f"https://pilot.vaults.example/tenant/a/{_SLUG}/mcp"
+    assert not is_allocation_resource_of(nested, shared)
+    assert is_allocation_resource_of(_ALLOCATION, _RESOURCE)

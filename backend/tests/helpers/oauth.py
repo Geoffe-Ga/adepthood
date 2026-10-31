@@ -22,7 +22,10 @@ from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import ec
 from httpx import AsyncClient, Response
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlmodel import col, update
 
+from models.user_vault_config import UserVaultConfig
+from models.vault_activation import VaultActivation, VaultActivationState
 from services import creek_provisioning_client as provisioning_client
 from services.managed_vault_activation_config import HANDOFF_AUTH_FILE_ENV_VAR
 from services.oauth_signing_keys import SIGNING_KEYS_ENV_VAR
@@ -67,6 +70,47 @@ async def connect_vault(db_session: AsyncSession, user_id: int, name: str) -> st
     """Store a self-connected vault for ``user_id``; return its MCP resource."""
     await store_vault_config(db_session, user_id, vault_url=vault_url_for(name), api_key=VAULT_KEY)
     return mcp_url_for(name)
+
+
+def allocation_url_for(name: str) -> str:
+    """The per-allocation MCP resource Creek-Vault#2002 gives ``name``'s managed vault."""
+    slug = (name + "_" * 32)[:32]
+    return f"https://{urlsplit(vault_url_for(name)).hostname}/a/{slug}/mcp"
+
+
+async def connect_managed_vault(
+    db_session: AsyncSession, user_id: int, name: str, *, allocation: str | None = None
+) -> str:
+    """Store a ready managed vault, optionally with an adopted allocation resource.
+
+    Returns the audience the account may name: the adopted per-allocation
+    resource when there is one, the shared edge's ``/mcp`` otherwise.
+    """
+    await store_vault_config(
+        db_session, user_id, vault_url=vault_url_for(name), api_key=VAULT_KEY, provisioned=True
+    )
+    db_session.add(
+        VaultActivation(
+            user_id=user_id,
+            activation_id=f"activation-{name}",
+            consumer_identity=f"consumer-{name}",
+            state=VaultActivationState.READY.value,
+        )
+    )
+    await db_session.commit()
+    if allocation is not None:
+        await adopt_allocation(db_session, user_id, allocation)
+    return allocation or mcp_url_for(name)
+
+
+async def adopt_allocation(db_session: AsyncSession, user_id: int, allocation: str) -> None:
+    """Record ``allocation`` as if the account's own vault had just advertised it."""
+    await db_session.execute(
+        update(UserVaultConfig)
+        .where(col(UserVaultConfig.user_id) == user_id)
+        .values(agent_mcp_resource=allocation)
+    )
+    await db_session.commit()
 
 
 async def register_agent(

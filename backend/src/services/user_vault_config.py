@@ -66,8 +66,18 @@ async def store_vault_config(
     Both columns are written together: a user pointing at a different vault is
     presenting a different credential, and carrying the old key over to a new
     URL would send one vault's secret to another.
+
+    A handoff that changes the URL, the credential or the managed flag names a
+    different allocation, so the per-allocation MCP resource adopted for the
+    old one is forgotten; a retried handoff repeating all three keeps it.
     """
     existing = await load_vault_config(session, user_id)
+    if existing is not None and (
+        existing.vault_url,
+        existing.api_key,
+        existing.provisioned,
+    ) != (vault_url, api_key, provisioned):
+        existing.agent_mcp_resource = None
     config = existing or UserVaultConfig(
         user_id=user_id,
         vault_url=vault_url,

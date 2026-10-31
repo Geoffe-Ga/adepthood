@@ -226,6 +226,9 @@ _PLAINTEXT_COLUMNS: dict[str, frozenset[str]] = {
             # the same address ``uservaultconfig.vault_url`` derives it from.
             "agent_grant.resource",
             "oauth_authorization_code.resource",
+            # A managed allocation's own MCP URL (Creek-Vault#2002), adopted from
+            # its authenticated discovery: the same kind of audience as above.
+            "uservaultconfig.agent_mcp_resource",
         }
     ),
     # What an OAuth client says about itself when it registers or publishes a
