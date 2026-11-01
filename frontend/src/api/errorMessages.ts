@@ -222,6 +222,11 @@ export const USER_FACING_ERROR_MESSAGES: Readonly<Record<string, string>> = Obje
     'Adepthood cannot identify the vault that received this older copy, so removal cannot be confirmed. It may remain in a vault you connected earlier.',
   journal_entry_deletion_pending:
     "This page is set to be deleted, so it can't be edited. Deletion finishes once your Creek vault confirms its copy is gone.",
+  // A promote or fold refused because the passage is from a page marked
+  // Intimate (#3059, owner decision R5-2). Describes the behaviour only; it makes
+  // no privacy promise (B24, #3076 gates those).
+  quote_source_restricted:
+    "Passages from a page marked Intimate stay on that page, so this one can't be quoted or folded into a review. Nothing was changed.",
 
   // --- Wallet / BotMason quota -----------------------------------------
   payment_required: MONTHLY_FREE_MESSAGES_USED,

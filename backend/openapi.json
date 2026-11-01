@@ -22738,7 +22738,7 @@
     },
     "/journal/{entry_id}/promote": {
       "post": {
-        "description": "Promote a span of the caller's own entry into a pending quote.\n\nOwnership is enforced by ``require_owned_journal_entry`` (a missing,\nsoft-deleted, or foreign entry all resolve to 404). The span is sliced and\nsnapshotted server-side, so the quote starts life pending (unfolded).",
+        "description": "Promote a span of the caller's own entry into a pending quote.\n\nOwnership is enforced by ``require_owned_journal_entry`` (a missing,\nsoft-deleted, or foreign entry all resolve to 404). The span is sliced and\nsnapshotted server-side, so the quote starts life pending (unfolded).\n\nA source that may not egress (Intimate, or an unknown tier), or a span over\na passage the source holds from a restricted fold, is 409\n``quote_source_restricted`` and stores nothing (#3059, owner decision R5-2).",
         "operationId": "promote_quote_journal__entry_id__promote_post",
         "parameters": [
           {
@@ -28771,7 +28771,7 @@
         ]
       },
       "patch": {
-        "description": "Fold the caller's own quote into a reflection, or return it to pending.\n\nA missing or foreign promotion is 404. Setting ``included_in_entry_id``\nrequires the target to be the caller's own live hierarchical reflection\n(404 / 422 otherwise); ``null`` clears the inclusion back to pending.",
+        "description": "Fold the caller's own quote into a reflection, or return it to pending.\n\nA missing or foreign promotion is 404. Setting ``included_in_entry_id``\nrequires the target to be the caller's own live hierarchical reflection\n(404 / 422 otherwise); ``null`` clears the inclusion back to pending.\nFolding a quote whose source has since become Intimate (or whose text\ncarries a passage restricted that way) is 409 ``quote_source_restricted``\n(#3059, owner decision R5-2); returning one to pending is always allowed.",
         "operationId": "update_promotion_promotions__promotion_id__patch",
         "parameters": [
           {

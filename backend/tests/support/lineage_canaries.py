@@ -24,8 +24,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from models.journal_entry import EntryStatus, JournalClassification, JournalEntry
 from models.promoted_quote import PromotedQuote
 
-#: A synthetic canary that should never appear in any log, and -- once lineage
-#: enforcement lands (#3059 AC9, pending D01) -- in any model prompt.
+#: A synthetic canary that must never appear in any log, nor -- since owner
+#: decision R5-2 excluded Intimate text from folded quotes (#3059) -- in
+#: anything a review that folds it sends.
 LINEAGE_SENTINEL = "b03-lineage-canary-7f3a"
 
 #: The review's own words, quoted by the canned resonance reply so a pass anchors.

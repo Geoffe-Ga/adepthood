@@ -65,6 +65,7 @@ from enum import StrEnum
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import col, select
 
+from domain.folded_passages import withhold_passages
 from domain.frequencies import Frequency
 from domain.privacy_tier import egress_eligible_clause
 from domain.stage_authority import open_through
@@ -78,6 +79,7 @@ from services.corpus_store import (
     resolve_stage_frequency,
     retrieve_fragments,
 )
+from services.folded_quote_privacy import egress_bodies, restricted_folded_passages
 from services.journal_withdrawal_obligation import deletion_in_progress_clause
 from services.privacy_lineage import LineageOperation, observe_lineage
 
@@ -93,10 +95,15 @@ GROUNDING_LIMIT = 3
 # the fallback window; plus one more for the folded-quote lineage shadow count
 # (#3059), a single grouped read whatever the window's size. The corpus path,
 # which skips the window, spends that slot on reading the fragments' source
-# entry ids and then makes the same one count. Asserted as a count rather than a
-# duration because a wall-clock budget fails under unrelated load, while a
-# query that starts running per fragment shows up in a count immediately.
-GROUNDING_STATEMENT_BUDGET = 5
+# entry ids and then makes the same one count. One more reads the passages those
+# entries hold from folds of Intimate sources, so they can be masked (#3059,
+# owner decision R5-2); it walks further only along a chain of folds of
+# Personal quotes, one statement per level, bounded by
+# ``services.folded_quote_privacy.MAX_FOLD_LEVELS`` and never by the corpus.
+# Asserted as a count rather than a duration because a wall-clock budget fails
+# under unrelated load, while a query that starts running per fragment shows up
+# in a count immediately.
+GROUNDING_STATEMENT_BUDGET = 6
 
 
 class GroundingSource(StrEnum):
@@ -180,15 +187,24 @@ async def _recent_entries(
     ]
 
 
-async def _fragment_source_entries(session: AsyncSession, fragment_ids: list[int]) -> list[int]:
-    """The journal entries the chosen corpus fragments were derived from, if any."""
+async def _fragment_source_entries(
+    session: AsyncSession, fragment_ids: list[int]
+) -> dict[int, int]:
+    """The journal entry each chosen corpus fragment was derived from, keyed by fragment id.
+
+    A fragment from an upload or an import has no entry and is absent.
+    """
     result = await session.execute(
-        select(col(CorpusFragment.source_entry_id)).where(
+        select(col(CorpusFragment.id), col(CorpusFragment.source_entry_id)).where(
             col(CorpusFragment.id).in_(fragment_ids),
             col(CorpusFragment.source_entry_id).is_not(None),
         )
     )
-    return [entry_id for entry_id in result.scalars().all() if entry_id is not None]
+    return {
+        int(fragment_id): int(entry_id)
+        for fragment_id, entry_id in result.all()
+        if fragment_id is not None and entry_id is not None
+    }
 
 
 async def gather_grounding(
@@ -231,14 +247,23 @@ async def _corpus_grounding(
 ) -> Grounding:
     """The corpus answer, after shadow-counting the entries its fragments came from."""
     fragment_ids = [fragment.fragment_id for fragment in fragments]
+    sources = await _fragment_source_entries(session, fragment_ids)
     await _observe_prior_lineage(
         session,
         user_id=user_id,
         subject_entry_id=subject_entry_id,
-        entry_ids=await _fragment_source_entries(session, fragment_ids),
+        entry_ids=list(sources.values()),
+    )
+    passages = await restricted_folded_passages(
+        session, user_id=user_id, entry_ids=set(sources.values())
     )
     return Grounding(
-        bodies=tuple(fragment.content for fragment in fragments),
+        bodies=tuple(
+            withhold_passages(
+                fragment.content, passages.get(sources.get(fragment.fragment_id, -1), ())
+            )
+            for fragment in fragments
+        ),
         source=GroundingSource.CORPUS,
         fragment_ids=tuple(fragment_ids),
     )
@@ -255,8 +280,9 @@ async def _window_grounding(
         subject_entry_id=subject_entry_id,
         entry_ids=[entry_id for entry_id, _ in window],
     )
+    bodies = await egress_bodies(session, user_id=user_id, bodies=dict(window))
     return Grounding(
-        bodies=tuple(body for _, body in window),
+        bodies=tuple(bodies[entry_id] for entry_id, _ in window),
         source=GroundingSource.RECENT_ENTRIES,
         fragment_ids=(),
     )
