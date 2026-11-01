@@ -49,9 +49,13 @@ from tests.helpers.oauth import (
     PASSWORD,
     VAULT_KEY,
     VERIFIER,
+    adopt_allocation,
+    allocation_url_for,
     approve,
     approved_code,
+    authorize_params,
     code_exchange_form,
+    connect_managed_vault,
     connect_vault,
     exchange,
     generate_signing_key,
@@ -803,3 +807,103 @@ async def test_the_access_token_carries_the_verifier_in_no_form(
     for value in body.values():
         assert VERIFIER not in str(value)
         assert code not in str(value)
+
+
+# --- per-allocation audience (R3-1, adepthood#3584) ----------------------------
+
+
+async def _managed_tokens(
+    async_client: AsyncClient, db_session: AsyncSession, name: str, *, allocation: str | None
+) -> tuple[dict[str, object], str, int]:
+    """Approve and exchange for a ready managed account; return the body, audience, account."""
+    headers, user_id = await signup(async_client, name)
+    resource = await connect_managed_vault(db_session, user_id, name, allocation=allocation)
+    client_id = await register_agent(async_client)
+    code = await approve(async_client, headers, client_id, resource, scope=_SCOPE)
+    response = await exchange(async_client, code_exchange_form(code, client_id))
+    assert response.status_code == HTTPStatus.OK, response.text
+    return response.json(), resource, user_id
+
+
+@pytest.mark.asyncio
+async def test_a_rolled_managed_vault_mints_for_its_own_allocation_resource(
+    async_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """``aud`` is the per-allocation resource, one string, and refreshes keep it."""
+    allocation = allocation_url_for("rolled")
+    body, resource, _user_id = await _managed_tokens(
+        async_client, db_session, "rolled", allocation=allocation
+    )
+    assert resource == allocation
+    claims = await _verify_as_the_vault(async_client, str(body["access_token"]), allocation)
+    assert claims["aud"] == allocation
+    assert claims["sub"] == "consumer-rolled"
+
+    refreshed = await _refresh(async_client, str(body["refresh_token"]))
+    assert refreshed.status_code == HTTPStatus.OK, refreshed.text
+    again = await _verify_as_the_vault(async_client, refreshed.json()["access_token"], allocation)
+    assert again["aud"] == allocation
+
+
+@pytest.mark.asyncio
+async def test_two_rolled_managed_vaults_get_two_audiences(
+    async_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """No two managed accounts share an audience once each is rolled."""
+    alice, _alice_resource, _alice_id = await _managed_tokens(
+        async_client, db_session, "rolled-alice", allocation=allocation_url_for("rolled-alice")
+    )
+    bob, _bob_resource, _bob_id = await _managed_tokens(
+        async_client, db_session, "rolled-bob", allocation=allocation_url_for("rolled-bob")
+    )
+    audiences = {
+        jwt.decode(str(body["access_token"]), options={"verify_signature": False})["aud"]
+        for body in (alice, bob)
+    }
+    assert audiences == {allocation_url_for("rolled-alice"), allocation_url_for("rolled-bob")}
+
+
+@pytest.mark.asyncio
+async def test_a_managed_vault_not_yet_rolled_keeps_the_shared_audience(
+    async_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """Shared-edge vaults keep working until Creek-Vault#2004 rolls them."""
+    body, resource, _user_id = await _managed_tokens(
+        async_client, db_session, "unrolled", allocation=None
+    )
+    assert resource == "https://v-unrolled.vaults.example/mcp"
+    claims = await _verify_as_the_vault(async_client, str(body["access_token"]), resource)
+    assert claims["aud"] == resource
+
+
+@pytest.mark.asyncio
+async def test_a_shared_audience_grant_stops_refreshing_once_the_vault_is_rolled(
+    async_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """The migration: an old grant is refused ``invalid_grant`` and must reconnect."""
+    body, _resource, user_id = await _managed_tokens(
+        async_client, db_session, "migrated", allocation=None
+    )
+    await adopt_allocation(db_session, user_id, allocation_url_for("migrated"))
+
+    _assert_refused(await _refresh(async_client, str(body["refresh_token"])), "invalid_grant")
+
+
+@pytest.mark.asyncio
+async def test_a_rolled_account_cannot_approve_the_shared_edge(
+    async_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """Never a shared-edge token for an account whose vault has its own resource."""
+    headers, user_id = await signup(async_client, "no-shared")
+    await connect_managed_vault(
+        db_session, user_id, "no-shared", allocation=allocation_url_for("no-shared")
+    )
+    client_id = await register_agent(async_client)
+    page = await async_client.get(
+        "/oauth/authorize",
+        params=authorize_params(client_id, "https://v-no-shared.vaults.example/mcp"),
+        headers=headers,
+    )
+    assert page.status_code == HTTPStatus.BAD_REQUEST
+    assert "invalid_target" in page.text
+    assert await _count(db_session, OAuthAuthorizationCode) == 0

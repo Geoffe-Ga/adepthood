@@ -4,6 +4,11 @@ Creek 0.24 adds ``agent_mcp`` to its unversioned capability document. It is
 per-allocation metadata, unlike the shared edge's RFC 9728 document. A bad or
 absent extension hides the agent address; it never takes an otherwise usable
 content vault offline. Values stay verbatim for exact resource/issuer matching.
+
+The resource is either the shared edge's ``/mcp`` or, once Creek-Vault#2002
+gives an allocation its own audience (owner decision R3-1), exactly
+``/a/<32-character base64url slug>/mcp`` on that same origin. Nothing nearby --
+another length, a nested path, percent-encoding -- is read as either.
 """
 
 from __future__ import annotations
@@ -24,6 +29,11 @@ _MINOR_MAX_LENGTH: Final = 16
 _MINOR: Final = re.compile(r"(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)")
 _UNSAFE_URL_CHARACTERS: Final = re.compile(r'[\x00-\x20\x7f"\\]')
 _FIELDS: Final = frozenset({"resource", "authorization_server"})
+SHARED_MCP_PATH: Final = "/mcp"
+# Creek-Vault#2002 ``creek_mcp/mcp_path.py``: ``secrets.token_urlsafe(24)`` is
+# exactly 32 base64url characters, and the router serves no other spelling.
+ALLOCATION_SLUG_LENGTH: Final = 32
+_ALLOCATION_MCP_PATH: Final = re.compile(rf"/a/[A-Za-z0-9_-]{{{ALLOCATION_SLUG_LENGTH}}}/mcp")
 # Public discovery follows the producer's stricter inert-host contract; the
 # user-URL guard separately combines its smaller suffix set with live DNS admission.
 _LOCAL_SUFFIXES: Final = (
@@ -104,9 +114,32 @@ def _discovery_mapping(raw: object) -> TypeGuard[Mapping[str, object]]:
     return isinstance(raw, Mapping) and set(raw) == _FIELDS
 
 
+def _is_mcp_path(path: str) -> bool:
+    """The shared edge path, or exactly one allocation's path on it."""
+    return path == SHARED_MCP_PATH or _ALLOCATION_MCP_PATH.fullmatch(path) is not None
+
+
 def _public_mcp_resource(value: object) -> TypeGuard[str]:
     """The producer serves MCP on its exact published path, never a redirect or subtree."""
-    return _public_https_url(value) and urlsplit(value).path == "/mcp"
+    return _public_https_url(value) and _is_mcp_path(urlsplit(value).path)
+
+
+def is_allocation_resource_of(candidate: str, shared_resource: str) -> bool:
+    """Whether ``candidate`` is one allocation's resource on ``shared_resource``'s edge.
+
+    Same scheme, host and port as the shared ``/mcp`` resource, with the exact
+    ``/a/<slug>/mcp`` path. A shared resource with a path prefix has none: Creek
+    serves the allocation path only at the origin's root.
+    """
+    shared = urlsplit(shared_resource)
+    allocation = urlsplit(candidate)
+    return (
+        shared.path == SHARED_MCP_PATH
+        and (allocation.scheme, allocation.netloc) == (shared.scheme, shared.netloc)
+        and _ALLOCATION_MCP_PATH.fullmatch(allocation.path) is not None
+        and not allocation.query
+        and not allocation.fragment
+    )
 
 
 def parse_agent_mcp(raw: object, *, minor: object) -> AgentMcpDiscovery | None:
@@ -120,11 +153,19 @@ def parse_agent_mcp(raw: object, *, minor: object) -> AgentMcpDiscovery | None:
     return AgentMcpDiscovery(resource=resource, authorization_server=issuer)
 
 
-def matching_agent_resource(
-    discovery: AgentMcpDiscovery | None, *, resource: str, issuer: str
+def owned_agent_resource(
+    discovery: AgentMcpDiscovery | None, *, shared_resource: str, issuer: str
 ) -> str | None:
-    """Expose only the owned resource, and only for this authorization server."""
-    if discovery is None:
+    """The advertised resource, if it is this account's edge and this authorization server.
+
+    Either the shared edge resource the account's ``/v1`` URL derives, or one
+    allocation's resource on that same edge. Which allocation is the caller's
+    to settle: discovery was read with the account's own credential, and the
+    adoption that stores it refuses a resource another account already holds.
+    """
+    if discovery is None or discovery.authorization_server != issuer:
         return None
-    advertised = (discovery.resource, discovery.authorization_server)
-    return resource if advertised == (resource, issuer) else None
+    advertised = discovery.resource
+    if advertised == shared_resource or is_allocation_resource_of(advertised, shared_resource):
+        return advertised
+    return None
