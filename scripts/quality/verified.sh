@@ -94,6 +94,7 @@ OPTIONS:
 
 GATES:
     backend       backend/ + scripts/ + .pre-commit-config.yaml
+    backend-suite the whole tree (everything the backend unit suite can read)
 
 EXIT CODES:
     $EXIT_HIT             The recorded verdict still describes this tree
@@ -109,6 +110,12 @@ EOF
 declared_paths_for_gate() {
     case "$1" in
         backend) printf '%s' "backend scripts .pre-commit-config.yaml" ;;
+        # The unit suite's verdict, for the pre-push hook to reuse. Keyed on the
+        # whole tree because the suite reads far more than the backend gate's
+        # paths: workflows, ADRs, CLAUDE.md and frontend sources all have tests
+        # asserting on them. A receipt over the narrower paths would still hit
+        # after an edit to any of those, and excuse the tests that read it.
+        backend-suite) printf '%s' "." ;;
         *) return 1 ;;
     esac
 }
