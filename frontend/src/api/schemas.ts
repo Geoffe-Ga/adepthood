@@ -1601,6 +1601,15 @@ export const vaultConnectionResponseSchema = z.object({
    * state but `incomplete`. Carries no count and no content.
    */
   classification_message: z.string().nullable().optional(),
+  /**
+   * Which kind of vault `connected` is about (#3608): one the account
+   * connected itself, a managed one, or the deployment-wide vault this account
+   * is the bound owner of. Null exactly when `connected` is false. The
+   * deployment source carries no address of any kind -- that vault is the
+   * operator's -- and has no row of the account's own to disconnect. A closed
+   * vocabulary; optional so an older server still parses.
+   */
+  source: z.enum(['connected', 'managed', 'deployment']).nullable().optional(),
 });
 
 export type VaultConnectionT = z.infer<typeof vaultConnectionResponseSchema>;

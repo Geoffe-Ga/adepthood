@@ -94,7 +94,7 @@ async function classifyOnePage(message: string): Promise<Run> {
  * that completes turns the state `complete` and the sentence off.
  *
  * The lane's vault owner is the deployment-wide vault's owner, so the answer
- * also says `connected: false` -- the case the server reads a state for anyway.
+ * says `connected: true` from the deployment source with no address (#3608).
  */
 describe('a managed vault that sorts with its rules floor', () => {
   it('reads as not finished until a full sort lands', async () => {
@@ -120,7 +120,9 @@ describe('a managed vault that sorts with its rules floor', () => {
       const calls = (await ledger()).received.slice(before.received.length);
       expect(calls.filter((call) => call.path === CLASSIFY)).toHaveLength(1);
       const roughAnswer = await vault.connection();
-      expect(roughAnswer.connected).toBe(false);
+      expect(roughAnswer.connected).toBe(true);
+      expect(roughAnswer.source).toBe('deployment');
+      expect(roughAnswer.vault_url).toBeNull();
       expect(roughAnswer.classification_state).toBe('incomplete');
       expect(roughAnswer.classification_message).toBe(ROUGH_SORT);
 

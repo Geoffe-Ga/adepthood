@@ -92,6 +92,7 @@ import {
   VAULT_CONNECTING_BUTTON,
   VAULT_CONNECTION_UNKNOWN,
   VAULT_MANAGED_CONNECTED,
+  VAULT_DEPLOYMENT_CONNECTED,
   VAULT_CONNECT_BUTTON,
   VAULT_CONNECT_FAILED,
   VAULT_CONNECT_INTRO,
@@ -205,6 +206,9 @@ const DISCONNECT_PROMPT: ConfirmPrompt = {
 const REPLACE_PROMPTS = new Map<VaultConnectionState['kind'], ConfirmPrompt>([
   ['connected', { title: VAULT_REPLACE_CONFIRM_TITLE, body: VAULT_REPLACE_CONFIRM_BODY }],
   ['managed', { title: VAULT_REPLACE_CONFIRM_TITLE, body: VAULT_REPLACE_CONFIRM_BODY }],
+  // A vault of the account's own wins over the deployment binding (#3608), so
+  // connecting one moves where copies go and is asked about like any swap.
+  ['deployment', { title: VAULT_REPLACE_CONFIRM_TITLE, body: VAULT_REPLACE_CONFIRM_BODY }],
   [
     'unknown',
     { title: VAULT_REPLACE_UNKNOWN_CONFIRM_TITLE, body: VAULT_REPLACE_UNKNOWN_CONFIRM_BODY },
@@ -788,6 +792,18 @@ const VaultConnectionNotice = ({
     return (
       <>
         <Text style={settingsFormStyles.body}>{VAULT_MANAGED_CONNECTED}</Text>
+        <VaultSortNote message={state.classificationMessage} />
+      </>
+    );
+  }
+  if (state.kind === 'deployment') {
+    // No card and so no disconnect: the binding is the operator's, and there is
+    // no row of this account's own for a disconnect to remove.
+    return (
+      <>
+        <Text style={settingsFormStyles.body} testID="vault-deployment-connected">
+          {VAULT_DEPLOYMENT_CONNECTED}
+        </Text>
         <VaultSortNote message={state.classificationMessage} />
       </>
     );

@@ -933,8 +933,10 @@ export const showcaseShadow = {
 
 /**
  * Chrome that floats over the page, such as the writing timer's pill: the
- * canvas paper, opaque on every platform, with a hairline edge and a card's
- * lift. It was once a translucent blurred wash on the web, which let the page
+ * canvas paper, opaque on every platform, with a hairline edge and a raised
+ * surface's lift. The timer and its completion note share this elevation so
+ * they read as one floating tool throughout a session. It was once a
+ * translucent blurred wash on the web, which let the page
  * text under it read through behind its controls (#3403); floating chrome sits
  * over writing, so nothing beneath it may be legible.
  */
@@ -943,6 +945,6 @@ export const floatingChrome = {
     backgroundColor: surface.canvas,
     borderColor: surface.hairline,
     borderWidth: 1,
-    ...surfaceShadow.card,
+    ...surfaceShadow.raised,
   },
 } as const;

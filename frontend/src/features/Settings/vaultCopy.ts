@@ -219,6 +219,15 @@ export const VAULT_MANAGED_CONNECTED =
   'A managed vault is connected to your account. This does not check whether it is reachable right now.';
 
 /**
+ * The deployment-wide vault's one bound owner (#3608). Says whose vault it is
+ * -- the one this Adepthood was set up with, looked after by whoever runs it --
+ * and so why there is no disconnect beside it, and makes the same
+ * no-health-check disclaimer the managed sentence does.
+ */
+export const VAULT_DEPLOYMENT_CONNECTED =
+  'Your writing goes to the vault this Adepthood was set up with. Whoever runs this Adepthood looks after it, so there is nothing to disconnect here. This does not check whether it is reachable right now.';
+
+/**
  * Said when the read could not establish whether a vault is attached at all.
  * "No vault connected yet" would be an answer nobody gave, and for somebody who
  * does have one it would be a false report of losing it, so this states the gap

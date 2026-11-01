@@ -27,6 +27,7 @@ import {
   VAULT_CONNECTION_UNKNOWN,
   VAULT_CONNECT_FAILED,
   VAULT_CONNECT_INTRO,
+  VAULT_DEPLOYMENT_CONNECTED,
   VAULT_DISCONNECT_BUTTON,
   VAULT_DISCONNECT_CONFIRM_BODY,
   VAULT_DISCONNECT_CONFIRM_TITLE,
@@ -141,6 +142,14 @@ const CONNECTED_WITHOUT_ADDRESS: VaultConnection = {
   connected: true,
   vault_url: null,
   mcp_address: null,
+};
+// The deployment-wide vault's one bound owner (#3608): connected, and with no
+// address of any kind, because that vault is the operator's configuration.
+const DEPLOYMENT_VAULT: VaultConnection = {
+  connected: true,
+  vault_url: null,
+  mcp_address: null,
+  source: 'deployment',
 };
 const AVAILABLE_ACTIVATION: VaultActivation = {
   active: false,
@@ -609,6 +618,67 @@ describe('VaultSettingsScreen — reading the connection', () => {
 
     expect(view.getByText(VAULT_ADD_HEADING)).toBeTruthy();
     expect(view.queryByText(VAULT_REPLACE_HEADING, HIDDEN_TOO)).toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The deployment-wide vault (#3608)
+// ---------------------------------------------------------------------------
+
+describe('VaultSettingsScreen — the deployment-wide vault (#3608)', () => {
+  test('says the writing goes to the vault this Adepthood was set up with', async () => {
+    const view = await renderVault(DEPLOYMENT_VAULT);
+
+    expect(view.getByTestId('vault-deployment-connected')).toBeTruthy();
+    expect(view.getByText(VAULT_DEPLOYMENT_CONNECTED)).toBeTruthy();
+    expect(view.queryByTestId('vault-none-connected', HIDDEN_TOO)).toBeNull();
+    expect(view.queryByTestId('vault-connection-unknown', HIDDEN_TOO)).toBeNull();
+  });
+
+  test('never calls it a managed vault, which it is not', async () => {
+    const view = await renderVault(DEPLOYMENT_VAULT);
+
+    expect(view.queryByText(/A managed vault is connected/u, HIDDEN_TOO)).toBeNull();
+  });
+
+  test('offers no disconnect, even with the Advanced fold open', async () => {
+    // There is no row of the account's own to remove: a disconnect would answer
+    // 204 and change nothing, so it is not offered at all.
+    const view = await renderWithFormOpen(DEPLOYMENT_VAULT);
+
+    expect(view.queryByText(VAULT_DISCONNECT_BUTTON, HIDDEN_TOO)).toBeNull();
+    expect(view.queryByTestId('disconnect-vault-button', HIDDEN_TOO)).toBeNull();
+    expect(mockDisconnect).not.toHaveBeenCalled();
+  });
+
+  test('offers no managed vault to set up on top of it', async () => {
+    const view = await renderVault(DEPLOYMENT_VAULT);
+
+    expect(view.queryByTestId('managed-vault-offer', HIDDEN_TOO)).toBeNull();
+    expect(view.queryByTestId('managed-vault-unavailable', HIDDEN_TOO)).toBeNull();
+    expect(view.queryByTestId('open-vault-activation', HIDDEN_TOO)).toBeNull();
+  });
+
+  test('keeps the fold closed, and offers to connect a vault of their own rather than replace', async () => {
+    const view = await renderWithFormOpen(DEPLOYMENT_VAULT);
+
+    expect(view.getByText(VAULT_ADD_HEADING)).toBeTruthy();
+    expect(view.queryByText(VAULT_REPLACE_HEADING, HIDDEN_TOO)).toBeNull();
+  });
+
+  test('asks before a vault of their own takes over where copies go', async () => {
+    // The account's own connection wins over the deployment binding, as the
+    // server routes it, so connecting one moves new copies: worth one question.
+    const view = await renderWithFormOpen(DEPLOYMENT_VAULT);
+    const raised = await pressConnectThroughDialog(
+      view,
+      { address: REPLACEMENT_VAULT_URL, key: TYPED_KEY },
+      'none',
+    );
+
+    expect(raised?.title).toBe(VAULT_REPLACE_CONFIRM_TITLE);
+    expect(raised?.body).toBe(VAULT_REPLACE_CONFIRM_BODY);
+    expect(mockConnect).not.toHaveBeenCalled();
   });
 });
 

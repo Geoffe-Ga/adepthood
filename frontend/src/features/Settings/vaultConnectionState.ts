@@ -1,6 +1,7 @@
 /**
  * Distinguish a failed connection read from a confirmed absence, a managed
- * binding with a private address, and a vault whose address can be displayed.
+ * binding with a private address, the deployment-wide vault, and a vault whose
+ * address can be displayed.
  * A stored binding is not a live health check.
  */
 import type { VaultConnection } from '@/api';
@@ -14,6 +15,12 @@ export type VaultConnectionState =
   | { readonly kind: 'unknown' }
   | { readonly kind: 'none' }
   | ({ readonly kind: 'managed'; readonly agentAddress?: string | null } & SortNote)
+  /**
+   * The deployment-wide vault this account is the bound owner of (#3608). The
+   * operator's configuration rather than the account's row, so it carries no
+   * address and offers nothing to disconnect.
+   */
+  | ({ readonly kind: 'deployment' } & SortNote)
   | ({
       readonly kind: 'connected';
       readonly address: string;
@@ -60,11 +67,15 @@ function connectedTo(
 }
 
 /**
- * A null vault_url identifies the private managed binding. Its public agent
+ * The deployment source is read first and carries nothing but the sort note,
+ * so an address that rode along on it by mistake still has nowhere to land.
+ * Otherwise a null vault_url identifies the private managed binding -- which is
+ * also how a server from before `source` answers -- and its public agent
  * address is independent: retain it when the server can name one.
  */
 export function readConnectionState(connection: VaultConnection): VaultConnectionState {
   if (!connection.connected) return NOTHING_CONNECTED;
+  if (connection.source === 'deployment') return { kind: 'deployment', ...sortNote(connection) };
   if (connection.vault_url === null) {
     return { kind: 'managed', agentAddress: connection.mcp_address, ...sortNote(connection) };
   }
@@ -76,14 +87,9 @@ export function readConnectionState(connection: VaultConnection): VaultConnectio
  *
  * A corpus lives in a vault (#3015), so a document has nowhere to go until the
  * account has one. True only when the server has said nothing is attached:
- * a managed binding or an unknown read is
- * never read as none, and the server's own `vault_required` answer is the
- * backstop for those.
- *
- * One known gap, accepted: the deployment-wide vault's single owner
- * (`CREEK_VAULT_OWNER_USER_ID`) has no connection row, so the server answers
- * them `connected: false` and this holds for them although their imports land.
- * The fix is a server-side has-a-vault signal, not a guess made here.
+ * a managed binding, the deployment-wide vault's bound owner (#3608) or an
+ * unknown read is never read as none, and the server's own `vault_required`
+ * answer is the backstop for those.
  */
 export function vaultComesFirst(vault: VaultConnectionState): boolean {
   return vault.kind === 'none';
