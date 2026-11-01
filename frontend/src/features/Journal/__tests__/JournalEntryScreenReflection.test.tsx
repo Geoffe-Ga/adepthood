@@ -29,7 +29,7 @@ import type {
 } from '@/api';
 import { decorativeHidden } from '@/components/a11yHidden';
 import { NAV_ICON_SIZE, NAV_ICON_STROKE } from '@/components/drawer';
-import { SPACING, accent, touchTarget } from '@/design/tokens';
+import { SPACING, accent, journalSheet, touchTarget } from '@/design/tokens';
 
 const mockGet = jest.fn() as jest.MockedFunction<(_id: number) => Promise<JournalMessage>>;
 const mockCreate = jest.fn() as jest.MockedFunction<(_e: unknown) => Promise<JournalMessage>>;
@@ -612,7 +612,7 @@ describe('JournalEntryScreen -- reflection mode', () => {
       );
       expect(
         StyleSheet.flatten(getByTestId('journal-compose-stack').props.style).marginBottom,
-      ).toBe(120 + SPACING.md);
+      ).toBe(120 + journalSheet.deskPaddingH + SPACING.md);
       expect(
         StyleSheet.flatten(getByTestId('journal-compose-row').props.style).marginBottom ?? 0,
       ).toBe(0);

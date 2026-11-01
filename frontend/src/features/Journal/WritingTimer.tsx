@@ -529,11 +529,13 @@ function TimerTrack({
   compact,
   docked,
   expandedRail,
+  withinBand,
   children,
 }: {
   compact: boolean;
   docked: boolean;
   expandedRail: boolean;
+  withinBand: boolean;
   children: React.ReactNode;
 }): React.JSX.Element {
   if (docked) {
@@ -546,7 +548,11 @@ function TimerTrack({
   if (compact) return <>{children}</>;
   return (
     <View
-      style={[styles.expandedTrack, expandedRail && styles.expandedRail]}
+      style={[
+        styles.expandedTrack,
+        expandedRail && styles.expandedRail,
+        withinBand && styles.trackWithinBand,
+      ]}
       pointerEvents="box-none"
       testID="writing-timer-expanded-track"
     >
@@ -597,9 +603,7 @@ function TimerMount({
       pointerEvents="box-none"
       testID="writing-timer-wrapper"
     >
-      <TimerTrack compact={compact} docked={docked} expandedRail={expandedRail}>
-        {mountedPill}
-      </TimerTrack>
+      <TimerTrack {...{ compact, docked, expandedRail, withinBand }}>{mountedPill}</TimerTrack>
     </View>
   );
 }
@@ -728,6 +732,10 @@ const styles = StyleSheet.create({
     alignItems: 'flex-end',
     paddingHorizontal: 0,
   },
+  /** The band's scroll content already supplies the inset and shadow clearance. */
+  trackWithinBand: {
+    paddingHorizontal: 0,
+  },
   /**
    * Keep the readout and controls together above independently wrapping
    * presets. The surface measures this column, so larger text can grow the
@@ -743,7 +751,7 @@ const styles = StyleSheet.create({
   },
   pillExpanded: {
     width: '100%',
-    maxWidth: journalLayout.pageMaxWidth,
+    maxWidth: journalLayout.pageMaxWidth - 2 * SPACING.md,
   },
   pillExpandedRail: {
     // Fit the margin and its page inset without entering the writing column.
