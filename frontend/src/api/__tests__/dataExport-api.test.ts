@@ -82,3 +82,25 @@ describe('users.exportMyJournalAsMarkdown', () => {
     expect(journal).toBe(MARKDOWN);
   });
 });
+
+describe('users.exportMyVault', () => {
+  test('reads the vault export as text, so it is saved exactly as the server sent it', async () => {
+    const body = '{"format":"adepthood-vault-export","items":[],"complete":true}';
+    mockFetch.mockReturnValueOnce(textResponse(body));
+
+    const vault = await users.exportMyVault('tok');
+
+    const [url, init] = mockFetch.mock.calls[0];
+    expect(url).toBe('http://test/users/me/export/vault');
+    expect(init.headers.Authorization).toBe('Bearer tok');
+    expect(vault).toBe(body);
+  });
+
+  test('a vault that cannot export is an error carrying its code, not an empty file', async () => {
+    mockFetch.mockReturnValueOnce(jsonResponse({ detail: 'vault_export_needs_update' }, 409));
+
+    const err = await users.exportMyVault('tok').catch((e: unknown) => e);
+
+    expect(err).toMatchObject({ status: 409, detail: 'vault_export_needs_update' });
+  });
+});

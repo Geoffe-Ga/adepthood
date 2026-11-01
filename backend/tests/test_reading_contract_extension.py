@@ -39,7 +39,9 @@ def test_extension_pin_matches_producer_manifest_and_capability_table() -> None:
         if name != "manifest.json":
             assert upstream[name] == digest
     capabilities = json.loads((_ROOT / "examples/capabilities/success.json").read_bytes())
-    assert set(_CAPABILITY_BY_WIRE_NAME) == set(capabilities["capabilities"])
+    # ``export`` joined at 0.27 (#3579); tests/test_creek_contract_0_27_export.py
+    # holds the whole table to that later document.
+    assert set(_CAPABILITY_BY_WIRE_NAME) - {"export"} == set(capabilities["capabilities"])
 
 
 @pytest.mark.asyncio

@@ -32824,6 +32824,132 @@
         ]
       }
     },
+    "/users/me/export/vault": {
+      "get": {
+        "description": "Stream what the caller's own vault holds of theirs, as one JSON file (#3579).\n\nThe vault is the one the owner-safe resolver gives this token -- the\ncaller's own connection, never one named by the request, which carries\nnothing at all. The first page is read before anything is sent, so a vault\nthat is absent, asleep, too old or refusing answers a coded refusal rather\nthan an empty file; a failure after that ends the file marked incomplete.",
+        "operationId": "export_my_vault_users_me_export_vault_get",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {}
+            },
+            "description": "What the caller's Creek Vault holds of theirs, streamed as one JSON document whose trailing ``complete`` says whether every page and item is in it."
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "The request body could not be parsed, or a value it carried was refused."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "No usable credential was presented."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "The caller is authenticated but does not own the resource."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "No such resource -- or none this caller is allowed to see."
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "The request conflicts with the resource's current state."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ValidationErrorResponse"
+                }
+              }
+            },
+            "description": "The request failed validation -- an array of rejected fields -- or a check applied after the schema refused it, as one snake_case code."
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "The caller went past a rate limit."
+          },
+          "502": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "An upstream dependency this route relies on failed."
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "A required dependency is temporarily unusable."
+          }
+        },
+        "summary": "Export My Vault",
+        "tags": [
+          "export"
+        ]
+      }
+    },
     "/users/me/timezone": {
       "put": {
         "description": "Update the authenticated caller's IANA timezone.\n\nValidation mirrors signup (see :class:`~schemas.timezone.TimezoneUpdate`):\nan unknown or oversized name is rejected with 422 and blank input coerces\nto ``\"UTC\"``.  The dependency resolves the caller from their JWT, so only\nthat user's own row is ever mutated.",

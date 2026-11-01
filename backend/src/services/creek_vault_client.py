@@ -147,11 +147,17 @@ from domain.reading_recommendations import (
     ReadingRecommendation,
     ReadingRequest,
 )
+from domain.vault_export import VAULT_EXPORT_SINCE_MINOR, VaultExportPage
 from services.creek_vault_activity_wire import read_agent_activity
 from services.creek_vault_agent_discovery import parse_agent_mcp
 from services.creek_vault_call_errors import HTTP_CALL_FAILED_ERRORS as _HTTP_CALL_FAILED_ERRORS
 from services.creek_vault_call_errors import (
     HTTP_CALL_TIMED_OUT_ERRORS as _HTTP_CALL_TIMED_OUT_ERRORS,
+)
+from services.creek_vault_export_wire import (
+    EXPORT_DEADLINE_SECONDS,
+    export_offered,
+    read_export_page,
 )
 from services.creek_vault_payload import (
     _CALL_FAILED,
@@ -612,6 +618,7 @@ _CAPABILITY_BY_WIRE_NAME: Mapping[str, CreekCapability] = MappingProxyType(
         "voice-drafts": CreekCapability.VOICE_DRAFTS,
         "letters": CreekCapability.LETTERS,
         "agent-activity": CreekCapability.AGENT_ACTIVITY,
+        "export": CreekCapability.EXPORT,
     }
 )
 
@@ -1109,6 +1116,12 @@ class _CallDepartures:
 _STANDING_CALL = _CallDepartures()
 _UNVERSIONED_CALL = _CallDepartures(contract_versioned=False)
 _READING_CALL = _CallDepartures(contract_minor="0.25", deadline=30.0)
+
+# The owner export (#3579): 0.27 and a longer deadline, both explained in
+# :mod:`services.creek_vault_export_wire`.
+_EXPORT_CALL = _CallDepartures(
+    contract_minor=VAULT_EXPORT_SINCE_MINOR, deadline=EXPORT_DEADLINE_SECONDS
+)
 
 # The job-status poll against a vault that serves contract 0.26, which is the
 # minor whose failed job says *why* it failed (Creek-Vault#1877). Only this read
@@ -2758,6 +2771,15 @@ class HttpCreekVaultClient:
                 read_failure=_read_failure,
             )
 
+    async def export_page(self, cursor: str | None, /) -> VaultExportPage:
+        """Read one owner-export page (0.27, #3579); see :mod:`services.creek_vault_export_wire`."""
+        send = partial(self._authorized_request, departures=_EXPORT_CALL)
+        supported = export_offered(self._last_handshake)
+        with _CountingOutcome(CreekCapability.EXPORT):
+            return await read_export_page(
+                send, self._url, cursor, supported=supported, read_failure=_read_failure
+            )
+
 
 class LocalFallbackCreekVaultClient:
     """The no-vault :class:`CreekVaultClient`: local pipeline stays authoritative.
@@ -2870,6 +2892,11 @@ class LocalFallbackCreekVaultClient:
         """Raise: there is no vault whose audit chain could be read."""
         record_vault_outcome(self._outcome, CreekCapability.AGENT_ACTIVITY)
         raise CreekCapabilityUnsupportedError(_unsupported_message(CreekCapability.AGENT_ACTIVITY))
+
+    async def export_page(self, _cursor: str | None, /) -> VaultExportPage:
+        """Raise: there is no vault whose content could be exported."""
+        record_vault_outcome(self._outcome, CreekCapability.EXPORT)
+        raise CreekCapabilityUnsupportedError(_unsupported_message(CreekCapability.EXPORT))
 
     async def classify_corpus(self) -> VaultClassificationPass | VaultPipelineJob:
         """Raise: there is no vault whose corpus could be classified.

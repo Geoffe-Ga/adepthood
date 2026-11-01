@@ -528,8 +528,10 @@ MANIFEST: Mapping[str, ExportRule] = {
     "uservaultconfig": Omitted(
         "The Creek Vault the account connected, and the key that opens it. "
         "The key is a live secret for a system this export has no business "
-        "copying into a plaintext file. The vault's own contents are "
-        "exported from the vault.",
+        "copying into a plaintext file. What the vault holds of the account's "
+        "— imported documents, attachments and their fragments, every tier "
+        "— is exported separately, by GET /users/me/export/vault, so this "
+        "archive still downloads when the vault is asleep.",
     ),
     "vaultactivation": Omitted(
         "Private-vault provisioning state and opaque control-plane handles. "
@@ -544,7 +546,8 @@ MANIFEST: Mapping[str, ExportRule] = {
         "Scheduling state: when adepthood last asked the account's vault to "
         "classify and link itself. It describes this app's housekeeping "
         "rather than anything the account wrote, and the ontology the passes "
-        "produced lives in the vault, which exports itself.",
+        "produced lives in the vault, whose contents GET /users/me/export/vault "
+        "exports.",
     ),
     "vaultteardownreceipt": Omitted(
         "Content-free post-deletion reconciliation state. It has no account "

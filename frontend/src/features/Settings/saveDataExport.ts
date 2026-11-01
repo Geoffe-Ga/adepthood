@@ -18,8 +18,8 @@ import { users, type DataExportArchive } from '@/api';
  * not a failed export.
  */
 
-/** The two things an export can be. */
-export type ExportFormat = 'json' | 'markdown';
+/** The three things an export can be: the archive, the journal, or the vault. */
+export type ExportFormat = 'json' | 'markdown' | 'vault';
 
 /** The platform handoff that made the completed export reachable. */
 export type ExportDestination = 'browser-download' | 'shared' | 'device-file';
@@ -32,8 +32,18 @@ export interface SavedExport {
   uri: string | null;
   /** Rows in the archive; ``null`` for Markdown, which is prose, not records. */
   records: number | null;
+  /** For a vault export only: how many items it carries, and whether it is whole. */
+  vault?: VaultExportSummary;
   /** Where the person can retrieve the completed copy. */
   destination: ExportDestination;
+}
+
+/** What a saved vault export holds, read off its own trailer. */
+export interface VaultExportSummary {
+  /** Documents and fragments in the file. */
+  items: number;
+  /** ``true`` only when the file itself says every page and item is in it. */
+  complete: boolean;
 }
 
 /** Title the share sheet shows above the file. */
@@ -129,6 +139,32 @@ async function fetchMarkdownExport(): Promise<{ contents: string; records: null 
   return { contents: await users.exportMyJournalAsMarkdown(), records: null };
 }
 
+/**
+ * Read a vault file's own trailer. Anything that is not a whole, parseable
+ * file that says ``"complete": true`` is reported incomplete -- including one
+ * cut off mid-stream, which is still saved because what arrived is still the
+ * person's.
+ */
+export function summariseVaultExport(contents: string): VaultExportSummary {
+  try {
+    const parsed = JSON.parse(contents) as { items?: unknown; complete?: unknown };
+    const items = Array.isArray(parsed.items) ? parsed.items.length : 0;
+    return { items, complete: parsed.complete === true };
+  } catch {
+    return { items: 0, complete: false };
+  }
+}
+
+/** The vault file: what a Creek Vault holds of yours, saved exactly as sent. */
+async function fetchVaultExport(): Promise<{
+  contents: string;
+  records: null;
+  vault: VaultExportSummary;
+}> {
+  const contents = await users.exportMyVault();
+  return { contents, records: null, vault: summariseVaultExport(contents) };
+}
+
 const FORMATS = {
   json: {
     filename: 'adepthood-export',
@@ -142,6 +178,12 @@ const FORMATS = {
     mediaType: 'text/markdown;charset=utf-8',
     fetch: fetchMarkdownExport,
   },
+  vault: {
+    filename: 'adepthood-vault',
+    extension: 'json',
+    mediaType: 'application/json;charset=utf-8',
+    fetch: fetchVaultExport,
+  },
 } as const;
 
 /**
@@ -154,10 +196,12 @@ const FORMATS = {
  */
 export async function saveDataExport(format: ExportFormat): Promise<SavedExport> {
   const spec = FORMATS[format];
-  const { contents, records } = await spec.fetch();
+  const fetched: { contents: string; records: number | null; vault?: VaultExportSummary } =
+    await spec.fetch();
   const filename = `${spec.filename}-${today()}.${spec.extension}`;
-  const saved = await saveTextFile(filename, contents, spec.mediaType);
-  return { ...saved, records };
+  const saved = await saveTextFile(filename, fetched.contents, spec.mediaType);
+  const summary = fetched.vault ? { vault: fetched.vault } : {};
+  return { ...saved, records: fetched.records, ...summary };
 }
 
 /** Where one saved text file ended up. */

@@ -45,6 +45,8 @@ from http import HTTPStatus
 from typing import Final, NoReturn, Protocol
 from uuid import UUID
 
+from domain.vault_export import VaultExportPage
+
 # Semantic contract version adepthood presents at handshake and compares against
 # what a vault advertises. A major-version mismatch degrades to unavailable
 # rather than risking a call under an incompatible surface.
@@ -88,6 +90,10 @@ from uuid import UUID
 #    `request_key_rejected` (Creek-Vault#1877, #3595) -- only to a vault whose
 #    handshake lists 0.26 (`JOB_FAILURE_CODE_SINCE_MINOR`); an older vault keeps
 #    hearing 0.22. `tests/test_creek_contract_0_26.py` pins that negotiation.
+#    The owner export (`GET /v1/export`, Creek-Vault#2033, #3579) declares 0.27
+#    the same way (`VAULT_EXPORT_SINCE_MINOR`), and only to a vault that both
+#    advertises `export` and lists 0.27; `tests/test_creek_contract_0_27_export.py`
+#    pins it.
 CONTRACT_VERSION = "0.22.0"
 
 
@@ -123,7 +129,9 @@ class CreekCapability(enum.StrEnum):
     provider (#3203). ``AGENT_ACTIVITY`` (contract 0.22) is the content-free
     list of what agents asked the vault for, which Settings renders under the
     agents a person approved (#3535): who, which tool, when and whether it was
-    admitted -- never an argument and never a result.
+    admitted -- never an argument and never a result. ``EXPORT`` (contract
+    0.27) is the owner's paged export of everything the vault holds of theirs,
+    which "Export my data" hands back to a managed-vault writer (#3579).
     """
 
     HANDSHAKE = "creek.handshake"
@@ -140,6 +148,7 @@ class CreekCapability(enum.StrEnum):
     LETTERS = "creek.letters"
     AGENT_ACTIVITY = "creek.agent_activity"
     READING_RECOMMENDATIONS = "creek.reading_recommendations"
+    EXPORT = "creek.export"
 
 
 class VaultTierCeiling(enum.StrEnum):
@@ -1586,6 +1595,28 @@ class CreekVaultAgentActivityClient(CreekVaultClient, Protocol):
         """
 
 
+class CreekVaultExportClient(CreekVaultClient, Protocol):
+    """The client surface the owner's vault export needs: ``export`` (0.27, #3579).
+
+    Separate from :class:`CreekVaultClient` for the reason
+    :class:`CreekVaultAgentActivityClient` is.
+    """
+
+    async def export_page(self, cursor: str | None, /) -> VaultExportPage:
+        """Read one page of the owner's vault-held content, starting at ``cursor``.
+
+        ``None`` asks for the first page; every later cursor is the previous
+        page's ``next_cursor``. Every tier is returned, intimate included: this
+        is the owner's own content coming back to the owner. Fails as
+        :meth:`CreekVaultClient.wheel` does -- an off-schema or corrupted page as
+        :class:`CreekVaultPayloadError`, a refusal as
+        :class:`CreekVaultContractError`, an absent or unreadable vault as
+        :class:`CreekVaultUnavailableError` -- and a vault that does not
+        advertise the read at a minor it serves raises
+        :class:`CreekCapabilityUnsupportedError` before any request is built.
+        """
+
+
 class CreekVaultVoiceDraftClient(CreekVaultClient, Protocol):
     """The narrow client surface required by optional Voice Draft mirroring.
 
@@ -1624,7 +1655,9 @@ class CreekVaultLetterClient(CreekVaultVoiceDraftClient, Protocol):
         """
 
 
-class CreekVaultPipelineClient(CreekVaultLetterClient, CreekVaultAgentActivityClient, Protocol):
+class CreekVaultPipelineClient(
+    CreekVaultLetterClient, CreekVaultAgentActivityClient, CreekVaultExportClient, Protocol
+):
     """The whole per-request surface: every narrower client, plus pipeline polling.
 
     Status polling is absent from :class:`CreekVaultClient` deliberately. Most
@@ -1632,7 +1665,9 @@ class CreekVaultPipelineClient(CreekVaultLetterClient, CreekVaultAgentActivityCl
     to implement a pipeline-only operation in their adapters or test doubles.
     This is the type the per-request dependency resolves, so it also carries
     :class:`CreekVaultAgentActivityClient`: the Settings activity route (#3535)
-    reads through the same resolved client every other route does.
+    reads through the same resolved client every other route does, and
+    :class:`CreekVaultExportClient` for the same reason: the owner's vault
+    export (#3579) dials the caller's own resolved vault and no other.
     """
 
     async def pipeline_job(
