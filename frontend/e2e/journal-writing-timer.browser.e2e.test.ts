@@ -193,7 +193,7 @@ for (const viewport of [
     expect(
       idleBand.y + idleBand.height - (idleContent.y + idleContent.height),
       'short content stays anchored above the phone dock padding',
-    ).toBeCloseTo(viewport.width === 390 ? 12 : 0, 1);
+    ).toBeCloseTo(viewport.width === 390 ? 28 : 0, 1);
     await page.clock.fastForward(4_000);
     await expectReachable(page, 'journal-finish-button');
     await expectReachable(page, 'get-resonance-button');

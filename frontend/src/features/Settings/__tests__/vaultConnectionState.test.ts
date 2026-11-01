@@ -108,6 +108,64 @@ describe('readConnectionState', () => {
     expect(state).not.toHaveProperty('classificationMessage');
   });
 
+  it('reads the deployment-wide vault as its own kind, with no address of any sort (#3608)', () => {
+    const connection: VaultConnection = {
+      connected: true,
+      vault_url: null,
+      mcp_address: null,
+      source: 'deployment',
+    };
+
+    expect(readConnectionState(connection)).toEqual({ kind: 'deployment' });
+  });
+
+  it('never carries an address for the deployment vault, even one sent by mistake', () => {
+    // The operator's vault is not the account's to show: an address on this
+    // answer would be a server fault, and the state still has nowhere to put it.
+    const state = readConnectionState({
+      connected: true,
+      vault_url: VAULT_URL,
+      mcp_address: AGENT_ADDRESS,
+      source: 'deployment',
+    });
+
+    expect(state).toEqual({ kind: 'deployment' });
+  });
+
+  it("carries the server's sort sentence on the deployment vault too", () => {
+    const message = 'Some of your writing has only had a rough sort so far.';
+
+    expect(
+      readConnectionState({
+        connected: true,
+        vault_url: null,
+        mcp_address: null,
+        source: 'deployment',
+        classification_state: 'incomplete',
+        classification_message: message,
+      }),
+    ).toEqual({ kind: 'deployment', classificationMessage: message });
+  });
+
+  it('reads the named managed and connected sources as before', () => {
+    expect(
+      readConnectionState({
+        connected: true,
+        vault_url: null,
+        mcp_address: null,
+        source: 'managed',
+      }),
+    ).toEqual({ kind: 'managed', agentAddress: null });
+    expect(
+      readConnectionState({
+        connected: true,
+        vault_url: VAULT_URL,
+        mcp_address: null,
+        source: 'connected',
+      }),
+    ).toEqual({ kind: 'connected', address: VAULT_URL, agentAddress: null });
+  });
+
   it('lets the connected flag decide, even when an address rides along with it', () => {
     // ``connected: false`` is answered before the address is looked at, so a
     // stale address on a disconnected answer reads as none rather than
@@ -147,5 +205,16 @@ describe('vaultComesFirst', () => {
     const managed = readConnectionState({ connected: true, vault_url: null, mcp_address: null });
 
     expect(vaultComesFirst(managed)).toBe(false);
+  });
+
+  it("does not hold for the deployment-wide vault's owner, whose writing lands there (#3608)", () => {
+    const deployment = readConnectionState({
+      connected: true,
+      vault_url: null,
+      mcp_address: null,
+      source: 'deployment',
+    });
+
+    expect(vaultComesFirst(deployment)).toBe(false);
   });
 });

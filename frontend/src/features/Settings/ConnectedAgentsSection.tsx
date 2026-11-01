@@ -195,7 +195,10 @@ function useConnectedAgents(): AgentsController {
 
 /** Whether the section has anything to say for this account. */
 function sectionShows(vaultState: VaultConnectionState, list: AgentList): boolean {
-  if (vaultState.kind !== 'none') return true;
+  // The deployment-wide vault (#3608) is the operator's, and no address is
+  // named for an agent to reach it by, so it is offered nothing either: only
+  // agents already approved are shown, so they can be stopped.
+  if (vaultState.kind !== 'none' && vaultState.kind !== 'deployment') return true;
   return list.kind === 'loaded' && list.agents.length > 0;
 }
 

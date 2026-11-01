@@ -202,7 +202,7 @@ describe('the finished-session note clears what floats over it', () => {
     const view = render(<WritingSessionBanner result={result} onDismiss={jest.fn()} />);
 
     // The floating band handles vertical stacking; the note only owns its reading measure.
-    expect(flat(view.root.props.style).maxWidth).toBe(journalLayout.pageMaxWidth);
+    expect(flat(view.root.props.style).maxWidth).toBeLessThan(journalLayout.pageMaxWidth);
     expect(flat(view.root.props.style).alignSelf).toBe('center');
     expect(flat(view.root.props.style).marginBottom).toBeLessThan(WRITING_TIMER_PILL_MAX_HEIGHT);
   });

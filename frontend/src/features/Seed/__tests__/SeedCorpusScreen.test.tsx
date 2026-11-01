@@ -48,11 +48,21 @@ global.fetch = ((url: string, init?: RequestInit) =>
     : mockFetch(url, init)) as unknown as typeof fetch;
 
 /** What `GET /vault/connection` answers. */
-function vaultConnectionReply(connected: boolean, vaultUrl: string | null) {
+function vaultConnectionReply(
+  connected: boolean,
+  vaultUrl: string | null,
+  source?: 'connected' | 'managed' | 'deployment',
+) {
   return Promise.resolve({
     ok: true,
     status: 200,
-    json: () => Promise.resolve({ connected, vault_url: vaultUrl, mcp_address: null }),
+    json: () =>
+      Promise.resolve({
+        connected,
+        vault_url: vaultUrl,
+        mcp_address: null,
+        ...(source === undefined ? {} : { source }),
+      }),
   });
 }
 
@@ -609,6 +619,21 @@ describe('an account with nowhere to keep a document yet (#3017)', () => {
   test('keeps the picker while the vault read is still out', () => {
     mockVaultConnectionFetch.mockImplementation(() => new Promise(() => undefined));
     const { getByTestId, queryByTestId } = render(<SeedCorpusScreen />);
+
+    expect(getByTestId('seed-choose-button')).toBeTruthy();
+    expect(queryByTestId('seed-vault-invitation')).toBeNull();
+  });
+
+  test("keeps the picker for the deployment-wide vault's owner (#3608)", async () => {
+    mockVaultConnectionFetch.mockImplementation(() =>
+      vaultConnectionReply(true, null, 'deployment'),
+    );
+    const { getByTestId, queryByTestId } = render(<SeedCorpusScreen />);
+
+    await waitFor(() => expect(mockVaultConnectionFetch).toHaveBeenCalled());
+    await act(async () => {
+      await Promise.resolve();
+    });
 
     expect(getByTestId('seed-choose-button')).toBeTruthy();
     expect(queryByTestId('seed-vault-invitation')).toBeNull();

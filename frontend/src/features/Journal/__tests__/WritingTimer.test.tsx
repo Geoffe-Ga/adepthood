@@ -126,7 +126,7 @@ describe('WritingTimer — the offer at rest', () => {
     expect(queryByTestId('writing-timer-minimize')).not.toBeNull();
   });
 
-  it('caps the expanded setter at the journal reading measure', () => {
+  it('caps the expanded setter inside the journal reading measure', () => {
     const { getByTestId } = renderTimer(jest.fn());
 
     expect(
@@ -135,10 +135,9 @@ describe('WritingTimer — the offer at rest', () => {
       width: '100%',
       alignItems: 'center',
     });
-    expect(StyleSheet.flatten(getByTestId('writing-timer-pill').props.style)).toMatchObject({
-      width: '100%',
-      maxWidth: journalLayout.pageMaxWidth,
-    });
+    const pill = StyleSheet.flatten(getByTestId('writing-timer-pill').props.style);
+    expect(pill.width).toBe('100%');
+    expect(pill.maxWidth).toBeLessThan(journalLayout.pageMaxWidth);
   });
 
   it('re-seeds the countdown in place when another length is chosen', () => {

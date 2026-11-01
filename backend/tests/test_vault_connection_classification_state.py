@@ -246,14 +246,15 @@ async def test_another_accounts_rows_never_reach_this_one(
 
 
 @pytest.mark.asyncio
-async def test_the_deployment_vaults_owner_reads_a_state_though_not_connected(
+async def test_the_deployment_vaults_owner_reads_a_state_for_the_vault_they_have(
     async_client: AsyncClient, db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """The deployment-wide vault's owner has no connection row, yet their writing is sorted.
 
-    ``connected`` stays false for them, as it always has; the sort state follows
-    the vault the pipeline actually writes to, as ``classification_key_rejected``
-    does (#3595). Anybody else on the same deployment still reads null.
+    They read ``connected`` with the deployment source (#3608), and the sort
+    state follows the vault the pipeline actually writes to, as
+    ``classification_key_rejected`` does (#3595). Anybody else on the same
+    deployment still reads null.
     """
     headers, user_id = await _signup(async_client, "cs-deploy-owner")
     stranger_headers, stranger_id = await _signup(async_client, "cs-deploy-stranger")
@@ -264,7 +265,8 @@ async def test_the_deployment_vaults_owner_reads_a_state_though_not_connected(
     await _row(db_session, user_id, VaultPipelineOutcome.INCOMPLETE)
     await _row(db_session, stranger_id, VaultPipelineOutcome.INCOMPLETE)
     body = await _read(async_client, headers)
-    assert body["connected"] is False
+    assert body["connected"] is True
+    assert body["source"] == "deployment"
     assert _state(body) == ("incomplete", _INCOMPLETE_MESSAGE)
     assert _state(await _read(async_client, stranger_headers)) == (None, None)
 
