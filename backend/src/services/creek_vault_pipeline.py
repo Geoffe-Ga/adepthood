@@ -85,12 +85,10 @@ from domain.creek_vault import (
     CreekVaultPipelineClient,
     CreekVaultUnavailableError,
     VaultClassificationPass,
-    VaultJobFailureCode,
     VaultLinkPass,
     VaultLinkStage,
     VaultPipelineJob,
     VaultPipelineStage,
-    VaultProviderKey,
     VaultSendSuspendedError,
 )
 from domain.dates import ensure_aware
@@ -124,15 +122,11 @@ from services.creek_vault_pipeline_results import persisted_counts as _persisted
 from services.creek_vault_pipeline_results import (
     poll_needs_reconciliation as _poll_needs_reconciliation,
 )
-from services.creek_vault_relay import (
-    forwarding_provider_key,
-    has_forwarded_provider_key,
-    keyless_context,
-)
+from services.creek_vault_relay import has_forwarded_provider_key, keyless_context
 from services.vault_classification_key import (
-    retain_forwarded_key,
-    stage_forget,
-    stored_classification_key,
+    classification_submit_key,
+    forget_if_rejected,
+    relaying,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -764,9 +758,7 @@ async def _commit_finished_run(
         return
     locked, pending = target
     _finish_run(session, locked, outcome, counts)
-    if counts.failure_code is VaultJobFailureCode.REQUEST_KEY_REJECTED:
-        # A refused key is refused again: no background run may spend it (R1-1).
-        await stage_forget(session, locked.user_id)
+    await forget_if_rejected(session, locked.user_id, counts.failure_code)
     await session.flush()
     await _queue_follow_up(session, locked, pending)
     await session.commit()
@@ -802,47 +794,6 @@ def _refused_admission_outcome(admission: _Admission, exc: Exception) -> VaultPi
     )
 
 
-async def _classification_key(
-    session: AsyncSession,
-    client: CreekVaultPipelineClient,
-    user_id: int,
-    stage: VaultPipelineStage,
-) -> VaultProviderKey | None:
-    """The stored key a classification submit relays when its request carries none (R1-1).
-
-    A request that relays the writer's key keeps relaying it, and retains it
-    for later (:func:`~services.vault_classification_key.retain_forwarded_key`).
-    Any other classification submit -- a keyless save, a detached retry, a
-    queued successor, restart recovery -- reads the account's own stored copy,
-    keyed on the run's ``user_id``. The read is committed before the send so no
-    pooled connection rides it. Every other stage spends no key.
-    """
-    if stage is not VaultPipelineStage.CLASSIFY:
-        return None
-    if has_forwarded_provider_key():
-        await retain_forwarded_key(session, client, user_id)
-        return None
-    key = await stored_classification_key(session, user_id)
-    await session.commit()
-    return key
-
-
-async def _send_admission(
-    client: CreekVaultPipelineClient,
-    admission: _Admission,
-    stored: VaultProviderKey | None,
-) -> tuple[VaultPipelineOutcome, _StageCounts] | VaultPipelineJob:
-    """Make the submit, relaying ``stored`` when there is one.
-
-    The vault client still decides at send time, from the vault's handshake,
-    whether the key leaves at all (``request_key_providers``).
-    """
-    if stored is None:
-        return await _submit(client, admission.stage, admission.budget)
-    with forwarding_provider_key(stored):
-        return await _submit(client, admission.stage, admission.budget)
-
-
 async def _submit_and_record(
     session: AsyncSession,
     client: CreekVaultPipelineClient,
@@ -853,8 +804,9 @@ async def _submit_and_record(
     try:
         if not client.supports(CreekCapability.PIPELINE):
             await client.handshake()
-        stored = await _classification_key(session, client, run.user_id, admission.stage)
-        result = await _send_admission(client, admission, stored)
+        stored = await classification_submit_key(session, client, run.user_id, admission.stage)
+        with relaying(stored):
+            result = await _submit(client, admission.stage, admission.budget)
     except _DEFINITIVE_REFUSALS as exc:
         _LOGGER.info(_refusal_event(exc), extra={"stage": admission.stage.value})
         outcome = _refused_admission_outcome(admission, exc)

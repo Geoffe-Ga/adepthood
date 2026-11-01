@@ -28,16 +28,26 @@ nothing else.
 from __future__ import annotations
 
 import logging
+from contextlib import AbstractContextManager, nullcontext
 from typing import TYPE_CHECKING
 
 from sqlalchemy import Text, type_coerce
 from sqlalchemy.exc import SQLAlchemyError
 from sqlmodel import col, delete, select
 
-from domain.creek_vault import VaultKeyProvider, VaultProviderKey
+from domain.creek_vault import (
+    VaultJobFailureCode,
+    VaultKeyProvider,
+    VaultPipelineStage,
+    VaultProviderKey,
+)
 from models.vault_classification_key import VaultClassificationKey
 from services import journal_encryption
-from services.creek_vault_relay import forwarded_provider_key
+from services.creek_vault_relay import (
+    forwarded_provider_key,
+    forwarding_provider_key,
+    has_forwarded_provider_key,
+)
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
@@ -131,11 +141,60 @@ async def stored_classification_key(session: AsyncSession, user_id: int) -> Vaul
     return VaultProviderKey(provider=provider, _secret=secret)
 
 
+async def classification_submit_key(
+    session: AsyncSession,
+    client: CreekVaultPipelineClient,
+    user_id: int,
+    stage: VaultPipelineStage,
+) -> VaultProviderKey | None:
+    """The stored key a classification submit relays when its request carries none.
+
+    The pipeline's one admission point asks this before every send. A request
+    that relays the writer's key keeps relaying it, and retains it for later
+    (:func:`retain_forwarded_key`). Any other classification submit -- a
+    keyless save, a detached retry, a queued successor, restart recovery --
+    reads the account's own stored copy, keyed on the run's ``user_id``. The
+    read is committed before the send so no pooled connection rides it. Every
+    other stage spends no key.
+    """
+    if stage is not VaultPipelineStage.CLASSIFY:
+        return None
+    if has_forwarded_provider_key():
+        await retain_forwarded_key(session, client, user_id)
+        return None
+    key = await stored_classification_key(session, user_id)
+    await session.commit()
+    return key
+
+
+def relaying(stored: VaultProviderKey | None) -> AbstractContextManager[None]:
+    """Relay ``stored`` on the sends inside the block, or leave the context as it is.
+
+    ``None`` must not enter :func:`forwarding_provider_key`, which would clear a
+    key the request itself is relaying. The vault client still decides at send
+    time, from the vault's handshake, whether the key leaves at all.
+    """
+    return nullcontext() if stored is None else forwarding_provider_key(stored)
+
+
 async def stage_forget(session: AsyncSession, user_id: int) -> None:
     """Delete this account's stored key inside the caller's transaction."""
     await session.execute(
         delete(VaultClassificationKey).where(col(VaultClassificationKey.user_id) == user_id)
     )
+
+
+async def forget_if_rejected(
+    session: AsyncSession, user_id: int, failure_code: VaultJobFailureCode | None
+) -> None:
+    """Delete the stored copy, in the landing run's transaction, when its vendor refused a key.
+
+    Creek contract 0.26's ``request_key_rejected`` is final (#3600): the run
+    lands ``failed`` and is not re-admitted. The same refusal would meet every
+    later background submit, so the copy goes with it and is never spent again.
+    """
+    if failure_code is VaultJobFailureCode.REQUEST_KEY_REJECTED:
+        await stage_forget(session, user_id)
 
 
 async def forget_classification_key(session: AsyncSession, user_id: int) -> None:
