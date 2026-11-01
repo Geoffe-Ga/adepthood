@@ -537,6 +537,13 @@ MANIFEST: Mapping[str, ExportRule] = {
         "Private-vault provisioning state and opaque control-plane handles. "
         "They describe application housekeeping, not anything the account wrote.",
     ),
+    "vaultclassificationkey": Omitted(
+        "The account's own AI provider key, kept encrypted only so its vault "
+        "can sort new writing in the background (R1-1). It is a live secret "
+        "for the account's own provider account, which this export has no "
+        "business copying into a plaintext file; the account already holds "
+        "the key on its own device.",
+    ),
     "vaultpipelinefollowup": Omitted(
         "Content-free scheduling state saying a newer vault write needs one "
         "post-snapshot classification pass. It is application housekeeping, "

@@ -78,9 +78,10 @@ encrypted the same way as the writing itself: **the embedding of each passage
 in the corpus** — a list of numbers a model computes from the text so that
 passages with similar meaning can be found — and **the vault tags on an
 entry**, the frequency and Wavelength-phase labels a Creek Vault gives back
-when an entry is sent to it. One thing that is not your writing is
+when an entry is sent to it. Two things that are not your writing are
 encrypted alongside all of it: **the access key for a private vault, if you
-connect one**. They are encrypted with a key the
+connect one**, and **the AI provider key your managed vault sorts your writing
+with, if you use your own key**. They are encrypted with a key the
 operator configures, and a production server refuses to start without one, so
 a production deployment of this service cannot quietly store your writing in
 the clear.
@@ -264,8 +265,21 @@ request carries neither the key nor the page. **Every other feature that uses
 the key still passes through Adepthood's server**, including resonance notes,
 letters and completion checks: the production app sends the key over HTTPS to
 Adepthood's server in the `X-LLM-API-Key` header, and Adepthood forwards it
-over HTTPS to your account with that provider for that call. The key is used
-for that one call and is never persisted, logged or returned by Adepthood.
+over HTTPS to your account with that provider for that call. Apart from the
+one copy described in the next paragraph, the key is used for that one call
+and is never persisted, logged or returned by Adepthood.
+
+With a managed vault, **Adepthood keeps one encrypted copy of your key** so
+that your vault can keep sorting what you write after you close the app. The
+copy is made only when your key is passed on to your vault for that
+sorting, and it is used for nothing else: not for resonance notes, letters or
+completion checks, which still use the key your device sends with each
+request. It is encrypted with the operator's key, like your writing, so it is
+protected against a stolen disk and **not against the operator: Adepthood can
+technically read it**. It is never returned by a screen or API, included in
+your export, written to a log or sent to error monitoring. It is deleted when
+you remove or replace the key in Settings, when you disconnect the vault, when
+your provider turns the key down, and with your account.
 
 **Your Creek Vault**, only if one is configured. A vault is a corpus of
 your own writing on infrastructure the operator arranges, reached over

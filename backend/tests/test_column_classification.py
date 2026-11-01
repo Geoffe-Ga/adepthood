@@ -151,6 +151,9 @@ _PLAINTEXT_COLUMNS: dict[str, frozenset[str]] = {
             "vaultactivation.custody_mode",
             "vaultactivation.state",
             "vaultpipelinefollowup.trigger",
+            # The vendor of a writer's stored provider key (R1-1); the key itself
+            # is ciphertext.
+            "vaultclassificationkey.provider",
             "vaultpipelinerun.failure_code",
             "vaultpipelinerun.follow_up_trigger",
             "vaultpipelinerun.outcome",

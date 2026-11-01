@@ -158,6 +158,7 @@ class SinkId(enum.StrEnum):
     PROMOTED_QUOTE_ANCHOR = "db.promotedquote.anchor_text"
     PROMPT_RESPONSE = "db.promptresponse.response"
     VAULT_CONNECTION = "db.uservaultconfig.api_key"
+    VAULT_CLASSIFICATION_KEY = "db.vaultclassificationkey.api_key"
     # Queues
     VAULT_PIPELINE_RUNS = "queue.vault_pipeline_runs"
 
@@ -370,6 +371,8 @@ _ROWS: Final[tuple[Sink, ...]] = (
     _encrypted(SinkId.PROMOTED_QUOTE_ANCHOR, ALL_TIERS),
     _encrypted(SinkId.PROMPT_RESPONSE, ALL_TIERS),
     _encrypted(SinkId.VAULT_CONNECTION, NO_TIERS),
+    # A writer's own provider key, stored for background classification (R1-1).
+    _encrypted(SinkId.VAULT_CLASSIFICATION_KEY, NO_TIERS),
     # The durable pipeline-run rows both detached doors replay. Content-free rows.
     _inside(
         SinkId.VAULT_PIPELINE_RUNS,

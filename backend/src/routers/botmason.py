@@ -14,7 +14,7 @@ import logging
 from datetime import UTC, datetime
 from typing import Annotated
 
-from fastapi import Depends, Request
+from fastapi import Depends, Request, Response, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from database import get_session
@@ -37,6 +37,7 @@ from services import wallet as wallet_service
 from services.botmason import server_generation_available
 from services.reflection_boundary import ReflectionBoundary
 from services.usage import get_monthly_cap
+from services.vault_classification_key import forget_classification_key
 from services.wallet import require_user_fresh, reset_monthly_usage_if_due
 
 logger = logging.getLogger(__name__)
@@ -115,6 +116,24 @@ async def get_vault_key_vendors(
     return VaultKeyVendorsResponse(
         vendors=sorted(provider for provider in VaultKeyProvider if handshake.accepts_key(provider))
     )
+
+
+@router.delete("/user/vault-classification-key", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_vault_classification_key(
+    current_user: Annotated[int, Depends(get_current_user)],
+    session: Annotated[AsyncSession, Depends(get_session)],
+) -> Response:
+    """Delete the copy of the caller's provider key kept for their vault's sorting (R1-1).
+
+    The device calls this the moment its writer removes or replaces their key,
+    so a background classification can never again spend a key the writer has
+    taken back. A replacement is kept again the next time it is relayed for a
+    classification admission. Keyed on the caller's own token -- there is no
+    id a request could aim at another account -- and idempotent: an account
+    with no stored key is answered 204 too.
+    """
+    await forget_classification_key(session, current_user)
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 @router.post("/user/balance/add", response_model=BalanceAddResponse)

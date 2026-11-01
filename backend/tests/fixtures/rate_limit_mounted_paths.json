@@ -140,6 +140,7 @@
   "/user/balance",
   "/user/balance/add",
   "/user/usage",
+  "/user/vault-classification-key",
   "/user/vault-key-vendors",
   "/users/me",
   "/users/me/export",

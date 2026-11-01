@@ -32422,6 +32422,99 @@
         ]
       }
     },
+    "/user/vault-classification-key": {
+      "delete": {
+        "description": "Delete the copy of the caller's provider key kept for their vault's sorting (R1-1).\n\nThe device calls this the moment its writer removes or replaces their key,\nso a background classification can never again spend a key the writer has\ntaken back. A replacement is kept again the next time it is relayed for a\nclassification admission. Keyed on the caller's own token -- there is no\nid a request could aim at another account -- and idempotent: an account\nwith no stored key is answered 204 too.",
+        "operationId": "delete_vault_classification_key_user_vault_classification_key_delete",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "The request body could not be parsed, or a value it carried was refused."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "No usable credential was presented."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "The caller is authenticated but does not own the resource."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "No such resource -- or none this caller is allowed to see."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ValidationErrorResponse"
+                }
+              }
+            },
+            "description": "The request failed validation -- an array of rejected fields -- or a check applied after the schema refused it, as one snake_case code."
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "The caller went past a rate limit."
+          }
+        },
+        "summary": "Delete Vault Classification Key",
+        "tags": [
+          "botmason"
+        ]
+      }
+    },
     "/user/vault-key-vendors": {
       "get": {
         "description": "Ask the caller's vault which vendors' writer keys it would write with (#3437).\n\nThe one usage-adjacent read that dials, kept apart from ``GET /user/usage``\nso a price snapshot still never resolves or reaches a vault. Only a\nvault-bound caller is asked about; the probe is the capability handshake,\nwhich carries no stored writing and no key. Empty for an app-provider\ncaller, an unreachable vault, and any vault that advertises none (Creek\ncontract 0.18 ``request_key_providers``).",

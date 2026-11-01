@@ -64,6 +64,7 @@ from .vault_activation import (
     VaultCustodyMode,
     VaultTeardownReceipt,
 )
+from .vault_classification_key import VaultClassificationKey
 from .vault_pipeline_follow_up import VaultPipelineFollowUp
 from .vault_pipeline_run import VaultPipelineOutcome, VaultPipelineRun
 from .voice_draft_retraction import VoiceDraftRetraction
@@ -132,6 +133,7 @@ __all__ = [
     "UserVaultConfig",
     "VaultActivation",
     "VaultActivationState",
+    "VaultClassificationKey",
     "VaultCustodyMode",
     "VaultPipelineFollowUp",
     "VaultPipelineOutcome",
