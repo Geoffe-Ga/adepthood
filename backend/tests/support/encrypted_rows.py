@@ -43,6 +43,7 @@ from models.prompt_response import PromptResponse
 from models.user import User
 from models.user_practice import UserPractice
 from models.user_vault_config import UserVaultConfig
+from models.vault_classification_key import VaultClassificationKey
 from services.encryption_inventory import EncryptedColumn, encrypted_columns
 from services.journal_encryption import EncryptedJSONList
 
@@ -217,6 +218,10 @@ async def _user_vault_config(session: AsyncSession) -> UserVaultConfig:
     )
 
 
+async def _vault_classification_key(session: AsyncSession) -> VaultClassificationKey:
+    return VaultClassificationKey(user_id=await _user_id(session), provider="openai", api_key=_FILL)
+
+
 ROW_FACTORIES: Mapping[str, RowFactory] = {
     "completionsuggestion": _completion_suggestion,
     "corpusfragment": _corpus_fragment,
@@ -228,6 +233,7 @@ ROW_FACTORIES: Mapping[str, RowFactory] = {
     "promotedquote": _promoted_quote,
     "promptresponse": _prompt_response,
     "uservaultconfig": _user_vault_config,
+    "vaultclassificationkey": _vault_classification_key,
 }
 
 

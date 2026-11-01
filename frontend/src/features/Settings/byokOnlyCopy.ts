@@ -17,6 +17,14 @@ export const REMOVE_KEY_DIALOG_BODY =
   "Without your own key, BotMason's cloud AI features — resonance notes, letters, completion checks and page reading — stop until you add one again. Resonance notes and letters can still come from your vault if you have one. Your journal itself is unaffected.";
 
 /**
+ * Removal could not reach the server, so the copy kept for a managed vault's
+ * sorting (R1-1) may still exist. Nothing was removed, so "Remove" stays
+ * truthful and the writer can simply try again.
+ */
+export const VAULT_COPY_NOT_DELETED =
+  "Couldn't reach Adepthood to delete the copy of your key it keeps for your vault, so nothing was removed. Check your connection and try again.";
+
+/**
  * A managed vault's sort stopped because the writer's AI provider refused their
  * key (Creek contract 0.26, #3595). Calm and specific: it names who refused,
  * what stopped and the one remedy, and never repeats the key or the vendor's

@@ -125,13 +125,19 @@ def test_every_omission_names_a_table_the_user_did_not_write() -> None:
         for table in SQLModel.metadata.tables.values()
         if any(is_encrypted_type(column.type) for column in table.columns)
     }
-    # ``uservaultconfig`` is the one encrypted column that is a credential
-    # rather than writing, and it is omitted for exactly that reason.
+    # ``uservaultconfig`` and ``vaultclassificationkey`` are the two encrypted
+    # columns that are credentials rather than writing -- the vault's access
+    # key and the writer's own provider key (R1-1) -- and each is omitted for
+    # exactly that reason.
     # ``feedbacknote`` is encrypted prose, but an *administrator's* prose about
     # the account's report rather than anything the account wrote (#2900):
     # handing it to the reporter would turn a private triage note into a
-    # message. Both exceptions are named so a third cannot join silently.
-    assert omitted & encrypted_text_tables == {"uservaultconfig", "feedbacknote"}
+    # message. Every exception is named so another cannot join silently.
+    assert omitted & encrypted_text_tables == {
+        "uservaultconfig",
+        "vaultclassificationkey",
+        "feedbacknote",
+    }
 
 
 def test_the_journal_is_exported() -> None:

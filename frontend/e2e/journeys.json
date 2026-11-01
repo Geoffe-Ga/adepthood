@@ -1615,7 +1615,7 @@
   },
   {
     "id": "account.byok-key-can-be-removed",
-    "description": "Someone who saved their own model key on this device removes it from Settings. The press opens a rendered confirmation (not Alert.alert, which react-native-web ships as an empty method and which left the key irremovable on web, #2928); Cancel keeps the key and Remove clears it, and it is still gone after a reload. Removal itself is device-local and calls no route, so the journey proves what removal is for, on both ways the client picks a key, reached from the entry's own API-key shortcut in the same browser session. The resonance pass passes its disclosed payer explicitly: after removal it is disclosed as the shared allowance, leaves without the X-LLM-API-Key header, and raises monthly_messages_used by one, which catches a build that hid the card while the key stayed in context. The margin-note essay passes no key and so reads the session getter ApiKeyContext registers: opened after removal and before any reload, it too leaves without the header, which catches a build whose in-memory getter kept returning the removed key (the explicit-key pass cannot, since it never consults the getter). Controls made while the key is stored carry the header -- the pass itself, and the completion check the refused pass runs through the getter -- so the header's later absence is observed rather than assumed. The controls are answered in the browser and never reach a server, and the spec asserts the lane fake provider's shared attempt counters are unchanged at its end, because later specs require them to start at zero.",
+    "description": "Someone who saved their own model key on this device removes it from Settings. The press opens a rendered confirmation (not Alert.alert, which react-native-web ships as an empty method and which left the key irremovable on web, #2928); Cancel keeps the key and Remove clears it, and it is still gone after a reload. Removal first sends DELETE /user/vault-classification-key, which deletes the encrypted copy the server keeps for a managed vault's background sorting (R1-1, ADR 0009 amendment 2026-11-01) and is answered 204 before the device's copy goes (if that delete cannot be reached, nothing is removed and the screen says so); beyond that route the journey proves what removal is for, on both ways the client picks a key, reached from the entry's own API-key shortcut in the same browser session. The resonance pass passes its disclosed payer explicitly: after removal it is disclosed as the shared allowance, leaves without the X-LLM-API-Key header, and raises monthly_messages_used by one, which catches a build that hid the card while the key stayed in context. The margin-note essay passes no key and so reads the session getter ApiKeyContext registers: opened after removal and before any reload, it too leaves without the header, which catches a build whose in-memory getter kept returning the removed key (the explicit-key pass cannot, since it never consults the getter). Controls made while the key is stored carry the header -- the pass itself, and the completion check the refused pass runs through the getter -- so the header's later absence is observed rather than assumed. The controls are answered in the browser and never reach a server, and the spec asserts the lane fake provider's shared attempt counters are unchanged at its end, because later specs require them to start at zero.",
     "crosses": {
       "screen": "frontend/src/features/Settings/ApiKeySettingsScreen.tsx",
       "client": ["resonance", "completionSuggestions", "botmasonUsage"],
@@ -1623,9 +1623,10 @@
         "POST /journal/{entry_id}/resonance",
         "POST /journal/{entry_id}/suggestions/detect",
         "POST /journal/marginalia/{marginalia_id}/essay",
-        "GET /user/usage"
+        "GET /user/usage",
+        "DELETE /user/vault-classification-key"
       ],
-      "tables": ["user", "marginalia"]
+      "tables": ["user", "marginalia", "vaultclassificationkey"]
     },
     "status": "covered",
     "coveredBy": "frontend/e2e/api-key-remove.browser.e2e.test.ts"
@@ -3269,7 +3270,7 @@
   },
   {
     "id": "journal.managed-vault-classification-own-key",
-    "description": "A writer saves a personal journal page or imports a document with their own provider key while an unstarted classification is queued (#3550). The document case starts with a cold vendor cache and lets the production corpus.importDocument wrapper discover the eligible vendor before sending its first upload; a second document case first caches an empty vendor answer, then enables request keys to prove recovery after a Vault upgrade; the journal case starts with a cold vendor cache and the production journal.create wrapper waits up to SAVE_KEY_DISCOVERY_WAIT_MS for discovery; a journal-edit case does the same through journal.update, whose PATCH re-onboards the edited page and relays the key to its classification pass only (a save whose session ends during that wait is refused, never sent under another account). The production journal.create and journal.update wrappers send the request-scoped key to the live server, which admits CLASSIFY through the real managed-vault adapter and commits the returned handle before replying. The opt-in lane vault keeps the job non-terminal until the journey observes that handle, records the key only by digest on the single classification POST, then completes the same handle through keyless status polling. The test-only arrange module resolves the authenticated lane owner and touches only content-free pipeline state in the disposable e2e database. Backend controls cover fresh follow-up admission, a spent foreground clock, absent/ineligible keys, already admitted jobs, synchronous completion, database recovery and the stale-continuation race; detached retries and restart recovery remain keyless under ADR0009/Creek ADR0015.",
+    "description": "A writer saves a personal journal page or imports a document with their own provider key while an unstarted classification is queued (#3550). The document case starts with a cold vendor cache and lets the production corpus.importDocument wrapper discover the eligible vendor before sending its first upload; a second document case first caches an empty vendor answer, then enables request keys to prove recovery after a Vault upgrade; the journal case starts with a cold vendor cache and the production journal.create wrapper waits up to SAVE_KEY_DISCOVERY_WAIT_MS for discovery; a journal-edit case does the same through journal.update, whose PATCH re-onboards the edited page and relays the key to its classification pass only (a save whose session ends during that wait is refused, never sent under another account). The production journal.create and journal.update wrappers send the request-scoped key to the live server, which admits CLASSIFY through the real managed-vault adapter and commits the returned handle before replying. The opt-in lane vault keeps the job non-terminal until the journey observes that handle, records the key only by digest on the single classification POST, then completes the same handle through keyless status polling. The test-only arrange module resolves the authenticated lane owner and touches only content-free pipeline state in the disposable e2e database. Backend controls cover fresh follow-up admission, a spent foreground clock, absent/ineligible keys, already admitted jobs, synchronous completion, database recovery and the stale-continuation race; detached retries, queued successors and restart recovery are keyed only by the encrypted stored copy an un-enrolled writer's keyed admission leaves (R1-1, ADR 0009 amendment 2026-11-01), which backend/tests/security/test_stored_classification_key.py pins and journal.managed-vault-background-classification-on-stored-key declares.",
     "crosses": {
       "screen": "frontend/src/features/Journal/JournalEntryScreen.tsx",
       "client": [
@@ -3291,6 +3292,23 @@
     },
     "status": "covered",
     "coveredBy": "frontend/e2e/journal-byok-classification.e2e.test.ts"
+  },
+  {
+    "id": "journal.managed-vault-background-classification-on-stored-key",
+    "description": "An un-enrolled writer with their own Anthropic or OpenAI key saves a page to a managed vault that advertises the key's vendor in request_key_providers (R1-1, ADR 0009 amendment 2026-11-01, Creek-Vault ADR-0015 amendment 2026-11-01). The keyed classification admission keeps the key in vaultclassificationkey.api_key, encrypted with the journal codec and never in plaintext; later classification that no request keys -- a bounded detached retry, a queued successor, restart recovery, a save from a device that sent no key -- relays that stored copy, for that account only and only when the vault still advertises the vendor, and otherwise stays keyless on the rules floor. Removing or replacing the key in Settings, disconnecting the vault, a vendor rejection (failure_code request_key_rejected), enrolment and account deletion each delete the copy. Uncovered by a seam-crossing spec: the lane vault would need to be driven through a detached retry or an adepthood restart while the browser session has ended, which no lane harness does yet. Pinned meanwhile by backend/tests/security/test_stored_classification_key.py (through the real HTTP vault adapter: retention, use on retries/recovery/keyless saves, vendor gating, IDOR, every deletion) and the rewritten canary sweep in backend/tests/security/test_ai_boundary_network_matrix.py, whose raw read of every column finds the key nowhere but as ciphertext in its own column.",
+    "crosses": {
+      "screen": "frontend/src/features/Journal/JournalEntryScreen.tsx",
+      "client": ["journal", "vaultRequestKeys", "vaultClassificationKey"],
+      "routes": [
+        "POST /journal/",
+        "PATCH /journal/{entry_id}",
+        "POST /corpus/import",
+        "DELETE /user/vault-classification-key"
+      ],
+      "tables": ["journalentry", "vaultpipelinerun", "vaultclassificationkey"]
+    },
+    "status": "uncovered",
+    "issue": 3647
   },
   {
     "id": "settings.managed-vault-rejected-writer-key",

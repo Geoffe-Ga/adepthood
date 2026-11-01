@@ -20,6 +20,7 @@ from sqlmodel import col, delete, select
 from models.user import User
 from models.user_vault_config import UserVaultConfig
 from models.vault_activation import VaultActivation, VaultActivationState
+from services.vault_classification_key import stage_forget
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
@@ -94,13 +95,15 @@ async def store_vault_config(
 
 
 async def clear_vault_config(session: AsyncSession, user_id: int) -> None:
-    """Remove this account's connection, credential included.
+    """Remove this account's connection, credential and stored provider key included.
 
     Idempotent: disconnecting a vault nobody connected is a no-op rather than a
     404, because the state the caller asked for -- "no vault of mine is stored"
     -- is the state they end up in either way.
     """
     await session.execute(delete(UserVaultConfig).where(col(UserVaultConfig.user_id) == user_id))
+    # The stored provider key exists only for this vault's classification (R1-1).
+    await stage_forget(session, user_id)
     await session.commit()
 
 

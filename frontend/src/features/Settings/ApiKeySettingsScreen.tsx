@@ -15,7 +15,12 @@ import {
 import ConfirmDialog from '../Habits/components/ConfirmDialog';
 
 import { BYOK_DETAIL_DISCLOSURE } from './byokDisclosure';
-import { KEY_REJECTED_NOTICE, NO_KEY_HINT, REMOVE_KEY_DIALOG_BODY } from './byokOnlyCopy';
+import {
+  KEY_REJECTED_NOTICE,
+  NO_KEY_HINT,
+  REMOVE_KEY_DIALOG_BODY,
+  VAULT_COPY_NOT_DELETED,
+} from './byokOnlyCopy';
 import { BYOK_PROVIDERS, providerForKey } from './byokProviders';
 import {
   LOCAL_MODEL_OFF_NOTE,
@@ -37,6 +42,7 @@ import type { SettingsFormState } from './shared/useSettingsForm';
 import { useSettingsFormState, useSettingsSubmit } from './shared/useSettingsForm';
 import { useVaultConnectionState } from './useVaultConnectionState';
 
+import { vaultClassificationKey } from '@/api';
 import { ScreenScaffold } from '@/components/layout/ScreenScaffold';
 import { LOCAL_MODEL_AVAILABLE } from '@/constants/localModel';
 import type {
@@ -488,6 +494,20 @@ const ScreenBody = ({
   );
 };
 
+/**
+ * Delete the encrypted copy Adepthood keeps for the writer's vault (R1-1).
+ * Resolves ``false`` instead of throwing, so each caller decides what an
+ * unreachable server means for its own action.
+ */
+async function forgetVaultCopy(): Promise<boolean> {
+  try {
+    await vaultClassificationKey.forget();
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 function useSaveKeyHandler(
   form: SettingsFormState,
   setReveal: Dispatch<SetStateAction<boolean>>,
@@ -496,6 +516,10 @@ function useSaveKeyHandler(
   const { draft, setDraft, setStatus } = form;
   const validate = useCallback(() => validateUserApiKey(draft)?.message ?? null, [draft]);
   const perform = useCallback(async () => {
+    // A replaced key stops paying for background sorting at once; the new key
+    // is kept again the next time a save relays it (R1-1). Best-effort: a copy
+    // this cannot reach is overwritten by that same next relay.
+    await forgetVaultCopy();
     const result = await saveApiKey(draft.trim());
     setDraft('');
     setReveal(false);
@@ -515,14 +539,20 @@ function useClearKeyHandler(
   form: SettingsFormState,
   clearApiKey: () => Promise<ApiKeyClearResult>,
 ): () => Promise<void> {
-  const { setStatus } = form;
+  const { setError, setStatus } = form;
   const validate = useCallback(() => null, []);
   const perform = useCallback(async () => {
+    // The server copy goes first: removing only the device's copy while the
+    // vault could keep spending the key would make "Remove" untrue (R1-1).
+    if (!(await forgetVaultCopy())) {
+      setError(VAULT_COPY_NOT_DELETED);
+      return;
+    }
     const result = await clearApiKey();
     if (result.cleared) {
       setStatus('API key removed from this device.');
     }
-  }, [clearApiKey, setStatus]);
+  }, [clearApiKey, setError, setStatus]);
   const onError = useCallback(
     (err: unknown) =>
       err instanceof Error && err.message ? err.message : 'Could not remove the API key.',

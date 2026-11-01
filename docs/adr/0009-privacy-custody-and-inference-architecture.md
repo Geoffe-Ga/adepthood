@@ -78,7 +78,7 @@ Measured on branch `w34/B12` (main plus wave 34d), 2026-10-07:
 
   Both are built to fail when B13 phase (c) moves a journal column to
   client-held ciphertext.
-- **That covers 20 columns across 10 tables.** The count comes from
+- **That covers 21 columns across 11 tables.** The count comes from
   `services/encryption_inventory.py::encrypted_columns()`. The comment in
   `models/_prose_repr.py`, "13 across 8 tables", is stale. B02's raw canary
   `test_every_encrypted_column_stores_ciphertext` proves that the env keys
@@ -92,7 +92,7 @@ Measured on branch `w34/B12` (main plus wave 34d), 2026-10-07:
   `journalentry.vault_tags`, `marginalia.anchor_text`, `marginalia.essay`,
   `marginalia.note`, `practicesession.insight`, `practicesession.reflection`,
   `promotedquote.anchor_text`, `promptresponse.response`,
-  `uservaultconfig.api_key`.
+  `uservaultconfig.api_key`, `vaultclassificationkey.api_key`.
 - **Content-derived plaintext sits beside them.** The `DERIVED_FROM_PROSE`
   group of `_PLAINTEXT_COLUMNS` in `backend/tests/test_column_classification.py`
   lists the columns that hold it. Among them are the corpus frequency
@@ -450,6 +450,12 @@ vault directly, because adepthood holds the vault credential.
    retries, scheduler runs and restart recovery remain keyless. No provider
    key is added to a continuation or to stored state, and this clarification
    changes no custody decision.
+
+   **Amended 2026-11-01 (R1-1; see
+   [the amendment](#amendment-2026-11-01-a-stored-key-for-background-classification-r1-1)).**
+   For an account that has not enrolled in user-held keys, the key is now also
+   kept in one encrypted column so that background classification can use it.
+   The two paragraphs above are kept as decided.
 6. **Labelled on each use.** Before a reading or letter the price line says
    "Your vault will write this {reading|letter} with your own
    {Anthropic|OpenAI} key. Your key pays for it, not your BotMason messages.";
@@ -466,6 +472,134 @@ in plaintext while it runs, as Creek-Vault ADR 0014 describes. Neither is
 operator-blind while the request runs. The operator's own cloud key still
 carries no journal content (item 3 stands for that), and credits still pay
 only for vault answers that do not use the writer's key.
+
+## Amendment 2026-11-01: a stored key for background classification (R1-1)
+
+- **Decider:** Geoff (owner). Release decision R1-1 (2026-10-27): "Option 2
+  of #3550: keep the writer's key encrypted beyond the request, so background
+  classification can use it." On 2026-11-01 the owner confirmed the split
+  proposed on [#3578](https://github.com/Geoffe-Ga/adepthood/issues/3578):
+  "Split: un-enrolled stored server-side; enrolled stay user-held." Both are
+  recorded in
+  [`prompts/claude-comms/2026-10-27-release-decisions.md`](../../prompts/claude-comms/2026-10-27-release-decisions.md)
+  (R1-1 and its 2026-11-01 addendum, R1-1a).
+- **Paired record:** Creek-Vault ADR-0015, amendment 2026-11-01. Creek's
+  custody does not change: it still holds a key for one request and keeps
+  nothing.
+- **What it amends:** item 5 of the 2026-10-16 amendment above ("It ends with
+  the request" and "No provider key is added to a continuation or to stored
+  state"). That text is kept as decided and now carries a pointer here.
+
+**Why.** Under the 2026-10-16 amendment, only the request that relays the
+writer's key could submit classification with it (#3550). Every later
+classification submit ran keyless and fell to the vault's rules floor, which
+lands `incomplete` (#3577). That covered the bounded retries of an admission
+whose answer was lost, a queued successor started by the detached
+continuation, work resumed after an adepthood restart, re-admission after a
+Creek restart (Creek fails a job whose worker is gone, and adepthood re-admits
+it), and a save from a device that sent no key. The writer had brought a key
+for exactly this work.
+
+**What changes.**
+
+1. **The split.** An account that has **not** enrolled in user-held keys may
+   have its BYOK provider key stored server-side: encrypted at rest,
+   server-decryptable, and used only for background vault classification. An
+   **enrolled** account keeps its key user-held (Decision item 13), and the
+   server holds no copy it can read. That account's background classification
+   waits for its next online session, when the device relays the key as it
+   does today; until then its background submits stay keyless (the rules
+   floor), as all accounts' were before this amendment.
+2. **Nobody can enrol today** (Decision item 7: no web enrolment before
+   enforced CSP plus SRI), so in practice every account is on the un-enrolled
+   path. **At enrolment, the stored key is deleted server-side.** Phase (b)'s
+   enrolment step must call
+   `services/vault_classification_key.py::retire_on_enrolment` when it records
+   the enrolment. That call deletes the row before the account counts as
+   enrolled, so no server-readable copy outlives it. The deletion is pinned by
+   `test_enrolment_deletes_the_stored_key_and_background_goes_keyless`. An
+   enrolment path that does not call it is a defect against this record.
+3. **Storage.** The key is kept in one column,
+   `vaultclassificationkey.api_key`, one row per account. It uses
+   `EncryptedString`, the codec that already protects the journal and
+   `uservaultconfig.api_key`; no new cryptography was added. A key is never
+   written while at-rest encryption is unconfigured, so the column never holds
+   plaintext. The vendor is a closed vocabulary. The row's renderings redact
+   the key (`ProseRedactingRepr`). No response schema carries it. The data
+   export omits the table, with a stated reason. Nothing logs it, and nothing
+   sends it to telemetry or error monitoring. It is erased with the account
+   (deletion policy and `ON DELETE CASCADE`). Decision item 9 already puts
+   credentials out of the journal scope, so the scorecard lists this column
+   out of scope beside the vault credential.
+4. **When it is kept.** The key is kept only at a classification admission
+   that relays the writer's key, and only when the vault's handshake advertises
+   that vendor in `request_key_providers`. A key the vault would not spend is
+   not kept. A different key relayed later replaces the stored copy in place.
+5. **When it is used.** Only the pipeline's classification submit uses it,
+   and only for the run's own account (`user_id` from the run, never from a
+   request), when the request carries no key of its own. That covers the
+   scheduler's keyless save, the detached continuation's retries and queued
+   successors, and restart recovery. The key is read from its row at the
+   moment of sending and relayed in Creek's `X-Creek-Provider` /
+   `X-Creek-Provider-Key` headers. The vault client still attaches it only
+   when the vault advertises that vendor. Otherwise the submit is keyless (the
+   rules floor), unchanged. The continuation still starts in a context with no
+   key (`keyless_context`), so no task holds the key. Polling, linker stages
+   and every non-classification call carry none. Reflections, letters and
+   completion detection keep the per-request relay
+   (`services/creek_vault_relay.py`) and never read the stored copy.
+6. **When it is deleted.** Each of these deletes the stored copy, after which
+   the next background submit is keyless:
+   - The writer removes or replaces the key on their device. The device calls
+     `DELETE /user/vault-classification-key`. A replacement key is stored the
+     next time it is relayed for a classification admission.
+   - The writer disconnects their vault.
+   - The vendor rejects the key (Creek contract 0.26
+     `failure_code: request_key_rejected`). The run lands `failed` as #3600
+     decided, and the copy is deleted in the same transaction, so a refused
+     key is never spent again.
+   - The account enrols (item 2).
+   - The account is deleted.
+7. **Labels stay truthful.** Classification is not billed (R1-2), so it has no
+   payer label. A background run on the stored key spends the writer's own
+   key, so the key-refused notice (#3595) still names the writer's provider
+   and the writer's key. The reflection and letter receipts (#3591) are
+   unchanged, because the stored copy never pays for them.
+8. **INTIMATE is unchanged.** A stored key reaches only the vault's
+   corpus-level classification pass. The vault routes INTIMATE fragments
+   locally or leaves them unclassified, as Creek-Vault ADR-0015 decided, and
+   never hands them to the writer's provider.
+
+**The honest limit: this path is not operator-blind.** The operator holds the
+codec key, so the server's environment keys alone decrypt the stored copy. A
+stolen database alone does not expose the key, but a stolen database together
+with those environment keys does, and so does the operator. That is wider than
+the 2026-10-16 amendment, which kept the key nowhere. The privacy policy
+discloses the copy and who can read it
+(`test_the_policy_discloses_the_stored_provider_key_and_who_can_read_it`). Any
+public copy about it must say plainly that the operator can read it, and every
+claim boundary in "What this record does not unlock" stands.
+
+**Tests.** The canary sweep
+`test_a_relayed_key_is_never_logged_persisted_or_echoed` is rewritten. The key
+may now rest only in its encrypted column: a raw sweep of every column of every
+table, read past the codec, never finds it, and the column decrypts to it.
+`tests/security/test_stored_classification_key.py` pins retention, use,
+vendor gating, each deletion and cross-account isolation. The isolation tests
+check that one account's background classification never relays another
+account's key.
+
+**Consequences.**
+
+- An un-enrolled writer's vault sorts with their own key after the request
+  ends. A save from a second device without the key is also sorted with it.
+- Removal reaches the server only when the device can. If the device cannot
+  delete the copy, Settings says so and asks the writer to remove the key
+  again. Until that delete succeeds, the copy stays usable for background
+  sorting.
+- A rejection that lands after the writer has already replaced the key can
+  delete the replacement. The failure is closed: the next keyed admission
+  stores the replacement again, and background sorting is keyless until then.
 
 ## Threat actors
 
@@ -503,7 +637,7 @@ history and future content stand or fall together.
 - **Inference location:** Pre-phase-(a) baseline: server-side cloud calls paid by the app's own LLM_API_KEY unless the person supplies a key; Creek reflection when a vault is bound. Phase (a)'s first slice (#3067) removed the app-key payer. (`repo:backend/src/services/botmason.py::resolve_chat_api_key`)
 - **Supported platforms:** Web only ships; native is configured but unshipped. (`repo:DEPLOYMENT.md`)
 - **Client delivery and update trust:** Operator-served web bundle with an enforced CSP and SRI; a modified bundle is undetectable to the person, because both are served by us. (`repo:frontend/nginx.conf`)
-- **Primary-copy and derivative removal:** Nothing removed: 20 EncryptedString columns across 10 tables, DERIVED_FROM_PROSE plaintext, backups, Creek copies and vendor copies all persist under operator control. (`repo:backend/src/services/encryption_inventory.py::encrypted_columns`)
+- **Primary-copy and derivative removal:** Nothing removed: 21 EncryptedString columns across 11 tables, DERIVED_FROM_PROSE plaintext, backups, Creek copies and vendor copies all persist under operator control. (`repo:backend/src/services/encryption_inventory.py::encrypted_columns`)
 - **Threat actors:** Defends a database or backup thief only while the env keys stay separate; nothing against operator, host, compelled update, subpoena or support pressure. (`repo:backend/tests/test_journal_text_at_rest.py::test_every_encrypted_column_stores_ciphertext`)
 - **Budget (USD per active account-month):** **unknown; owner input required.**
 - **Staffing:** **unknown; owner input required.**
@@ -605,7 +739,7 @@ history and future content stand or fall together.
 - **Inference location:** Device first; then the person's vault-local model, a managed no-retention runtime we run, or a vendor-attested runtime verified under Creek-Vault ADR-0016 Decision 3 (all paid by credits and labelled on each use; the first two are not operator-blind while they run, and the third is held to the operator-blind target, which is not met until B24 certifies it); cloud only with the person's own key, called from the device straight to the vendor. Today BYOK is server-proxied, a known gap until phase (a). (`owner:2026-10-07#B12-cloud-byok`)
 - **Supported platforms:** Web first, native later. Native apps carry the strongest guarantee; on web the guarantee rests on trusting the code we serve. Web accounts may not enrol until enforced CSP plus SRI is live; signed builds come later. (`owner:2026-10-07#B12-web`)
 - **Client delivery and update trust:** Native: store-signed builds (later). Web: enforced CSP plus SRI now (live since phase (b)'s first slice), signed builds later; CSP plus SRI cannot stop us serving a different bundle. (`repo:frontend/nginx.conf`)
-- **Primary-copy and derivative removal:** The 14 in-scope EncryptedString columns of journal_scope_proposal (of the 20; feedback and the vault credential stay out), DERIVED_FROM_PROSE plaintext, completion detection output, Creek copies, vendor copies and backups are re-encrypted client-side, withdrawn or expired before an account is labelled protected. (`repo:backend/src/services/encryption_inventory.py::encrypted_columns`)
+- **Primary-copy and derivative removal:** The 14 in-scope EncryptedString columns of journal_scope_proposal (of the 21; feedback and the two vault credentials stay out), DERIVED_FROM_PROSE plaintext, completion detection output, Creek copies, vendor copies and backups are re-encrypted client-side, withdrawn or expired before an account is labelled protected. (`repo:backend/src/services/encryption_inventory.py::encrypted_columns`)
 - **Threat actors:** Defeats DB thief, backup holder, host-storage access and stored-data subpoena. Defeats the privileged operator only on native while the signed build is honest; on web the operator can capture the key through a served bundle and read all stored history until signed builds ship. A compromised device remains; inference in a managed runtime we run is not operator-blind while it runs (labelled on each use); a vendor-attested runtime verified under Creek-Vault ADR-0016 Decision 3 excludes the host and the operator from its enclave by hardware, on the vendor's attestation chain, but only while Decision 3.3 condition (f) holds, which the owner waived on 2026-10-21 and which is therefore vendor-asserted rather than verified, and the vendor keeps request metadata under condition (g); until phase (a) our server relays BYOK calls and sees their plaintext; with a managed vault it relays the key and the writing to the vault per request (amendment 2026-10-16, #3437), and neither is operator-blind while that request runs. (`repo:backend/src/services/botmason.py::resolve_chat_api_key`)
 - **Budget (USD per active account-month):** **unknown; owner input required.**
 - **Staffing:** **unknown; owner input required.**
@@ -667,7 +801,7 @@ certifies that claim for that platform.
 Every server-readable store that must reach "ciphertext under a user-held
 key, withdrawn, or expired" before an account may be labelled protected:
 
-1. **The 20 `EncryptedString` columns.** These are held by B02's inventory
+1. **The 21 `EncryptedString` columns.** These are held by B02's inventory
    (`encrypted_columns()`) and pinned by
    `test_every_encrypted_column_stores_ciphertext`. The default proposal,
    per the owner's scope split (Decision item 9), puts 14 in scope:
@@ -678,8 +812,9 @@ key, withdrawn, or expired" before an account may be labelled protected:
      `practicesession.reflection`.
    - **Out of scope:** `feedbacknote.body` and `feedbackreport.*`,
      which are written *to* the operator to be read, and
-     `uservaultconfig.api_key`, a credential the server must present on the
-     person's behalf.
+     `uservaultconfig.api_key` and `vaultclassificationkey.api_key`,
+     credentials the server must present on the person's behalf (the second
+     only for an un-enrolled account; see the 2026-11-01 amendment).
 2. **`DERIVED_FROM_PROSE` plaintext** (`_PLAINTEXT_COLUMNS` in
    `backend/tests/test_column_classification.py`). The members are
    `corpusfragment.frequency_weights`, `corpusfragment.tier`,
@@ -1130,6 +1265,11 @@ The B13 epic body that carries this plan is drafted at
   inference leg; the 2026-10-21 half names the vendor and records the three
   waivers with their substitutes. Creek-Vault ADR-0016 holds the vault's half,
   and takes effect only once this amendment merges.
+- **2026-11-01 (release decision R1-1, split confirmed by the owner):** the
+  2026-10-16 amendment's item 5 is amended by the "Amendment 2026-11-01: a
+  stored key for background classification (R1-1)" section, with the original
+  text kept. Creek-Vault ADR-0015's amendment of the same date records the
+  vault's half.
 - **2026-10-27 (release decision R5-1):** the "Reviewers" section's four
   independent reviews stop being phase gates, by the "Amendment 2026-10-27:
   reviewer gates waived by owner" section appended after it, with the original

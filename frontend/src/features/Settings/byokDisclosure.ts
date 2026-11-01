@@ -4,6 +4,8 @@
  * The key rests in device storage between requests. Page reading then sends it
  * from the device straight to the chosen vendor (ADR 0009 phase (a), #3067);
  * every other AI feature sends it over HTTPS through Adepthood to that vendor.
+ * With a managed vault, Adepthood also keeps one encrypted copy for the
+ * vault's background sorting (R1-1).
  * The hub wording is the owner's, decided on 2026-10-14 (#3260). Keep these
  * exports as the only Settings wording so the contract test can hold both
  * surfaces to the transport and forwarding implementation.
@@ -23,7 +25,16 @@ export const BYOK_HUB_DISCLOSURE =
 export const BYOK_MANAGED_VAULT_DISCLOSURE =
   'With a managed vault, those features pass it on from Adepthood to your vault, which sends your writing to that provider with it and keeps none of it. Entries you mark Intimate never go.';
 
+/**
+ * The one copy Adepthood keeps (R1-1, ADR 0009 amendment 2026-11-01): an
+ * encrypted copy, for a managed vault's sorting only, which the operator can
+ * read. Said plainly, because it is not operator-blind and no copy may imply
+ * otherwise; deleted on removal or replacement here.
+ */
+export const BYOK_STORED_COPY_DISCLOSURE =
+  'So your vault can keep sorting what you write after you close the app, Adepthood keeps one encrypted copy of your key for that sorting alone. Adepthood can technically read it. Removing or replacing your key here deletes it.';
+
 /** Full disclosure shown before somebody saves a provider credential. */
 export const BYOK_DETAIL_DISCLOSURE =
-  `${BYOK_HUB_DISCLOSURE} ${BYOK_MANAGED_VAULT_DISCLOSURE} ` +
-  'Adepthood does not persist it: nothing of your key is kept once the reply is back.';
+  `${BYOK_HUB_DISCLOSURE} ${BYOK_MANAGED_VAULT_DISCLOSURE} ${BYOK_STORED_COPY_DISCLOSURE} ` +
+  'Without a managed vault, Adepthood does not persist it: nothing of your key is kept once the reply is back.';

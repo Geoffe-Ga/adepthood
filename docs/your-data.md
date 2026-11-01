@@ -47,8 +47,9 @@ Three kinds of thing, and the archive itself lists them under `not_included`
 with the reason for each, so the file can be trusted about what it does contain.
 
 1. **Secrets.** Your password hash, your sign-in links to Google or Apple, any
-   outstanding password-reset token, and the key to a Creek Vault you
-   connected. A working credential in a file on a laptop is a credential
+   outstanding password-reset token, the key to a Creek Vault you
+   connected, and the encrypted copy of your own AI provider key that a
+   managed vault sorts your writing with. A working credential in a file on a laptop is a credential
    somebody else can use.
 2. **Records the system kept about your usage rather than things you wrote.**
    Sign-in attempts and the addresses they came from, AI metering, wallet

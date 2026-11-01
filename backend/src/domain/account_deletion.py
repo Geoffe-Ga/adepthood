@@ -397,6 +397,13 @@ POLICY: Mapping[str, TablePolicy] = {
         "The content-free managed-vault provisioning handle. Its upstream job "
         "is copied into a detached teardown receipt before this account link is erased.",
     ),
+    "vaultclassificationkey": _erase(
+        "user_id",
+        "The account's own AI provider key, kept encrypted so its vault could "
+        "sort new writing after the request that carried it (R1-1). A live "
+        "third-party secret: leaving it behind would keep a working key to "
+        "somebody else's account after they asked to be forgotten.",
+    ),
     "vaultpipelinefollowup": _erase(
         "user_id",
         "A content-free scheduling marker saying the account's vault needs one "

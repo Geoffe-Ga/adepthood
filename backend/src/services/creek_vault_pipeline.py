@@ -123,6 +123,11 @@ from services.creek_vault_pipeline_results import (
     poll_needs_reconciliation as _poll_needs_reconciliation,
 )
 from services.creek_vault_relay import has_forwarded_provider_key, keyless_context
+from services.vault_classification_key import (
+    classification_submit_key,
+    forget_if_rejected,
+    relaying,
+)
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -753,6 +758,7 @@ async def _commit_finished_run(
         return
     locked, pending = target
     _finish_run(session, locked, outcome, counts)
+    await forget_if_rejected(session, locked.user_id, counts.failure_code)
     await session.flush()
     await _queue_follow_up(session, locked, pending)
     await session.commit()
@@ -798,7 +804,9 @@ async def _submit_and_record(
     try:
         if not client.supports(CreekCapability.PIPELINE):
             await client.handshake()
-        result = await _submit(client, admission.stage, admission.budget)
+        stored = await classification_submit_key(session, client, run.user_id, admission.stage)
+        with relaying(stored):
+            result = await _submit(client, admission.stage, admission.budget)
     except _DEFINITIVE_REFUSALS as exc:
         _LOGGER.info(_refusal_event(exc), extra={"stage": admission.stage.value})
         outcome = _refused_admission_outcome(admission, exc)
@@ -1858,7 +1866,9 @@ def _schedule_continuation(continuation: _Continuation) -> bool:
     active = _BACKGROUND_TASKS.get(key)
     if active is not None and not active.done():
         return False
-    # Off the request's context: a writer's relayed key ends with the reply (#3437).
+    # Off the request's context: the request's relayed key ends with the reply
+    # (#3437). Background classification reads the account's stored copy per
+    # submit instead (R1-1), so no key is ever held by the task itself.
     task = asyncio.create_task(_continue_ladder(continuation), context=keyless_context())
     _BACKGROUND_TASKS[key] = task
     task.add_done_callback(
@@ -2076,8 +2086,10 @@ async def _handoff_queued_classification(
 
     The existing scheduler lock and queued-to-attempted compare-and-swap still
     choose one submitter. An already admitted pass is never submitted again.
-    No key enters the continuation: all polling and later retries use the
-    existing keyless context, including work resumed after process death.
+    No key enters the continuation: it starts in the keyless context, and a
+    later classification submit -- a retry, a queued successor, work resumed
+    after process death -- relays only the account's stored key, read from its
+    encrypted row at the moment of sending (R1-1), or none.
     """
     if continuation is None:
         return

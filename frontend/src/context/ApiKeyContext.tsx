@@ -24,7 +24,10 @@ import { loadLocalModelPreferred, saveLocalModelPreferred } from '@/storage/loca
  *
  * Between calls the key lives in device storage. On supported requests it is
  * transmitted to Adepthood, then forwarded to the provider; Adepthood never
- * persists it in the server database or returns it in an API response. Page
+ * returns it in an API response. With a managed vault, Adepthood keeps one
+ * encrypted, operator-readable copy for the vault's background sorting (R1-1,
+ * ADR 0009 amendment 2026-11-01), which the Settings screen deletes whenever
+ * the key is removed or replaced. Page
  * reading is the exception: it goes from this device straight to the key's
  * vendor and never reaches Adepthood (ADR 0009 phase (a), #3067).
  *
