@@ -1,12 +1,16 @@
 import { execFileSync } from 'node:child_process';
-import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 
 import { describe, expect, it } from '@jest/globals';
 
 const FRONTEND_ROOT = resolve(__dirname, '..');
 
-/** Use Node's real installed dependency, outside React Native/Jest module mocks. */
+/**
+ * Use Node's real installed dependency, outside React Native/Jest module mocks.
+ * GHSA-86w9-cpqp-85rv (nested DigestAlgorithm element count) is fixed upstream
+ * in node-forge 1.4.1+, pinned via the package.json override; these regressions
+ * guard that the installed release keeps rejecting the forgery.
+ */
 const CHECK_INSTALLED_FORGE = `
 const forge = require('node-forge');
 const { generateKeyPairSync } = require('node:crypto');
@@ -85,20 +89,4 @@ describe('installed node-forge nested DigestAlgorithm validation', () => {
       expect(installed[key]).toEqual({ accepted: true });
     },
   );
-
-  it('keeps the backport on the normal install path under the owner-approved expiry', () => {
-    const pkg = JSON.parse(readFileSync(resolve(FRONTEND_ROOT, 'package.json'), 'utf8')) as {
-      scripts: { postinstall: string };
-    };
-    const allowlist = JSON.parse(
-      readFileSync(resolve(FRONTEND_ROOT, '.audit-allowlist.json'), 'utf8'),
-    ) as { allow: { id: string; package: string; expires: string; issue: number }[] };
-    expect(pkg.scripts.postinstall).toBe('patch-package');
-    expect(installed.version).toBe('1.4.0');
-    expect(allowlist.allow.find((entry) => entry.id === 'GHSA-86w9-cpqp-85rv')).toMatchObject({
-      package: 'node-forge',
-      expires: '2026-10-30',
-      issue: 3023,
-    });
-  });
 });
