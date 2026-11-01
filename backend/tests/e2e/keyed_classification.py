@@ -2,6 +2,11 @@
 
 Only enum state, counts and opaque handles are read or written. The authenticated
 lane owner's email resolves the account; no provider credential is accepted.
+
+``show`` also reports whether the owner has a stored classification key (R1-1,
+#3647): its vendor, and whether its column holds ciphertext. The column is read
+past the codec, so nothing is decrypted here, and the key itself is never
+printed -- a journey compares the key by digest on the vault's own ledger.
 """
 
 from __future__ import annotations
@@ -13,6 +18,7 @@ import os
 import sys
 from urllib.parse import urlsplit
 
+from sqlalchemy import Text, type_coerce
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 from sqlalchemy.pool import NullPool
 from sqlmodel import col, select
@@ -20,8 +26,32 @@ from sqlmodel import col, select
 from database import normalize_database_url
 from domain.creek_vault import VaultPipelineStage
 from models import User
+from models.vault_classification_key import VaultClassificationKey
 from models.vault_pipeline_run import VaultPipelineOutcome, VaultPipelineRun
+from services import journal_encryption
 from services.creek_vault_pipeline import VaultPipelineTrigger
+
+
+async def stored_key_state(session: AsyncSession, user_id: int | None) -> dict[str, object]:
+    """The vendor of this account's stored key and whether it rests as ciphertext.
+
+    The key column is coerced to plain ``Text`` so the codec never decrypts it;
+    only a vendor name and a boolean leave this function.
+    """
+    row = (
+        await session.execute(
+            select(
+                col(VaultClassificationKey.provider),
+                type_coerce(col(VaultClassificationKey.api_key), Text),
+            ).where(col(VaultClassificationKey.user_id) == user_id)
+        )
+    ).first()
+    if row is None:
+        return {"stored_key_vendor": None, "stored_key_sealed": None}
+    return {
+        "stored_key_vendor": str(row[0]),
+        "stored_key_sealed": journal_encryption.is_ciphertext(str(row[1])),
+    }
 
 
 async def inspect_run(session: AsyncSession, email: str, *, arrange: bool) -> dict[str, object]:
@@ -75,6 +105,7 @@ async def inspect_run(session: AsyncSession, email: str, *, arrange: bool) -> di
         "outcome": None if run is None else run.outcome,
         "attempt_count": None if run is None else run.attempt_count,
         "failure_code": None if run is None else run.failure_code,
+        **await stored_key_state(session, owner.id),
     }
 
 
