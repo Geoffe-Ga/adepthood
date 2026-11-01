@@ -1615,6 +1615,19 @@ export const vaultConnectionResponseSchema = z.object({
 export type VaultConnectionT = z.infer<typeof vaultConnectionResponseSchema>;
 
 /**
+ * What one on-demand check of the account's own vault found (mirrors the
+ * backend ``VaultReachabilityResponse``, #3406). Two fields and nothing else:
+ * no address, no error text. A closed vocabulary, so a state this client does
+ * not know is a validation error rather than a blank sentence.
+ */
+export const vaultReachabilityResponseSchema = z.object({
+  state: z.enum(['reachable', 'unreachable', 'unknown']),
+  checked_at: z.string(),
+});
+
+export type VaultReachabilityT = z.infer<typeof vaultReachabilityResponseSchema>;
+
+/**
  * One agent this account approved for its vault and has not stopped (mirrors
  * the backend ``ConnectedAgentResponse``, #3534).
  *

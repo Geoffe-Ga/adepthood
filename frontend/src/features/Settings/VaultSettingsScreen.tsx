@@ -35,6 +35,10 @@
  * report that nothing is attached, so the screen says so and a connect made
  * from that state asks before it sends. See ``vaultConnectionState``.
  *
+ * **A managed vault can be checked on demand (#3406).** "Check now" beside it
+ * runs one handshake per press and says whether the vault answered; nothing
+ * checks on open. See ``ManagedVaultReachability``.
+ *
  * **Agents come last (#3534).** Below the connection, "Agents that may read
  * your vault" lists every agent the person approved and lets them stop one;
  * see ``ConnectedAgentsSection``. It reads its own list and is handed the
@@ -57,6 +61,7 @@ import {
 import ConfirmDialog from '../Habits/components/ConfirmDialog';
 
 import ConnectedAgentsSection from './ConnectedAgentsSection';
+import { ManagedVaultReachability } from './ManagedVaultReachability';
 import { SettingsFeedbackBanner } from './shared/SettingsFeedbackBanner';
 import {
   SETTINGS_BUTTON_PADDING,
@@ -792,6 +797,7 @@ const VaultConnectionNotice = ({
     return (
       <>
         <Text style={settingsFormStyles.body}>{VAULT_MANAGED_CONNECTED}</Text>
+        <ManagedVaultReachability />
         <VaultSortNote message={state.classificationMessage} />
       </>
     );

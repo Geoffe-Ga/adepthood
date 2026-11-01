@@ -230,6 +230,37 @@ describe('vault.connect', () => {
   });
 });
 
+describe('vault.checkReachability', () => {
+  const CHECK_URL = 'http://test/vault/connection/check';
+  const CHECKED_AT = '2026-10-31T11:24:00Z';
+
+  test('POSTs /vault/connection/check with no body and reads the state and time', async () => {
+    mockFetch.mockReturnValueOnce(jsonResponse({ state: 'unreachable', checked_at: CHECKED_AT }));
+
+    const answer = await vault.checkReachability('tok');
+
+    expect(mockFetch).toHaveBeenCalledTimes(1);
+    const [url, init] = mockFetch.mock.calls[0];
+    expect(url).toBe(CHECK_URL);
+    expect(init?.method).toBe('POST');
+    expect(init?.body).toBeUndefined();
+    expect(answer).toEqual({ state: 'unreachable', checked_at: CHECKED_AT });
+  });
+
+  test('refuses a state outside the three it knows instead of rendering a blank', async () => {
+    mockFetch.mockReturnValueOnce(jsonResponse({ state: 'degraded', checked_at: CHECKED_AT }));
+
+    await expect(vault.checkReachability('tok')).rejects.toBeInstanceOf(ApiValidationError);
+  });
+
+  test('never retries: each press is one handshake, and a refusal is said once', async () => {
+    mockFetch.mockReturnValueOnce(jsonResponse({ detail: 'rate_limited' }, 503));
+
+    await expect(vault.checkReachability('tok')).rejects.toBeInstanceOf(ApiError);
+    expect(mockFetch).toHaveBeenCalledTimes(1);
+  });
+});
+
 describe('vault.disconnect', () => {
   test('DELETEs with no body and resolves on a 204 that carries none either', async () => {
     mockFetch.mockReturnValueOnce(noContentResponse());

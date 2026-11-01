@@ -60,6 +60,7 @@ import {
   transcribePageSchema,
   uiFlagsSchema,
   vaultConnectionResponseSchema,
+  vaultReachabilityResponseSchema,
   connectedAgentSchema,
   vaultActivationResponseSchema,
   documentImportSchema,
@@ -125,6 +126,7 @@ import {
   type TimezoneReadT,
   type TranscribePageT,
   type VaultConnectionT,
+  type VaultReachabilityT,
   type ConnectedAgentT,
   agentActivityResponseSchema,
   type AgentActivityT,
@@ -4599,6 +4601,12 @@ export interface VaultConnectionPayload {
 const vaultConnectionSchema =
   vaultConnectionResponseSchema as unknown as z.ZodType<VaultConnection>;
 
+/** What one on-demand check of this account's vault found, and when (#3406). */
+export type VaultReachabilityAnswer = VaultReachabilityT;
+
+const vaultReachabilitySchema =
+  vaultReachabilityResponseSchema as unknown as z.ZodType<VaultReachabilityAnswer>;
+
 const connectedAgentsSchema = z.array(connectedAgentSchema) as unknown as z.ZodType<
   ConnectedAgentT[]
 >;
@@ -4643,6 +4651,22 @@ export const vault = {
       body: payload,
       token,
       schema: vaultConnectionSchema,
+      retry: false,
+    });
+  },
+  /**
+   * Ask this account's own vault, once, whether it answers right now (#3406).
+   *
+   * Deliberately not retried: each call is one handshake that can wake a
+   * stopped vault, the server budgets them per account, and a person who
+   * pressed once should see one answer. No body -- the server resolves the
+   * vault from the session alone.
+   */
+  checkReachability(token?: string): Promise<VaultReachabilityAnswer> {
+    return request<VaultReachabilityAnswer>(`/vault/${VAULT_RESOURCE}/check`, {
+      method: 'POST',
+      token,
+      schema: vaultReachabilitySchema,
       retry: false,
     });
   },

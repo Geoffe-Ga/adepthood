@@ -3251,6 +3251,23 @@
     "coveredBy": "frontend/e2e/managed-agent-address-unconfirmed.browser.e2e.test.ts"
   },
   {
+    "id": "vault.managed-reachability-check",
+    "description": "A writer whose reflections come from a managed vault opens Where your writing lives and reads \"A managed vault is connected to your account.\" with a Check now control beside it (#3406). Nothing is checked on open. Pressing it shows Checking… while one handshake runs against the caller's own vault, resolved from the session alone, then one sentence with the device-local time checked: \"Reachable just now.\", \"Not reachable just now. Your entries are saved here, and anything that needs your vault will wait until it is back.\" (a refused connection, a timeout, a 5xx, or a vault that says it is down), or \"Couldn't tell just now.\" (a refused credential, a malformed or skewed capability document, no dialable vault, or a request that could not be asked). POST /vault/connection/check answers only state and checked_at, never an address, error text or provider name, and is limited to five checks per account per minute; a refused check dials nothing and says to try again in a minute. The states, the content-free body, the caller-only resolution and the per-user limit are pinned by backend/tests/test_vault_reachability_check.py over the production HTTP adapter and a mock transport; the control, its pending state, the three sentences and the no-check-on-open rule by the Jest suites ManagedVaultReachability.test.tsx and VaultSettingsScreen.test.tsx. Uncovered in the browser because no outcome is deterministic in the lane: its managed vault (#3640) is bound by the fake control plane to https://1.1.1.1, which the check dials for real through the SSRF-guarded stored-client path, and the lane's own fake vault is on loopback, which that guard refuses by design.",
+    "crosses": {
+      "screen": "frontend/src/features/Settings/ManagedVaultReachability.tsx",
+      "client": ["vault", "vaultActivation"],
+      "routes": [
+        "POST /vault/activation",
+        "GET /vault/activation",
+        "GET /vault/connection",
+        "POST /vault/connection/check"
+      ],
+      "tables": ["uservaultconfig", "vaultactivation"]
+    },
+    "status": "uncovered",
+    "issue": 3651
+  },
+  {
     "id": "vault.agent-consent-subset",
     "description": "A person connecting an agent that asks for every permission sees only reading and drafting checked by default, unchecks drafting, and approves reading alone (#3544). The consent page posts those explicit choices; the code exchange issues an access token with only vault:read and no refresh token, and the production vault.agents client lists exactly that approved subset in Settings. The agent cannot acquire journal or pipeline permission by requesting them. Backend regressions also pin forged, duplicate, empty and unrequested choices and refresh scope preservation.",
     "crosses": {
