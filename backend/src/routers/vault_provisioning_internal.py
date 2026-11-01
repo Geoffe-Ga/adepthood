@@ -88,10 +88,26 @@ class _FleetAlertKind(StrEnum):
     CONTINUOUS_RUNNING = "continuous_running"
     INCOMPLETE_CREATE = "incomplete_create"
     MONTHLY_BUDGET_DEPARTURE = "monthly_budget_departure"
+    # A pool credential outlived its activation: an orphaned per-activation
+    # key, or (Creek #2037) a rolled-away key's revocation stuck past the
+    # deletion bound. Sent today by Creek's fleet reconciler.
+    POOL_CREDENTIAL_ORPHAN = "pool_credential_orphan"
+    # The organization pool admin key (Creek #1930). Registered in Creek's
+    # AlertKind but not yet emitted; Creek waits on this list before wiring it.
+    POOL_ADMIN_KEY_UNUSABLE = "pool_admin_key_unusable"
+    POOL_ADMIN_KEY_REJECTED = "pool_admin_key_rejected"
+    POOL_ADMIN_KEY_NEAR_EXPIRY = "pool_admin_key_near_expiry"
     # Creek #1867: the Fly org token nears or passes its recorded expiry.
     PROVIDER_CREDENTIAL_EXPIRING = "provider_credential_expiring"
     # Creek #1866: the Fly Machines API refused the org token (401/403).
     PROVIDER_CREDENTIAL_REJECTED = "provider_credential_rejected"
+    # Creek #2039 (#1896): the attesting Privatemode pool, seen from one vault.
+    # Registered in Creek's AlertKind ahead of any delivery path.
+    POOL_ATTESTATION_FAILED = "pool_attestation_failed"
+    POOL_CREDENTIAL_REJECTED = "pool_credential_rejected"
+    POOL_ADMISSION_REFUSED = "pool_admission_refused"
+    POOL_VENDOR_RATE_LIMITED = "pool_vendor_rate_limited"
+    POOL_QUOTA_EXHAUSTED = "pool_quota_exhausted"
 
 
 class _FleetAlertPayload(BaseModel):
