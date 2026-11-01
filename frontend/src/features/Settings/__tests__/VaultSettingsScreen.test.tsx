@@ -111,6 +111,7 @@ jest.mock('@/api', () => {
       agents: jest.fn(() => Promise.resolve([])),
       agentActivity: jest.fn(() => Promise.resolve({ status: 'ok', rows: [] })),
       revokeAgent: jest.fn(),
+      checkReachability: jest.fn(),
     },
     vaultActivation: { status: jest.fn() },
   };
@@ -589,17 +590,23 @@ describe('VaultSettingsScreen — reading the connection', () => {
     expect(view.getByTestId('vault-connection-unknown')).toBeTruthy();
   });
 
-  test('recognizes a managed connection without claiming a live health check', async () => {
+  test('recognizes a managed connection and offers a check it never runs on its own', async () => {
     const view = await renderVault(CONNECTED_WITHOUT_ADDRESS);
 
-    expect(
-      view.getByText(
-        'A managed vault is connected to your account. This does not check whether it is reachable right now.',
-      ),
-    ).toBeTruthy();
+    expect(view.getByText('A managed vault is connected to your account.')).toBeTruthy();
+    expect(view.getByTestId('vault-check-now')).toBeTruthy();
+    expect(vault.checkReachability).not.toHaveBeenCalled();
     expect(view.queryByTestId('vault-connection-unknown', HIDDEN_TOO)).toBeNull();
     expect(view.queryByTestId('vault-none-connected', HIDDEN_TOO)).toBeNull();
     expect(view.queryByTestId('managed-vault-offer', HIDDEN_TOO)).toBeNull();
+  });
+
+  test('offers the check on the managed card only, not on a vault you run', async () => {
+    // The self-run card's copy is out of scope for #3406; it gains no control yet.
+    const view = await renderVault(CONNECTED);
+
+    expect(view.queryByTestId('vault-check-now', HIDDEN_TOO)).toBeNull();
+    expect(vault.checkReachability).not.toHaveBeenCalled();
   });
 
   test('still asks before a managed connection could be replaced', async () => {

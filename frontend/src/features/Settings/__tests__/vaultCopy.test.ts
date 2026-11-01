@@ -76,6 +76,12 @@ const FORM_KEYS = [
   'VAULT_NONE_CONNECTED',
   'VAULT_MANAGED_CONNECTED',
   'VAULT_DEPLOYMENT_CONNECTED',
+  'VAULT_CHECK_NOW_BUTTON',
+  'VAULT_CHECKING_BUTTON',
+  'VAULT_REACHABLE',
+  'VAULT_UNREACHABLE',
+  'VAULT_REACHABILITY_UNKNOWN',
+  'VAULT_CHECK_TOO_SOON',
   'VAULT_CONNECTION_UNKNOWN',
   'VAULT_STATUS_CONNECTED',
   'VAULT_STATUS_DISCONNECTED',
@@ -361,6 +367,35 @@ describe('vaultCopy — the form deck, verbatim', () => {
 
   it('VAULT_NONE_CONNECTED states the empty case without regret', () => {
     expect(vaultCopy.VAULT_NONE_CONNECTED).toBe('No vault connected yet.');
+  });
+
+  it('VAULT_MANAGED_CONNECTED states the binding and leaves health to "Check now" (#3406)', () => {
+    expect(vaultCopy.VAULT_MANAGED_CONNECTED).toBe('A managed vault is connected to your account.');
+  });
+
+  it('the reachability check reads as one press and three plain answers (#3406)', () => {
+    expect(vaultCopy.VAULT_CHECK_NOW_BUTTON).toBe('Check now');
+    expect(vaultCopy.VAULT_CHECKING_BUTTON).toBe('Checking…');
+    expect(vaultCopy.VAULT_REACHABLE).toBe('Reachable just now.');
+    expect(vaultCopy.VAULT_UNREACHABLE).toBe(
+      'Not reachable just now. Your entries are saved here, and anything that needs your vault will wait until it is back.',
+    );
+    expect(vaultCopy.VAULT_REACHABILITY_UNKNOWN).toBe("Couldn't tell just now.");
+    expect(vaultCopy.VAULT_CHECK_TOO_SOON).toBe(
+      'You have checked a few times just now. Try again in a minute.',
+    );
+  });
+
+  it('no reachability answer carries an em dash (house style)', () => {
+    for (const key of [
+      'VAULT_MANAGED_CONNECTED',
+      'VAULT_REACHABLE',
+      'VAULT_UNREACHABLE',
+      'VAULT_REACHABILITY_UNKNOWN',
+      'VAULT_CHECK_TOO_SOON',
+    ] as const) {
+      expect(vaultCopy[key]).not.toContain('—');
+    }
   });
 
   it('VAULT_STATUS_CONNECTED describes what connecting changed', () => {

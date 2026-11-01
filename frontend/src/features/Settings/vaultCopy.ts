@@ -214,9 +214,39 @@ export const VAULT_CONNECTED_LABEL = 'Connected to';
  */
 export const VAULT_NONE_CONNECTED = 'No vault connected yet.';
 
-/** A confirmed managed binding says nothing about current runtime health. */
-export const VAULT_MANAGED_CONNECTED =
-  'A managed vault is connected to your account. This does not check whether it is reachable right now.';
+/**
+ * A confirmed managed binding. It says nothing about current runtime health,
+ * and no longer has to say so: "Check now" beside it asks the vault (#3406).
+ */
+export const VAULT_MANAGED_CONNECTED = 'A managed vault is connected to your account.';
+
+/** The one control that asks the vault whether it answers. Nothing asks on its own. */
+export const VAULT_CHECK_NOW_BUTTON = 'Check now';
+
+/** The same control while the one handshake is out. The single ellipsis is deliberate. */
+export const VAULT_CHECKING_BUTTON = 'Checking…';
+
+/** The vault answered. "Just now" keeps it a moment's fact, not a standing promise. */
+export const VAULT_REACHABLE = 'Reachable just now.';
+
+/**
+ * The vault did not answer, or said it was down. An outage reads as an outage,
+ * and the second sentence says what it does and does not cost: the writing is
+ * kept here, and whatever needs the vault waits for it. It does not say
+ * "reflections": a vault is not the yes to sorting, and the copy guard holds
+ * every line that names reflections to that.
+ */
+export const VAULT_UNREACHABLE =
+  'Not reachable just now. Your entries are saved here, and anything that needs your vault will wait until it is back.';
+
+/**
+ * The check landed without settling it, or could not be asked at all. Never
+ * worded as an outage, because nothing showed there was one.
+ */
+export const VAULT_REACHABILITY_UNKNOWN = "Couldn't tell just now.";
+
+/** A check refused for its per-minute budget. No time, because nothing was checked. */
+export const VAULT_CHECK_TOO_SOON = 'You have checked a few times just now. Try again in a minute.';
 
 /**
  * The deployment-wide vault's one bound owner (#3608). Says whose vault it is

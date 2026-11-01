@@ -11327,6 +11327,35 @@
         "title": "VaultPraxisStatus",
         "type": "string"
       },
+      "VaultReachability": {
+        "description": "What one on-demand handshake found about the caller's vault (#3406).\n\nThree states rather than a boolean, because \"it did not answer\" and \"the\nanswer did not settle it\" are different news to a writer: the first is an\noutage they can wait out, the second is nothing they should read as one.\nSee :mod:`services.vault_reachability` for which handshake outcome lands\nwhere.",
+        "enum": [
+          "reachable",
+          "unreachable",
+          "unknown"
+        ],
+        "title": "VaultReachability",
+        "type": "string"
+      },
+      "VaultReachabilityResponse": {
+        "description": "The whole answer to ``POST /vault/connection/check``: a state and when.\n\nTwo fields and no room for a third. No address, because a managed binding\nkeeps its address private; no error text or degrade reason, because those\nare an operator's instruments and a response body is a place a client may\nlog; no provider identifier for the same reason. The client owns every\nsentence it renders from ``state``.",
+        "properties": {
+          "checked_at": {
+            "format": "date-time",
+            "title": "Checked At",
+            "type": "string"
+          },
+          "state": {
+            "$ref": "#/components/schemas/VaultReachability"
+          }
+        },
+        "required": [
+          "state",
+          "checked_at"
+        ],
+        "title": "VaultReachabilityResponse",
+        "type": "object"
+      },
       "VaultTeardownStatus": {
         "description": "Content-free reconciliation state visible only to operations.\n\n``pending_since`` is when the teardown was *requested*, not when it was last\nretried: a stuck deletion keeps its true age across every retry, which is\nthe one number an operator triaging it needs (#3075).",
         "properties": {
@@ -34422,6 +34451,116 @@
           }
         },
         "summary": "Put Vault Connection",
+        "tags": [
+          "vault"
+        ]
+      }
+    },
+    "/vault/connection/check": {
+      "post": {
+        "description": "Run one handshake against this account's own vault and say what it found (#3406).\n\nOnly ever on an explicit request. The Settings screen never calls this on\nopen; a writer presses \"Check now\". (``GET /vault/connection`` is not a\nreachability probe: for a managed vault it reads agent discovery, and says\nnothing about whether the vault is up.)\n\nThe client is resolved here, in the body, from the authenticated caller\nalone -- no account, vault or address is read from the request -- and\ndeliberately not as a dependency: dependencies resolve before the limiter\nruns, so a check refused for its budget would still have paid for a\nresolution, while here it costs nothing past the token decode.\n\nThe answer is a state and a time and nothing else\n(:class:`~schemas.vault_config.VaultReachabilityResponse`): an outage reads\nas an outage without the body ever carrying an address, an error string or\na provider name.",
+        "operationId": "check_vault_connection_vault_connection_check_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/VaultReachabilityResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "The request body could not be parsed, or a value it carried was refused."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "No usable credential was presented."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "The caller is authenticated but does not own the resource."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "No such resource -- or none this caller is allowed to see."
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "The request conflicts with the resource's current state."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ValidationErrorResponse"
+                }
+              }
+            },
+            "description": "The request failed validation -- an array of rejected fields -- or a check applied after the schema refused it, as one snake_case code."
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "The caller went past a rate limit."
+          }
+        },
+        "summary": "Check Vault Connection",
         "tags": [
           "vault"
         ]
