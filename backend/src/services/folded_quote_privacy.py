@@ -32,8 +32,9 @@ Three doors, each closed at the narrowest point that sees it:
 
 A quote's restriction **follows it through re-quoting**: a quote lifted from a
 review counts as restricted when its text carries a passage that review holds
-from a restricted source, so a week review folded into a stage review does not
-launder it.
+from a restricted source -- a whole line of it, or a phrase from inside one
+(:func:`domain.folded_passages.fold_carries_passage`) -- so a week review folded
+into a stage review does not launder it.
 
 Nothing here logs or returns text. Errors are not swallowed: a passage that
 cannot be decrypted fails the request rather than sending the body unredacted.
@@ -50,7 +51,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased
 from sqlmodel import col
 
-from domain.folded_passages import carries_passage, span_overlaps_passage, withhold_passages
+from domain.folded_passages import (
+    carries_passage,
+    fold_carries_passage,
+    span_overlaps_passage,
+    withhold_passages,
+)
 from domain.privacy_tier import admits_egress
 from errors import conflict
 from models.journal_entry import JournalEntry
@@ -67,7 +73,8 @@ QUOTE_REFUSED_EVENT: Final = "quote_refused_restricted_source"
 
 #: How many fold levels the resolver walks before it stops trusting the chain.
 #: The reflection hierarchy nests week, stage, section and course, so a real
-#: chain is at most a handful deep; a deeper one is treated as restricted.
+#: chain is at most a handful deep; a deeper one is treated as restricted --
+#: that chain alone, not the rest of the batch it was resolved with (#3639).
 MAX_FOLD_LEVELS: Final = 16
 
 
@@ -106,19 +113,45 @@ async def _folds_into(
 
 async def _fold_closure(
     session: AsyncSession, user_id: int, entry_ids: Collection[int]
-) -> tuple[list[_Fold], bool]:
-    """Every fold reachable upstream of ``entry_ids``, and whether the walk ran out of levels."""
+) -> tuple[list[_Fold], set[int]]:
+    """Every fold reachable upstream of ``entry_ids``, and the sources the walk never resolved.
+
+    One statement per level, however many entries the batch holds. A source in
+    the second set holds folds no statement read, so nothing is known about
+    what it carries; it is empty unless a chain ran past :data:`MAX_FOLD_LEVELS`.
+    """
     folds: list[_Fold] = []
     seen: set[int] = set()
     frontier = set(entry_ids)
     for _ in range(MAX_FOLD_LEVELS):
         if not frontier:
-            return folds, False
+            break
         found = await _folds_into(session, user_id, frontier)
         folds.extend(found)
         seen |= frontier
         frontier = {fold.source_id for fold in found if fold.source_admits_egress} - seen
-    return folds, bool(frontier)
+    return folds, frontier
+
+
+def _downstream_of(folds: list[_Fold], unresolved: set[int]) -> set[int]:
+    """``unresolved`` and every entry a chain of ``folds`` carries their text into.
+
+    These are the entries whose restricted passages cannot be known: each holds,
+    at some remove, a fold from a source the walk never read. An entry that
+    reaches none of them was resolved in full, however deep another chain in
+    the same batch ran.
+    """
+    targets: dict[int, list[int]] = {}
+    for fold in folds:
+        targets.setdefault(fold.source_id, []).append(fold.target_id)
+    reached = set(unresolved)
+    pending = list(unresolved)
+    while pending:
+        for target in targets.get(pending.pop(), ()):
+            if target not in reached:
+                reached.add(target)
+                pending.append(target)
+    return reached
 
 
 async def restricted_folded_passages(
@@ -131,12 +164,13 @@ async def restricted_folded_passages(
     passage of its own source (a quote of a quote). Scoped to ``user_id``'s
     own quotes. An empty ``entry_ids`` issues no query; an entry with no folds
     costs one. A chain deeper than :data:`MAX_FOLD_LEVELS` fails closed: every
-    fold in it is treated as restricted.
+    fold into an entry that chain reaches is treated as restricted. The rest of
+    the batch is resolved on its own folds (#3639).
     """
     if not entry_ids:
         return {}
-    folds, exhausted = await _fold_closure(session, user_id, entry_ids)
-    restricted = _restricted_texts(folds, exhausted=exhausted)
+    folds, unresolved = await _fold_closure(session, user_id, entry_ids)
+    restricted = _restricted_texts(folds, unknown=_downstream_of(folds, unresolved))
     return {
         entry_id: tuple(sorted(restricted[entry_id]))
         for entry_id in set(entry_ids)
@@ -145,15 +179,19 @@ async def restricted_folded_passages(
 
 
 def _fold_is_restricted(
-    fold: _Fold, restricted: Mapping[int, set[str]], *, exhausted: bool
+    fold: _Fold, restricted: Mapping[int, set[str]], *, unknown: Collection[int]
 ) -> bool:
-    """Whether ``fold`` carries restricted text, given what is known restricted so far."""
-    if exhausted or not fold.source_admits_egress:
+    """Whether ``fold`` carries restricted text, given what is known restricted so far.
+
+    A fold into an entry in ``unknown`` is restricted outright: what that entry
+    carries cannot be resolved, and an ambiguity withholds.
+    """
+    if fold.target_id in unknown or not fold.source_admits_egress:
         return True
-    return carries_passage(fold.text, restricted.get(fold.source_id, ()))
+    return fold_carries_passage(fold.text, restricted.get(fold.source_id, ()))
 
 
-def _restricted_texts(folds: list[_Fold], *, exhausted: bool) -> dict[int, set[str]]:
+def _restricted_texts(folds: list[_Fold], *, unknown: Collection[int]) -> dict[int, set[str]]:
     """Each target's restricted fold texts, propagated to a fixed point.
 
     Sets only grow and are bounded by the folds' own texts, so the loop ends.
@@ -166,7 +204,7 @@ def _restricted_texts(folds: list[_Fold], *, exhausted: bool) -> dict[int, set[s
         changed = False
         for fold in folds:
             held = restricted.setdefault(fold.target_id, set())
-            if fold.text not in held and _fold_is_restricted(fold, restricted, exhausted=exhausted):
+            if fold.text not in held and _fold_is_restricted(fold, restricted, unknown=unknown):
                 held.add(fold.text)
                 changed = True
     return restricted
