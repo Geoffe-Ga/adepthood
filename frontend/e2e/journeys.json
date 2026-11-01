@@ -3221,7 +3221,7 @@
   },
   {
     "id": "vault.managed-agent-sign-in-availability",
-    "description": "A person with a managed vault sees its public agent address only when the ready account's authenticated 0.24 discovery reports an exact resource/issuer match (#3545). Legacy, disabled or unavailable agent discovery shows an explicit address-unconfirmed message and no invitation that cannot finish; the private vault_url remains hidden. Backend HTTP adapter and route tests cover canonical producer metadata, legacy/null/malformed replies, exact ownership and issuer matching, per-account credentials on a shared edge, a rolled allocation, and releasing the database connection before discovery. Settings component tests cover the address/copy control and address-unconfirmed copy, without claiming that an older allocation cannot already support sign-in. The content contract pin stays 0.22. Browser coverage of this message and address is an explicit gap tracked by #3546.",
+    "description": "A person with a managed vault sees its public agent address only when the ready account's authenticated 0.24 discovery reports an exact resource/issuer match (#3545): the allocation's own /a/<slug>/mcp resource (#3632), with a copy control, equal to the resource the authorization server accepts for that account. Backend HTTP adapter and route tests cover canonical producer metadata, legacy/null/malformed replies, exact ownership and issuer matching, per-account credentials on a shared edge, a rolled allocation, guarded adoption and releasing the database connection before discovery; Settings component tests cover the address/copy control. The content contract pin stays 0.22. The address-unconfirmed half is its own covered journey, vault.managed-agent-sign-in-unconfirmed. Browser coverage of the confirmed address remains a gap tracked by #3546: a managed allocation's discovery is dialled only through the pinned transport to a public https address the SSRF guard admits, and the lane's issuer is not an https origin, so no loopback fake can answer it without a lane-only dial seam the owner has not decided on.",
     "crosses": {
       "screen": "frontend/src/features/Settings/ConnectedAgentsSection.tsx",
       "client": ["vault"],
@@ -3230,6 +3230,24 @@
     },
     "status": "uncovered",
     "issue": 3546
+  },
+  {
+    "id": "vault.managed-agent-sign-in-unconfirmed",
+    "description": "A person whose managed vault is ready but whose authenticated agent discovery is absent or unavailable opens Where your writing lives (#3545, #3546). Covered by frontend/e2e/managed-agent-address-unconfirmed.browser.e2e.test.ts at 390px and 1280px: a pilot account activates through the production activation routes and the lane's protocol-shaped Creek control plane to its authenticated handoff, approves an agent through the real register/authorize/decision/token path for the resource the authorization server accepts, then the real GET /vault/connection response carries vault_url and mcp_address null; the card says Adepthood can't show an agent sign-in address for this vault yet, shows no address or copy control and no empty-state approval invitation, and keeps the agent's Stop control, which revokes it (DELETE /vault/agents/{agent_id}) so its next refresh is refused -- and the invitation stays absent once the list is empty.",
+    "crosses": {
+      "screen": "frontend/src/features/Settings/ConnectedAgentsSection.tsx",
+      "client": ["vault", "vaultActivation"],
+      "routes": [
+        "POST /vault/activation",
+        "GET /vault/activation",
+        "GET /vault/connection",
+        "GET /vault/agents",
+        "DELETE /vault/agents/{agent_id}"
+      ],
+      "tables": ["uservaultconfig", "vaultactivation"]
+    },
+    "status": "covered",
+    "coveredBy": "frontend/e2e/managed-agent-address-unconfirmed.browser.e2e.test.ts"
   },
   {
     "id": "vault.agent-consent-subset",
