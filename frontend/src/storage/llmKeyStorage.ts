@@ -2,8 +2,10 @@
  * Storage layer for the user's BYOK (Bring Your Own Key) LLM API key — a thin
  * wrapper over the shared secure-string store.
  *
- * The key is stored **only** on the device -- never uploaded to our backend
- * database -- so a server-side breach cannot leak user-owned LLM keys.
+ * This module is the device's copy. The server keeps a copy only for a managed
+ * vault's background sorting, encrypted and operator-readable (R1-1, ADR 0009
+ * amendment 2026-11-01), and deletes it when the key is removed or replaced in
+ * Settings; without a managed vault no copy leaves the device to be kept.
  *
  * The native-Keychain / web-localStorage fallback, the trim/reject-empty guard,
  * and the web XSS-window tradeoff all live in ``secureStringStore.ts``; read

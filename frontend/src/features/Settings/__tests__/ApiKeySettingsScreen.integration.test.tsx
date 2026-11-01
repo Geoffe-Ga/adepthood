@@ -13,6 +13,9 @@ const VALID_KEY = 'sk-user-owned-example-key-0123456789';
 jest.mock('@/api', () => ({
   setLlmApiKeyGetter: jest.fn(),
   setLlmApiKeyReset: jest.fn(),
+  // Removal deletes the server's copy first (R1-1); it succeeds here so these
+  // tests exercise the device store alone.
+  vaultClassificationKey: { forget: jest.fn(() => Promise.resolve()) },
 }));
 
 jest.mock('@/storage/llmKeyStorage', () => ({

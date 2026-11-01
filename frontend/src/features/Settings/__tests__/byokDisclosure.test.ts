@@ -3,7 +3,11 @@
 import * as fs from 'fs';
 import * as path from 'path';
 
-import { BYOK_DETAIL_DISCLOSURE, BYOK_HUB_DISCLOSURE } from '../byokDisclosure';
+import {
+  BYOK_DETAIL_DISCLOSURE,
+  BYOK_HUB_DISCLOSURE,
+  BYOK_STORED_COPY_DISCLOSURE,
+} from '../byokDisclosure';
 
 import { REPO_ROOT, readBackendSource } from '@/testing/backendSource';
 
@@ -12,6 +16,14 @@ const TERMS = path.join(REPO_ROOT, 'docs', 'legal', 'terms-of-service.md');
 const FRONTEND_API = path.join(REPO_ROOT, 'frontend', 'src', 'api', 'index.ts');
 const FRONTEND_CONFIG = path.join(REPO_ROOT, 'frontend', 'src', 'config.ts');
 const API_KEY_CONTEXT = path.join(REPO_ROOT, 'frontend', 'src', 'context', 'ApiKeyContext.tsx');
+const SETTINGS_SCREEN = path.join(
+  REPO_ROOT,
+  'frontend',
+  'src',
+  'features',
+  'Settings',
+  'ApiKeySettingsScreen.tsx',
+);
 
 function prose(file: string): string {
   return fs.readFileSync(file, 'utf-8').toLowerCase().split(/\s+/).join(' ');
@@ -47,8 +59,29 @@ describe('the BYOK disclosure follows the key across both service boundaries', (
     ].join(' ');
 
     expect(copy).not.toMatch(/never upload/i);
-    expect(BYOK_DETAIL_DISCLOSURE).toMatch(/does not persist/i);
+    expect(BYOK_DETAIL_DISCLOSURE).toMatch(/without a managed vault, adepthood does not persist/i);
     expect(prose(PRIVACY_POLICY)).toMatch(/never persisted/i);
+  });
+
+  test('the stored copy kept for a managed vault is disclosed as operator-readable (R1-1)', () => {
+    expect(BYOK_DETAIL_DISCLOSURE).toContain(BYOK_STORED_COPY_DISCLOSURE);
+    expect(BYOK_STORED_COPY_DISCLOSURE).toMatch(/keeps one encrypted copy of your key/i);
+    expect(BYOK_STORED_COPY_DISCLOSURE).toMatch(/adepthood can technically read it/i);
+    expect(BYOK_STORED_COPY_DISCLOSURE).toMatch(/removing or replacing your key here deletes it/i);
+    // The unqualified promise is gone from the screen: it is now false for a
+    // managed vault's writer.
+    expect(BYOK_DETAIL_DISCLOSURE).not.toMatch(
+      /(?<!managed vault, )adepthood does not persist it/i,
+    );
+    expect(prose(PRIVACY_POLICY)).toContain('adepthood keeps one encrypted copy of your key');
+  });
+
+  test('removing or replacing the key deletes the server copy first (R1-1)', () => {
+    const screen = fs.readFileSync(SETTINGS_SCREEN, 'utf-8');
+    const api = fs.readFileSync(FRONTEND_API, 'utf-8');
+
+    expect(api).toContain("'/user/vault-classification-key', { method: 'DELETE', token }");
+    expect(screen.match(/await forgetVaultCopy\(\)/g)?.length).toBe(2);
   });
 });
 

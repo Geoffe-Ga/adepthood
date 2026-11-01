@@ -14,8 +14,11 @@ import { readLaneState } from './laneState';
  * the button by hand -- stayed green. Only a browser can settle that the
  * rendered confirm is really there and really answers.
  *
- * Removal itself is device-local; no route is called. So the seam this spec
- * proves is what removal is *for*, on both ways the client picks a key:
+ * Removal first deletes the encrypted copy the server keeps for a managed
+ * vault's background sorting (`DELETE /user/vault-classification-key`, R1-1),
+ * and the spec sees that answered 204 before the device's copy goes. Beyond
+ * that route, the seam this spec proves is what removal is *for*, on both ways
+ * the client picks a key:
  *
  * - The resonance pass pins the payer it disclosed and passes that key
  *   explicitly. After removal the server-confirmed demo runs without
@@ -182,9 +185,16 @@ test('a removed key stops travelling and the declared demo leaves the wallet unc
   await expect(page.getByTestId('remove-key-dialog')).toHaveCount(0);
   await expect(page.getByTestId('stored-key-card')).toBeVisible();
 
-  // 3. Confirming removes it.
+  // 3. Confirming removes it -- first the encrypted copy the server keeps for a
+  //    managed vault's background sorting (R1-1), then the device's copy.
   await page.getByTestId('remove-key-button').click();
+  const forgotten = page.waitForResponse(
+    (response) =>
+      response.request().method() === 'DELETE' &&
+      new URL(response.url()).pathname.endsWith('/user/vault-classification-key'),
+  );
   await page.getByTestId('remove-key-confirm').click();
+  expect((await forgotten).status()).toBe(204);
   await expect(page.getByTestId('remove-key-dialog')).toHaveCount(0);
   await expect(page.getByTestId('api-key-status')).toContainText(
     'API key removed from this device.',

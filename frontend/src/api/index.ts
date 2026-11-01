@@ -606,6 +606,20 @@ export const vaultRequestKeys = {
   },
 };
 
+/**
+ * The encrypted copy of the writer's key that Adepthood keeps so their managed
+ * vault can sort new writing after the request that carried it (R1-1, ADR 0009
+ * amendment 2026-11-01). The device never reads or sends it here: its one
+ * operation is deletion, called the moment the writer removes or replaces the
+ * key, so a key taken back is never spent again in the background.
+ */
+export const vaultClassificationKey = {
+  /** Delete the caller's stored copy. Idempotent: a 204 whether one was kept or not. */
+  forget(token?: string): Promise<void> {
+    return request<void>('/user/vault-classification-key', { method: 'DELETE', token });
+  },
+};
+
 /** A request's optional writer-key header. */
 type KeyHeaders = Record<string, string> | undefined;
 
