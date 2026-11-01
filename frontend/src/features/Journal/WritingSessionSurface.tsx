@@ -37,11 +37,13 @@
  */
 import React, { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import {
+  Platform,
   ScrollView,
   StyleSheet,
   View,
   useWindowDimensions,
   type LayoutChangeEvent,
+  type ViewStyle,
 } from 'react-native';
 
 import {
@@ -56,6 +58,9 @@ import WritingTimer from './WritingTimer';
 import { decorativeHidden } from '@/components/a11yHidden';
 import { SPACING, journalSheet, touchTarget } from '@/design/tokens';
 import type { EngineDeps } from '@/features/Practice/engine/types';
+
+/** Room for the downward shadow at the phone viewport's bottom edge. */
+const IDLE_DOCK_BOTTOM_INSET = journalSheet.deskPaddingH + SPACING.md;
 
 export interface WritingSessionSurfaceProps {
   /** A confirmed log may also give an early-stopped session a factual note. */
@@ -132,7 +137,7 @@ function useBandClearance(
   useLayoutEffect(() => {
     if (idleDocked) {
       onClearanceChange?.(0);
-      if (visibleHeight !== null) onIdleDockHeightChange?.(visibleHeight + SPACING.md);
+      if (visibleHeight !== null) onIdleDockHeightChange?.(visibleHeight + IDLE_DOCK_BOTTOM_INSET);
       return;
     }
     onIdleDockHeightChange?.(0);
@@ -154,7 +159,7 @@ function useBandClearance(
     },
     [onIdleDockHeightChange],
   );
-  return { reportLayout, measured: visibleHeight !== null };
+  return { reportLayout, measured: visibleHeight !== null, visibleHeight };
 }
 
 function useStandingNote(
@@ -234,7 +239,7 @@ function useBandBounds() {
     setContentHeight(height);
   }, []);
   const lift = lowered ? WRITING_BAND_LOWERED_CLEARANCE : RESONANCE_BUTTON_CLEARANCE;
-  return { scrollWholeSurface, lift, reportBandLayout, reportContentSize };
+  return { scrollWholeSurface, lift, reportBandLayout, reportContentSize, contentHeight };
 }
 
 function StandingSessionNote({
@@ -264,12 +269,19 @@ function StandingSessionNote({
 }
 
 function writingBandStyle(
-  layout: { idleDocked: boolean; idleDockMaxHeight: number; lift: number; unreserved: boolean },
+  layout: {
+    idleDocked: boolean;
+    idleDockMaxHeight: number;
+    lift: number;
+    unreserved: boolean;
+    scrollWholeSurface: boolean;
+  },
   rightInset: number,
 ) {
   return [
     styles.band,
     layout.idleDocked ? styles.idleDock : null,
+    !layout.scrollWholeSurface && styles.unclipped,
     {
       right: rightInset,
       bottom: layout.idleDocked ? 0 : layout.lift,
@@ -279,12 +291,23 @@ function writingBandStyle(
   ];
 }
 
-function writingContentStyle(idleDocked: boolean, idleDockMaxHeight: number) {
-  return [
-    styles.content,
-    idleDocked ? styles.idleDockContent : null,
-    idleDocked ? { maxHeight: idleDockMaxHeight } : null,
-  ];
+function writingScrollStyles(layout: ReturnType<typeof useWritingBandLayout>) {
+  // In an extremely short window the viewport cannot fit a target plus its
+  // shadow gutters. Keep the controls reachable before preserving that space.
+  const roomForShadow =
+    (layout.visibleHeight ?? Infinity) >= touchTarget.minimum + SPACING.md + IDLE_DOCK_BOTTOM_INSET;
+  return {
+    style: [
+      styles.content,
+      !layout.scrollWholeSurface && styles.unclipped,
+      layout.idleDocked ? styles.idleDockContent : null,
+      layout.idleDocked ? { maxHeight: layout.idleDockMaxHeight } : null,
+    ],
+    contentContainerStyle: [
+      styles.shadowClearance,
+      (!layout.scrollWholeSurface || !roomForShadow) && styles.unclippedContent,
+    ],
+  };
 }
 
 function useWritingBandLayout(
@@ -293,10 +316,15 @@ function useWritingBandLayout(
 ) {
   const { idleDocked, idleDockMaxHeight, beginFloatingSession } = useIdleTimerDock();
   const bounds = useBandBounds();
-  const { reportLayout, measured } = useBandClearance(
+  // A dock has no lift to give up: compare its natural height directly with
+  // its capped viewport instead of using the floating band's lift arithmetic.
+  const scrollWholeSurface = idleDocked
+    ? bounds.contentHeight > idleDockMaxHeight
+    : bounds.scrollWholeSurface;
+  const { reportLayout, measured, visibleHeight } = useBandClearance(
     onClearanceChange,
     onIdleDockHeightChange,
-    bounds.scrollWholeSurface,
+    scrollWholeSurface,
     bounds.lift,
     idleDocked,
   );
@@ -305,10 +333,12 @@ function useWritingBandLayout(
   const unreserved = idleDocked && !measured;
   return {
     ...bounds,
+    scrollWholeSurface,
     idleDocked,
     idleDockMaxHeight,
     beginFloatingSession,
     reportLayout,
+    visibleHeight,
     unreserved,
   };
 }
@@ -335,8 +365,10 @@ function WritingSessionSurface({
       testID="writing-session-band"
     >
       <ScrollView
-        style={writingContentStyle(layout.idleDocked, layout.idleDockMaxHeight)}
-        scrollEnabled={layout.idleDocked || layout.scrollWholeSurface}
+        {...writingScrollStyles(layout)}
+        // RN Web forces overflow:hidden when scrolling is disabled. A fitting
+        // band uses overflow:visible, which lets shadows out without scrolling.
+        scrollEnabled={Platform.OS === 'web' || layout.idleDocked || layout.scrollWholeSurface}
         pointerEvents="box-none"
         onLayout={layout.reportLayout}
         onContentSizeChange={layout.reportContentSize}
@@ -363,6 +395,27 @@ function WritingSessionSurface({
 }
 
 const styles = StyleSheet.create({
+  /**
+   * A ScrollView clips even when scrolling is disabled. Keep the warm shadow
+   * inside its viewport on every edge, and inset both notes and options from
+   * the paper beneath them so they read as tools laid on top of the page.
+   */
+  shadowClearance: {
+    paddingHorizontal: journalSheet.deskPaddingH + SPACING.md,
+    // The shadow falls downward, so its lower gutter needs more room than
+    // its upper one. Keeping that asymmetry leaves more paper at high zoom.
+    paddingTop: SPACING.md,
+    paddingBottom: journalSheet.deskPaddingH + SPACING.md,
+  },
+  /** Let shadows paint outside a fitting band instead of reserving blank space. */
+  unclipped:
+    Platform.OS === 'web'
+      ? ({ overflow: 'visible', overflowX: 'visible', overflowY: 'visible' } as ViewStyle)
+      : { overflow: 'visible' },
+  unclippedContent: {
+    paddingTop: 0,
+    paddingBottom: 0,
+  },
   content: {
     flexGrow: 0,
     flexShrink: 1,
@@ -378,7 +431,6 @@ const styles = StyleSheet.create({
     justifyContent: 'flex-end',
     left: 0,
     right: 0,
-    paddingHorizontal: journalSheet.deskPaddingH,
   },
   /**
    * An untouched phone timer is a quiet tray below the paper, not an overlay.
@@ -393,7 +445,7 @@ const styles = StyleSheet.create({
     // bottom-sized tray instead of a stretched lower-half overlay.
     top: 'auto',
     bottom: 0,
-    paddingBottom: SPACING.md,
+    paddingBottom: IDLE_DOCK_BOTTOM_INSET,
     overflow: 'hidden',
   },
   /** Fill only the available tray height; overflow remains reachable by scroll. */

@@ -54,6 +54,13 @@ grey shadow at the screen's end. Two rules keep it a dissolve rather than a band
 
 `ScreenScaffold` renders it automatically in `scroll` mode.
 
+**Journal timer:** the timer and its completion note share the opaque canvas,
+hairline edge and warm `surfaceShadow.raised` lift of `floatingChrome.pill` in
+every state. Expanded surfaces are centred and narrower than the journal sheet:
+the inset keeps the journal primary while the shadow identifies an independent
+tool above it. Fitting bands let the shadow paint outside their bounds; short
+viewports that need scrolling reserve room for it inside the scroll content.
+
 ## Palette provenance
 
 The accent is an **original** terracotta/sienna derived from the app's own

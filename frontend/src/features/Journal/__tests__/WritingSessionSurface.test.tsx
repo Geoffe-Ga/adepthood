@@ -12,7 +12,7 @@ import {
 import { DEFAULT_WRITING_MINUTES, type WritingSessionResult } from '../writingSession';
 import WritingSessionSurface from '../WritingSessionSurface';
 
-import { SPACING, touchTarget } from '@/design/tokens';
+import { SPACING, journalSheet, touchTarget } from '@/design/tokens';
 import type { IntervalHandle } from '@/features/Practice/engine/types';
 import { MS_PER_MINUTE } from '@/features/Practice/engine/types';
 
@@ -77,7 +77,7 @@ describe('WritingSessionSurface', () => {
         top: 'auto',
         bottom: 0,
         maxHeight: 844 - touchTarget.minimum - SPACING.lg,
-        overflow: 'hidden',
+        overflow: 'visible',
       });
       expect(
         StyleSheet.flatten(getByTestId('writing-session-band-content', UNMEASURED).props.style),
@@ -90,7 +90,9 @@ describe('WritingSessionSurface', () => {
       fireEvent(getByTestId('writing-session-band-content', UNMEASURED), 'layout', {
         nativeEvent: { layout: { height: 100 } },
       });
-      expect(onIdleDockHeightChange).toHaveBeenLastCalledWith(100 + SPACING.md);
+      expect(onIdleDockHeightChange).toHaveBeenLastCalledWith(
+        100 + journalSheet.deskPaddingH + SPACING.md,
+      );
       fireEvent.press(getByTestId('writing-timer-start', UNMEASURED));
 
       expect(
@@ -125,7 +127,9 @@ describe('WritingSessionSurface', () => {
       fireEvent(getByTestId('writing-session-band-content', UNMEASURED), 'layout', {
         nativeEvent: { layout: { height: 100 } },
       });
-      expect(onIdleDockHeightChange).toHaveBeenLastCalledWith(100 + SPACING.md);
+      expect(onIdleDockHeightChange).toHaveBeenLastCalledWith(
+        100 + journalSheet.deskPaddingH + SPACING.md,
+      );
       expect(StyleSheet.flatten(band().props.style).opacity).toBe(1);
       expect(band().props.pointerEvents).toBe('box-none');
       expect(band().props['aria-hidden']).toBe(false);
