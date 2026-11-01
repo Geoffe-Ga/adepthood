@@ -30,6 +30,8 @@ Also asserts that no owned-resource response DTO echoes ``user_id``.
 
 from __future__ import annotations
 
+import base64
+import hashlib
 import json
 import logging
 from datetime import UTC, date, datetime, timedelta
@@ -79,11 +81,15 @@ from models.stage_progress import StageProgress
 from models.user import User
 from models.user_practice import UserPractice
 from models.user_ui_flags import UserUiFlags
+from models.user_vault_config import UserVaultConfig
+from models.vault_activation import VaultActivation, VaultActivationState
 from security.idempotency import hash_idem_key
 from services import frequency_classification as fc
+from services.creek_vault_agent_connection import reset_agent_discovery_cache
 from services.creek_vault_client import HttpCreekVaultClient
 from services.journal_retention import PURGE_MIN_RETENTION_DAYS
 from services.oauth_authorization import OAUTH_ISSUER_ENV_VAR
+from services.user_vault_config import store_vault_config
 from services.vault_agent_activity_copy import ACTIVITY_SOMETHING_ELSE
 from tests.helpers import oauth as oauth_flow
 from tests.helpers.feedback_triage import (
@@ -2800,6 +2806,63 @@ async def test_idor_oauth_authorize_refuses_another_accounts_vault_and_writes_no
 
 
 @pytest.mark.asyncio
+async def test_idor_agent_token_status_never_pairs_one_subject_with_anothers_agent(
+    async_client: AsyncClient,
+    db_session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """Alice's ``sub`` named with an agent only Bob approved is never active (#3585).
+
+    The status lookup's body carries a ``client_id`` beside the subject, and the
+    grant is resolved by the pair, so naming Bob's agent with Alice's subject
+    finds no grant of Alice's: the answer is the uniform ``{"active": false}``,
+    Bob's own token still answers ``true`` (the control), and the lookup writes
+    nothing -- no grant is created or stamped.
+    """
+    monkeypatch.setenv(OAUTH_ISSUER_ENV_VAR, oauth_flow.ISSUER)
+    oauth_flow.install_signing_keys(monkeypatch)
+    bearer = oauth_flow.install_handoff_bearer(monkeypatch, tmp_path)
+    claims: dict[str, dict[str, object]] = {}
+    for name in ("alice_status", "bob_status"):
+        code, client_id, _resource, _user_id = await oauth_flow.approved_code(
+            async_client, db_session, name
+        )
+        minted = await oauth_flow.exchange(
+            async_client, oauth_flow.code_exchange_form(code, client_id)
+        )
+        claims[name] = oauth_flow.token_status_claims(minted.json()["access_token"])
+    grants_before = (
+        (await db_session.execute(select(AgentGrant).order_by(col(AgentGrant.id)))).scalars().all()
+    )
+    stamped_before = [(grant.id, grant.last_used_at) for grant in grants_before]
+
+    crossed = {**claims["alice_status"], "client_id": claims["bob_status"]["client_id"]}
+    attack = await async_client.post(
+        oauth_flow.AGENT_TOKEN_STATUS_PATH, json=crossed, headers=bearer
+    )
+    control = await async_client.post(
+        oauth_flow.AGENT_TOKEN_STATUS_PATH, json=claims["bob_status"], headers=bearer
+    )
+
+    assert attack.status_code == HTTPStatus.OK
+    assert attack.json() == {"active": False}
+    assert control.json() == {"active": True}
+    grants_after = (
+        (
+            await db_session.execute(
+                select(AgentGrant)
+                .order_by(col(AgentGrant.id))
+                .execution_options(populate_existing=True)
+            )
+        )
+        .scalars()
+        .all()
+    )
+    assert [(grant.id, grant.last_used_at) for grant in grants_after] == stamped_before
+
+
+@pytest.mark.asyncio
 async def test_idor_oauth_authorize_serves_each_account_only_its_own_vault(
     async_client: AsyncClient,
     db_session: AsyncSession,
@@ -3012,6 +3075,8 @@ async def test_idor_revoking_another_accounts_agent_is_refused_and_changes_nothi
 
 #: The vendored Creek bundle, for the published handshake a scripted vault serves.
 _CREEK_BUNDLE = Path(__file__).parent.parent / "fixtures" / "creek_v1"
+#: Creek 0.24 authenticated discovery, for a scripted vault advertising ``agent_mcp``.
+_DISCOVERY_FIXTURE = Path(__file__).parent.parent / "fixtures" / "creek_discovery_0_24"
 
 
 async def _grant_count(db_session: AsyncSession) -> int:
@@ -3086,3 +3151,200 @@ async def test_idor_agent_activity_reads_only_the_callers_own_vault_and_agents(
     assert alice_client not in response.text
     assert set(dialled) == {"v-bob-activity.vaults.example"}
     assert await _grant_count(db_session) == grants_before
+
+
+@pytest.mark.asyncio
+async def test_idor_a_vault_advertising_another_accounts_allocation_cannot_adopt_it(
+    async_client: AsyncClient,
+    db_session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Bob's vault naming Alice's per-allocation resource buys Bob nothing (#3584).
+
+    ``GET /oauth/authorize`` carries the vault in its RFC 8707 ``resource``, and
+    an adopted per-allocation resource (Creek-Vault#2002) is the one value no
+    two accounts may share. So even when Bob's own, authenticated discovery
+    reports Alice's ``/a/<slug>/mcp`` -- on Settings and on the authorize
+    request that re-runs discovery -- Bob is shown no address, keeps no
+    resource, and is refused ``invalid_target`` with no code or grant written,
+    while Alice's adoption is untouched. The vault dialled is only ever Bob's.
+    """
+    monkeypatch.setenv(OAUTH_ISSUER_ENV_VAR, oauth_flow.ISSUER)
+    _alice_headers, alice_id = await oauth_flow.signup(async_client, "alice_allocation")
+    bob_headers, bob_id = await oauth_flow.signup(async_client, "bob_allocation")
+    alice_resource = oauth_flow.allocation_url_for("shared-edge")
+    await oauth_flow.connect_managed_vault(
+        db_session, alice_id, "shared-edge", allocation=alice_resource
+    )
+    edge = oauth_flow.vault_url_for("shared-edge")
+    bob_key = "bob-vault-key-0123456789"  # pragma: allowlist secret
+    await store_vault_config(db_session, bob_id, vault_url=edge, api_key=bob_key, provisioned=True)
+    db_session.add(
+        VaultActivation(
+            user_id=bob_id,
+            activation_id="activation-bob-allocation",
+            consumer_identity="consumer-bob-allocation",
+            state=VaultActivationState.READY.value,
+        )
+    )
+    await db_session.commit()
+    payload = json.loads((_DISCOVERY_FIXTURE / "agent-mcp-ready.json").read_bytes())
+    payload["agent_mcp"] = {"resource": alice_resource, "authorization_server": oauth_flow.ISSUER}
+    credentials: list[str | None] = []
+
+    def _vault(request: httpx.Request) -> httpx.Response:
+        credentials.append(request.headers.get("authorization"))
+        return httpx.Response(HTTPStatus.OK, json=payload)
+
+    def _build(url: str, api_key: str, *, managed: bool) -> HttpCreekVaultClient:
+        return HttpCreekVaultClient(
+            url,
+            api_key,
+            http_client=httpx.AsyncClient(transport=httpx.MockTransport(_vault)),
+            managed=managed,
+        )
+
+    async def _dialable(_session: AsyncSession, _vault_url: str) -> bool:
+        return False
+
+    monkeypatch.setattr("services.creek_vault_stored_client.build_connected_vault_client", _build)
+    monkeypatch.setattr("services.creek_vault_stored_client.stored_host_is_undialable", _dialable)
+    reset_agent_discovery_cache()
+    client_id = await oauth_flow.register_agent(async_client)
+
+    settings = await async_client.get("/vault/connection", headers=bob_headers)
+    reset_agent_discovery_cache()
+    attack = await async_client.get(
+        "/oauth/authorize",
+        params=oauth_flow.authorize_params(client_id, alice_resource),
+        headers=bob_headers,
+    )
+    reset_agent_discovery_cache()
+
+    assert settings.json()["mcp_address"] is None
+    assert attack.status_code == HTTPStatus.BAD_REQUEST
+    assert "invalid_target" in attack.text
+    assert 'name="ticket"' not in attack.text
+    assert await _authorization_rows(db_session) == (0, 0)
+    stored = await db_session.execute(
+        select(UserVaultConfig.user_id, UserVaultConfig.agent_mcp_resource)
+        .order_by(col(UserVaultConfig.user_id))
+        .execution_options(populate_existing=True)
+    )
+    assert list(stored.tuples()) == [(alice_id, alice_resource), (bob_id, None)]
+    assert credentials == [f"Bearer {bob_key}", f"Bearer {bob_key}"]
+
+
+# Synthetic content held only in Alice's vault (#3579). Nothing in adepthood's
+# database ever holds it, so it can only reach a response through her vault.
+_ALICE_VAULT_CANARY = b"synthetic canary held only in alice's vault 91ad\n"
+_EXPORT_CAPABILITIES = (
+    Path(__file__).parent.parent
+    / "fixtures"
+    / "creek_export_v027"
+    / "examples"
+    / "capabilities"
+    / "success.json"
+)
+
+
+async def _ready_managed_vault(
+    db_session: AsyncSession, user_id: int, name: str, api_key: str
+) -> None:
+    """Store a ready managed vault for ``user_id`` under its own credential."""
+    await store_vault_config(
+        db_session,
+        user_id,
+        vault_url=oauth_flow.vault_url_for(name),
+        api_key=api_key,
+        provisioned=True,
+    )
+    db_session.add(
+        VaultActivation(
+            user_id=user_id,
+            activation_id=f"activation-{name}",
+            consumer_identity=f"consumer-{name}",
+            state=VaultActivationState.READY.value,
+        )
+    )
+    await db_session.commit()
+
+
+@pytest.mark.asyncio
+async def test_idor_vault_export_reads_only_the_callers_own_vault(
+    async_client: AsyncClient,
+    db_session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Bob's vault export dials Bob's vault with Bob's key, and nothing of Alice's (#3579).
+
+    ``GET /users/me/export/vault`` takes no account, vault or document id: the
+    vault it dials is resolved from the bearer alone. So a ``user_id`` or
+    ``vault_url`` smuggled into the query buys nothing -- Bob's request reaches
+    only Bob's vault host, carries only Bob's credential, and Alice's canary,
+    held only in her vault, is nowhere in what he gets back. Nothing is written.
+    """
+    alice_key = "alice-vault-key-0123456789"  # pragma: allowlist secret
+    bob_key = "bob-vault-key-9876543210"  # pragma: allowlist secret
+    _alice_headers, alice_id = await oauth_flow.signup(async_client, "alice_vault_export")
+    bob_headers, bob_id = await oauth_flow.signup(async_client, "bob_vault_export")
+    await _ready_managed_vault(db_session, alice_id, "alice-export", alice_key)
+    await _ready_managed_vault(db_session, bob_id, "bob-export", bob_key)
+    capabilities = json.loads(_EXPORT_CAPABILITIES.read_bytes())
+    canary = {
+        "document_id": "adepthood-upload-alice.txt",
+        "size_bytes": len(_ALICE_VAULT_CANARY),
+        "sha256": hashlib.sha256(_ALICE_VAULT_CANARY).hexdigest(),
+        "content_base64": base64.b64encode(_ALICE_VAULT_CANARY).decode("ascii"),
+        "content_included": True,
+    }
+    holdings = {"v-alice-export.vaults.example": [canary], "v-bob-export.vaults.example": []}
+    dialled: list[tuple[str, str | None]] = []
+
+    def _vault(request: httpx.Request) -> httpx.Response:
+        dialled.append((request.url.host, request.headers.get("authorization")))
+        if request.url.path.endswith("/capabilities"):
+            return httpx.Response(HTTPStatus.OK, json=capabilities)
+        page = {
+            "status": "ok",
+            "documents": holdings[request.url.host],
+            "fragments": [],
+            "skipped": 0,
+            "next_cursor": None,
+        }
+        return httpx.Response(HTTPStatus.OK, json=page)
+
+    def _build(url: str, api_key: str, *, managed: bool) -> HttpCreekVaultClient:
+        return HttpCreekVaultClient(
+            url,
+            api_key,
+            http_client=httpx.AsyncClient(transport=httpx.MockTransport(_vault)),
+            managed=managed,
+        )
+
+    async def _dialable(_session: AsyncSession, _vault_url: str) -> bool:
+        return False
+
+    monkeypatch.setattr("services.creek_vault_stored_client.build_connected_vault_client", _build)
+    monkeypatch.setattr("services.creek_vault_stored_client.stored_host_is_undialable", _dialable)
+    configs_before = (
+        await db_session.execute(select(func.count()).select_from(UserVaultConfig))
+    ).scalar_one()
+
+    response = await async_client.get(
+        "/users/me/export/vault",
+        params={"user_id": alice_id, "vault_url": oauth_flow.vault_url_for("alice-export")},
+        headers=bob_headers,
+    )
+
+    assert response.status_code == HTTPStatus.OK
+    body = response.json()
+    assert body["items"] == []
+    assert body["complete"] is True
+    assert "91ad" not in response.text
+    assert set(dialled) == {("v-bob-export.vaults.example", f"Bearer {bob_key}")}
+    assert all(alice_key not in (credential or "") for _host, credential in dialled)
+    configs_after = (
+        await db_session.execute(select(func.count()).select_from(UserVaultConfig))
+    ).scalar_one()
+    assert configs_after == configs_before

@@ -151,6 +151,9 @@ _PLAINTEXT_COLUMNS: dict[str, frozenset[str]] = {
             "vaultactivation.custody_mode",
             "vaultactivation.state",
             "vaultpipelinefollowup.trigger",
+            # The vendor of a writer's stored provider key (R1-1); the key itself
+            # is ciphertext.
+            "vaultclassificationkey.provider",
             "vaultpipelinerun.failure_code",
             "vaultpipelinerun.follow_up_trigger",
             "vaultpipelinerun.outcome",
@@ -226,6 +229,9 @@ _PLAINTEXT_COLUMNS: dict[str, frozenset[str]] = {
             # the same address ``uservaultconfig.vault_url`` derives it from.
             "agent_grant.resource",
             "oauth_authorization_code.resource",
+            # A managed allocation's own MCP URL (Creek-Vault#2002), adopted from
+            # its authenticated discovery: the same kind of audience as above.
+            "uservaultconfig.agent_mcp_resource",
         }
     ),
     # What an OAuth client says about itself when it registers or publishes a

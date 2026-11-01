@@ -81,6 +81,7 @@ from schemas.oauth import (
     ClientRegistrationResponse,
     OAuthErrorResponse,
 )
+from services.creek_vault_agent_connection import adopt_requested_allocation
 from services.oauth_authorization import (
     GRANT_TYPES,
     PUBLIC_CLIENT_AUTH_METHOD,
@@ -306,6 +307,9 @@ async def _consent_or_refusal(
 ) -> HTMLResponse:
     """Render the decision page if the resource is this account's vault; refuse if not."""
     own_resource = await account_vault_resource(session, user_id)
+    if own_resource is not None and own_resource != request.resource:
+        await adopt_requested_allocation(session, user_id, request.resource)
+        own_resource = await account_vault_resource(session, user_id)
     if own_resource != request.resource:
         logger.warning(_RESOURCE_REFUSED_EVENT, extra={"user_id": user_id})
         kind = RefusalKind.NO_VAULT if own_resource is None else RefusalKind.OTHER_VAULT

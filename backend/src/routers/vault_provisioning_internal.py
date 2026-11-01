@@ -1,12 +1,19 @@
-"""Credential-bearing Creek callback kept off the user-facing vault router."""
+"""Credential-bearing Creek callbacks kept off the user-facing vault router.
+
+Every route here is called by Creek's control plane with its mounted handoff
+bearer, never by a person: the one-time connection handoff, counts-only fleet
+alerts, and (R3-2, #3585) the per-call question of whether an agent's access
+token still stands, answered ``{"active": bool}`` and nothing more.
+"""
 
 from __future__ import annotations
 
 from datetime import UTC, datetime
 from enum import StrEnum, unique
-from typing import Annotated, Literal
+from typing import Annotated, Final, Literal
 
 from fastapi import Depends, Header, HTTPException, Request, Response, status
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import select
@@ -16,6 +23,9 @@ from error_responses import build_router
 from errors import bad_request, conflict, service_unavailable
 from models.user_vault_config import UserVaultConfig
 from models.vault_activation import VaultActivation, VaultActivationState
+from rate_limit import limiter
+from routers.auth import session_signing_secret
+from schemas.agent_token_status import AgentTokenStatusRequest, AgentTokenStatusResponse
 from schemas.vault_activation import CreekConnectionHandoff
 from schemas.vault_config import credential_is_usable
 from services.creek_provisioning_client import handoff_bearer_is_valid
@@ -27,6 +37,7 @@ from services.email import (
     get_email_sender,
 )
 from services.managed_vault_rollout import managed_vault_alert_destination
+from services.oauth_tokens import AgentTokenClaims, agent_token_active
 from services.user_vault_config import (
     load_vault_config,
     lock_vault_connection_owner,
@@ -47,6 +58,25 @@ _TERMINAL_HANDOFF_STATES = frozenset(
 )
 _ALERT_EMAIL_SUBJECT = "Managed vault pilot alert"
 
+#: Status lookups one caller address may make. Creek caches an ``active`` answer
+#: per (sub, client) for ``REVOCATION_CACHE_SECONDS`` (Creek-Vault#2005), so this
+#: is one lookup a second across the fleet it fronts; no higher than the ambient
+#: per-path floor, which would cap it there anyway. A refused lookup is refused
+#: by Creek fail-closed, so the budget bounds load, never widens access.
+STATUS_LOOKUP_RATE_LIMIT: Final = "60/minute"
+_INVALID_STATUS_REQUEST: Final = "invalid_agent_token_status"
+_NO_STORE: Final = {"Cache-Control": "no-store", "Pragma": "no-cache"}
+# Published by hand because the body is read only after the bearer: a declared
+# body parameter would be parsed -- and refused with a 422 -- before it.
+_STATUS_REQUEST_BODY: Final = {
+    "requestBody": {
+        "required": True,
+        "content": {
+            "application/json": {"schema": AgentTokenStatusRequest.model_json_schema()},
+        },
+    }
+}
+
 
 @unique
 class _FleetAlertKind(StrEnum):
@@ -58,6 +88,26 @@ class _FleetAlertKind(StrEnum):
     CONTINUOUS_RUNNING = "continuous_running"
     INCOMPLETE_CREATE = "incomplete_create"
     MONTHLY_BUDGET_DEPARTURE = "monthly_budget_departure"
+    # A pool credential outlived its activation: an orphaned per-activation
+    # key, or (Creek #2037) a rolled-away key's revocation stuck past the
+    # deletion bound. Sent today by Creek's fleet reconciler.
+    POOL_CREDENTIAL_ORPHAN = "pool_credential_orphan"
+    # The organization pool admin key (Creek #1930). Registered in Creek's
+    # AlertKind but not yet emitted; Creek waits on this list before wiring it.
+    POOL_ADMIN_KEY_UNUSABLE = "pool_admin_key_unusable"
+    POOL_ADMIN_KEY_REJECTED = "pool_admin_key_rejected"
+    POOL_ADMIN_KEY_NEAR_EXPIRY = "pool_admin_key_near_expiry"
+    # Creek #1867: the Fly org token nears or passes its recorded expiry.
+    PROVIDER_CREDENTIAL_EXPIRING = "provider_credential_expiring"
+    # Creek #1866: the Fly Machines API refused the org token (401/403).
+    PROVIDER_CREDENTIAL_REJECTED = "provider_credential_rejected"
+    # Creek #2039 (#1896): the attesting Privatemode pool, seen from one vault.
+    # Registered in Creek's AlertKind ahead of any delivery path.
+    POOL_ATTESTATION_FAILED = "pool_attestation_failed"
+    POOL_CREDENTIAL_REJECTED = "pool_credential_rejected"
+    POOL_ADMISSION_REFUSED = "pool_admission_refused"
+    POOL_VENDOR_RATE_LIMITED = "pool_vendor_rate_limited"
+    POOL_QUOTA_EXHAUSTED = "pool_quota_exhausted"
 
 
 class _FleetAlertPayload(BaseModel):
@@ -221,3 +271,42 @@ async def receive_creek_fleet_alert(
     except EmailDeliveryError:
         raise service_unavailable("managed_vault_alert_delivery_unavailable") from None
     return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+async def _validated_status_request(
+    request: Request,
+    authorization: str | None,
+) -> AgentTokenStatusRequest:
+    """Parse the three-claim question after authenticating its bearer."""
+    _authenticate_handoff(authorization)
+    try:
+        return AgentTokenStatusRequest.model_validate(await request.json())
+    except (ValueError, ValidationError):
+        raise bad_request(_INVALID_STATUS_REQUEST) from None
+
+
+@router.post(
+    "/agent-token-status",
+    response_model=AgentTokenStatusResponse,
+    openapi_extra=_STATUS_REQUEST_BODY,
+)
+@limiter.limit(STATUS_LOOKUP_RATE_LIMIT)
+async def agent_token_status(
+    request: Request,
+    session: Annotated[AsyncSession, Depends(get_session)],
+    authorization: Annotated[str | None, Header()] = None,
+) -> JSONResponse:
+    """Say whether a verified agent token's grant still stands; every no is the same no."""
+    payload = await _validated_status_request(request, authorization)
+    active = await agent_token_active(
+        session,
+        AgentTokenClaims(
+            subject=payload.sub,
+            client_id=payload.client_id,
+            issued_at=datetime.fromtimestamp(payload.iat, UTC),
+        ),
+        secret=session_signing_secret(),
+        now=datetime.now(UTC),
+    )
+    body = AgentTokenStatusResponse(active=active)
+    return JSONResponse(body.model_dump(), headers=_NO_STORE)

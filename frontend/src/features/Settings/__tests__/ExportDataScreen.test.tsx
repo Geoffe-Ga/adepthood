@@ -6,6 +6,7 @@ import React from 'react';
 import ExportDataScreen from '../ExportDataScreen';
 import { saveDataExport, type SavedExport } from '../saveDataExport';
 
+import { ApiError } from '@/api';
 import { expectNavigationOwnsTitle, watchFocusMoves } from '@/testing/navigationOwnsTitle';
 
 jest.mock('@/config', () => ({ API_BASE_URL: 'http://test' }));
@@ -35,6 +36,14 @@ const WEB_RESULT: SavedExport = {
   uri: null,
   records: 1240,
   destination: 'browser-download',
+};
+
+const VAULT_RESULT: SavedExport = {
+  filename: 'adepthood-vault-2026-08-22.json',
+  uri: 'file:///documents/adepthood-vault-2026-08-22.json',
+  records: null,
+  destination: 'shared',
+  vault: { items: 14, complete: true },
 };
 
 beforeEach(() => {
@@ -133,6 +142,56 @@ describe('ExportDataScreen', () => {
     release(JSON_RESULT);
     await waitFor(() => expect(getByTestId('export-data-receipt')).toBeTruthy());
   });
+});
+
+describe('ExportDataScreen — what your vault holds (#3579)', () => {
+  test('the vault button runs the vault export and counts what came back', async () => {
+    mockSaveDataExport.mockResolvedValue(VAULT_RESULT);
+    const { getByTestId, queryByTestId } = render(<ExportDataScreen />);
+
+    fireEvent.press(getByTestId('export-data-vault'));
+
+    await waitFor(() => expect(getByTestId('export-data-receipt')).toBeTruthy());
+    expect(mockSaveDataExport).toHaveBeenCalledWith('vault');
+    const saved = getByTestId('export-data-receipt-saved').props.children as string;
+    expect(saved).toContain('14 items from your vault');
+    expect(saved).toContain('adepthood-vault-2026-08-22.json');
+    expect(queryByTestId('export-data-receipt-incomplete')).toBeNull();
+  });
+
+  test('a copy the vault stopped partway through is saved and called incomplete', async () => {
+    mockSaveDataExport.mockResolvedValue({
+      ...VAULT_RESULT,
+      vault: { items: 3, complete: false },
+    });
+    const { getByTestId } = render(<ExportDataScreen />);
+
+    fireEvent.press(getByTestId('export-data-vault'));
+
+    await waitFor(() => expect(getByTestId('export-data-receipt-incomplete')).toBeTruthy());
+    const warning = getByTestId('export-data-receipt-incomplete').props.children as string;
+    expect(warning).toContain('incomplete');
+    expect(warning).toContain('Try again');
+  });
+
+  test.each([
+    ['vault_unavailable', 503, 'asleep or unreachable'],
+    ['vault_export_needs_update', 409, 'needs an update before its content can be exported'],
+    ['vault_not_connected', 404, 'no Creek Vault'],
+    ['vault_export_failed', 502, 'could not finish the export'],
+  ])(
+    'a vault answering %s says so rather than saving an empty file',
+    async (detail, status, says) => {
+      mockSaveDataExport.mockRejectedValue(new ApiError(status, detail));
+      const { getByTestId, queryByTestId } = render(<ExportDataScreen />);
+
+      fireEvent.press(getByTestId('export-data-vault'));
+
+      await waitFor(() => expect(getByTestId('export-data-error')).toBeTruthy());
+      expect(getByTestId('export-data-error').props.children as string).toContain(says);
+      expect(queryByTestId('export-data-receipt')).toBeNull();
+    },
+  );
 });
 
 describe('ExportDataScreen — navigation owns the title (#2962)', () => {

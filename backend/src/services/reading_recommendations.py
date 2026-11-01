@@ -39,6 +39,7 @@ from schemas.invitations import ReadingInvitation
 from services.account_egress_barrier import ensure_account_live, hold_account
 from services.content_repository import ContentRepositoryError
 from services.corpus_consent import load_consent
+from services.folded_quote_privacy import egress_bodies
 from services.journal_withdrawal_obligation import deletion_in_progress_clause
 from services.privacy_lineage import LineageOperation, observe_lineage
 from services.reading_catalog import shortlist
@@ -99,12 +100,15 @@ def _day_in_stage(progress: StageProgress | None, stage: int, tz: str) -> int:
     )
 
 
-def _source(entry: JournalEntry) -> ReadingSource:
-    """Translate the app's public tier through the canonical wire mapping."""
+def _source(entry: JournalEntry, body: str) -> ReadingSource:
+    """Translate the app's public tier through the canonical wire mapping.
+
+    ``body`` is the entry's message with its restricted folded passages masked.
+    """
     return ReadingSource(
         cast("int", entry.id),
         entry.title,
-        entry.message[:_SOURCE_CHARS],
+        body[:_SOURCE_CHARS],
         wire_ceiling_for(tier_ceiling_for(entry.classification)).value,
     )
 
@@ -131,7 +135,21 @@ async def _sources(session: AsyncSession, user_id: int) -> tuple[ReadingSource, 
     entries = list(result.scalars().all())
     if any(assess_distress(item.message).level == "elevated" for item in entries):
         return ()
-    return tuple(_source(item) for item in entries if _has_text(item))
+    return await _excerpted(session, user_id, [item for item in entries if _has_text(item)])
+
+
+async def _excerpted(
+    session: AsyncSession, user_id: int, entries: list[JournalEntry]
+) -> tuple[ReadingSource, ...]:
+    """``entries`` as reading sources, each body with its restricted folds masked.
+
+    A passage folded in from a quote of an Intimate source is masked before it
+    can be excerpted (#3059, owner decision R5-2).
+    """
+    bodies = await egress_bodies(
+        session, user_id=user_id, bodies={cast("int", item.id): item.message for item in entries}
+    )
+    return tuple(_source(item, bodies[cast("int", item.id)]) for item in entries)
 
 
 async def _consented(session: AsyncSession, user_id: int) -> bool:

@@ -69,7 +69,10 @@ def keyless_context() -> Context:
     it, so a background task started inside :func:`forwarding_provider_key`
     would otherwise keep relaying the writer's key after the reply is back.
     Every task a keyed route can leave running is started in this context
-    instead, so the key ends with the request that carried it.
+    instead, so the request's key ends with the request that carried it. An
+    un-enrolled writer's background classification relays their *stored* key
+    instead, read per submit from its encrypted row by the pipeline (R1-1, ADR
+    0009 amendment 2026-11-01); nothing reaches it through this context.
 
     Returns:
         The caller's context, copied, with the forwarded key cleared.
@@ -86,6 +89,18 @@ def has_forwarded_provider_key() -> bool:
     context ends. Vendor eligibility remains the adapter's send-time decision.
     """
     return _FORWARDED_PROVIDER_KEY.get() is not None
+
+
+def forwarded_provider_key() -> VaultProviderKey | None:
+    """The key this request relays, for the one write that retains it (R1-1).
+
+    Its only caller is
+    :func:`services.vault_classification_key.retain_forwarded_key`, which keeps
+    an un-enrolled writer's key encrypted for their vault's background
+    classification (ADR 0009, amendment 2026-11-01). Every send still reads the
+    key through :func:`relay_headers`.
+    """
+    return _FORWARDED_PROVIDER_KEY.get()
 
 
 def forwarded_key_vendor() -> VaultKeyProvider | None:

@@ -806,7 +806,7 @@ async def test_a_decorated_route_still_refuses_at_its_own_tighter_limit(
     assert responses[_LIMIT_5].status_code == HTTPStatus.TOO_MANY_REQUESTS
 
 
-# The 38 limits declared with ``@limiter.limit``, frozen. This table is the
+# The 39 limits declared with ``@limiter.limit``, frozen. This table is the
 # ratchet for #2909: the ambient floor was added *underneath* these, and the
 # one way that change could do harm is by disturbing one of them. Reading it
 # back from the limiter proves the decorators registered what the source says,
@@ -863,6 +863,9 @@ _DECLARED_ROUTE_LIMITS: dict[str, tuple[str, ...]] = {
     # Every on-demand reachability check is a handshake that can wake a
     # scale-to-zero vault, so it is budgeted per account (#3406).
     "routers.vault_config.check_vault_connection": ("5 per 1 minute",),
+    # Creek's per-call agent-token status lookup (R3-2, #3585), per caller
+    # address, at the ambient floor that would cap it anyway.
+    "routers.vault_provisioning_internal.agent_token_status": ("60 per 1 minute",),
 }
 
 # One sentinel for every ``{param}`` segment. The coverage guard below only
@@ -885,7 +888,7 @@ def _expected_mounted_paths() -> set[str]:
 
 
 def test_every_declared_route_limit_matches_the_frozen_table() -> None:
-    """The 38 declared limits, including the audited admin wallet correction.
+    """The 39 declared limits, including the audited admin wallet correction.
 
     Also a tripwire for the one regression the new layer could hide: slowapi's
     ``@limiter.exempt`` and ``request_filter`` escape hatches govern the

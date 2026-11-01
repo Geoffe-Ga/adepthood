@@ -132,10 +132,12 @@ _REPO_URL_PATH = re.compile(r"https://github\.com/Geoffe-Ga/adepthood/blob/main/
 # The policy's sentence about what is encrypted was written against exactly
 # this set; see :func:`test_exactly_the_pinned_columns_are_encrypted`.
 #
-# All but the last hold the account's own writing, or something derived from
-# it. ``uservaultconfig.api_key`` is different in kind and the policy says so:
-# it is a credential the account supplied for a service of its own, encrypted
-# for the same reason but not a thing they wrote.
+# All but the last two hold the account's own writing, or something derived
+# from it. ``uservaultconfig.api_key`` and ``vaultclassificationkey.api_key``
+# are different in kind and the policy says so: each is a credential the
+# account supplied for a service of its own (its vault; its AI provider, kept
+# for the vault's background sorting under R1-1), encrypted for the same reason
+# but not a thing they wrote.
 _ENCRYPTED_COLUMNS = frozenset(
     {
         "completionsuggestion.anchor_text",
@@ -158,6 +160,7 @@ _ENCRYPTED_COLUMNS = frozenset(
         "promotedquote.anchor_text",
         "promptresponse.response",
         "uservaultconfig.api_key",
+        "vaultclassificationkey.api_key",
     }
 )
 
@@ -1626,6 +1629,34 @@ def test_the_policy_says_where_an_own_key_travels_for_each_feature() -> None:
     assert not missing, f"the policy drops the owner's own-key wording: {missing}"
     restated = [claim for claim in _RETIRED_OWN_KEY_CLAIMS if claim in prose]
     assert not restated, f"the policy still makes a retired own-key claim: {restated}"
+
+
+# The stored copy of a managed-vault writer's key (R1-1, ADR 0009 amendment
+# 2026-11-01). It is server-decryptable, so the policy must say the operator can
+# read it, and must name every way it is deleted; and the old absolute "never
+# persisted" sentence may not stand without the exception in front of it.
+_STORED_KEY_PROMISES: Final[tuple[str, ...]] = (
+    "adepthood keeps one encrypted copy of your key",
+    "not against the operator: adepthood can technically read it",
+    "never returned by a screen or api, included in your export, written to a log",
+    "deleted when you remove or replace the key in settings",
+    "when you disconnect the vault",
+    "when your provider turns the key down",
+    "the ai provider key your managed vault sorts your writing with",
+)
+_RETIRED_STORED_KEY_CLAIMS: Final[tuple[str, ...]] = (
+    "for that call. the key is used for that one call and is never persisted",
+)
+
+
+def test_the_policy_discloses_the_stored_provider_key_and_who_can_read_it() -> None:
+    """The R1-1 copy is disclosed as operator-readable, with every way it is deleted."""
+    prose = _prose(_PRIVACY_POLICY)
+
+    missing = [promise for promise in _STORED_KEY_PROMISES if promise not in prose]
+    assert not missing, f"the policy drops the stored-key disclosure: {missing}"
+    restated = [claim for claim in _RETIRED_STORED_KEY_CLAIMS if claim in prose]
+    assert not restated, f"the policy still says the key is never persisted: {restated}"
 
 
 # The off-host backup copy the owner retired on 2026-10-14 (#3260): "No off-host

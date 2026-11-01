@@ -158,6 +158,9 @@ _OTHER_ENCRYPTED_COLUMNS: frozenset[str] = frozenset(
         # because it is a live secret at rest, not because it is anyone's
         # writing.
         "uservaultconfig.api_key",
+        # The writer's own AI provider key, kept for their vault's background
+        # classification (R1-1). The same kind of live secret.
+        "vaultclassificationkey.api_key",
     }
 )
 

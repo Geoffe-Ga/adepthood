@@ -20,6 +20,7 @@ from sqlmodel import col, delete, select
 from models.user import User
 from models.user_vault_config import UserVaultConfig
 from models.vault_activation import VaultActivation, VaultActivationState
+from services.vault_classification_key import stage_forget
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
@@ -66,8 +67,18 @@ async def store_vault_config(
     Both columns are written together: a user pointing at a different vault is
     presenting a different credential, and carrying the old key over to a new
     URL would send one vault's secret to another.
+
+    A handoff that changes the URL, the credential or the managed flag names a
+    different allocation, so the per-allocation MCP resource adopted for the
+    old one is forgotten; a retried handoff repeating all three keeps it.
     """
     existing = await load_vault_config(session, user_id)
+    if existing is not None and (
+        existing.vault_url,
+        existing.api_key,
+        existing.provisioned,
+    ) != (vault_url, api_key, provisioned):
+        existing.agent_mcp_resource = None
     config = existing or UserVaultConfig(
         user_id=user_id,
         vault_url=vault_url,
@@ -84,13 +95,15 @@ async def store_vault_config(
 
 
 async def clear_vault_config(session: AsyncSession, user_id: int) -> None:
-    """Remove this account's connection, credential included.
+    """Remove this account's connection, credential and stored provider key included.
 
     Idempotent: disconnecting a vault nobody connected is a no-op rather than a
     404, because the state the caller asked for -- "no vault of mine is stored"
     -- is the state they end up in either way.
     """
     await session.execute(delete(UserVaultConfig).where(col(UserVaultConfig.user_id) == user_id))
+    # The stored provider key exists only for this vault's classification (R1-1).
+    await stage_forget(session, user_id)
     await session.commit()
 
 

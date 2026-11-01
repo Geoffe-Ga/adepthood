@@ -41,9 +41,8 @@ interface VaultConnectionAnswer {
  * The same read, keeping the refused-key flag (#3595) beside the state.
  *
  * The flag rides this response rather than a second one so a screen that shows
- * both asks once. It is independent of the connection state: the
- * deployment-wide vault's owner reads `connected: false` and can still have
- * had a key refused.
+ * both asks once. It is independent of the connection state: the server reads
+ * it from the account's pipeline rows, not from a connection row.
  */
 async function readVaultConnectionAnswer(): Promise<VaultConnectionAnswer> {
   const connection = await vault.connection();

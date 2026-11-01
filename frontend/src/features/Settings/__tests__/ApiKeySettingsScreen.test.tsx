@@ -9,7 +9,7 @@ import ApiKeySettingsScreen, {
   validateUserApiKey,
 } from '../ApiKeySettingsScreen';
 import { BYOK_DETAIL_DISCLOSURE } from '../byokDisclosure';
-import { NO_KEY_HINT, REMOVE_KEY_DIALOG_BODY } from '../byokOnlyCopy';
+import { NO_KEY_HINT, REMOVE_KEY_DIALOG_BODY, VAULT_COPY_NOT_DELETED } from '../byokOnlyCopy';
 import { BYOK_PROVIDERS, providerForKey } from '../byokProviders';
 import {
   LOCAL_MODEL_SWITCH_DESCRIPTION,
@@ -24,6 +24,12 @@ import habitStyles from '@/features/Habits/Habits.styles';
 jest.mock('@/context/ApiKeyContext', () => ({
   useApiKey: jest.fn(),
 }));
+
+const mockForget = jest.fn<Promise<void>, []>(() => Promise.resolve());
+jest.mock('@/api', () => {
+  const actual = jest.requireActual<Record<string, unknown>>('@/api');
+  return { ...actual, vaultClassificationKey: { forget: () => mockForget() } };
+});
 
 const mockUseApiKey = useApiKey as jest.MockedFunction<typeof useApiKey>;
 
@@ -46,6 +52,7 @@ function setApiKeyState(partial: Partial<ReturnType<typeof useApiKey>>) {
 
 beforeEach(() => {
   jest.clearAllMocks();
+  mockForget.mockImplementation(() => Promise.resolve());
 });
 
 /** Presses Remove, then the rendered dialog's destructive confirm (#2928). */
@@ -256,6 +263,54 @@ describe('ApiKeySettingsScreen', () => {
     expect(state.clearApiKey).toHaveBeenCalledTimes(1);
     expect(view.queryByTestId('remove-key-dialog')).toBeNull();
     expect(await view.findByText('API key removed from this device.')).toBeTruthy();
+  });
+
+  test('removal deletes the copy kept for the vault before the device copy (R1-1)', async () => {
+    const order: string[] = [];
+    mockForget.mockImplementation(() => {
+      order.push('server');
+      return Promise.resolve();
+    });
+    const state = setApiKeyState({
+      apiKey: VALID_KEY,
+      clearApiKey: jest.fn(() => {
+        order.push('device');
+        return Promise.resolve({ cleared: true });
+      }),
+    });
+    const { getByTestId, findByTestId } = render(<ApiKeySettingsScreen />);
+    await confirmRemoval(getByTestId);
+
+    expect(order).toEqual(['server', 'device']);
+    expect(state.clearApiKey).toHaveBeenCalledTimes(1);
+    expect((await findByTestId('api-key-status')).props.children).toContain(
+      'removed from this device',
+    );
+  });
+
+  test('removal that cannot reach the server removes nothing and says so (R1-1)', async () => {
+    mockForget.mockImplementation(() => Promise.reject(new Error('offline')));
+    const state = setApiKeyState({ apiKey: VALID_KEY });
+    const { getByTestId, findByTestId } = render(<ApiKeySettingsScreen />);
+    await confirmRemoval(getByTestId);
+
+    expect(state.clearApiKey).not.toHaveBeenCalled();
+    expect((await findByTestId('api-key-error')).props.children).toBe(VAULT_COPY_NOT_DELETED);
+    expect(getByTestId('stored-key-card')).toBeTruthy();
+  });
+
+  test('replacing the key deletes the old server copy, and still saves when offline (R1-1)', async () => {
+    mockForget.mockImplementation(() => Promise.reject(new Error('offline')));
+    const state = setApiKeyState({ apiKey: 'sk-old-owned-example-key-0123456789' });
+    const { getByTestId } = render(<ApiKeySettingsScreen />);
+
+    fireEvent.changeText(getByTestId('api-key-input'), VALID_KEY);
+    await act(async () => {
+      fireEvent.press(getByTestId('save-key-button'));
+    });
+
+    expect(mockForget).toHaveBeenCalledTimes(1);
+    expect(state.saveApiKey).toHaveBeenCalledWith(VALID_KEY);
   });
 
   test('cancel closes the remove dialog and keeps the key', async () => {

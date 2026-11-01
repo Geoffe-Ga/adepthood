@@ -143,6 +143,15 @@ _SPARSE_FILE_COUNT = 0
 _MODULE_TEXT = '"""Fixture module measured by the backend gate."""\n\nVALUE = 1\n'
 _PYPROJECT_TEXT = "[tool.example]\nvalue = 1\n"
 _PRE_COMMIT_TEXT = "repos: []\n"
+# The receipts directory has to be ignored, as it is in the real repository:
+# the whole-tree gate otherwise fingerprints the receipt it is about to write.
+_GITIGNORE = Path(".gitignore")
+_GITIGNORE_TEXT = ".gate-state/\n"
+# A file the unit suite may read that lies outside the backend gate's paths.
+_OUTSIDE_FILE = Path("CLAUDE.md")
+_OUTSIDE_TEXT = "# Fixture guide\n"
+_SUITE_GATE = "backend-suite"
+_SUITE_TREE_CHANGED_MESSAGE = "no whole-tree receipt recorded"
 _MID_RUN_EDIT_TEXT = "EDITED_WHILE_THE_GATE_RAN = True"
 
 _DEFAULT_BRANCH = "main"
@@ -405,13 +414,16 @@ class _Gate:
         )
         return _Run(result=result, marker_dir=marker_dir)
 
-    def receipt_path(self) -> Path:
-        """Return the location of the backend gate's receipt.
+    def receipt_path(self, gate: str = _GATE) -> Path:
+        """Return the location of one gate's receipt.
+
+        Args:
+            gate: Gate whose receipt is wanted; the backend gate by default.
 
         Returns:
             The single per-gate receipt path, whether or not it exists yet.
         """
-        return self.root / _RECEIPTS_DIR / f"{_GATE}{_RECEIPT_SUFFIX}"
+        return self.root / _RECEIPTS_DIR / f"{gate}{_RECEIPT_SUFFIX}"
 
 
 def _stage_gate(
@@ -442,6 +454,8 @@ def _stage_gate(
     _install_stage_shims(scripts_dir)
 
     _write(root, _PRE_COMMIT_CONFIG, _PRE_COMMIT_TEXT)
+    _write(root, _GITIGNORE, _GITIGNORE_TEXT)
+    _write(root, _OUTSIDE_FILE, _OUTSIDE_TEXT)
     _write(root, _BACKEND_DIR / "pyproject.toml", _PYPROJECT_TEXT)
     _write(root, _MUTABLE_FILE, _MODULE_TEXT)
     for index in range(tracked_file_count):
@@ -768,3 +782,82 @@ def test_the_agent_docs_state_the_no_concurrent_suite_rule(document: Path) -> No
             f"{document.name} does not state the no-concurrent-suite rule "
             f"(missing {marker!r}), so an agent meeting the refusal has nothing to read"
         )
+
+
+# --- the whole-tree receipt the pre-push hook reuses ---
+
+
+def test_a_clean_full_run_also_records_the_whole_tree_receipt(gate: _Gate) -> None:
+    """The pre-push hook can only reuse what check-all banked for the whole tree.
+
+    The backend gate's paths miss files the unit suite reads -- workflows, ADRs,
+    CLAUDE.md -- so the pre-push reuse keys on a second receipt over the whole
+    tree, recorded by the same full green run.
+    """
+    first = gate.run()
+
+    assert first.result.returncode == _ALL_PASSED_EXIT_CODE, first.result.stderr
+    assert gate.receipt_path(_SUITE_GATE).exists(), (
+        f"a clean full run must record the {_SUITE_GATE} receipt; output: {first.output()!r}"
+    )
+
+
+def test_a_failing_stage_records_no_whole_tree_receipt(gate: _Gate) -> None:
+    """A red run banks neither receipt."""
+    gate.run(extra_env={_FAILING_STAGE_ENV: "test.sh"})
+
+    assert not gate.receipt_path(_SUITE_GATE).exists()
+
+
+def test_an_edit_outside_the_backend_paths_mid_run_withholds_only_the_whole_tree_receipt(
+    gate: _Gate,
+) -> None:
+    """A mid-run edit the backend gate cannot see still voids the whole-tree verdict.
+
+    The backend receipt is unaffected -- its paths did not move -- but the unit
+    suite may have read the edited file, so the whole-tree receipt is withheld
+    and the reason said out loud.
+    """
+    edited = gate.run(
+        extra_env={
+            _MUTATE_ON_STAGE_ENV: "test.sh",
+            _MUTATE_FILE_ENV: str(gate.root / _OUTSIDE_FILE),
+        },
+    )
+
+    assert edited.result.returncode == _ALL_PASSED_EXIT_CODE, edited.output()
+    assert gate.receipt_path().exists(), "the backend gate's own paths did not move"
+    assert not gate.receipt_path(_SUITE_GATE).exists(), (
+        "a file outside the backend paths changed mid-run, so the whole-tree verdict "
+        "describes a mixture of two trees"
+    )
+    assert _SUITE_TREE_CHANGED_MESSAGE in edited.output(), edited.output()
+
+
+def test_an_edit_inside_the_backend_paths_mid_run_records_neither_receipt(gate: _Gate) -> None:
+    """The whole tree contains the backend paths, so it moved too."""
+    gate.run(
+        extra_env={
+            _MUTATE_ON_STAGE_ENV: "test.sh",
+            _MUTATE_FILE_ENV: str(gate.root / _MUTABLE_FILE),
+        },
+    )
+
+    assert not gate.receipt_path().exists()
+    assert not gate.receipt_path(_SUITE_GATE).exists()
+
+
+def test_a_short_circuited_run_records_no_whole_tree_receipt(gate: _Gate) -> None:
+    """A reused verdict re-proves nothing, so it cannot bank a new whole-tree claim.
+
+    After a commit outside the backend paths, check-all short-circuits on the
+    backend receipt -- and the unit suite that reads the edited file never ran.
+    """
+    _record_a_receipt(gate)
+    gate.receipt_path(_SUITE_GATE).unlink()
+    (gate.root / _OUTSIDE_FILE).write_text(_OUTSIDE_TEXT + _MID_RUN_EDIT_TEXT)
+
+    second = gate.run()
+
+    assert "test.sh" not in second.stages_that_ran()
+    assert not gate.receipt_path(_SUITE_GATE).exists()

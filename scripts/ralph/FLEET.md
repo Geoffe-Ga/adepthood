@@ -21,36 +21,36 @@ predict which files a change will touch before we make it. So the loop never
   as the sequential loop does.
 - **Merge pessimistically, but never with a barrier.** Merges to `main` are
   **serialized** (one at a time — the single orchestrator session serializes them
-  for free) and each merge is **always up-to-date**: a lane merges only when it is
-  `LGTM` + CI-green + **proven** current with `main` — the compare API's
-  `behind_by == 0`, as `pr-ready.sh` measures it. `mergeStateStatus` is *not* a
-  freshness signal: GitHub computes `BEHIND` only when the base branch enforces
-  strict/up-to-date status checks, which this repo does not, so a branch many
-  commits behind `main` reports `CLEAN`. The `BEHIND` path below was designed but
-  had never once fired here, so lanes were routinely merging out of date on a
-  green that proved nothing about today's `main`. `CLEAN` is retained only as the
-  sole signal for `DIRTY`/`CONFLICTING`/`BLOCKED`/`DRAFT`/`UNKNOWN`, each of
-  which now prints its own token rather than collapsing into `behind`. If a sibling
-  merged after this lane went green, the lane is behind; it **syncs the new
-  `main` into its branch (by merge, not rebase — a plain push updates the PR
-  and re-runs CI, never a force-push)** and merges on a later wake once green
-  again. A lane that cannot cleanly sync **drops to Gate 1**. This sync is **lazy**
-  — a lane only pays it when it is itself about to merge, not proactively every
-  time any sibling merges.
+  for free) and each merge is **conflict-free**: a lane merges when it is `LGTM`
+  (or `COMMENTS` with its findings filed) + CI-green on its current head + free of
+  merge conflicts with `main`, as `pr-ready.sh` reads GitHub's `mergeStateStatus`
+  (`CLEAN` or `BEHIND`). **Being behind `main` is not a blocker** (owner rule,
+  2026-10-31: "If there are no merge conflicts then it is fine to merge a pr that
+  passed all other gates"), so a lane does not sync just because a sibling merged
+  first. A lane that **conflicts** with `main` (`DIRTY`/`CONFLICTING`) must merge
+  `main` in and resolve before it merges (by merge, not rebase — a plain push
+  updates the PR and re-runs CI, never a force-push); a lane that cannot resolve
+  cleanly **drops to Gate 1**. `UNKNOWN` (GitHub still computing mergeability) is
+  "not yet known" and waits, never clears. The one exception is
+  `ready-unreviewed`: with no reviewer, green CI **verified against current
+  `main`** (`CLEAN` + the compare API's `behind_by == 0`) *is* its review gate, so
+  a behind unreviewed bump still syncs — which also makes its real review run.
 - **Never wait on the slowest lane.** Whichever lane is ready merges immediately;
   the slot it frees refills at once. A fast lane at Gate 4 never waits for a slow
   lane at Gate 1.
 
-The result: an imperfect independence guess costs at most a sync — it can
-**never** merge broken or conflicting code (every merge is re-validated against
-the real, updated `main`), and it **never** stalls a ready lane behind a slow one.
+The result: an imperfect independence guess costs at most a conflict
+resolution — it can **never** merge conflicting code, and it **never** stalls a
+ready lane behind a slow one. A behind lane's green was proven on an older
+`main`; the `push: main` CI run is the backstop for any semantic (non-textual)
+interaction between two conflict-free changes.
 
 ```
 pick optimistically ──▶ N lanes build in parallel (isolated worktrees)
         │
-   a lane goes LGTM+green ──▶ current (behind_by == 0)? ──▶ merge NOW, refill slot
-        │                 ──▶ behind? ── sync main in (lazy) ── re-green ── merge next wake
-   sync conflict?         ──▶ that lane drops to Gate 1 (never a forced merge)
+   a lane goes LGTM+green ──▶ conflict-free (behind or not)? ──▶ merge NOW, refill slot
+        │                 ──▶ conflicted? ── merge main in + resolve ── re-green ── merge next wake
+   unresolvable conflict? ──▶ that lane drops to Gate 1 (never a forced merge)
 ```
 
 ## Why worktrees (not branches in one tree, not clones)
@@ -159,10 +159,9 @@ On each wake it:
 1. **Reconciles** — releases worktrees whose PR merged/closed (`fleet.sh
    reconcile`), freeing their slots.
 2. **Merges every ready lane** — any PR that `pr-ready.sh` calls `ready`
-   (`LGTM` + green + `CLEAN` + the compare API's `behind_by == 0`; `CLEAN` alone
-   is not freshness — see above) merges *now*, serialized; a lane that is behind
-   lazily syncs first and merges on a later wake. A ready lane never waits for a
-   slow one.
+   (`LGTM` + green + no merge conflict — `CLEAN` or `BEHIND`; being behind is
+   not a blocker, see above) merges *now*, serialized; a lane that conflicts
+   merges `main` in and resolves first. A ready lane never waits for a slow one.
 3. **Advances failing lanes** — a `ralph-worker` is dispatched into the worktree
    of any PR that needs a fix (CI failure → `ci-debugging`; `CHANGES_REQUESTED` →
    `address-feedback`).
@@ -215,8 +214,8 @@ open-PR exclusion, it:
     ordered/overlapping). Toggle with `RALPH_RESPECT_EPICS=0`.
 
 These heuristics only reduce *sync churn*; they are **not** the correctness
-mechanism. Correctness is the serialized, always-up-to-date merge (lazy sync +
-re-green when behind) described above.
+mechanism. Correctness is the serialized, conflict-free merge (resolve +
+re-green when conflicted) described above.
 
 ## Dependency lanes (Dependabot)
 
@@ -249,9 +248,9 @@ One token per lane, exactly one action. This table, `pr-ready.sh`'s header, and
 
 | Token | Means | Remedy |
 | --- | --- | --- |
-| `ready` | fresh `LGTM` + CI green + `CLEAN` + `behind_by == 0`. | Merge now. |
+| `ready` | fresh `LGTM` + CI green + no merge conflict (`CLEAN` or `BEHIND` — being behind `main` is not a blocker). | Merge now. |
 | `ready-unreviewed` | CI green *with at least one non-review check actually `SUCCESS`* + `CLEAN` + `behind_by == 0`, but this PR has no review gate: Dependabot both authored it and pushed its HEAD commit, and every `claude-review` entry reported `SKIPPED`. | Merge — on a `dependencies` lane only. On any other lane the review workflow is misconfigured: stop and investigate. |
-| `behind` | `LGTM` or `COMMENTS` + green but not current with `main`. | `fleet.sh sync <N>`; merge on a later wake once re-green. |
+| `behind` | green, but a would-be `ready-unreviewed` bump that is not verified current with `main` (its review substitute), or a `mergeStateStatus` the helper does not recognise as mergeable. A reviewed lane is never `behind` merely for being behind. | `fleet.sh sync <N>`; merge on a later wake once re-green. |
 | `unknown` | GitHub has not finished computing mergeability — routine for a few seconds after every push. | Wait for a later wake. A sync would merge nothing and push nothing, so the next wake would be identical. |
 | `draft` | the PR is a draft: a deliberate human hold. | Leave the lane alone, same standing as `optout`. The loop must not fight a human who parked a PR. |
 | `blocked` | a required check or review is missing. | A sync cannot supply it. Wait, or escalate if it stays blocked — do not dispatch a worker. |
@@ -259,7 +258,7 @@ One token per lane, exactly one action. This table, `pr-ready.sh`'s header, and
 | `pending` | CI still running. | Wait for a later wake. |
 | `ci-failed` | a check failed or errored, **and a second query corroborated it** by naming a check with a failing conclusion. | Dispatch a `ci-debugging` worker into the lane. |
 | `transport-error` | `gh` could not be asked, or answered non-zero with no failing check to corroborate it: no network, TLS failure, expired token, rate-limit block, a 5xx, or a PR reporting no checks at all. **Not a claim about CI** — it is "I could not tell". | Retry on a later wake. **Do not dispatch a `ci-debugging` worker**: that is the bug this token exists to stop, an agent reading logs for a failure that never happened on a PR that was about to go green. `watch-pr.sh` counts it as in-flight and keeps polling. |
-| `ready-comments` | a fresh `COMMENTS` verdict + every other `ready` condition (CI green, `CLEAN`, `behind_by == 0`, no hold). The reviewer signed off with non-blocking findings. | **No worker, no iteration.** The orchestrator files each actionable finding as a follow-up issue with a severity-matched `P0`–`P3` label (`address-feedback` Step 1A), then merges exactly as for `ready` (`ralph-tick.md` Step 1). Terminal for `watch-pr.sh`. |
+| `ready-comments` | a fresh `COMMENTS` verdict + every other `ready` condition (CI green, no merge conflict, no hold). The reviewer signed off with non-blocking findings. | **No worker, no iteration.** The orchestrator files each actionable finding as a follow-up issue with a severity-matched `P0`–`P3` label (`address-feedback` Step 1A), then merges exactly as for `ready` (`ralph-tick.md` Step 1). Terminal for `watch-pr.sh`. |
 | `changes-requested` | a fresh `CHANGES_REQUESTED` verdict (posted after HEAD). Gate 4 failed. A fresh `COMMENTS` verdict is never this token. | Dispatch an `address-feedback` worker into the lane. Terminal for `watch-pr.sh` — the watcher exits on it, so the verdict is a wake, never a timeout. |
 | `awaiting-review` | no verdict yet, or only a stale one that predates HEAD (a fresh non-LGTM is `changes-requested` instead). | Wait for the review or re-review; `watch-pr.sh` counts this as in-flight. |
 | `review-self-skipped` | this PR edits `.github/workflows/claude-code-review.yml`, so `claude-code-action` self-skipped as anti-tamper and no verdict will ever be posted. The check reports `SUCCESS`, not `SKIPPED`, so the reviewless path does not apply either. | **Terminal — hand it to a human.** Stop re-checking the lane; it is not waiting on anything. A human who reviews it and posts a fresh `LGTM` still lands it via `ready`. Common on Dependabot bumps of `anthropics/claude-code-action`. |
@@ -415,8 +414,8 @@ python -m pytest scripts/ralph -q
 
 | Scenario | Handling |
 | --- | --- |
-| Two "independent" issues touch the same file | Whichever merges first wins; the other reads `behind`, lazily syncs main in, re-greens, then merges. A sync conflict ⇒ drops to Gate 1. Never a broken merge. |
-| A lane is green but out of date with `main` | Its own green proves nothing about today's `main`. `pr-ready.sh` derives freshness from the compare API (`behind_by`), not `mergeStateStatus`, so this reads `behind` even while GitHub says `CLEAN`; the lane syncs, re-greens, and merges on a later wake. |
+| Two "independent" issues touch the same file | Whichever merges first wins. If the other now conflicts it reads `conflicted`, merges main in and resolves (Gate 1), re-greens, then merges; if it does not conflict it stays `ready` and merges. Never a conflicting merge. |
+| A lane is green but out of date with `main` | Not a blocker (owner rule, 2026-10-31). With no merge conflict it reads `ready`/`ready-comments` and merges; the `push: main` CI run catches any semantic interaction. Only an unreviewed Dependabot bump is still held to `behind_by == 0`, because that freshness is its review substitute. |
 | A bot PR whose review job cannot run | Untouched Dependabot PRs trigger no `claude-review` (no secrets for bot-actor runs). Any commit of ours on that branch makes the job runnable, so a synced or adapted bump clears Gate 4 normally; an untouched, already-current, already-green bump merges as `ready-unreviewed` on freshness-verified CI that demonstrably ran, with no `do-not-auto-merge` hold set. |
 | A slow lane would stall a fast one | It can't — lanes are independent; a ready lane merges immediately and its slot refills without waiting on any sibling. |
 | A worker crashes / abandons an issue | `reconcile` releases it once its PR closes; an un-PR'd stale worktree is re-detected and either resumed or released on the next wake. |

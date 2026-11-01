@@ -88,3 +88,26 @@ privacy/deletion contact and the Privatemode key owner.
   been missing. `/.well-known/oauth-authorization-server` and
   `/.well-known/jwks.json` return 200 in production.
 - The Privatemode account and key were created.
+
+---
+
+## Addendum 2026-11-01 — R1-1 split confirmed
+
+**Decider:** Geoff Gallinger, repository owner, on 2026-11-01, answering the
+open question on [#3578](https://github.com/Geoffe-Ga/adepthood/issues/3578).
+
+The owner's words, verbatim:
+
+> Split: un-enrolled stored server-side; enrolled stay user-held.
+
+| Id | Decision | Owner's rationale |
+|---|---|---|
+| R1-1a | The R1-1 stored key is split by enrolment. An account that has **not** enrolled in user-held keys may have its BYOK provider key stored server-side, encrypted at rest and server-decryptable, for background vault classification. An **enrolled** account keeps its key user-held (ADR 0009 Decision item 13), and its background classification waits for its next online session's relayed key. | — |
+
+What an agent recorded alongside it, which decides nothing: nobody can enrol
+today (Decision item 7: no web enrolment before enforced CSP plus SRI), so in
+practice every account is un-enrolled; the stored copy is not operator-blind,
+and no public copy may imply that it is. The record that carries the decision
+out is ADR 0009's "Amendment 2026-11-01: a stored key for background
+classification (R1-1)" (adepthood#3578) and its pair, Creek-Vault ADR-0015's
+amendment of the same date. This addendum amends no ADR.

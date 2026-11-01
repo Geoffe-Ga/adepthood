@@ -259,6 +259,21 @@
         "title": "AgentActivityStatus",
         "type": "string"
       },
+      "AgentTokenStatusResponse": {
+        "additionalProperties": false,
+        "description": "Whether the vault may serve the call: RFC 7662's ``active`` and nothing else.",
+        "properties": {
+          "active": {
+            "title": "Active",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "active"
+        ],
+        "title": "AgentTokenStatusResponse",
+        "type": "object"
+      },
       "AppleOAuthRequest": {
         "description": "Apple sign-in payload -- the shared shape plus the one-shot ``full_name``.\n\nApple never puts the name in the token.  It is handed to the client once,\nduring the very first authorization, and never sent again -- so the client\nforwards it here or it is lost.  That also makes it the one field on this\nroute the provider has *not* vouched for, which is why the ladder consults\nit only when creating a brand-new row: a later request carrying a different\nname can never relabel an account that already exists.\n\nBlank (or whitespace-only) means \"no name\", not an empty name, so the\ncolumn stays ``NULL`` and every reader's fallback keeps working.  The\nlength bound matches the column's, so an over-long name is a 422 here\nrather than a truncating write or a 500 from mid-transaction.",
         "properties": {
@@ -11150,7 +11165,7 @@
         "type": "object"
       },
       "VaultConnectionResponse": {
-        "description": "What a user may be told about their own vault connection.\n\nWhether one exists, and where it points. Not the credential -- see the\nmodule docstring -- and not the surrogate row id either, per the\nno-``user_id`` invariant :class:`OwnedResourcePublic` exists to state.\n\n``connected`` is carried explicitly rather than left to be inferred from a\nnull URL, so a client renders \"you have not connected a vault\" from a field\nthat says so instead of from an absence it has to interpret.\n\n``mcp_address`` is the address a person gives an agent they run elsewhere\n(#3534), and the audience every token for that vault names. A managed\nbinding keeps ``vault_url`` private. Its agent address is returned only\nafter authenticated per-allocation discovery reports the exact owned\nresource and this deployment's issuer. Legacy, disabled, malformed or\nunreachable discovery returns ``None``; the stored binding stays connected.\n\n``classification_key_rejected`` is true when the account's latest settled\nvault classification failed because the writer's own provider key was\nrefused by its vendor (Creek contract 0.26, #3595). It is read from the\naccount's pipeline rows rather than from the connection row, so it holds\nfor the deployment-wide vault's owner too, and it carries no key material\nand no vendor text -- the client owns the sentence it renders.\n\n``classification_state`` answers a different question from a different row\n(#3577): has the writing had its full sort yet? It is the outcome of the\nlatest classification pass that *landed labels*, so a newer failed pass --\na refused key included -- leaves it where it was; the two fields can both\nstand at once and do not contradict, because one is about the sort the\nwriting has had and the other about why the latest attempt at more stopped.\n``None`` when the account has no vault the pipeline writes to: neither a\nstored connection nor the deployment-wide vault it owns. That owner reads\n``connected: false`` and still gets a state, for the reason\n``classification_key_rejected`` holds for them. ``classification_message``\nis the server's sentence for the state, ``None`` except for ``incomplete``\n(:data:`VAULT_CLASSIFICATION_MESSAGES`). Neither carries a count or any\ncontent.",
+        "description": "What a user may be told about their own vault connection.\n\nWhether one exists, and where it points. Not the credential -- see the\nmodule docstring -- and not the surrogate row id either, per the\nno-``user_id`` invariant :class:`OwnedResourcePublic` exists to state.\n\n``connected`` is carried explicitly rather than left to be inferred from a\nnull URL, so a client renders \"you have not connected a vault\" from a field\nthat says so instead of from an absence it has to interpret.\n\n``mcp_address`` is the address a person gives an agent they run elsewhere\n(#3534), and the audience every token for that vault names. A managed\nbinding keeps ``vault_url`` private. Its agent address is returned only\nafter authenticated per-allocation discovery reports the exact owned\nresource and this deployment's issuer. Legacy, disabled, malformed or\nunreachable discovery returns ``None``; the stored binding stays connected.\n\n``classification_key_rejected`` is true when the account's latest settled\nvault classification failed because the writer's own provider key was\nrefused by its vendor (Creek contract 0.26, #3595). It is read from the\naccount's pipeline rows rather than from the connection row, so it holds\nfor the deployment-wide vault's owner too, and it carries no key material\nand no vendor text -- the client owns the sentence it renders.\n\n``classification_state`` answers a different question from a different row\n(#3577): has the writing had its full sort yet? It is the outcome of the\nlatest classification pass that *landed labels*, so a newer failed pass --\na refused key included -- leaves it where it was; the two fields can both\nstand at once and do not contradict, because one is about the sort the\nwriting has had and the other about why the latest attempt at more stopped.\n``None`` when the account has no vault the pipeline writes to: neither a\nstored connection nor the deployment-wide vault it owns. ``classification_message``\nis the server's sentence for the state, ``None`` except for ``incomplete``\n(:data:`VAULT_CLASSIFICATION_MESSAGES`). Neither carries a count or any\ncontent.\n\n``source`` says which kind of vault ``connected`` is about (#3608), and is\n``None`` exactly when ``connected`` is false. It follows the precedence the\npipeline routes by -- a stored connection first, then the deployment-wide\nvault for its one bound owner -- so ``connected`` is true for that owner,\nwhose writing really is sent to that vault. The deployment source carries\nno ``vault_url`` and no ``mcp_address``: that vault is the operator's\nconfiguration, and its address and credential are never said to anyone.\nAdditive and defaulted, so a client from before the field reads the owner\nas a vault with a private address, which is what it is.",
         "properties": {
           "classification_key_rejected": {
             "default": false,
@@ -11193,6 +11208,16 @@
             ],
             "title": "Mcp Address"
           },
+          "source": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/VaultConnectionSource"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "vault_url": {
             "anyOf": [
               {
@@ -11212,6 +11237,16 @@
         ],
         "title": "VaultConnectionResponse",
         "type": "object"
+      },
+      "VaultConnectionSource": {
+        "description": "Which of the three ways an account reaches its vault a read is reporting (#3608).\n\n``CONNECTED`` is a vault the account connected itself, ``MANAGED`` one the\nlifecycle provisioned for it, and ``DEPLOYMENT`` the legacy deployment-wide\nvault bound to this one account by ``CREEK_VAULT_OWNER_USER_ID``. The values\nare the source names :mod:`dependencies.creek_vault` already folds into a\ndestination fingerprint, so changing one would re-key every recorded copy;\nthey are spelled once, here, and that module reads them from this enum.\n\nA client tells the deployment source apart because it is the operator's\nconfiguration rather than the account's row: there is nothing of the\naccount's own to disconnect, rotate or tear down.",
+        "enum": [
+          "connected",
+          "managed",
+          "deployment"
+        ],
+        "title": "VaultConnectionSource",
+        "type": "string"
       },
       "VaultCustodyMode": {
         "description": "Closed custody vocabulary negotiated with Creek provisioning v2.",
@@ -20060,6 +20095,164 @@
         "summary": "Readiness"
       }
     },
+    "/internal/vault-provisioning/agent-token-status": {
+      "post": {
+        "description": "Say whether a verified agent token's grant still stands; every no is the same no.",
+        "operationId": "agent_token_status_internal_vault_provisioning_agent_token_status_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "additionalProperties": false,
+                "description": "The claims of one verified access token: whose, which agent's, and when issued.",
+                "properties": {
+                  "client_id": {
+                    "maxLength": 2048,
+                    "minLength": 1,
+                    "title": "Client Id",
+                    "type": "string"
+                  },
+                  "iat": {
+                    "maximum": 32503680000,
+                    "minimum": 0,
+                    "title": "Iat",
+                    "type": "integer"
+                  },
+                  "sub": {
+                    "maxLength": 200,
+                    "minLength": 1,
+                    "title": "Sub",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "sub",
+                  "client_id",
+                  "iat"
+                ],
+                "title": "AgentTokenStatusRequest",
+                "type": "object"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AgentTokenStatusResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "The request body could not be parsed, or a value it carried was refused."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "No usable credential was presented."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "The caller is authenticated but does not own the resource."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "No such resource -- or none this caller is allowed to see."
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "The request conflicts with the resource's current state."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ValidationErrorResponse"
+                }
+              }
+            },
+            "description": "The request failed validation -- an array of rejected fields -- or a check applied after the schema refused it, as one snake_case code."
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "The caller went past a rate limit."
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "A required dependency is temporarily unusable."
+          }
+        },
+        "summary": "Agent Token Status",
+        "tags": [
+          "internal-vault-provisioning"
+        ]
+      }
+    },
     "/internal/vault-provisioning/alerts": {
       "post": {
         "description": "Deliver one authenticated, counts-only fleet alert to operations.",
@@ -22594,7 +22787,7 @@
     },
     "/journal/{entry_id}/promote": {
       "post": {
-        "description": "Promote a span of the caller's own entry into a pending quote.\n\nOwnership is enforced by ``require_owned_journal_entry`` (a missing,\nsoft-deleted, or foreign entry all resolve to 404). The span is sliced and\nsnapshotted server-side, so the quote starts life pending (unfolded).",
+        "description": "Promote a span of the caller's own entry into a pending quote.\n\nOwnership is enforced by ``require_owned_journal_entry`` (a missing,\nsoft-deleted, or foreign entry all resolve to 404). The span is sliced and\nsnapshotted server-side, so the quote starts life pending (unfolded).\n\nA source that may not egress (Intimate, or an unknown tier), or a span over\na passage the source holds from a restricted fold, is 409\n``quote_source_restricted`` and stores nothing (#3059, owner decision R5-2).",
         "operationId": "promote_quote_journal__entry_id__promote_post",
         "parameters": [
           {
@@ -28627,7 +28820,7 @@
         ]
       },
       "patch": {
-        "description": "Fold the caller's own quote into a reflection, or return it to pending.\n\nA missing or foreign promotion is 404. Setting ``included_in_entry_id``\nrequires the target to be the caller's own live hierarchical reflection\n(404 / 422 otherwise); ``null`` clears the inclusion back to pending.",
+        "description": "Fold the caller's own quote into a reflection, or return it to pending.\n\nA missing or foreign promotion is 404. Setting ``included_in_entry_id``\nrequires the target to be the caller's own live hierarchical reflection\n(404 / 422 otherwise); ``null`` clears the inclusion back to pending.\nFolding a quote whose source has since become Intimate (or whose text\ncarries a passage restricted that way) is 409 ``quote_source_restricted``\n(#3059, owner decision R5-2); returning one to pending is always allowed.",
         "operationId": "update_promotion_promotions__promotion_id__patch",
         "parameters": [
           {
@@ -32278,6 +32471,99 @@
         ]
       }
     },
+    "/user/vault-classification-key": {
+      "delete": {
+        "description": "Delete the copy of the caller's provider key kept for their vault's sorting (R1-1).\n\nThe device calls this the moment its writer removes or replaces their key,\nso a background classification can never again spend a key the writer has\ntaken back. A replacement is kept again the next time it is relayed for a\nclassification admission. Keyed on the caller's own token -- there is no\nid a request could aim at another account -- and idempotent: an account\nwith no stored key is answered 204 too.",
+        "operationId": "delete_vault_classification_key_user_vault_classification_key_delete",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "The request body could not be parsed, or a value it carried was refused."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "No usable credential was presented."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "The caller is authenticated but does not own the resource."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "No such resource -- or none this caller is allowed to see."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ValidationErrorResponse"
+                }
+              }
+            },
+            "description": "The request failed validation -- an array of rejected fields -- or a check applied after the schema refused it, as one snake_case code."
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "The caller went past a rate limit."
+          }
+        },
+        "summary": "Delete Vault Classification Key",
+        "tags": [
+          "botmason"
+        ]
+      }
+    },
     "/user/vault-key-vendors": {
       "get": {
         "description": "Ask the caller's vault which vendors' writer keys it would write with (#3437).\n\nThe one usage-adjacent read that dials, kept apart from ``GET /user/usage``\nso a price snapshot still never resolves or reaches a vault. Only a\nvault-bound caller is asked about; the probe is the capability handshake,\nwhich carries no stored writing and no key. Empty for an app-provider\ncaller, an unreachable vault, and any vault that advertises none (Creek\ncontract 0.18 ``request_key_providers``).",
@@ -32675,6 +32961,132 @@
           }
         },
         "summary": "Export My Journal As Markdown",
+        "tags": [
+          "export"
+        ]
+      }
+    },
+    "/users/me/export/vault": {
+      "get": {
+        "description": "Stream what the caller's own vault holds of theirs, as one JSON file (#3579).\n\nThe vault is the one the owner-safe resolver gives this token -- the\ncaller's own connection, never one named by the request, which carries\nnothing at all. The first page is read before anything is sent, so a vault\nthat is absent, asleep, too old or refusing answers a coded refusal rather\nthan an empty file; a failure after that ends the file marked incomplete.",
+        "operationId": "export_my_vault_users_me_export_vault_get",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {}
+            },
+            "description": "What the caller's Creek Vault holds of theirs, streamed as one JSON document whose trailing ``complete`` says whether every page and item is in it."
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "The request body could not be parsed, or a value it carried was refused."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "No usable credential was presented."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "The caller is authenticated but does not own the resource."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "No such resource -- or none this caller is allowed to see."
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "The request conflicts with the resource's current state."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ValidationErrorResponse"
+                }
+              }
+            },
+            "description": "The request failed validation -- an array of rejected fields -- or a check applied after the schema refused it, as one snake_case code."
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "The caller went past a rate limit."
+          },
+          "502": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "An upstream dependency this route relies on failed."
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "A required dependency is temporarily unusable."
+          }
+        },
+        "summary": "Export My Vault",
         "tags": [
           "export"
         ]
@@ -33818,7 +34230,7 @@
         ]
       },
       "get": {
-        "description": "Report whether this account has connected a vault, and where it points.\n\nNever a 404 for an account that has connected nothing: \"you have no vault\"\nis an answer about a resource that exists conceptually for every account,\nnot a missing resource, and answering it plainly is what lets a client\nrender the connect affordance without first handling an error.",
+        "description": "Report whether this account has a vault, which kind, and where it points.\n\nNever a 404 for an account that has connected nothing: \"you have no vault\"\nis an answer about a resource that exists conceptually for every account,\nnot a missing resource, and answering it plainly is what lets a client\nrender the connect affordance without first handling an error.",
         "operationId": "get_vault_connection_vault_connection_get",
         "parameters": [
           {

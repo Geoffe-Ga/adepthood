@@ -19,7 +19,7 @@ email with a link in it: the app asks the server for your archive, saves it to
 this device, and hands it to the share sheet so you can put it wherever you
 keep things.
 
-You get two files.
+You get two files, and a third if you use a Creek Vault.
 
 - **`adepthood-export-<date>.json`** — everything, in a format that can be read
   back in. Your entries, their titles, tags and privacy tiers; your habits,
@@ -30,8 +30,10 @@ You get two files.
   your own sentences, classified into the ten frequencies.
 - **`adepthood-journal-<date>.md`** — the journal alone, as Markdown, oldest
   first. This is the one to open if you want to *read* it.
+- **`adepthood-vault-<date>.json`** — what your Creek Vault holds of yours.
+  See [If you use a Creek Vault](#if-you-use-a-creek-vault) below.
 
-Entries you deleted are in neither file.
+Entries you deleted are in neither of the first two files.
 
 Your entries are stored encrypted, and the export decrypts them. What you get
 is what you wrote, not what the database holds. Anyone who gets hold of the
@@ -45,8 +47,9 @@ Three kinds of thing, and the archive itself lists them under `not_included`
 with the reason for each, so the file can be trusted about what it does contain.
 
 1. **Secrets.** Your password hash, your sign-in links to Google or Apple, any
-   outstanding password-reset token, and the key to a Creek Vault you
-   connected. A working credential in a file on a laptop is a credential
+   outstanding password-reset token, the key to a Creek Vault you
+   connected, and the encrypted copy of your own AI provider key that a
+   managed vault sorts your writing with. A working credential in a file on a laptop is a credential
    somebody else can use.
 2. **Records the system kept about your usage rather than things you wrote.**
    Sign-in attempts and the addresses they came from, AI metering, wallet
@@ -57,8 +60,28 @@ with the reason for each, so the file can be trusted about what it does contain.
 
 ### If you use a Creek Vault
 
-The export covers your Adepthood data. Your vault holds its own copy and
-exports from its own side; nothing here reaches into it. An ordinary managed
+The first two files cover your Adepthood data. The third,
+**`adepthood-vault-<date>.json`**, is what your vault holds of yours: every
+document and attachment you imported, as its original bytes (base64, with a
+SHA-256 so you can check each one), and every fragment the vault made of your
+writing, verbatim, with its privacy tier, frequency and phase. Intimate
+fragments are included — it is your writing, coming back to you. For a managed
+vault this matters most: it holds the only copy of a document you imported, and
+you cannot reach it except through Adepthood, so this file is how you take
+those documents with you. (A document's original filename is not in it —
+Adepthood never kept your filenames, only the file type.)
+
+It is a separate file so the first two still download when your vault is
+asleep or unreachable. When the vault cannot answer, the app says so — "your
+vault is asleep or unreachable", or "your vault needs an update before its
+content can be exported" — rather than saving an empty file. If the vault stops
+answering partway through, the file ends with `"complete": false` and an
+`incomplete_reason`, keeping everything read so far; a file is only marked
+`"complete": true` when every page was read and every item included. Try again
+for a whole copy. Nothing of what the file contains is logged — only that an
+export ran, and how many items it carried.
+
+An ordinary managed
 Fly vault is provider-managed and operator-readable, not confidential compute:
 Fly and privileged Adepthood or Creek operators can access its stored bytes.
 If the vault's own deployment allows it a cloud model (its
@@ -82,7 +105,8 @@ ready for your account it is not read, sorted or kept anywhere.
 
 ### That an export happened is recorded
 
-The server notes the date, your account id, and how many records went — and
+The server notes the date, your account id, and how many records went — for a
+vault export, how many documents and fragments and whether it was complete — and
 nothing else. Not a line of what the archive said. The same rule as the
 deletion receipt, for the same reason.
 

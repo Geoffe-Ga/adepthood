@@ -528,12 +528,21 @@ MANIFEST: Mapping[str, ExportRule] = {
     "uservaultconfig": Omitted(
         "The Creek Vault the account connected, and the key that opens it. "
         "The key is a live secret for a system this export has no business "
-        "copying into a plaintext file. The vault's own contents are "
-        "exported from the vault.",
+        "copying into a plaintext file. What the vault holds of the account's "
+        "— imported documents, attachments and their fragments, every tier "
+        "— is exported separately, by GET /users/me/export/vault, so this "
+        "archive still downloads when the vault is asleep.",
     ),
     "vaultactivation": Omitted(
         "Private-vault provisioning state and opaque control-plane handles. "
         "They describe application housekeeping, not anything the account wrote.",
+    ),
+    "vaultclassificationkey": Omitted(
+        "The account's own AI provider key, kept encrypted only so its vault "
+        "can sort new writing in the background (R1-1). It is a live secret "
+        "for the account's own provider account, which this export has no "
+        "business copying into a plaintext file; the account already holds "
+        "the key on its own device.",
     ),
     "vaultpipelinefollowup": Omitted(
         "Content-free scheduling state saying a newer vault write needs one "
@@ -544,7 +553,8 @@ MANIFEST: Mapping[str, ExportRule] = {
         "Scheduling state: when adepthood last asked the account's vault to "
         "classify and link itself. It describes this app's housekeeping "
         "rather than anything the account wrote, and the ontology the passes "
-        "produced lives in the vault, which exports itself.",
+        "produced lives in the vault, whose contents GET /users/me/export/vault "
+        "exports.",
     ),
     "vaultteardownreceipt": Omitted(
         "Content-free post-deletion reconciliation state. It has no account "

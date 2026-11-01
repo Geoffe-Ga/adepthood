@@ -59,7 +59,7 @@ from __future__ import annotations
 import enum
 import json
 import logging
-from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
+from collections.abc import AsyncIterator, Awaitable, Callable, Iterator, Sequence
 from dataclasses import dataclass, field, replace
 from datetime import date
 from http import HTTPStatus
@@ -70,7 +70,11 @@ import httpx
 import httpx2
 import pytest
 import pytest_asyncio
+from cryptography.fernet import Fernet
 from httpx import AsyncClient
+from sqlalchemy import column as sql_column
+from sqlalchemy import select as sql_select
+from sqlalchemy import table as sql_table
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import SQLModel, col, select
 
@@ -81,7 +85,7 @@ from models.journal_entry import JournalEntry
 from models.marginalia import Marginalia, MarginaliaKind
 from models.user import User
 from routers import transcription as transcription_router
-from services import botmason, creek_vault_url_resolution
+from services import botmason, creek_vault_url_resolution, journal_encryption
 from services import frequency_classification as frequency_classification_service
 from services import marginalia as marginalia_service
 from services.botmason import ImagePayload, LLMResponse
@@ -1197,24 +1201,65 @@ async def test_the_vendor_read_discloses_the_vendors_a_managed_vault_writes_with
     assert harness.edge.keyed() == []
 
 
-# ── The canary: the relayed key leaves no trace (#3437) ───────────────────────
+# ── The canary: the relayed key leaves no trace but its own ciphertext (#3437, R1-1) ──
 
 _CANARY_KEYS: Final = (
     "sk-ant-api03-CANARY3437relayedKEYneverSTOREDzz",  # pragma: allowlist secret
     "sk-proj-CANARY3437relayedKEYneverSTOREDzz",  # pragma: allowlist secret
 )
 
+#: The one place a relayed key may rest: an un-enrolled writer's stored copy,
+#: kept encrypted for their vault's background classification (ADR 0009,
+#: amendment 2026-11-01). Everywhere else -- every other column of every table,
+#: decrypted or not -- the key must be absent.
+_STORED_KEY_COLUMN: Final = ("vaultclassificationkey", "api_key")
 
-async def _database_text(session: AsyncSession) -> str:
-    """Every row of every table, rendered: the persisted state a key could hide in."""
+
+@pytest.fixture
+def _at_rest_encryption(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
+    """Configure a throwaway at-rest key, as production must; reset the cached registry."""
+    monkeypatch.setenv(journal_encryption.KEYS_ENV_VAR, Fernet.generate_key().decode())
+    journal_encryption.reset_cache()
+    yield
+    journal_encryption.reset_cache()
+
+
+async def _database_text(session: AsyncSession, *, raw: bool) -> str:
+    """Every row of every table, rendered: the persisted state a key could hide in.
+
+    ``raw`` reads the stored bytes past every codec -- what a stolen disk holds.
+    Otherwise every column is read through the ORM types, decrypted, except the
+    stored key's own column, which is the single permitted home of the key.
+    """
     rendered: list[str] = []
     for table in SQLModel.metadata.sorted_tables:
-        result = await session.execute(table.select())
+        names = [
+            column.name
+            for column in table.columns
+            if raw or (table.name, column.name) != _STORED_KEY_COLUMN
+        ]
+        if raw:
+            source = sql_table(table.name, *(sql_column(name) for name in names))
+            statement = sql_select(*(source.c[name] for name in names))
+        else:
+            statement = sql_select(*(table.c[name] for name in names))
+        result = await session.execute(statement)
         rendered.append(repr(result.all()))
     return "\n".join(rendered)
 
 
+async def _stored_key_column(session: AsyncSession) -> tuple[list[str], list[str]]:
+    """The stored-key column as written (raw) and as the codec reads it (decrypted)."""
+    table_name, column_name = _STORED_KEY_COLUMN
+    raw_source = sql_table(table_name, sql_column(column_name))
+    raw = (await session.execute(sql_select(raw_source.c[column_name]))).scalars().all()
+    orm = SQLModel.metadata.tables[table_name].c[column_name]
+    decrypted = (await session.execute(sql_select(orm))).scalars().all()
+    return [str(value) for value in raw], [str(value) for value in decrypted]
+
+
 @pytest.mark.asyncio
+@pytest.mark.usefixtures("_at_rest_encryption")
 @pytest.mark.parametrize("canary", _CANARY_KEYS, ids=["anthropic", "openai"])
 async def test_a_relayed_key_is_never_logged_persisted_or_echoed(
     harness: Harness,
@@ -1225,7 +1270,11 @@ async def test_a_relayed_key_is_never_logged_persisted_or_echoed(
 
     The canary must reach the vault -- that is the feature -- and nowhere else:
     not a response body or header, not a log record at any level (the vault
-    client's and the SDKs' DEBUG included), and not a row in any table.
+    client's and the SDKs' DEBUG included), and not a row in any table, with
+    one exception (R1-1): the writer's stored copy, kept for background
+    classification, in its own encrypted column. That column must hold
+    ciphertext that decrypts to the key and never the key itself, so the raw
+    sweep -- every column of every table, read past the codec -- finds nothing.
     """
     writer = await _vault_bound_writer(harness, f"canary_{canary[:6]}")
     await _arrange_entry(harness.client, harness.session, writer)
@@ -1260,4 +1309,9 @@ async def test_a_relayed_key_is_never_logged_persisted_or_echoed(
     for record in caplog.records:
         assert canary not in record.getMessage()
         assert canary not in str(record.__dict__)
-    assert canary not in await _database_text(harness.session)
+    assert canary not in await _database_text(harness.session, raw=True)
+    assert canary not in await _database_text(harness.session, raw=False)
+    raw, decrypted = await _stored_key_column(harness.session)
+    assert decrypted == [canary]
+    assert all(journal_encryption.is_ciphertext(value) for value in raw)
+    assert all(canary not in value for value in raw)

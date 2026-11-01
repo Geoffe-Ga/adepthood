@@ -11,9 +11,11 @@
 # on it. We put a fake, arg-aware `gh` on PATH and assert every classification.
 #
 # Three further dimensions are pinned here: a `do-not-auto-merge` opt-out that
-# short-circuits every other check; a freshness guard proving `CLEAN` alone
-# never means "up to date with main" — plus that the freshness probe stays LAZY
-# (a pending/red/unreviewed lane must never pay for it); and `ready-unreviewed`,
+# short-circuits every other check; the merge gate's conflict rule — being BEHIND
+# main is NOT a blocker (a behind-but-conflict-free reviewed lane is `ready`),
+# while a conflicting one is `conflicted` and an uncomputed one `unknown` — plus
+# that the compare probe, which now guards only `ready-unreviewed`, stays LAZY
+# (no reviewed, pending, red, or unreviewed lane ever pays for it); and `ready-unreviewed`,
 # the token for a Dependabot PR whose review gate provably cannot run, which must
 # stay tight enough that no human PR ever reaches it — so "green" has to mean CI
 # actually ran (an all-skipped rollup is not a review), the bot has to have pushed
@@ -308,9 +310,11 @@ fi
 check "green + CLEAN + fresh LGTM → ready" "ready" \
   "$(CHECKS_EC=0 MERGE_STATE=CLEAN HEAD_DATE=$H VERDICT="$FRESH|true" run 100)"
 
-# --- behind: green + fresh LGTM but not up-to-date -------------------------
-check "green + BEHIND + fresh LGTM → behind" "behind" \
-  "$(CHECKS_EC=0 MERGE_STATE=BEHIND HEAD_DATE=$H VERDICT="$FRESH|true" run 100)"
+# --- behind main is not a blocker: only a conflict is ----------------------
+# Owner rule: a PR need not be brought up to the current main before merging. If
+# GitHub reports no merge conflict, a lane that passed every other gate merges.
+check "green + BEHIND (conflict-free) + fresh LGTM → ready" "ready" \
+  "$(CHECKS_EC=0 MERGE_STATE=BEHIND HEAD_DATE=$H VERDICT="$FRESH|true" BEHIND_BY=9 run 100)"
 
 # --- a PR editing the review workflow is a terminal state, not a wait -------
 # claude-code-action self-skips (anti-tamper) on any PR that edits the workflow
@@ -404,8 +408,8 @@ check "an UNKNOWN-mergeability PR with no verdict still awaits review" "awaiting
 check "a conflicting PR with a FRESH non-LGTM is still changes-requested" "changes-requested" \
   "$(CHECKS_EC=0 MERGE_STATE=DIRTY HEAD_DATE=$H VERDICT="$FRESH|false" run 100)"
 
-# CLEAN-but-stale is the one case `behind` still means, and it must survive.
-check "green + CLEAN + stale head → behind" "behind" \
+# CLEAN-but-behind is conflict-free, so it is no longer held back for a sync.
+check "green + CLEAN + 3 commits behind → ready" "ready" \
   "$(CHECKS_EC=0 MERGE_STATE=CLEAN HEAD_DATE=$H VERDICT="$FRESH|true" BEHIND_BY=3 run 100)"
 
 # A state nobody has enumerated must not silently become `ready`; it falls back
@@ -452,10 +456,10 @@ check "malformed verdict flag → awaiting-review, never changes-requested" "awa
 check "green + CLEAN + current + fresh COMMENTS → ready-comments" "ready-comments" \
   "$(CHECKS_EC=0 MERGE_STATE=CLEAN HEAD_DATE=$H VERDICT="$FRESH|false|true" BEHIND_BY=0 run 100)"
 
-check "fresh COMMENTS but BEHIND → behind" "behind" \
+check "fresh COMMENTS + BEHIND (conflict-free) → ready-comments" "ready-comments" \
   "$(CHECKS_EC=0 MERGE_STATE=BEHIND HEAD_DATE=$H VERDICT="$FRESH|false|true" run 100)"
 
-check "fresh COMMENTS + CLEAN but compare says stale → behind" "behind" \
+check "fresh COMMENTS + CLEAN + 3 commits behind → ready-comments" "ready-comments" \
   "$(CHECKS_EC=0 MERGE_STATE=CLEAN HEAD_DATE=$H VERDICT="$FRESH|false|true" BEHIND_BY=3 run 100)"
 
 check "fresh COMMENTS + conflicting → conflicted" "conflicted" \
@@ -614,12 +618,12 @@ check "hold on a changelog-linked issue is not this PR's hold" "ready" \
   "$(CHECKS_EC=0 MERGE_STATE=CLEAN HEAD_DATE=$H VERDICT="$FRESH|true" BEHIND_BY=0 \
      PR_BODY="$CHANGELOG_BODY" ISSUE_LABELS_FOR=456 ISSUE_LABELS="$OPTOUT" run 100)"
 
-# --- freshness: CLEAN is NOT proof of being up to date with main ------------
-# GitHub only reports BEHIND when the base branch enforces strict status checks,
-# which this repo does not. A grouped pip bump sitting 17 commits behind main can
-# be MERGEABLE+CLEAN with its own checks green; merging it lands a ruff major bump
-# that was never compiled against today's main and turns main red.
-check "green + CLEAN + fresh LGTM but 17 commits behind → behind" "behind" \
+# --- the merge gate is a CONFLICT check, not a freshness check -------------
+# Owner rule (2026-10-31): PRs do not need to be brought up to the current main
+# before merging; with no merge conflict, a PR that passed every other gate
+# merges. So a reviewed lane's readiness never depends on `behind_by` — however
+# far behind, and even when the compare API cannot be asked at all.
+check "green + CLEAN + fresh LGTM but 17 commits behind → ready" "ready" \
   "$(CHECKS_EC=0 MERGE_STATE=CLEAN HEAD_DATE=$H VERDICT="$FRESH|true" \
      BEHIND_BY=17 run 100)"
 
@@ -627,32 +631,32 @@ check "green + CLEAN + fresh LGTM + behind_by 0 → ready" "ready" \
   "$(CHECKS_EC=0 MERGE_STATE=CLEAN HEAD_DATE=$H VERDICT="$FRESH|true" \
      BEHIND_BY=0 run 100)"
 
-check "green + CLEAN + fresh LGTM + behind_by 1 → behind" "behind" \
+check "a broken compare API cannot hold back a reviewed lane" "ready" \
   "$(CHECKS_EC=0 MERGE_STATE=CLEAN HEAD_DATE=$H VERDICT="$FRESH|true" \
-     BEHIND_BY=1 run 100)"
+     COMPARE_EC=1 BEHIND_BY='' run 100)"
 
-# Fail closed: an unusable freshness answer must never be read as up-to-date.
-check "compare API error → behind" "behind" \
-  "$(CHECKS_EC=0 MERGE_STATE=CLEAN HEAD_DATE=$H VERDICT="$FRESH|true" \
-     COMPARE_EC=1 BEHIND_BY=0 run 100)"
-
-check "compare returns empty → behind" "behind" \
-  "$(CHECKS_EC=0 MERGE_STATE=CLEAN HEAD_DATE=$H VERDICT="$FRESH|true" \
-     BEHIND_BY='' run 100)"
-
-check "compare returns non-numeric → behind" "behind" \
-  "$(CHECKS_EC=0 MERGE_STATE=CLEAN HEAD_DATE=$H VERDICT="$FRESH|true" \
-     BEHIND_BY=null run 100)"
-
-# behind_by is irrelevant once GitHub already says BEHIND.
-check "green + BEHIND + fresh LGTM + behind_by 0 → behind" "behind" \
+check "green + BEHIND + fresh LGTM + behind_by 17 → ready" "ready" \
   "$(CHECKS_EC=0 MERGE_STATE=BEHIND HEAD_DATE=$H VERDICT="$FRESH|true" \
+     BEHIND_BY=17 run 100)"
+
+# A conflict is still a hard stop, behind or not: it must merge main in and
+# resolve first. DIRTY and CONFLICTING are GitHub's two spellings of it.
+check "behind AND conflicting (DIRTY) + fresh LGTM → conflicted" "conflicted" \
+  "$(CHECKS_EC=0 MERGE_STATE=DIRTY HEAD_DATE=$H VERDICT="$FRESH|true" \
+     BEHIND_BY=17 run 100)"
+check "behind AND conflicting (CONFLICTING) + fresh LGTM → conflicted" "conflicted" \
+  "$(CHECKS_EC=0 MERGE_STATE=CONFLICTING HEAD_DATE=$H VERDICT="$FRESH|true" \
+     BEHIND_BY=17 run 100)"
+
+# Mergeability GitHub has not finished computing is "not yet known", never clear.
+check "uncomputed mergeability (UNKNOWN) + fresh LGTM → unknown, never ready" "unknown" \
+  "$(CHECKS_EC=0 MERGE_STATE=UNKNOWN HEAD_DATE=$H VERDICT="$FRESH|true" \
      BEHIND_BY=0 run 100)"
 
-# --- laziness: only a would-be-ready lane may pay for the compare probe -----
-# FLEET.md makes syncing lazy; probing freshness on every unready lane would make
-# the orchestrator sync-thrash. BEHIND_BY=17 stays set to prove the token comes
-# from the earlier check, not from a probe.
+# --- laziness: only a would-be-ready-UNREVIEWED lane pays for the compare probe
+# The compare probe survives only as part of `ready-unreviewed`'s review
+# substitute (see below). Every reviewed lane — ready, ready-comments — and every
+# lane that is not one step from merging must never call it.
 S_PENDING="$WORK/compare-pending"
 check "pending stays pending with a stale branch" "pending" \
   "$(CHECKS_EC=8 BEHIND_BY=17 COMPARE_SENTINEL="$S_PENDING" run 100)"
@@ -671,10 +675,16 @@ check "stale verdict stays awaiting-review with a stale branch" "awaiting-review
 probed "unreviewed lane never probes freshness" "no" "$S_REVIEW"
 
 S_READY="$WORK/compare-ready"
-check "ready lane still classifies as ready" "ready" \
+check "a reviewed lane behind main classifies as ready" "ready" \
   "$(CHECKS_EC=0 MERGE_STATE=CLEAN HEAD_DATE=$H VERDICT="$FRESH|true" \
-     BEHIND_BY=0 COMPARE_SENTINEL="$S_READY" run 100)"
-probed "would-be-ready lane does probe freshness" "yes" "$S_READY"
+     BEHIND_BY=17 COMPARE_SENTINEL="$S_READY" run 100)"
+probed "a reviewed would-be-ready lane never probes freshness" "no" "$S_READY"
+
+S_RCOMMENTS="$WORK/compare-ready-comments"
+check "a COMMENTS lane behind main classifies as ready-comments" "ready-comments" \
+  "$(CHECKS_EC=0 MERGE_STATE=CLEAN HEAD_DATE=$H VERDICT="$FRESH|false|true" \
+     BEHIND_BY=17 COMPARE_SENTINEL="$S_RCOMMENTS" run 100)"
+probed "a ready-comments lane never probes freshness" "no" "$S_RCOMMENTS"
 
 S_OPTOUT="$WORK/compare-optout"
 check "opt-out lane classifies as optout" "optout" \
@@ -722,11 +732,30 @@ check "reviewless setup but WITH a fresh LGTM → plain ready" "ready" \
   "$(CHECKS_EC=0 MERGE_STATE=CLEAN HEAD_DATE=$H VERDICT="$FRESH|true" ISSUE_LIST_JSON="$BRIDGED" \
      PR_AUTHOR="$DEPENDABOT" REVIEW_CONCLUSIONS="$SKIPPED" BEHIND_BY=0 run 100)"
 
-# With the review gate gone the freshness guard carries the whole safety burden,
-# so it must still bind exactly as hard as it does on the `ready` path.
+# With the review gate gone, "green CI verified against CURRENT main" IS the
+# review substitute for this one PR class, so the freshness probe is part of its
+# review gate (not a merge-currency rule) and still binds here — the owner's
+# behind-is-fine rule clears behind PRs that passed every OTHER gate, and an
+# unreviewed bump that is behind has not passed its review gate. A sync makes the
+# real review runnable and lands it on the normal `ready` path.
 check "reviewless + 17 commits behind → behind, never ready-unreviewed" "behind" \
-  "$(CHECKS_EC=0 MERGE_STATE=CLEAN HEAD_DATE=$H VERDICT="$NO_VERDICT" \
+  "$(CHECKS_EC=0 MERGE_STATE=CLEAN HEAD_DATE=$H VERDICT="$NO_VERDICT" ISSUE_LIST_JSON="$BRIDGED" \
      PR_AUTHOR="$DEPENDABOT" REVIEW_CONCLUSIONS="$SKIPPED" BEHIND_BY=17 run 100)"
+
+check "reviewless + GitHub BEHIND → behind, never ready-unreviewed" "behind" \
+  "$(CHECKS_EC=0 MERGE_STATE=BEHIND HEAD_DATE=$H VERDICT="$NO_VERDICT" ISSUE_LIST_JSON="$BRIDGED" \
+     PR_AUTHOR="$DEPENDABOT" REVIEW_CONCLUSIONS="$SKIPPED" BEHIND_BY=0 run 100)"
+
+check "reviewless + compare API error → behind (fail closed)" "behind" \
+  "$(CHECKS_EC=0 MERGE_STATE=CLEAN HEAD_DATE=$H VERDICT="$NO_VERDICT" ISSUE_LIST_JSON="$BRIDGED" \
+     PR_AUTHOR="$DEPENDABOT" REVIEW_CONCLUSIONS="$SKIPPED" COMPARE_EC=1 BEHIND_BY=0 run 100)"
+
+S_UNREVIEWED="$WORK/compare-ready-unreviewed"
+check "a current reviewless bump → ready-unreviewed" "ready-unreviewed" \
+  "$(CHECKS_EC=0 MERGE_STATE=CLEAN HEAD_DATE=$H VERDICT="$NO_VERDICT" ISSUE_LIST_JSON="$BRIDGED" \
+     PR_AUTHOR="$DEPENDABOT" REVIEW_CONCLUSIONS="$SKIPPED" BEHIND_BY=0 \
+     COMPARE_SENTINEL="$S_UNREVIEWED" run 100)"
+probed "the would-be-ready-unreviewed lane does probe freshness" "yes" "$S_UNREVIEWED"
 
 # Was `behind` until the non-actionable states were split out. The property this
 # case exists for is unchanged and is what the name states: a conflicting bot PR
@@ -1054,8 +1083,10 @@ out="$(CHECKS_EC=1 CI_CONFIRM_JSON="$FAILED_ROLLUP" PR_AUTHOR="$DEPENDABOT" \
 check "an unprovable hold still reports ci-failed" "ci-failed" "$out"
 check "an unprovable hold does not fail a red lane" "0" "$rc"
 
+# (A reviewless bump that is behind is the lane still routed to a sync.)
 rc=0
-out="$(CHECKS_EC=0 MERGE_STATE=CLEAN HEAD_DATE=$H VERDICT="$FRESH|true" BEHIND_BY=17 \
+out="$(CHECKS_EC=0 MERGE_STATE=CLEAN HEAD_DATE=$H VERDICT="$NO_VERDICT" BEHIND_BY=17 \
+   REVIEW_CONCLUSIONS="$SKIPPED" \
    PR_AUTHOR="$DEPENDABOT" PR_BODY="$REWRITTEN_BODY" ISSUE_LIST_JSON='[]' run 100)" || rc=$?
 check "an unprovable hold still reports behind" "behind" "$out"
 check "an unprovable hold does not fail a stale lane" "0" "$rc"

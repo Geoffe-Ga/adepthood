@@ -616,6 +616,10 @@ RETENTION: Mapping[str, RetentionRule] = {
     "useruiflags": until_account_deletion("One-time interface state."),
     "uservaultconfig": until_account_deletion("The connected vault and its credential."),
     "vaultactivation": until_account_deletion("Content-free managed-vault provisioning handle."),
+    "vaultclassificationkey": until_account_deletion(
+        "The writer's stored provider key; also deleted on removal, replacement, "
+        "vault disconnect, vendor rejection and enrolment."
+    ),
     "vaultpipelinefollowup": until_account_deletion("Content-free scheduling marker."),
     "vaultpipelinerun": until_account_deletion("Content-free vault pipeline progress."),
     "vaultteardownreceipt": nightly(

@@ -78,6 +78,21 @@ import { fileURLToPath } from 'node:url';
  * `reply: 'unreadable'`, so a journey can prove the vault kept a document the
  * server could not confirm.
  *
+ * `GET /v1/export` (contract 0.27, Creek-Vault#2033, #3579) is the owner's paged
+ * export, and it is opt-in like classification: by default this vault predates
+ * it. `POST /__lane/advertise-export` names `export` and lists 0.27, as a vault
+ * on the merged image does; `POST /__lane/advertise-export-unserved` names
+ * `export` but lists 0.26 at most, as a vault whose handshake overstated itself
+ * does; `POST /__lane/withdraw-export` restores the default. While served, the
+ * read answers two fixed, synthetic pages joined by a minted `next_cursor`: a
+ * staged canary document whose base64 bytes match its own `sha256` and
+ * `size_bytes`, and fragments including one `intimate` canary. Every item is
+ * built over the published `export` success cell (read verbatim from the
+ * vendored 0.27 bundle and checked key-for-key at startup), so a drifted
+ * contract fails the lane at boot. `GET /__lane/export-pages` hands a journey
+ * those same two pages, so it can prove the saved file is exactly what the
+ * vault held without reading backend files.
+ *
  * `GET /__lane/uploads` reports what actually arrived: every `/v1` request in
  * order, and the fragments the ledger holds. Requests are recorded by shape and
  * by a digest of the bytes, never by the bytes -- which is what lets a spec
@@ -106,6 +121,22 @@ const READING_MINOR = '0.25';
 /** The minor whose failed job names why (Creek contract 0.26, Creek-Vault#1877). */
 const FAILURE_CODE_MINOR = '0.26';
 let readingsAdvertised = false;
+/** The minor of Creek's owner export (contract 0.27, Creek-Vault#2033, #3579). */
+const EXPORT_MINOR = '0.27';
+/** What a vault that names `export` but predates it lists at most. */
+const PRE_EXPORT_MINOR = '0.26';
+/**
+ * How this vault answers for the owner export: `absent` (the default -- a vault
+ * on an image before 0.27), `served` (names `export` and lists 0.27), or
+ * `unserved` (names `export` but lists only 0.26, so it may not be asked).
+ */
+let exportMode = 'absent';
+/** The control route that sets each {@link exportMode}. */
+const EXPORT_CONTROLS = new Map([
+  ['/__lane/advertise-export', 'served'],
+  ['/__lane/advertise-export-unserved', 'unserved'],
+  ['/__lane/withdraw-export', 'absent'],
+]);
 const CONTRACT_HEADER = 'x-creek-contract-version';
 const CEILING_HEADER = 'x-creek-tier-ceiling';
 
@@ -184,6 +215,119 @@ const RELATED_PAGES = {
 const NO_RELATED_PAGES = { related_eddies: [], related_praxis: [] };
 /** One reflection a journey armed to carry {@link RELATED_PAGES}. */
 let relatedPagesArmed = false;
+/**
+ * Creek's published `export` success cell, verbatim from the vendored 0.27
+ * bundle. Its items are the shape every page item below is built over.
+ */
+const EXPORT_SUCCESS = JSON.parse(
+  readFileSync(
+    fileURLToPath(
+      new URL(
+        '../../backend/tests/fixtures/creek_export_v027/examples/export/success.json',
+        import.meta.url,
+      ),
+    ),
+    'utf8',
+  ),
+);
+
+/** One item over a published cell's own keys: a key it lacks, or one more, refuses to boot. */
+function shapedLike(cell, values) {
+  const published = Object.keys(cell).sort().join();
+  if (Object.keys(values).sort().join() !== published) {
+    throw new Error(`a lane export item drifted from the published shape: ${published}`);
+  }
+  return { ...cell, ...values };
+}
+
+/**
+ * The staged canary document: synthetic bytes held only by this vault, never
+ * sent to it by any journey, so finding them in an export proves the vault is
+ * where they came from.
+ */
+const EXPORT_CANARY_BYTES = Buffer.from(
+  'Lane canary document. Synthetic text this vault holds and nothing else does.\n',
+  'utf8',
+);
+const EXPORT_CANARY_DOCUMENT_ID = 'adepthood-upload-lanecanary3579.md';
+const EXPORT_DOCUMENT = shapedLike(EXPORT_SUCCESS.documents[0], {
+  content_base64: EXPORT_CANARY_BYTES.toString('base64'),
+  content_included: true,
+  document_id: EXPORT_CANARY_DOCUMENT_ID,
+  sha256: createHash('sha256').update(EXPORT_CANARY_BYTES).digest('hex'),
+  size_bytes: EXPORT_CANARY_BYTES.length,
+});
+
+/** A fragment file as Creek stores it: frontmatter, then the synthetic body. */
+function fragmentFile(fragmentId, tier, body) {
+  return `---\ntype: fragment\nid: ${fragmentId}\nprivacy_tier: ${tier}\n---\n${body}\n`;
+}
+
+function exportFragment(fragmentId, tier, labels, body) {
+  return shapedLike(EXPORT_SUCCESS.fragments[0], {
+    content_included: true,
+    document_id: labels.documentId,
+    fragment_id: fragmentId,
+    frequency: labels.frequency,
+    markdown: fragmentFile(fragmentId, tier, body),
+    phase: labels.phase,
+    source_platform: labels.sourcePlatform,
+    tier,
+  });
+}
+
+/** The cursor page one mints for page two: `f-` and a SHA-256 order key, never a name. */
+const EXPORT_SECOND_CURSOR = `f-${createHash('sha256').update('lane-export-page-2').digest('hex')}`;
+
+/**
+ * The two pages this vault's owner export answers: the canary document and the
+ * fragment classified from it, then -- behind the cursor -- an Intimate canary
+ * and an open fragment. Synthetic text only.
+ */
+const EXPORT_PAGES = [
+  shapedLike(EXPORT_SUCCESS, {
+    documents: [EXPORT_DOCUMENT],
+    fragments: [
+      exportFragment(
+        'frag-lane-export-0001',
+        'personal',
+        {
+          documentId: EXPORT_CANARY_DOCUMENT_ID,
+          frequency: 'F3',
+          phase: 'rising',
+          sourcePlatform: 'document',
+        },
+        'Lane canary fragment, classified from the canary document.',
+      ),
+    ],
+    next_cursor: EXPORT_SECOND_CURSOR,
+    skipped: 0,
+    status: 'ok',
+  }),
+  shapedLike(EXPORT_SUCCESS, {
+    documents: [],
+    fragments: [
+      exportFragment(
+        'frag-lane-export-0002',
+        'intimate',
+        { documentId: null, frequency: 'F7', phase: 'rising', sourcePlatform: 'journal' },
+        'Lane intimate canary. Synthetic text only its owner may take back.',
+      ),
+      exportFragment(
+        'frag-lane-export-0003',
+        'open',
+        { documentId: null, frequency: 'unclassified', phase: 'rising', sourcePlatform: 'journal' },
+        'Lane open fragment on the second page.',
+      ),
+    ],
+    next_cursor: null,
+    skipped: 0,
+    status: 'ok',
+  }),
+];
+/** The query `ExportQuery` publishes, and nothing else. */
+const EXPORT_QUERY_FIELDS = ['cursor', 'limit'];
+
 /** Creek's content-free placeholder title for a Voice Draft stored without one. */
 const VOICE_DRAFT_TITLE = 'Voice draft';
 
@@ -305,20 +449,29 @@ function digestOf(contentBase64) {
   return createHash('sha256').update(String(contentBase64), 'utf8').digest('hex');
 }
 
+/** The minors the owner export adds to the handshake, by {@link exportMode}. */
+function exportMinors() {
+  if (exportMode === 'served') return [EXPORT_MINOR];
+  return exportMode === 'unserved' ? [PRE_EXPORT_MINOR] : [];
+}
+
 function capabilities(response) {
+  const minors = [CONTRACT_MINOR]
+    .concat(readingsAdvertised ? [READING_MINOR] : [])
+    .concat(requestKeysRejected ? [FAILURE_CODE_MINOR] : [])
+    .concat(exportMinors());
   send(response, HTTP_OK, {
     capabilities: ADVERTISED_CAPABILITIES.filter((name) => !lettersHeld || name !== 'letters')
       .concat(pipelineAdvertised ? ['pipeline'] : [])
-      .concat(readingsAdvertised ? ['reading-recommendations'] : []),
+      .concat(readingsAdvertised ? ['reading-recommendations'] : [])
+      .concat(exportMode === 'absent' ? [] : ['export']),
     contract_minor: readingsAdvertised ? READING_MINOR : CONTRACT_MINOR,
     contract_version: readingsAdvertised ? '0.25.0' : CONTRACT_VERSION,
     ...(readingsAdvertised ? { keyless_inference: true } : {}),
     ontology_version: ONTOLOGY_VERSION,
     request_key_providers: requestKeysAdvertised ? REQUEST_KEY_PROVIDERS : [],
     status: 'ok',
-    supported_contract_minors: [CONTRACT_MINOR]
-      .concat(readingsAdvertised ? [READING_MINOR] : [])
-      .concat(requestKeysRejected ? [FAILURE_CODE_MINOR] : []),
+    supported_contract_minors: [...new Set(minors)],
     tier_model: { ceilings: ADMITTED_TIERS, default: 'open', intimate_never_egresses: true },
     vault: { available: true },
   });
@@ -857,6 +1010,55 @@ async function recommendReading(request, response) {
   });
 }
 
+/**
+ * The page a well-formed `ExportQuery` names: the first without a cursor, the
+ * second at the cursor page one minted, or `null` for anything Creek refuses --
+ * a parameter it never published, a limit below one, a cursor it never minted.
+ */
+function exportPageFor(url) {
+  const names = [...url.searchParams.keys()];
+  if (names.some((name) => !EXPORT_QUERY_FIELDS.includes(name))) return null;
+  if (new Set(names).size !== names.length) return null;
+  const limit = url.searchParams.get('limit');
+  if (limit !== null && !(Number.isInteger(Number(limit)) && Number(limit) >= 1)) return null;
+  const cursor = url.searchParams.get('cursor');
+  if (cursor === null) return EXPORT_PAGES[0];
+  return cursor === EXPORT_SECOND_CURSOR ? EXPORT_PAGES[1] : null;
+}
+
+/**
+ * `GET /v1/export` (0.27): one page of the owner's vault-held content.
+ *
+ * Only a call declaring 0.27 to a vault that serves it is answered; anything
+ * else is the `409 incompatible_version` Creek gives a minor it does not list.
+ * Recorded by shape -- the declared minor and whether a cursor rode -- so a
+ * journey can prove both pages were asked for, at 0.27, and nothing else.
+ */
+function exportRead(request, response, url) {
+  request.resume();
+  const declared = request.headers[CONTRACT_HEADER] ?? null;
+  const cursor = url.searchParams.get('cursor');
+  received.push({
+    method: 'GET',
+    path: '/v1/export',
+    externalId: null,
+    tier: null,
+    declared,
+    cursor,
+    ceiling: request.headers[CEILING_HEADER] ?? null,
+  });
+  if (exportMode !== 'served' || declared !== EXPORT_MINOR) {
+    refuse(response, HTTP_INCOMPATIBLE_VERSION, 'incompatible_version');
+    return;
+  }
+  const page = exportPageFor(url);
+  if (page === null) {
+    refuse(response, HTTP_UNPROCESSABLE, 'invalid_request');
+    return;
+  }
+  send(response, HTTP_OK, page);
+}
+
 /** Serve one authorised `/v1` call, or say this vault has no such route. */
 async function capability(request, response, pathname) {
   if (request.method === 'POST' && pathname === '/v1/reading-recommendations') {
@@ -867,6 +1069,10 @@ async function capability(request, response, pathname) {
   if (request.method === 'GET' && pathname === '/v1/capabilities') {
     received.push({ method: 'GET', path: pathname, externalId: null, tier: null, digest: null });
     capabilities(response);
+    return;
+  }
+  if (request.method === 'GET' && pathname === '/v1/export' && exportMode !== 'absent') {
+    exportRead(request, response, new URL(request.url ?? '/', 'http://localhost'));
     return;
   }
   if (request.method === 'GET' && pathname === '/v1/agent-activity') {
@@ -974,6 +1180,18 @@ const server = createServer((request, response) => {
       request.resume();
       readingsAdvertised = pathname === '/__lane/advertise-readings';
       send(response, HTTP_OK, { status: 'ok' });
+      return;
+    }
+    const exportControl = EXPORT_CONTROLS.get(pathname);
+    if (request.method === 'POST' && exportControl !== undefined) {
+      request.resume();
+      exportMode = exportControl;
+      send(response, HTTP_OK, { status: 'ok' });
+      return;
+    }
+    if (request.method === 'GET' && pathname === '/__lane/export-pages') {
+      request.resume();
+      send(response, HTTP_OK, { pages: EXPORT_PAGES });
       return;
     }
     const providerKey = request.headers[PROVIDER_KEY_HEADER];

@@ -197,6 +197,19 @@ vault to exactly one pre-provisioned account used only by those specs: every
 other account in the lane is served the local fallback, which is byte-for-byte
 the behaviour it had before.
 
+Creek's owner export (`GET /v1/export`, contract 0.27, #3579) is opt-in in the
+same way classification is: by default the vault predates it. Only
+`account-export-vault-content.browser.e2e.test.ts` arms it, through
+`POST /__lane/advertise-export` (names `export` and lists 0.27) or
+`POST /__lane/advertise-export-unserved` (names `export` but lists 0.26 at
+most), and puts it back with `POST /__lane/withdraw-export` after each test.
+While served, the read answers two fixed pages of synthetic content -- a staged
+canary document whose bytes match its own SHA-256 and size, then, behind a
+minted cursor, an Intimate canary fragment -- each item built over the vendored
+`creek_export_v027` success cell and checked key-for-key when the fake boots.
+`GET /__lane/export-pages` hands the spec those pages, so it can prove the
+saved file is exactly what the vault held.
+
 `GET /__lane/uploads` reports what actually arrived — every `/v1` request in
 order and the upload, journal, and Voice Draft fragments the ledger holds, by
 kind, identity, action, and a digest of the bytes, never by the bytes. That is

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # scripts/test.sh - Run tests with Pytest
 # Usage: ./scripts/test.sh [--unit|--integration|--e2e|--all] [--coverage]
-#                          [--verbose] [--help] [PATH...]
+#                          [--reuse-verified-unit] [--verbose] [--help] [PATH...]
 
 set -euo pipefail
 
@@ -37,10 +37,26 @@ readonly REFUSED_EXIT_CODE=3
 # failed to obtain. This script used to answer `pytest: command not found` with
 # "✗ Tests failed", which reports a red suite nobody ran.
 readonly MISSING_RUNNER_EXIT_CODE=4
+# pytest's own "no tests collected". Tolerated in exactly one place - the
+# reused run's remainder pass, below - and a failure everywhere else.
+readonly PYTEST_NO_TESTS_COLLECTED_EXIT_CODE=5
+
+# The whole-tree receipt check-all.sh banks after a fully green run, and the one
+# exit code from the receipt primitive that licenses reusing it. "Not verified"
+# (1) and "cannot evaluate" (2) both mean: run everything.
+readonly VERIFIED_SCRIPT="$SCRIPT_DIR/../quality/verified.sh"
+readonly UNIT_RECEIPT_GATE="backend-suite"
+readonly RECEIPT_HIT_EXIT_CODE=0
+# The complement of check-all's unit selection ("not integration and not e2e").
+# Together with the Postgres pass over tests/integration, it is everything the
+# full SQLite pass would have run that the receipt does not already prove.
+readonly REMAINDER_MARKER_EXPRESSION="integration or e2e"
 
 TEST_TYPE="unit"
 COVERAGE=false
 COVERAGE_DATA=false
+REUSE_VERIFIED_UNIT=false
+REUSING_UNIT_VERDICT=false
 VERBOSE=false
 TARGETS=()
 LOCK_HELD=false
@@ -80,6 +96,10 @@ while [[ $# -gt 0 ]]; do
             COVERAGE_DATA=true
             shift
             ;;
+        --reuse-verified-unit)
+            REUSE_VERIFIED_UNIT=true
+            shift
+            ;;
         --verbose)
             VERBOSE=true
             shift
@@ -111,6 +131,16 @@ OPTIONS:
                     callers that report and gate separately (check-all.sh runs
                     the suite once under this flag, then coverage.sh
                     --report-only applies the threshold to the data on disk).
+    --reuse-verified-unit
+                    Only with --all --coverage (the pre-push hook). When a
+                    fresh check-all receipt (verified.sh gate backend-suite)
+                    describes this exact tree, the working tree has no staged,
+                    unstaged or untracked changes, and the pushed sha (if
+                    pre-commit exported PRE_COMMIT_TO_REF) is HEAD, skip the
+                    unit selection and the coverage threshold check-all already
+                    proved, and run only the remainder: integration/e2e-marked
+                    tests outside tests/integration, then tests/integration.
+                    Anything else runs the full --all --coverage suite.
     --verbose       Show detailed output
     --help          Display this help message
 
@@ -283,7 +313,65 @@ warn_if_suite_lock_is_held() {
     fi
 }
 
+unit_verdict_is_reusable() {
+    # Reuse is licensed only by evidence about the commit being pushed. Each
+    # refusal says why on stdout and falls back to the full run: an unusable
+    # receipt is never a test failure, and never permission to skip.
+    local detail="" receipt_status=0
+    detail="$("$VERIFIED_SCRIPT" check "$UNIT_RECEIPT_GATE" 2> /dev/null)" || receipt_status=$?
+    if [ "$receipt_status" -ne "$RECEIPT_HIT_EXIT_CODE" ]; then
+        echo "No fresh check-all receipt describes this tree (verified.sh exited $receipt_status);"
+        echo "running the whole suite."
+        return 1
+    fi
+
+    # The receipt describes the working tree; a push describes a commit. They
+    # are the same tree only when nothing is staged, unstaged or untracked.
+    local changes="" status_exit=0
+    changes="$(git -C "$TREE_ROOT" status --porcelain --untracked-files=all 2> /dev/null)" \
+        || status_exit=$?
+    if [ "$status_exit" -ne 0 ]; then
+        echo "git status failed (exit $status_exit), so the tree cannot be compared with HEAD;"
+        echo "running the whole suite."
+        return 1
+    fi
+    if [ -n "$changes" ]; then
+        echo "The working tree differs from HEAD, so the receipt does not describe the"
+        echo "commit being pushed; running the whole suite."
+        return 1
+    fi
+
+    # pre-commit exports the pushed sha. Pushing anything other than HEAD
+    # pushes a tree the receipt says nothing about.
+    if [ -n "${PRE_COMMIT_TO_REF:-}" ]; then
+        local head="" pushed=""
+        if ! head="$(git -C "$TREE_ROOT" rev-parse --verify --quiet 'HEAD^{commit}')" \
+            || ! pushed="$(git -C "$TREE_ROOT" rev-parse --verify --quiet \
+                "${PRE_COMMIT_TO_REF}^{commit}")" \
+            || [ "$head" != "$pushed" ]; then
+            echo "The pushed commit ($PRE_COMMIT_TO_REF) is not HEAD, so the receipt does not"
+            echo "describe it; running the whole suite."
+            return 1
+        fi
+    fi
+
+    echo "Reusing the verified unit suite and coverage threshold from check-all ($detail)."
+    echo "check-all ran the unit selection under coverage and enforced 90% on it, against"
+    echo "this exact tree; more tests can only raise coverage, so the threshold carries."
+    echo "Still running the remainder it never ran: integration/e2e-marked tests outside"
+    echo "tests/integration, then tests/integration."
+    return 0
+}
+
 trap release_held_locks EXIT INT TERM
+
+if $REUSE_VERIFIED_UNIT \
+    && { [ "$TEST_TYPE" != "all" ] || ! $COVERAGE || $COVERAGE_DATA || [ ${#TARGETS[@]} -gt 0 ]; }; then
+    echo "Error: --reuse-verified-unit applies only to the whole-suite --all --coverage run." >&2
+    echo "It stands in for exactly the unit selection and threshold check-all proves, and" >&2
+    echo "that is the only run that contains them." >&2
+    exit "$USAGE_EXIT_CODE"
+fi
 
 if [ ${#TARGETS[@]} -gt 0 ] && { $COVERAGE || $COVERAGE_DATA; }; then
     echo "Error: coverage cannot be combined with a positional path." >&2
@@ -333,6 +421,15 @@ else
             SQLITE_ARGS=("${PYTEST_ARGS[@]}" --ignore=tests/integration)
             ;;
     esac
+    # Decided under the lock, so no check-all in this tree is mid-run while the
+    # receipt is read.
+    if $REUSE_VERIFIED_UNIT && unit_verdict_is_reusable; then
+        REUSING_UNIT_VERDICT=true
+        # The threshold is already proven; applying it to a partial run would
+        # fail for a reason unrelated to the code under test.
+        COVERAGE=false
+        SQLITE_ARGS+=(-m "$REMAINDER_MARKER_EXPRESSION")
+    fi
 fi
 
 # Add coverage if requested.
@@ -384,7 +481,28 @@ run_pytest() {
     }
 }
 
-if [ "$TEST_TYPE" = "all" ] && [ ${#TARGETS[@]} -eq 0 ]; then
+run_remainder_pytest() {
+    # The reused run's SQLite pass. Its marker can legitimately select nothing,
+    # and pytest reports that as exit 5; every other non-zero code is a failure.
+    local status=0
+    if $VERBOSE; then
+        echo "Running pytest with args: $*"
+    fi
+    pytest "$@" || status=$?
+    if [ "$status" -eq "$PYTEST_NO_TESTS_COLLECTED_EXIT_CODE" ]; then
+        echo "No integration- or e2e-marked tests outside tests/integration; nothing to run there."
+        return 0
+    fi
+    if [ "$status" -ne 0 ]; then
+        echo "✗ Tests failed" >&2
+        exit "$TEST_FAILURE_EXIT_CODE"
+    fi
+}
+
+if [ "$TEST_TYPE" = "all" ] && [ ${#TARGETS[@]} -eq 0 ] && $REUSING_UNIT_VERDICT; then
+    run_remainder_pytest "${SQLITE_ARGS[@]}" "${PYTEST_TARGETS[@]}"
+    run_pytest "${PYTEST_ARGS[@]}" tests/integration
+elif [ "$TEST_TYPE" = "all" ] && [ ${#TARGETS[@]} -eq 0 ]; then
     # SQLite fixtures rewrite process-global ARRAY metadata to JSON. Keep the
     # live Postgres package pristine, as CI does. Other integration-marked
     # HTTP tests use SQLite too, so the marker alone is not the boundary.

@@ -12,6 +12,7 @@ import base64
 import hashlib
 import re
 from http import HTTPStatus
+from pathlib import Path
 from typing import Final
 from urllib.parse import parse_qs, urlsplit
 
@@ -21,7 +22,12 @@ from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import ec
 from httpx import AsyncClient, Response
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlmodel import col, update
 
+from models.user_vault_config import UserVaultConfig
+from models.vault_activation import VaultActivation, VaultActivationState
+from services import creek_provisioning_client as provisioning_client
+from services.managed_vault_activation_config import HANDOFF_AUTH_FILE_ENV_VAR
 from services.oauth_signing_keys import SIGNING_KEYS_ENV_VAR
 from services.oauth_signing_keys import reset_cache as reset_signing_key_cache
 from services.user_vault_config import store_vault_config
@@ -64,6 +70,47 @@ async def connect_vault(db_session: AsyncSession, user_id: int, name: str) -> st
     """Store a self-connected vault for ``user_id``; return its MCP resource."""
     await store_vault_config(db_session, user_id, vault_url=vault_url_for(name), api_key=VAULT_KEY)
     return mcp_url_for(name)
+
+
+def allocation_url_for(name: str) -> str:
+    """The per-allocation MCP resource Creek-Vault#2002 gives ``name``'s managed vault."""
+    slug = (name + "_" * 32)[:32]
+    return f"https://{urlsplit(vault_url_for(name)).hostname}/a/{slug}/mcp"
+
+
+async def connect_managed_vault(
+    db_session: AsyncSession, user_id: int, name: str, *, allocation: str | None = None
+) -> str:
+    """Store a ready managed vault, optionally with an adopted allocation resource.
+
+    Returns the audience the account may name: the adopted per-allocation
+    resource when there is one, the shared edge's ``/mcp`` otherwise.
+    """
+    await store_vault_config(
+        db_session, user_id, vault_url=vault_url_for(name), api_key=VAULT_KEY, provisioned=True
+    )
+    db_session.add(
+        VaultActivation(
+            user_id=user_id,
+            activation_id=f"activation-{name}",
+            consumer_identity=f"consumer-{name}",
+            state=VaultActivationState.READY.value,
+        )
+    )
+    await db_session.commit()
+    if allocation is not None:
+        await adopt_allocation(db_session, user_id, allocation)
+    return allocation or mcp_url_for(name)
+
+
+async def adopt_allocation(db_session: AsyncSession, user_id: int, allocation: str) -> None:
+    """Record ``allocation`` as if the account's own vault had just advertised it."""
+    await db_session.execute(
+        update(UserVaultConfig)
+        .where(col(UserVaultConfig.user_id) == user_id)
+        .values(agent_mcp_resource=allocation)
+    )
+    await db_session.commit()
 
 
 async def register_agent(
@@ -214,3 +261,26 @@ def code_exchange_form(code: str, client_id: str, /, **overrides: str) -> dict[s
 async def exchange(client: AsyncClient, form: dict[str, str]) -> Response:
     """POST ``form`` to the token endpoint, form-encoded as every OAuth client sends it."""
     return await client.post("/oauth/token", data=form)
+
+
+# --- the vault's per-call status lookup (#3585) ---------------------------------
+
+#: The bearer Creek's control plane mounts for its callbacks, made up per test.
+HANDOFF_BEARER: Final = "handoff-test-token-" + "h" * 48  # pragma: allowlist secret
+AGENT_TOKEN_STATUS_PATH: Final = "/internal/vault-provisioning/agent-token-status"
+
+
+def install_handoff_bearer(monkeypatch: pytest.MonkeyPatch, directory: Path) -> dict[str, str]:
+    """Mount :data:`HANDOFF_BEARER` where the backend reads it; return its header."""
+    token_file = directory / "handoff-token"
+    token_file.write_text(HANDOFF_BEARER, encoding="utf-8")
+    token_file.chmod(0o400)
+    monkeypatch.setattr(provisioning_client, "HANDOFF_AUTH_FILE_PATH", token_file)
+    monkeypatch.setenv(HANDOFF_AUTH_FILE_ENV_VAR, str(token_file))
+    return {"Authorization": f"Bearer {HANDOFF_BEARER}"}
+
+
+def token_status_claims(access_token: str) -> dict[str, object]:
+    """The three claims the vault sends to ask whether ``access_token`` still stands."""
+    claims = jwt.decode(access_token, options={"verify_signature": False})
+    return {"sub": claims["sub"], "client_id": claims["client_id"], "iat": claims["iat"]}

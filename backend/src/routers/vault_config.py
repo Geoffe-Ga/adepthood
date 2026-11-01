@@ -1,12 +1,15 @@
 """Endpoints for connecting, inspecting and removing a user's own Creek Vault.
 
 Three verbs against one resource that always exists in the abstract and
-sometimes exists as a row: ``GET`` reports whether this account has connected a
-vault and where it points, ``PUT`` sets or replaces the connection, ``DELETE``
-removes it. ``POST /vault/connection/check`` asks the connected vault, once,
-whether it answers right now (#3406). The caller is resolved from their JWT, so
-no account identifier is accepted from a path or a body and no request can name
-a row that is not the caller's own.
+sometimes exists as a row: ``GET`` reports whether this account has a vault,
+which kind, and where it points, ``PUT`` sets or replaces the connection,
+``DELETE`` removes it. ``GET`` also counts the legacy deployment-wide vault for
+its one bound owner (#3608), without its address; ``PUT`` and ``DELETE`` only
+ever touch the account's own row, so they cannot change that binding.
+``POST /vault/connection/check`` asks the account's own vault, once, whether it
+answers right now (#3406). The caller is resolved from their JWT, so no account
+identifier is accepted from a path or a body and no request can name a row that
+is not the caller's own.
 
 The credential travels in one direction only. It arrives on the ``PUT`` body and
 is never carried on any response, which is a property of
@@ -49,7 +52,7 @@ from fastapi import Depends, Request, Response, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from database import get_session
-from dependencies.creek_vault import deployment_vault_belongs_to, resolve_creek_vault_client
+from dependencies.creek_vault import resolve_creek_vault_client, vault_connection_source
 from error_responses import build_router
 from errors import conflict, unprocessable
 from models.user_vault_config import UserVaultConfig
@@ -60,6 +63,7 @@ from schemas.vault_config import (
     VAULT_CLASSIFICATION_MESSAGES,
     VaultConnectionRequest,
     VaultConnectionResponse,
+    VaultConnectionSource,
     VaultReachabilityResponse,
     credential_is_usable,
 )
@@ -159,8 +163,15 @@ async def _require_unmanaged_connection(session: AsyncSession, user_id: int) -> 
         raise conflict("managed_vault_connection_requires_teardown")
 
 
-def _to_response(config: UserVaultConfig | None) -> VaultConnectionResponse:
+def _to_response(config: UserVaultConfig | None, user_id: int) -> VaultConnectionResponse:
     """Project a stored row, or its absence, onto the response DTO.
+
+    The source is read from the precedence the pipeline routes by
+    (:func:`~dependencies.creek_vault.vault_connection_source`), so an account
+    with no row of its own that owns the deployment-wide vault is answered
+    connected, because its writing goes there (#3608). Only a connection the
+    account made itself carries an address: a managed binding's is private, and
+    the deployment vault's is the operator's configuration, said to nobody.
 
     The agent address is written in the one spelling the authorization server
     compares a ``resource`` in, so what a person pastes into an agent is
@@ -171,31 +182,33 @@ def _to_response(config: UserVaultConfig | None) -> VaultConnectionResponse:
     thing and is not: pydantic models are mutable, so one shared instance is a
     value every request holds a reference to.
     """
-    if config is None:
-        return VaultConnectionResponse(connected=False, vault_url=None, mcp_address=None)
-    if config.provisioned:
+    source = vault_connection_source(config, user_id)
+    if config is None or source is not VaultConnectionSource.CONNECTED:
         # The private /v1 binding is never returned. A separate authenticated
-        # discovery read below may name its public agent resource.
-        return VaultConnectionResponse(connected=True, vault_url=None, mcp_address=None)
+        # discovery read below may name a managed vault's public agent resource.
+        return VaultConnectionResponse(
+            connected=source is not None, vault_url=None, mcp_address=None, source=source
+        )
     return VaultConnectionResponse(
         connected=True,
         vault_url=config.vault_url,
         mcp_address=normalize_resource(vault_mcp_url(config.vault_url)),
+        source=source,
     )
 
 
 async def _attach_classification(
-    response: VaultConnectionResponse, session: AsyncSession, user_id: int, *, has_vault: bool
+    response: VaultConnectionResponse, session: AsyncSession, user_id: int
 ) -> None:
     """Fill in what the account's classification rows say, from one read.
 
-    ``has_vault`` is the stored connection; the deployment-wide vault's owner
-    has none and is added here, because the pipeline writes their journal to
-    that vault and so their rows describe a vault they really have (#3577). The
-    refused-key flag ignores it, as it always has (#3595).
+    Whether the account has a vault is the answer's own ``connected``, which
+    already counts the deployment-wide vault's owner: the pipeline writes their
+    journal to that vault, so their rows describe a vault they really have
+    (#3577, #3608). The refused-key flag ignores it, as it always has (#3595).
     """
     rows = await classification_status(session, user_id)
-    state = rows.state(has_vault=has_vault or deployment_vault_belongs_to(user_id))
+    state = rows.state(has_vault=response.connected)
     response.classification_key_rejected = rows.key_rejected
     response.classification_state = state
     response.classification_message = (
@@ -208,7 +221,7 @@ async def get_vault_connection(
     user_id: Annotated[int, Depends(get_current_user)],
     session: Annotated[AsyncSession, Depends(get_session)],
 ) -> VaultConnectionResponse:
-    """Report whether this account has connected a vault, and where it points.
+    """Report whether this account has a vault, which kind, and where it points.
 
     Never a 404 for an account that has connected nothing: "you have no vault"
     is an answer about a resource that exists conceptually for every account,
@@ -216,9 +229,9 @@ async def get_vault_connection(
     render the connect affordance without first handling an error.
     """
     config = await load_vault_config(session, user_id)
-    response = _to_response(config)
-    await _attach_classification(response, session, user_id, has_vault=config is not None)
-    if config is not None and config.provisioned:
+    response = _to_response(config, user_id)
+    await _attach_classification(response, session, user_id)
+    if config is not None and response.source is VaultConnectionSource.MANAGED:
         response.mcp_address = await managed_agent_address(session, user_id, config)
     return response
 
@@ -252,8 +265,8 @@ async def put_vault_connection(
     config = await store_vault_config(
         session, user_id, vault_url=payload.vault_url, api_key=payload.api_key
     )
-    response = _to_response(config)
-    await _attach_classification(response, session, user_id, has_vault=True)
+    response = _to_response(config, user_id)
+    await _attach_classification(response, session, user_id)
     return response
 
 
