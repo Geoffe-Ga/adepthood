@@ -22,6 +22,7 @@ from dependencies.ownership import require_owned_journal_entry
 from domain.folded_passages import (
     WITHHELD_MARK,
     carries_passage,
+    fold_carries_passage,
     passage_lines,
     span_overlaps_passage,
     withhold_passages,
@@ -96,6 +97,34 @@ def test_carries_passage_sees_a_whole_line_and_a_quote_from_inside_one() -> None
     assert not carries_passage("anything", [])
 
 
+def test_a_fold_carries_a_phrase_from_inside_a_line_but_not_a_lone_word() -> None:
+    """A word that also appears inside a restricted line is vocabulary, not the passage (#3639)."""
+    assert fold_carries_passage(f"before {_KEPT_CLOSE} after", [_KEPT_CLOSE])
+    assert fold_carries_passage("never say", [_KEPT_CLOSE])
+    assert fold_carries_passage("first\nnever say", [_KEPT_CLOSE])
+    assert not fold_carries_passage("never", [_KEPT_CLOSE])
+    assert not fold_carries_passage("  aloud \n", [_KEPT_CLOSE])
+    assert not fold_carries_passage("thing", ["the thing, I never say"])
+    assert not fold_carries_passage("thing.", ["the thing, I never say"])
+
+
+def test_a_fold_never_releases_less_than_a_whole_word_or_an_unspaced_phrase() -> None:
+    """Only a whole word is released: the narrowest rule that still lets a common word through."""
+    # A one-word restricted line is still matched whole, so a one-word passage never leaks.
+    assert fold_carries_passage("aloud", ["aloud"])
+    assert fold_carries_passage("> aloud", ["aloud"])
+    # A piece of a word is not a word of the line.
+    assert fold_carries_passage("ever", [_KEPT_CLOSE])
+    # A script written without spaces has no words to release: any run inside fails closed.
+    assert fold_carries_passage("\u4e0d\u8bf4", ["\u6211\u4ece\u6765\u4e0d\u8bf4\u51fa\u53e3"])
+
+
+def test_the_refusal_gates_still_count_any_fragment() -> None:
+    """Refusing an offer costs one quote, not a masked body: the gates keep the strict match."""
+    assert carries_passage("never", [_KEPT_CLOSE])
+    assert carries_passage("ever s", [_KEPT_CLOSE])
+
+
 def test_span_overlap_is_half_open_on_both_edges() -> None:
     body = f"abc {_KEPT_CLOSE} xyz"
     start = body.index(_KEPT_CLOSE)
@@ -160,6 +189,21 @@ async def _signup(client: AsyncClient, username: str) -> tuple[dict[str, str], i
     assert resp.status_code == HTTPStatus.OK
     payload = resp.json()
     return {"Authorization": f"Bearer {payload['token']}"}, int(payload["user_id"])
+
+
+_PASSED_ALONG = "a Personal passage, passed along"
+
+
+async def _deep_chain(session: AsyncSession, user_id: int) -> list[int]:
+    """A Personal chain one fold longer than the walk may follow, ids from origin to top."""
+    upstream = await _entry(session, user_id, _PASSED_ALONG)
+    ids = [int(upstream.id or 0)]
+    for _ in range(MAX_FOLD_LEVELS + 1):
+        downstream = await _entry(session, user_id, _PASSED_ALONG)
+        await _fold(session, user_id, upstream, _PASSED_ALONG, int(downstream.id or 0))
+        upstream = downstream
+        ids.append(int(upstream.id or 0))
+    return ids
 
 
 @pytest.mark.asyncio
@@ -246,18 +290,92 @@ async def test_a_fold_chain_past_the_level_cap_fails_closed(
 ) -> None:
     """Every fold of a chain longer than the walk may follow is treated as restricted."""
     _, user_id = await _signup(async_client, "fold_deep")
-    text = "a Personal passage, passed along"
-    upstream = await _entry(db_session, user_id, text)
-    for _ in range(MAX_FOLD_LEVELS + 1):
-        downstream = await _entry(db_session, user_id, text)
-        await _fold(db_session, user_id, upstream, text, int(downstream.id or 0))
-        upstream = downstream
+    top = await _deep_chain(db_session, user_id)
+
+    found = await restricted_folded_passages(db_session, user_id=user_id, entry_ids=[top[-1]])
+
+    assert found == {top[-1]: (_PASSED_ALONG,)}
+
+
+@pytest.mark.asyncio
+async def test_a_deep_chain_withholds_only_its_own_folds_in_a_batch(
+    async_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """One over-deep chain no longer masks an unrelated Personal fold beside it (#3639)."""
+    _, user_id = await _signup(async_client, "fold_deep_batch")
+    deep = (await _deep_chain(db_session, user_id))[-1]
+    shallow = await seed_folded_lineage(
+        db_session, user_id=user_id, source_classification=JournalClassification.PERSONAL
+    )
+    shallow_review = await db_session.get(JournalEntry, shallow.review_id)
+    assert shallow_review is not None
 
     found = await restricted_folded_passages(
-        db_session, user_id=user_id, entry_ids=[int(upstream.id or 0)]
+        db_session, user_id=user_id, entry_ids=[deep, shallow.review_id]
+    )
+    bodies = await egress_bodies(
+        db_session,
+        user_id=user_id,
+        bodies={deep: _PASSED_ALONG, shallow.review_id: shallow_review.message},
     )
 
-    assert found == {int(upstream.id or 0): (text,)}
+    assert found == {deep: (_PASSED_ALONG,)}
+    assert bodies[shallow.review_id] == shallow_review.message
+    assert LINEAGE_SENTINEL in bodies[shallow.review_id]
+    assert bodies[deep] == WITHHELD_MARK * len(_PASSED_ALONG)
+
+
+@pytest.mark.asyncio
+async def test_an_entry_quoting_into_a_deep_chain_is_withheld_with_it(
+    async_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """Whatever reaches an unresolved fold is ambiguous, so it fails closed beside the chain."""
+    _, user_id = await _signup(async_client, "fold_deep_branch")
+    chain = await _deep_chain(db_session, user_id)
+    below_top = await db_session.get(JournalEntry, chain[-2])
+    assert below_top is not None
+    branch = await _entry(db_session, user_id, _PASSED_ALONG)
+    await _fold(db_session, user_id, below_top, _PASSED_ALONG, int(branch.id or 0))
+
+    found = await restricted_folded_passages(
+        db_session, user_id=user_id, entry_ids=[chain[-1], int(branch.id or 0)]
+    )
+
+    assert found == {chain[-1]: (_PASSED_ALONG,), int(branch.id or 0): (_PASSED_ALONG,)}
+
+
+@pytest.mark.asyncio
+async def test_a_lone_word_requoted_from_a_review_still_egresses(
+    async_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """A one-word re-quote that also appears inside the review's Intimate line egresses (#3639).
+
+    The control in the same batch: a two-word phrase lifted from inside that
+    line is still withheld, as is the Intimate passage in the review itself.
+    """
+    _, user_id = await _signup(async_client, "fold_lone_word")
+    secret = await _entry(db_session, user_id, _KEPT_CLOSE, JournalClassification.INTIMATE)
+    review = await _entry(
+        db_session, user_id, f"The thing about this week.\n\n{folded_blockquote(_KEPT_CLOSE)}"
+    )
+    await _fold(db_session, user_id, secret, _KEPT_CLOSE, int(review.id or 0))
+    word_body = f"Stage notes.\n\n{folded_blockquote('thing')}\n\nOne more thing."
+    word = await _entry(db_session, user_id, word_body)
+    await _fold(db_session, user_id, review, "thing", int(word.id or 0))
+    phrase_body = f"Stage notes.\n\n{folded_blockquote('never say')}"
+    phrase = await _entry(db_session, user_id, phrase_body)
+    await _fold(db_session, user_id, review, "never say", int(phrase.id or 0))
+    ids = (int(review.id or 0), int(word.id or 0), int(phrase.id or 0))
+
+    bodies = await egress_bodies(
+        db_session,
+        user_id=user_id,
+        bodies={ids[0]: review.message, ids[1]: word_body, ids[2]: phrase_body},
+    )
+
+    assert _KEPT_CLOSE not in bodies[ids[0]]
+    assert bodies[ids[1]] == word_body
+    assert "never say" not in bodies[ids[2]]
 
 
 # --- creation: promote ---------------------------------------------------------
