@@ -8,12 +8,14 @@ body, past every per-entry guard. The server knows the lineage through
 tier, so it can be computed at egress time with no epoch: reclassifying the
 source changes the answer on the next read.
 
-Whether a folded passage inherits its source's restriction is owner decision
-D01, which #3059 forbids assuming. This module is therefore the issue's
-Rollout step 1 and nothing more: :func:`observe_lineage` logs one
-:data:`LINEAGE_SHADOW_EVENT` record -- ids, counts, a closed operation name and
-:data:`POLICY_VERSION`, never text -- when an egress operation runs on an entry
-with restricted lineage. It blocks nothing and changes no answer.
+Owner decision R5-2 settled one point of D01: Intimate text is excluded from
+folded quotes. That exclusion is enforced in :mod:`services.folded_quote_privacy`,
+which masks the passage itself wherever it would egress. Whether the review as
+a whole inherits its source's restriction is the rest of D01 and still open,
+so this module stays the issue's Rollout step 1: :func:`observe_lineage` logs
+one :data:`LINEAGE_SHADOW_EVENT` record -- ids, counts, a closed operation name
+and :data:`POLICY_VERSION`, never text -- when an egress operation runs on an
+entry with restricted lineage. It blocks nothing and changes no answer.
 
 What it counts, and what it cannot
 ==================================

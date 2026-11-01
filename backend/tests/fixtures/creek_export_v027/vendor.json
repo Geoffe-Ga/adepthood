@@ -1,0 +1,17 @@
+{
+  "repository": "Geoffe-Ga/Creek-Vault",
+  "commit": "56c7d4b6537ece32344e64fc18ddbcb3848afd85",
+  "path": "docs/contracts/adepthood-v1",
+  "contract_version": "0.27.0",
+  "files": {
+    "examples/capabilities/success.json": "a5b43bdb5c23de72efe38d3b5b7a660964817a02bfbc6b061f7cd2fbec4c8725",
+    "examples/export/empty.json": "86623306e938e1dfc89d9b70f8a80d7f0554476eaf528c19ea659afaba1a3d8a",
+    "examples/export/incompatible-version.json": "4be1a1928f6b6c8c5fe58baf5941de29b981c37a5f462d2a84a62775da069d2a",
+    "examples/export/refusal.json": "6aeb0e513fa7f33ad1b594c5d99a075ad70e9e2a4552679c096135d92571ac0b",
+    "examples/export/success.json": "d110351ad403cbe1a4095a25e7678c5ca208008e4b28630505bdede01ae3bf82",
+    "examples/export/unavailable-service.json": "86ced44e7f942a4b3f99a2088b8058a92d5d8218d2d229a2013cddabc55a342a",
+    "manifest.json": "db71eedc4ebfbd7fb4183bdfaf7f631f8d0710a8dea1d217e4b264e88147b585",
+    "schemas/ExportQuery.schema.json": "8b01877e6fa47f262413535c7478068afcecf5d40583747c3bfe4c3a91c1c4ab",
+    "schemas/ExportResponse.schema.json": "579c10b0491ec9a12e41a88d153b26b4037c1653924a54d4a20ed6421b539cb2"
+  }
+}

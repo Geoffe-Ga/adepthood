@@ -77,6 +77,7 @@ from domain.creek_vault import (
     VaultVoiceDraftResult,
     VaultWheelBalance,
 )
+from domain.vault_export import VaultExportPage
 from models.corpus_fragment import CorpusFragment
 from services import botmason, frequency_classification
 
@@ -334,6 +335,13 @@ class RecordingVault:
         """Record the content-free activity read; an empty log carries nothing."""
         await self._dial("agent_activity", "")
         return VaultAgentActivity(rows=())
+
+    async def export_page(self, cursor: str | None, /) -> VaultExportPage:
+        """Record the content-free export read; an empty vault exports nothing."""
+        await self._dial("export_page", cursor or "")
+        return VaultExportPage(
+            documents=(), fragments=(), skipped=0, next_cursor=None, answer_bytes=0
+        )
 
     async def upsert_voice_draft(self, request: VaultVoiceDraftRequest, /) -> VaultVoiceDraftResult:
         """Record the AI-authored draft and keep it remotely."""

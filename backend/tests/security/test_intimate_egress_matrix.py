@@ -1078,8 +1078,8 @@ async def test_reflecting_on_another_entry_carries_no_intimate_source(harness: H
     Personal and shows the source does reach that context when it may.
 
     The folded-quote case -- an Intimate passage quoted into a separately
-    labelled entry -- stays the strict xfail in ``tests/test_privacy_lineage.py``
-    until owner decision D01 (#3059), and the manifest says so.
+    labelled entry -- is pinned in ``tests/test_privacy_lineage.py``: owner
+    decision R5-2 (#3059) excludes that text, and the rest of D01 is still open.
     """
     app.dependency_overrides[get_reflection_boundary] = lambda: ReflectionBoundary.APP_PROVIDER
 

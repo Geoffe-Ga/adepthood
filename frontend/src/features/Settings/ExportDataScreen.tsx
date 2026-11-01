@@ -5,6 +5,7 @@ import { saveDataExport, type ExportFormat, type SavedExport } from './saveDataE
 import { SettingsFeedbackBanner } from './shared/SettingsFeedbackBanner';
 import { settingsFormStyles } from './shared/settingsFormLayout';
 
+import { ApiError } from '@/api';
 import { ScreenScaffold } from '@/components/layout/ScreenScaffold';
 import { BORDER_RADIUS, SPACING, accent, colors, ink, surface } from '@/design/tokens';
 
@@ -14,7 +15,10 @@ import { BORDER_RADIUS, SPACING, accent, colors, ink, surface } from '@/design/t
  *
  * Two files, because they answer two different questions. The JSON archive is
  * everything, in a form that can be read back in. The Markdown journal is the
- * one you open and read. Neither is a request queued for later: the app asks,
+ * one you open and read. A third, for a Creek Vault, is what the vault holds of
+ * yours (#3579) -- for a managed vault the only copy of an imported document --
+ * and when the vault cannot answer, the screen says why instead of saving an
+ * empty file. Neither is a request queued for later: the app asks,
  * saves the file, and hands it to the share sheet while you are standing there.
  *
  * The screen says plainly what the archive leaves out. An export that silently
@@ -41,13 +45,36 @@ const PLAINTEXT_CAUTION =
 const GENERIC_FAILURE =
   'Could not build the export. Nothing was saved. Check your connection and try again.';
 
-function failureMessage(): string {
+/**
+ * What each way a vault export can fail to start means, in the reader's words.
+ * Keyed by the server's code, so an unknown code falls back to the generic line.
+ */
+const VAULT_FAILURES: Readonly<Record<string, string>> = {
+  vault_not_connected:
+    'You have no Creek Vault connected, so there is nothing more to export. Everything you wrote here is in the two files above.',
+  vault_unavailable:
+    'Your vault is asleep or unreachable right now, so its content could not be exported. Nothing was saved. Try again in a minute.',
+  vault_export_needs_update:
+    'Your vault needs an update before its content can be exported. Nothing was saved.',
+  vault_export_failed:
+    'Your vault could not finish the export. Nothing was saved. Try again later.',
+};
+
+const VAULT_INCOMPLETE =
+  'This copy is incomplete: your vault stopped answering partway, or held something it could not include. What arrived is saved. Try again for a whole copy.';
+
+function failureMessage(error: unknown): string {
+  if (error instanceof ApiError) return VAULT_FAILURES[error.detail] ?? GENERIC_FAILURE;
   return GENERIC_FAILURE;
 }
 
+function receiptWhat(saved: SavedExport): string {
+  if (saved.vault) return `${saved.vault.items} items from your vault`;
+  return saved.records === null ? 'your journal' : `${saved.records} records`;
+}
+
 function receiptLine(saved: SavedExport): string {
-  const what = saved.records === null ? 'your journal' : `${saved.records} records`;
-  return `Saved ${what} to ${saved.filename}.`;
+  return `Saved ${receiptWhat(saved)} to ${saved.filename}.`;
 }
 
 function followUpLine(saved: SavedExport): string {
@@ -102,6 +129,22 @@ const Caveats = (): React.JSX.Element => (
   </View>
 );
 
+const Receipt = ({ saved }: { saved: SavedExport }): React.JSX.Element => (
+  <View testID="export-data-receipt">
+    <Text style={styles.receipt} testID="export-data-receipt-saved">
+      {receiptLine(saved)}
+    </Text>
+    <Text style={styles.receiptFollowUp} testID="export-data-receipt-next">
+      {followUpLine(saved)}
+    </Text>
+    {saved.vault && !saved.vault.complete ? (
+      <Text style={styles.receiptFollowUp} testID="export-data-receipt-incomplete">
+        {VAULT_INCOMPLETE}
+      </Text>
+    ) : null}
+  </View>
+);
+
 interface ExportState {
   running: ExportFormat | null;
   error: string | null;
@@ -118,8 +161,8 @@ function useExportRunner(): [ExportState, (_format: ExportFormat) => Promise<voi
     try {
       const saved = await saveDataExport(format);
       setState({ running: null, error: null, saved });
-    } catch {
-      setState({ running: null, error: failureMessage(), saved: null });
+    } catch (error: unknown) {
+      setState({ running: null, error: failureMessage(error), saved: null });
     }
   }, []);
   return [state, run];
@@ -129,6 +172,7 @@ export default function ExportDataScreen(): React.JSX.Element {
   const [state, run] = useExportRunner();
   const exportJson = useCallback(() => void run('json'), [run]);
   const exportMarkdown = useCallback(() => void run('markdown'), [run]);
+  const exportVault = useCallback(() => void run('vault'), [run]);
   const busy = state.running !== null;
 
   return (
@@ -152,17 +196,16 @@ export default function ExportDataScreen(): React.JSX.Element {
         onPress={exportMarkdown}
         testID="export-data-markdown"
       />
+      <ExportButton
+        label="What my vault holds (JSON)"
+        description="If you use a Creek Vault: every document you imported, as its original file, and every fragment the vault made of your writing, Intimate included."
+        busy={state.running === 'vault'}
+        disabled={busy}
+        onPress={exportVault}
+        testID="export-data-vault"
+      />
       <SettingsFeedbackBanner idPrefix="export-data" error={state.error} status={null} />
-      {state.saved ? (
-        <View testID="export-data-receipt">
-          <Text style={styles.receipt} testID="export-data-receipt-saved">
-            {receiptLine(state.saved)}
-          </Text>
-          <Text style={styles.receiptFollowUp} testID="export-data-receipt-next">
-            {followUpLine(state.saved)}
-          </Text>
-        </View>
-      ) : null}
+      {state.saved ? <Receipt saved={state.saved} /> : null}
       <Text style={styles.caution} testID="export-data-caution">
         {PLAINTEXT_CAUTION}
       </Text>

@@ -30,6 +30,8 @@ Also asserts that no owned-resource response DTO echoes ``user_id``.
 
 from __future__ import annotations
 
+import base64
+import hashlib
 import json
 import logging
 from datetime import UTC, date, datetime, timedelta
@@ -3231,3 +3233,118 @@ async def test_idor_a_vault_advertising_another_accounts_allocation_cannot_adopt
     )
     assert list(stored.tuples()) == [(alice_id, alice_resource), (bob_id, None)]
     assert credentials == [f"Bearer {bob_key}", f"Bearer {bob_key}"]
+
+
+# Synthetic content held only in Alice's vault (#3579). Nothing in adepthood's
+# database ever holds it, so it can only reach a response through her vault.
+_ALICE_VAULT_CANARY = b"synthetic canary held only in alice's vault 91ad\n"
+_EXPORT_CAPABILITIES = (
+    Path(__file__).parent.parent
+    / "fixtures"
+    / "creek_export_v027"
+    / "examples"
+    / "capabilities"
+    / "success.json"
+)
+
+
+async def _ready_managed_vault(
+    db_session: AsyncSession, user_id: int, name: str, api_key: str
+) -> None:
+    """Store a ready managed vault for ``user_id`` under its own credential."""
+    await store_vault_config(
+        db_session,
+        user_id,
+        vault_url=oauth_flow.vault_url_for(name),
+        api_key=api_key,
+        provisioned=True,
+    )
+    db_session.add(
+        VaultActivation(
+            user_id=user_id,
+            activation_id=f"activation-{name}",
+            consumer_identity=f"consumer-{name}",
+            state=VaultActivationState.READY.value,
+        )
+    )
+    await db_session.commit()
+
+
+@pytest.mark.asyncio
+async def test_idor_vault_export_reads_only_the_callers_own_vault(
+    async_client: AsyncClient,
+    db_session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Bob's vault export dials Bob's vault with Bob's key, and nothing of Alice's (#3579).
+
+    ``GET /users/me/export/vault`` takes no account, vault or document id: the
+    vault it dials is resolved from the bearer alone. So a ``user_id`` or
+    ``vault_url`` smuggled into the query buys nothing -- Bob's request reaches
+    only Bob's vault host, carries only Bob's credential, and Alice's canary,
+    held only in her vault, is nowhere in what he gets back. Nothing is written.
+    """
+    alice_key = "alice-vault-key-0123456789"  # pragma: allowlist secret
+    bob_key = "bob-vault-key-9876543210"  # pragma: allowlist secret
+    _alice_headers, alice_id = await oauth_flow.signup(async_client, "alice_vault_export")
+    bob_headers, bob_id = await oauth_flow.signup(async_client, "bob_vault_export")
+    await _ready_managed_vault(db_session, alice_id, "alice-export", alice_key)
+    await _ready_managed_vault(db_session, bob_id, "bob-export", bob_key)
+    capabilities = json.loads(_EXPORT_CAPABILITIES.read_bytes())
+    canary = {
+        "document_id": "adepthood-upload-alice.txt",
+        "size_bytes": len(_ALICE_VAULT_CANARY),
+        "sha256": hashlib.sha256(_ALICE_VAULT_CANARY).hexdigest(),
+        "content_base64": base64.b64encode(_ALICE_VAULT_CANARY).decode("ascii"),
+        "content_included": True,
+    }
+    holdings = {"v-alice-export.vaults.example": [canary], "v-bob-export.vaults.example": []}
+    dialled: list[tuple[str, str | None]] = []
+
+    def _vault(request: httpx.Request) -> httpx.Response:
+        dialled.append((request.url.host, request.headers.get("authorization")))
+        if request.url.path.endswith("/capabilities"):
+            return httpx.Response(HTTPStatus.OK, json=capabilities)
+        page = {
+            "status": "ok",
+            "documents": holdings[request.url.host],
+            "fragments": [],
+            "skipped": 0,
+            "next_cursor": None,
+        }
+        return httpx.Response(HTTPStatus.OK, json=page)
+
+    def _build(url: str, api_key: str, *, managed: bool) -> HttpCreekVaultClient:
+        return HttpCreekVaultClient(
+            url,
+            api_key,
+            http_client=httpx.AsyncClient(transport=httpx.MockTransport(_vault)),
+            managed=managed,
+        )
+
+    async def _dialable(_session: AsyncSession, _vault_url: str) -> bool:
+        return False
+
+    monkeypatch.setattr("services.creek_vault_stored_client.build_connected_vault_client", _build)
+    monkeypatch.setattr("services.creek_vault_stored_client.stored_host_is_undialable", _dialable)
+    configs_before = (
+        await db_session.execute(select(func.count()).select_from(UserVaultConfig))
+    ).scalar_one()
+
+    response = await async_client.get(
+        "/users/me/export/vault",
+        params={"user_id": alice_id, "vault_url": oauth_flow.vault_url_for("alice-export")},
+        headers=bob_headers,
+    )
+
+    assert response.status_code == HTTPStatus.OK
+    body = response.json()
+    assert body["items"] == []
+    assert body["complete"] is True
+    assert "91ad" not in response.text
+    assert set(dialled) == {("v-bob-export.vaults.example", f"Bearer {bob_key}")}
+    assert all(alice_key not in (credential or "") for _host, credential in dialled)
+    configs_after = (
+        await db_session.execute(select(func.count()).select_from(UserVaultConfig))
+    ).scalar_one()
+    assert configs_after == configs_before

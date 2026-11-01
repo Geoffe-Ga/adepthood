@@ -144,6 +144,7 @@
   "/users/me",
   "/users/me/export",
   "/users/me/export/journal.md",
+  "/users/me/export/vault",
   "/users/me/timezone",
   "/v1/energy/plan",
   "/vault/activation",

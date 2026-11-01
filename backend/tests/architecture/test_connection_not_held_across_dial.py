@@ -76,6 +76,11 @@ _MODULES_IMPORTING_A_TRANSPORT = frozenset(
         # request's transaction before the vault is called.
         "services.creek_vault_activity_wire",
         "services.creek_vault_call_errors",
+        # The owner-export read (#3579) imports httpx for its response type, as
+        # the activity read does, and dials only through the client's own
+        # authorized transport, which it is handed; its one route commits the
+        # request's transaction before the vault is called.
+        "services.creek_vault_export_wire",
         "services.creek_vault_pinned_transport",
         "services.creek_vault_url_resolution",
         "services.email",
@@ -131,6 +136,14 @@ _CLASSES_IMPLEMENTING = {
     ),
     "domain.creek_vault.CreekVaultPipelineClient": frozenset(
         {
+            "domain.creek_vault.CreekVaultPipelineClient",
+            "services.creek_vault_client.HttpCreekVaultClient",
+            "services.creek_vault_client.LocalFallbackCreekVaultClient",
+        }
+    ),
+    "domain.creek_vault.CreekVaultExportClient": frozenset(
+        {
+            "domain.creek_vault.CreekVaultExportClient",
             "domain.creek_vault.CreekVaultPipelineClient",
             "services.creek_vault_client.HttpCreekVaultClient",
             "services.creek_vault_client.LocalFallbackCreekVaultClient",

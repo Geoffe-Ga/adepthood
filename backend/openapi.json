@@ -22738,7 +22738,7 @@
     },
     "/journal/{entry_id}/promote": {
       "post": {
-        "description": "Promote a span of the caller's own entry into a pending quote.\n\nOwnership is enforced by ``require_owned_journal_entry`` (a missing,\nsoft-deleted, or foreign entry all resolve to 404). The span is sliced and\nsnapshotted server-side, so the quote starts life pending (unfolded).",
+        "description": "Promote a span of the caller's own entry into a pending quote.\n\nOwnership is enforced by ``require_owned_journal_entry`` (a missing,\nsoft-deleted, or foreign entry all resolve to 404). The span is sliced and\nsnapshotted server-side, so the quote starts life pending (unfolded).\n\nA source that may not egress (Intimate, or an unknown tier), or a span over\na passage the source holds from a restricted fold, is 409\n``quote_source_restricted`` and stores nothing (#3059, owner decision R5-2).",
         "operationId": "promote_quote_journal__entry_id__promote_post",
         "parameters": [
           {
@@ -28771,7 +28771,7 @@
         ]
       },
       "patch": {
-        "description": "Fold the caller's own quote into a reflection, or return it to pending.\n\nA missing or foreign promotion is 404. Setting ``included_in_entry_id``\nrequires the target to be the caller's own live hierarchical reflection\n(404 / 422 otherwise); ``null`` clears the inclusion back to pending.",
+        "description": "Fold the caller's own quote into a reflection, or return it to pending.\n\nA missing or foreign promotion is 404. Setting ``included_in_entry_id``\nrequires the target to be the caller's own live hierarchical reflection\n(404 / 422 otherwise); ``null`` clears the inclusion back to pending.\nFolding a quote whose source has since become Intimate (or whose text\ncarries a passage restricted that way) is 409 ``quote_source_restricted``\n(#3059, owner decision R5-2); returning one to pending is always allowed.",
         "operationId": "update_promotion_promotions__promotion_id__patch",
         "parameters": [
           {
@@ -32819,6 +32819,132 @@
           }
         },
         "summary": "Export My Journal As Markdown",
+        "tags": [
+          "export"
+        ]
+      }
+    },
+    "/users/me/export/vault": {
+      "get": {
+        "description": "Stream what the caller's own vault holds of theirs, as one JSON file (#3579).\n\nThe vault is the one the owner-safe resolver gives this token -- the\ncaller's own connection, never one named by the request, which carries\nnothing at all. The first page is read before anything is sent, so a vault\nthat is absent, asleep, too old or refusing answers a coded refusal rather\nthan an empty file; a failure after that ends the file marked incomplete.",
+        "operationId": "export_my_vault_users_me_export_vault_get",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {}
+            },
+            "description": "What the caller's Creek Vault holds of theirs, streamed as one JSON document whose trailing ``complete`` says whether every page and item is in it."
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "The request body could not be parsed, or a value it carried was refused."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "No usable credential was presented."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "The caller is authenticated but does not own the resource."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "No such resource -- or none this caller is allowed to see."
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "The request conflicts with the resource's current state."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ValidationErrorResponse"
+                }
+              }
+            },
+            "description": "The request failed validation -- an array of rejected fields -- or a check applied after the schema refused it, as one snake_case code."
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "The caller went past a rate limit."
+          },
+          "502": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "An upstream dependency this route relies on failed."
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "A required dependency is temporarily unusable."
+          }
+        },
+        "summary": "Export My Vault",
         "tags": [
           "export"
         ]

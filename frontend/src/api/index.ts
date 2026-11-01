@@ -4290,6 +4290,14 @@ export type DataExportArchive = DataExportArchiveT;
 const EXPORT_TIMEOUT_MS = 120_000;
 
 /**
+ * How long a vault export may take: longer again, because it is a page of the
+ * vault per round trip, each of which may carry megabytes of the person's own
+ * documents. Still finite, so a vault that never stops answering cannot hold
+ * the screen forever.
+ */
+const VAULT_EXPORT_TIMEOUT_MS = 300_000;
+
+/**
  * Confirmation body for ``DELETE /users/me``: the caller retypes their own
  * address. A boolean the client could synthesise would make an accidental
  * request indistinguishable from a deliberate one.
@@ -4368,6 +4376,22 @@ export const users = {
       token,
       responseType: 'text',
       timeoutMs: EXPORT_TIMEOUT_MS,
+    });
+  },
+  /**
+   * Download what the caller's Creek Vault holds of theirs (#3579), as text.
+   *
+   * Text rather than parsed JSON, so the file saved is byte-for-byte what the
+   * server streamed -- including one cut off mid-stream, which a parse would
+   * throw away and the person may still want. The vault is resolved from the
+   * JWT alone; a vault that cannot answer is an ``ApiError`` whose ``detail``
+   * says why (``vault_unavailable``, ``vault_export_needs_update``, ...).
+   */
+  exportMyVault(token?: string): Promise<string> {
+    return request<string>('/users/me/export/vault', {
+      token,
+      responseType: 'text',
+      timeoutMs: VAULT_EXPORT_TIMEOUT_MS,
     });
   },
 };
