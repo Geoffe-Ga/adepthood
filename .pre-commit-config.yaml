@@ -364,7 +364,17 @@ repos:
         #
         # with-venv.sh runs first so a coverage number can never be reported
         # from an interpreter nothing verified.
-        entry: scripts/backend/with-venv.sh ./scripts/backend/test.sh --all --coverage
+        #
+        # ``--reuse-verified-unit``: when check-all.sh left a fresh whole-tree
+        # receipt (verified.sh gate ``backend-suite``) for exactly this tree,
+        # the working tree is clean, and the pushed sha is HEAD, the unit
+        # selection and the 90% threshold check-all already proved are reused
+        # instead of re-run -- the threshold carries because more tests can only
+        # raise coverage over a fixed source set. The remainder check-all never
+        # ran (integration/e2e-marked tests outside tests/integration, then the
+        # Postgres pass over tests/integration) still runs, under the same lock.
+        # Any miss, dirty tree or sha mismatch runs the full suite unchanged.
+        entry: scripts/backend/with-venv.sh ./scripts/backend/test.sh --all --coverage --reuse-verified-unit
         pass_filenames: false
         files: ^backend/
         stages: [pre-push]

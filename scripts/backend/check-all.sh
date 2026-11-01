@@ -8,6 +8,12 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/../../backend" && pwd)"
 
 readonly GATE_NAME="backend"
+# A second receipt over the whole tree, banked by the same full green run. The
+# pre-push hook (test.sh --reuse-verified-unit) reuses this one rather than the
+# backend gate's: the unit suite reads files outside backend/ and scripts/ -
+# workflows, ADRs, CLAUDE.md, frontend sources - so only a whole-tree match
+# proves that the suite it would skip would still pass.
+readonly SUITE_GATE_NAME="backend-suite"
 readonly VERIFIED_SCRIPT="$SCRIPT_DIR/../quality/verified.sh"
 # The one exit code from the receipt primitive that licenses reusing a verdict.
 # "Not verified" and "cannot evaluate" both mean: do the work.
@@ -59,6 +65,10 @@ Runs:
   5. Complexity analysis (Radon)
   6. Unit tests (measured under coverage)
   7. Coverage report (reports on the data step 6 wrote; no second test run)
+
+A fully green run on a tree that did not move also records a whole-tree
+receipt (gate backend-suite), which lets the pre-push hook skip re-running the
+unit suite and re-measuring coverage for that exact tree.
 
 When a gate receipt proves the previous green run still describes this tree,
 steps 1-3 and 5-7 are reused instead of re-run. Step 0 and step 4 always run:
@@ -146,8 +156,12 @@ echo ""
 # was never checked as a whole. Empty means the gate could not be fingerprinted
 # at all, which withholds the receipt rather than failing the run.
 START_FINGERPRINT=""
+START_SUITE_FINGERPRINT=""
 if ! $SHORT_CIRCUIT; then
     START_FINGERPRINT="$("$VERIFIED_SCRIPT" fingerprint "$GATE_NAME" 2> /dev/null)" || true
+    # Empty on any failure, which withholds the whole-tree receipt below.
+    START_SUITE_FINGERPRINT="$("$VERIFIED_SCRIPT" fingerprint "$SUITE_GATE_NAME" 2> /dev/null)" \
+        || START_SUITE_FINGERPRINT=""
 fi
 
 FAILED_CHECKS=()
@@ -226,6 +240,11 @@ record_receipt_if_earned() {
     fi
     local end_fingerprint=""
     end_fingerprint="$("$VERIFIED_SCRIPT" fingerprint "$GATE_NAME" 2> /dev/null)" || true
+    # Taken before either receipt is written, so writing the first can never
+    # count as a change to the tree the second describes.
+    local end_suite_fingerprint=""
+    end_suite_fingerprint="$("$VERIFIED_SCRIPT" fingerprint "$SUITE_GATE_NAME" 2> /dev/null)" \
+        || end_suite_fingerprint=""
     if [ "$end_fingerprint" != "$START_FINGERPRINT" ]; then
         echo ""
         echo "No receipt recorded: the tree changed during the run, so these results"
@@ -233,6 +252,15 @@ record_receipt_if_earned() {
         return 0
     fi
     "$VERIFIED_SCRIPT" record "$GATE_NAME" > /dev/null 2>&1 || true
+    if [ -z "$START_SUITE_FINGERPRINT" ] \
+        || [ "$end_suite_fingerprint" != "$START_SUITE_FINGERPRINT" ]; then
+        echo ""
+        echo "No whole-tree receipt recorded: a file outside the backend gate's paths"
+        echo "changed during the run (or the tree could not be fingerprinted), so the"
+        echo "pre-push hook will run the whole backend suite rather than reuse this one."
+        return 0
+    fi
+    "$VERIFIED_SCRIPT" record "$SUITE_GATE_NAME" > /dev/null 2>&1 || true
 }
 
 record_receipt_if_earned

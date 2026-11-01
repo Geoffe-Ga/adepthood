@@ -1036,3 +1036,41 @@ async def test_sources_include_promoted_quotes_ordered_with_pending_flag(
     assert quotes[1]["anchor_text"] == entry.message[10:18]
     assert quotes[1]["pending"] is True
     assert foreign_quote.id not in {q["id"] for q in quotes}
+
+
+@pytest.mark.asyncio
+async def test_sources_never_offers_a_quote_of_intimate_text(
+    async_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """The composer is offered no quote of an Intimate source to fold (#3059, owner decision R5-2).
+
+    The Personal entry beside it shows the same feed does offer a quote when it may.
+    The Intimate entry is still the writer's own reading: only its quote is held back.
+    """
+    now = datetime.now(UTC)
+    headers, user_id = await _signup(async_client, db_session)
+    await _seed_progress(db_session, user_id, anchor=now - timedelta(days=_DAY_NINE_ELAPSED))
+    intimate = await _seed_entry(
+        db_session, user_id, "Kept close.", timestamp=now, classification="intimate"
+    )
+    personal = await _seed_entry(db_session, user_id, "Said aloud.", timestamp=now)
+    for entry in (intimate, personal):
+        db_session.add(
+            PromotedQuote(
+                user_id=user_id,
+                source_entry_id=entry.id,
+                anchor_start=0,
+                anchor_end=4,
+                anchor_text=entry.message[:4],
+            )
+        )
+    await db_session.commit()
+
+    resp = await async_client.get(
+        "/reflections/sources", params={"level": "week", "scope_key": "c1:w2"}, headers=headers
+    )
+
+    assert resp.status_code == HTTPStatus.OK, resp.text
+    offered = {item["id"]: item["promoted_quotes"] for item in resp.json()["items"]}
+    assert offered[intimate.id] == []
+    assert [quote["anchor_text"] for quote in offered[personal.id]] == ["Said"]

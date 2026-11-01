@@ -9,7 +9,7 @@
     "@react-native-community/slider": "5.2.0",
     "@react-native-picker/picker": "2.11.4",
     "@react-navigation/bottom-tabs": "^7.18.18",
-    "@react-navigation/native": "^7.1.6",
+    "@react-navigation/native": "^7.5.1",
     "@react-navigation/native-stack": "^7.18.10",
     "@scure/bip39": "2.4.0",
     "expo": "57.0.25",
@@ -111,6 +111,7 @@
     "js-yaml@4": "4.3.2",
     "postcss": "^8.5.23",
     "nanoid": "^3.3.17",
+    "node-forge": "1.4.2",
     "@expo/cli": {
       "zod": "$zod"
     }

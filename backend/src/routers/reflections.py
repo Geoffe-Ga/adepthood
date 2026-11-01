@@ -73,6 +73,7 @@ from schemas.reflection import (
     ReflectionSourceItem,
     ReflectionSourcesResponse,
 )
+from services.folded_quote_privacy import quote_is_foldable, restricted_folded_passages
 from services.users import get_user_timezone
 
 logger = logging.getLogger(__name__)
@@ -516,13 +517,26 @@ def _quote_summary(quote: PromotedQuote) -> PromotedQuoteSummary:
     )
 
 
+def _foldable(
+    entry: JournalEntry, quotes: list[PromotedQuote], restricted: tuple[str, ...]
+) -> list[PromotedQuote]:
+    """The quotes of ``entry`` the composer may be offered to fold (#3059, owner decision R5-2)."""
+    return [quote for quote in quotes if quote_is_foldable(entry, quote.anchor_text, restricted)]
+
+
 def _to_source_item(
-    item: SourceItem, entry: JournalEntry, quotes: list[PromotedQuote]
+    item: SourceItem,
+    entry: JournalEntry,
+    quotes: list[PromotedQuote],
+    restricted: tuple[str, ...],
 ) -> ReflectionSourceItem:
     """Map a resolved :class:`SourceItem` plus its row and quotes to the response DTO.
 
     ``reflection_level`` is carried only for a REFLECTION item (naming the child
-    layer that stood in); a raw entry leaves it ``None``.
+    layer that stood in); a raw entry leaves it ``None``. A quote that may not be
+    folded -- its source is Intimate, or its words are a passage this source
+    holds from such a fold (``restricted``) -- is not offered at all, so the
+    composer never splices it into a review (#3059, owner decision R5-2).
     """
     is_reflection = item.kind is SourceKind.REFLECTION and item.level is not None
     return ReflectionSourceItem(
@@ -532,7 +546,7 @@ def _to_source_item(
         timestamp=entry.timestamp,
         body=entry.message,
         reflection_level=item.level.value if is_reflection and item.level is not None else None,
-        promoted_quotes=[_quote_summary(quote) for quote in quotes],
+        promoted_quotes=[_quote_summary(quote) for quote in _foldable(entry, quotes, restricted)],
     )
 
 
@@ -589,8 +603,16 @@ async def get_reflection_sources(
     resolved = resolve_sources(level, scope_key, existing=reflection_refs, entries=entry_refs)
     entries_by_id = await _batch_entries(session, current_user, resolved)
     quotes_by_entry = await _quotes_by_entry(session, current_user, resolved)
+    restricted = await restricted_folded_passages(
+        session, user_id=current_user, entry_ids=set(quotes_by_entry)
+    )
     items = [
-        _to_source_item(item, entries_by_id[item.id], quotes_by_entry.get(item.id, []))
+        _to_source_item(
+            item,
+            entries_by_id[item.id],
+            quotes_by_entry.get(item.id, []),
+            restricted.get(item.id, ()),
+        )
         for item in resolved
         if item.id in entries_by_id
     ]

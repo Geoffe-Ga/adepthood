@@ -498,6 +498,22 @@
     "coveredBy": "frontend/e2e/journal-promote-quote-long-entry.browser.e2e.test.ts"
   },
   {
+    "id": "journal.intimate-passage-is-never-a-folded-quote",
+    "description": "Owner decision R5-2 (#3059): Intimate text is excluded from folded quotes. A writer who tries to promote a passage of a page marked Intimate, or a span of a review over a passage it holds from such a fold, is refused with 409 quote_source_restricted and sees the hint that passages from a page marked Intimate stay on that page and nothing was changed; no quote row is stored. A quote whose source page was made Intimate after it was promoted is no longer offered under Quotes to fold in on a review's sources panel (GET /reflections/sources), and folding it over PATCH /promotions/{promotion_id} is refused the same way, while returning it to pending still works. Where a review already holds such a passage -- spliced in before the fold PATCH, or before its source became Intimate -- the passage is masked, length for length, in everything the review sends: the reflection and detection prompts, letters, the recency window and corpus grounding, corpus ingest, the Creek vault write and reading recommendations, while the writer's own page still reads as written. Backend suites pin the refusals, the feed filter and each sink with a Personal twin (tests/test_folded_quote_privacy.py, tests/test_privacy_lineage.py, tests/test_reflections_api.py, tests/services/test_reading_recommendations.py), and Jest pins the hint copy. Browser coverage of the refusal hint and the filtered fold list is an explicit gap tracked by #3059.",
+    "crosses": {
+      "screen": "frontend/src/features/Journal/ReflectionSourcesPanel.tsx",
+      "client": ["promotions", "reflections"],
+      "routes": [
+        "POST /journal/{entry_id}/promote",
+        "PATCH /promotions/{promotion_id}",
+        "GET /reflections/sources"
+      ],
+      "tables": ["promotedquote", "journalentry"]
+    },
+    "status": "uncovered",
+    "issue": 3059
+  },
+  {
     "id": "journal.find-promoted-quotes-any-day",
     "description": "On any day, not only inside a review composer, a writer opens the Journal drawer's 'Promoted quotes' door (a door with no count) and sees every quote they have promoted, grouped by status: 'Not yet in a review (n)' above 'Used in a review (m)', each header carrying the server's total for its own section. A quote seeded through the real promote route near the end of a long finished page is listed verbatim with its source title; tapping it opens that page in read mode scrolled to the passage, which is underlined and asserted in the viewport. Back on the screen, Remove asks first, the confirmed remove issues DELETE /promotions/{promotion_id}, and after a cold reload the screen shows the exact empty copy and GET /promotions returns nothing. Not asserted in the browser, and pinned only by Jest and pytest: the Write a review picker hand-off, per-section paging, the revert-in-place of a refused remove, the stale and deleted-review captions, refetch on refocus, and the cross-tenant and soft-delete exclusions of GET /promotions.",
     "crosses": {
