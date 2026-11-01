@@ -227,6 +227,7 @@ const EXPECTED_JOURNEYS = [
   'vault-connection.e2e.test.ts',
   'vault-rejected-key-classification.e2e.test.ts',
   'vault-rules-fallback-classification.e2e.test.ts',
+  'vault-stored-key-background-classification.e2e.test.ts',
   'voice-drafts-shelf.e2e.test.ts',
   'voice-readiness.e2e.test.ts',
 ];
@@ -679,6 +680,29 @@ describe('the external Creek Vault boundary stays protocol-shaped and narrowly a
     expect(fake).toContain("pathname === '/__lane/enable-pipeline'");
     expect(fake).toContain("pathname === '/__lane/disable-pipeline'");
     expect(fake).not.toContain("'classify'");
+  });
+
+  it('sheds one armed classification admission, never more, and boots with at-rest encryption', () => {
+    // The stored-key journey (#3647) forces a background classification submit
+    // by having the vault shed one admission with Creek's own 503. Off by
+    // default, consumed by the one admission it refuses, cleared by either
+    // pipeline switch -- so no other journey can meet a refusal it did not arm.
+    // Retention needs at-rest encryption, which every deployment runs with.
+    const fake = read(FAKE_VAULT, 'The stored-key journey needs a vault that sheds one admission.');
+    const setup = read(GLOBAL_SETUP, 'The stored-key journey needs a server that keeps the key.');
+
+    expect(fake).toContain('let classificationRefusalArmed = false;');
+    expect(fake).toContain(
+      "if (method === 'llm' && classificationRefusalArmed) {\n    classificationRefusalArmed = false;",
+    );
+    expect(fake).toContain(
+      'pipelineJobsHeld = pipelineAdvertised;\n      classificationRefusalArmed = false;',
+    );
+    expect(fake).toContain(
+      "refuse(response, HTTP_SERVICE_UNAVAILABLE, 'temporarily_unavailable');",
+    );
+    expect(setup).toContain('process.env[AT_REST_KEYS_ENV] = mintAtRestKey();');
+    expect(setup).toContain('[AT_REST_KEYS_ENV]: process.env[AT_REST_KEYS_ENV],');
   });
 
   it("serves the 0.27 owner export only when armed, over Creek's own published cell", () => {
