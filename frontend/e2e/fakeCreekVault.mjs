@@ -78,6 +78,12 @@ import { fileURLToPath } from 'node:url';
  * `reply: 'unreadable'`, so a journey can prove the vault kept a document the
  * server could not confirm.
  *
+ * `POST /__lane/refuse-next-classification` arms one shed admission (#3647): the
+ * next `POST /v1/classifications` is answered `503 temporarily_unavailable` and
+ * admits no job, and its ledger entry carries `refused: true`. Adepthood then
+ * retries that admission off-request, which is how the stored-key journey drives
+ * a background classification submit without stubbing anything in the server.
+ *
  * `GET /v1/export` (contract 0.27, Creek-Vault#2033, #3579) is the owner's paged
  * export, and it is opt-in like classification: by default this vault predates
  * it. `POST /__lane/advertise-export` names `export` and lists 0.27, as a vault
@@ -103,6 +109,14 @@ import { fileURLToPath } from 'node:url';
 
 const READY_PREFIX = 'FAKE_VAULT_READY port=';
 const LOOPBACK_HOST = '127.0.0.1';
+/**
+ * How long an idle keep-alive socket stays open. A journey's `fetch` (undici)
+ * reuses idle connections, and a control sent on one that sat quiet through a
+ * Python arrange raced Node's 5 s default closing it, failing as "other side
+ * closed" (#3647's lane run). `tests/e2e/server.py` holds its own idle sockets
+ * open for the same reason; teardown still drops every one of them first.
+ */
+const IDLE_KEEP_ALIVE_MS = 300_000;
 
 const HTTP_OK = 200;
 const HTTP_ACCEPTED = 202;
@@ -405,6 +419,16 @@ const rejectedJobs = new Set();
  * `method: 'rules'`, which the server must read as a sort not yet finished.
  */
 let classifyWithRules = false;
+/**
+ * One classification admission a journey armed this vault to shed (#3647): the
+ * next `POST /v1/classifications` is answered `503 temporarily_unavailable`, as
+ * Creek's concurrency limits shed, and admits no job. The admission is not
+ * stored, so adepthood's bounded detached retry submits it again after the
+ * request that queued it has answered. Consumed by the one admission it refuses,
+ * and cleared whenever the pipeline is switched, so it cannot reach another
+ * journey.
+ */
+let classificationRefusalArmed = false;
 /** The vendors a managed Creek vault spends a writer's own key for. */
 const REQUEST_KEY_PROVIDERS = ['anthropic', 'openai'];
 const PROVIDER_HEADER = 'x-creek-provider';
@@ -930,6 +954,12 @@ async function pipelineCall(request, response, pathname) {
     refuse(response, HTTP_BAD_REQUEST, 'invalid_request');
     return true;
   }
+  if (method === 'llm' && classificationRefusalArmed) {
+    classificationRefusalArmed = false;
+    received.push({ method: 'POST', path: pathname, externalId: null, tier: null, refused: true });
+    refuse(response, HTTP_SERVICE_UNAVAILABLE, 'temporarily_unavailable');
+    return true;
+  }
   received.push({ method: 'POST', path: pathname, externalId: null, tier: null });
   if (method === 'temporal') {
     send(response, HTTP_OK, {
@@ -1136,6 +1166,13 @@ const server = createServer((request, response) => {
       request.resume();
       pipelineAdvertised = pathname === '/__lane/enable-pipeline';
       pipelineJobsHeld = pipelineAdvertised;
+      classificationRefusalArmed = false;
+      send(response, HTTP_OK, { status: 'ok' });
+      return;
+    }
+    if (request.method === 'POST' && pathname === '/__lane/refuse-next-classification') {
+      request.resume();
+      classificationRefusalArmed = true;
       send(response, HTTP_OK, { status: 'ok' });
       return;
     }
@@ -1280,6 +1317,8 @@ const server = createServer((request, response) => {
     await capability(request, response, pathname);
   })().catch(() => refuse(response, HTTP_BAD_REQUEST, 'invalid_request'));
 });
+
+server.keepAliveTimeout = IDLE_KEEP_ALIVE_MS;
 
 server.listen(0, LOOPBACK_HOST, () => {
   const address = server.address();
