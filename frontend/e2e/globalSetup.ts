@@ -66,6 +66,28 @@ const WEB_BASE_URL = 'https://reset.adepthood.invalid';
 const MANAGED_VAULT_ALERT_EMAIL = 'managed-vault-alerts@example.com';
 
 /**
+ * At-rest encryption, on for the whole lane as it is on every deployment.
+ *
+ * `JOURNAL_ENCRYPTION_KEYS` is a production setting, and a server without it
+ * keeps journal prose in the clear and refuses to retain a writer's provider
+ * key for background classification (R1-1, #3647). A lane without it would be
+ * testing a configuration production refuses to boot. One Fernet key is minted
+ * per run -- 32 random bytes in padded urlsafe base64, the only form Fernet
+ * accepts -- and exported to this process before anything is spawned, so the
+ * server and every arrange helper a journey runs against the same database
+ * read the same columns. It dies with the run's database.
+ */
+const AT_REST_KEYS_ENV = 'JOURNAL_ENCRYPTION_KEYS';
+const AT_REST_KEY_BYTES = 32;
+
+function mintAtRestKey(): string {
+  return randomBytes(AT_REST_KEY_BYTES)
+    .toString('base64')
+    .replace(/\+/gu, '-')
+    .replace(/\//gu, '_');
+}
+
+/**
  * The account the lane's deployment-wide Creek Vault belongs to.
  *
  * `dependencies.creek_vault` serves the configured vault to exactly one user --
@@ -485,6 +507,8 @@ function serverEnvironment(
     // keyless request on a stub server is refused 402 `llm_key_required`, as it
     // is on every real deployment. The server refuses a production boot with it.
     BOTMASON_STUB_SEAM: 'true',
+    // Minted by `globalSetup` before any process starts; see AT_REST_KEYS_ENV.
+    [AT_REST_KEYS_ENV]: process.env[AT_REST_KEYS_ENV],
     OPENAI_BASE_URL: `http://127.0.0.1:${provider.port}/v1`,
     ANTHROPIC_BASE_URL: `http://127.0.0.1:${provider.port}`,
     // Neither is read by the server any more (ADR 0009 phase (a), #3067): the
@@ -611,6 +635,9 @@ export default async function globalSetup(): Promise<void> {
   if (!adminUrl) throw new Error(POSTGRES_HELP);
 
   clearLaneState();
+  // Never a developer's own key: the lane's ciphertext must be readable by the
+  // lane alone, and every child (server and arrange helpers) inherits this.
+  process.env[AT_REST_KEYS_ENV] = mintAtRestKey();
   const databaseUrl = withDatabase(
     adminUrl,
     `adepthood_e2e_${randomBytes(DATABASE_SUFFIX_BYTES).toString('hex')}`,

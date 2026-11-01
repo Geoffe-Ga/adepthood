@@ -108,6 +108,13 @@ armed would make "how many journeys exist" a hidden global constraint: one more
 journey, or one retry, would start failing on a cap rather than on a defect.
 Rate limiting keeps its own tests in the backend suite.
 
+At-rest encryption is on, as it is on every deployment. `globalSetup` mints one
+Fernet key per run into `JOURNAL_ENCRYPTION_KEYS` before it spawns anything, so
+the server and every arrange helper a journey runs against the lane database
+read the same ciphertext. Without it the server keeps journal prose in the clear
+and refuses to retain a writer's provider key for background classification
+(R1-1), so the stored-key journey would have nothing to prove.
+
 The private-vault activation journey also starts an isolated fake Creek control
 plane on a kernel-selected loopback port. Adepthood still uses its production
 HTTP provisioning client, bearer files, contract-version header, routers,
@@ -209,6 +216,16 @@ minted cursor, an Intimate canary fragment -- each item built over the vendored
 `creek_export_v027` success cell and checked key-for-key when the fake boots.
 `GET /__lane/export-pages` hands the spec those pages, so it can prove the
 saved file is exactly what the vault held.
+
+`POST /__lane/refuse-next-classification` arms exactly one shed admission: the
+next `POST /v1/classifications` is answered Creek's own `503
+temporarily_unavailable`, admits no job, and is recorded with `refused: true`.
+The server's bounded detached retry then submits it again after the save that
+queued it has answered, which is how
+`vault-stored-key-background-classification.e2e.test.ts` drives a background
+classification submit and reads, by digest on the ledger, whether it carried
+the writer's stored key (#3647). Switching the pipeline either way clears an
+unspent refusal.
 
 `GET /__lane/uploads` reports what actually arrived — every `/v1` request in
 order and the upload, journal, and Voice Draft fragments the ledger holds, by

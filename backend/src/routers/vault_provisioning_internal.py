@@ -80,7 +80,13 @@ _STATUS_REQUEST_BODY: Final = {
 
 @unique
 class _FleetAlertKind(StrEnum):
-    """The exact content-free vocabulary shared with Creek AlertKind."""
+    """The exact content-free vocabulary shared with Creek AlertKind.
+
+    Creek's ``creek_mcp/provisioning/budget.py`` ``AlertKind`` is the source of
+    truth; ``tests/test_vault_activation.py`` pins this enum to the same exact
+    set Creek pins in its own tests (#3507). Widen it receiver-first: this enum
+    and that pin together, deployed before any Creek build that sends the kind.
+    """
 
     DUPLICATE_RESOURCE = "duplicate_resource"
     ORPHAN_RESOURCE = "orphan_resource"
@@ -110,8 +116,99 @@ class _FleetAlertKind(StrEnum):
     POOL_QUOTA_EXHAUSTED = "pool_quota_exhausted"
 
 
+#: What the operator should do about each kind: fixed copy, one line per kind,
+#: never filled in from the payload, so the email stays as content-free as it.
+_FLEET_ALERT_GUIDANCE: Final[dict[_FleetAlertKind, str]] = {
+    _FleetAlertKind.CONTINUOUS_RUNNING: (
+        "A vault Machine has run past the continuous-running limit. Reconcile"
+        " stops it while its vault is live; otherwise stop it on the Fly console."
+    ),
+    _FleetAlertKind.DUPLICATE_RESOURCE: (
+        "A vault owns more than one Machine, volume or live pool key. Find it in"
+        " the fleet report and remove the leftover on the provider's console."
+    ),
+    _FleetAlertKind.INCOMPLETE_CREATE: (
+        "A vault create failed and stayed failed after its one repair attempt."
+        " Inspect its app and job in the fleet report before retrying it."
+    ),
+    _FleetAlertKind.MONTHLY_BUDGET_DEPARTURE: (
+        "Estimated spend reached a budget line: the fleet's monthly Fly budget,"
+        " or a vault's EUR 5 pool spend alert. Check it against the invoice,"
+        " then adjust the budget or the fleet."
+    ),
+    _FleetAlertKind.ORPHAN_RESOURCE: (
+        "A provider resource exists that no vault owns. Confirm it on the Fly"
+        " console, then delete it there; Creek never deletes it."
+    ),
+    _FleetAlertKind.POOL_ADMIN_KEY_NEAR_EXPIRY: (
+        "The pool admin key nears its recorded expiry. Install a replacement"
+        " before it lapses, or no vault's pool key can be capped, renewed or"
+        " revoked."
+    ),
+    _FleetAlertKind.POOL_ADMIN_KEY_REJECTED: (
+        "The pool vendor refused the pool admin key. No vault's pool key can be"
+        " capped, renewed or revoked until you install a working one."
+    ),
+    _FleetAlertKind.POOL_ADMIN_KEY_UNUSABLE: (
+        "The control plane's pool admin key is missing, malformed, undated or"
+        " expired. No vault's pool key can be capped, renewed or revoked until"
+        " you install a valid one."
+    ),
+    _FleetAlertKind.POOL_ADMISSION_REFUSED: (
+        "A vault refused pool calls over its own in-flight or hourly limit. A"
+        " one-off is load; a steady count means that limit needs revisiting."
+    ),
+    _FleetAlertKind.POOL_ATTESTATION_FAILED: (
+        "A vault could not verify the pool's attestation, so it sent nothing."
+        " Check the pool proxy against its pinned measurement before trusting"
+        " it again."
+    ),
+    _FleetAlertKind.POOL_CREDENTIAL_ORPHAN: (
+        "A pool key outlived its vault, or a replaced key's revocation is stuck,"
+        " and it can still spend up to its cap. Retry the revocation, or revoke"
+        " the key in the vendor's portal."
+    ),
+    _FleetAlertKind.POOL_CREDENTIAL_REJECTED: (
+        "The pool vendor refused a vault's pool key, so that vault's pool calls"
+        " are refused. Replace the key."
+    ),
+    _FleetAlertKind.POOL_QUOTA_EXHAUSTED: (
+        "A vault's pool key reached its monthly cost cap, so its pool calls are"
+        " refused. Raise the cap or wait for the monthly reset."
+    ),
+    _FleetAlertKind.POOL_VENDOR_RATE_LIMITED: (
+        "The pool vendor rate-limited a vault's calls. A one-off is load; a"
+        " steady count means the pool needs more vendor capacity."
+    ),
+    _FleetAlertKind.PROVIDER_CREDENTIAL_EXPIRING: (
+        "The Fly org token nears or has passed its recorded expiry, or none was"
+        " recorded. Rotate it and record the new expiry."
+    ),
+    _FleetAlertKind.PROVIDER_CREDENTIAL_REJECTED: (
+        "Fly refused the org token, so the pilot is degraded now. Replace the token."
+    ),
+    _FleetAlertKind.STUCK_DELETION: (
+        "A vault deletion has gone unconfirmed past its bound. Reconcile retries"
+        " a retryable failure; finish a non-retryable one on the Fly console."
+    ),
+}
+_ALERT_EMAIL_FOOTER: Final = (
+    "This alert carries kinds and counts only. The fleet report on Creek's"
+    " control plane has the details, and Creek's runbooks have the full"
+    " response for each kind."
+)
+
+
 class _FleetAlertPayload(BaseModel):
-    """Counts-only fleet alert; subjects and resource coordinates cannot parse."""
+    """Counts-only fleet alert; subjects and resource coordinates cannot parse.
+
+    All or nothing: one kind outside the closed vocabulary refuses the whole
+    payload (#3507). Creek retries a payload as a unit and keeps it owed until
+    a 204, so the known counts are re-sent, not lost, once the kind is admitted;
+    a 204 for the known part would acknowledge the unknown kind and Creek would
+    drop it. The cost, stated in ``docs/managed-vault-pilot.md``: while a kind
+    is unknown here Creek keeps new activations closed.
+    """
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
@@ -170,15 +267,11 @@ def _fleet_alert_email(
     payload: _FleetAlertPayload,
     destination: str,
 ) -> EmailMessagePayload:
-    """Render sorted enum values and counts without any resource subject."""
-    lines = [
-        "Managed vault fleet alerts:",
-        *(
-            f"{kind.value}: {count}"
-            for kind, count in sorted(payload.counts.items(), key=lambda item: item[0].value)
-        ),
-        "",
-    ]
+    """Render sorted kinds, counts and fixed guidance without any resource subject."""
+    lines = ["Managed vault fleet alerts:", ""]
+    for kind, count in sorted(payload.counts.items(), key=lambda item: item[0].value):
+        lines.extend((f"{kind.value}: {count}", f"  {_FLEET_ALERT_GUIDANCE[kind]}", ""))
+    lines.extend((_ALERT_EMAIL_FOOTER, ""))
     return EmailMessagePayload(
         to=destination,
         subject=_ALERT_EMAIL_SUBJECT,

@@ -107,6 +107,22 @@ vault on Creek contract 0.18 or later answers `GET /v1/capabilities` with
    alert-kind counts—never an allocation id, user id, path, URL, exception,
    provider response, or journal content. Delivery failure is a generic 503 so
    Creek's bounded sender retries and reports the unhealthy reconciliation pass.
+   The email lists each kind's count beside fixed text naming what to do about
+   it; that text comes from the receiver, never from the request.
+
+   The receiver admits exactly Creek's `AlertKind` vocabulary
+   (`creek-tools/creek_mcp/provisioning/budget.py` in Creek-Vault), pinned by an
+   exact-set test on each side. A payload naming any other kind is refused
+   whole with `400 invalid_fleet_alert`, including the known kinds beside it.
+   That is deliberate (#3507): Creek keeps an undelivered payload owed and
+   re-sends it as a unit, so the known counts arrive once the kind is admitted.
+   Accepting only the known part would acknowledge the unknown kind, and Creek
+   would drop it. The cost is availability: under Creek's alert-channel policy
+   (R2-4) a refused payload keeps routing running but refuses every new
+   activation until a delivery succeeds. Builds from before that policy treated
+   the 400 as fatal and restarted the control plane in a loop. So a new kind
+   is receiver-first: deploy an Adepthood build that admits it before any
+   Creek build that can send it.
 5. Set `CREEK_MANAGED_VAULT_PILOT_USER_IDS` to the comma-separated Adepthood
    account ids approved for this cohort. Never use email addresses or a browser
    flag. The parser rejects zero, negative, malformed, empty, and over-100 lists.

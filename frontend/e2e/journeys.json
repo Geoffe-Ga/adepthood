@@ -3312,20 +3312,27 @@
   },
   {
     "id": "journal.managed-vault-background-classification-on-stored-key",
-    "description": "An un-enrolled writer with their own Anthropic or OpenAI key saves a page to a managed vault that advertises the key's vendor in request_key_providers (R1-1, ADR 0009 amendment 2026-11-01, Creek-Vault ADR-0015 amendment 2026-11-01). The keyed classification admission keeps the key in vaultclassificationkey.api_key, encrypted with the journal codec and never in plaintext; later classification that no request keys -- a bounded detached retry, a queued successor, restart recovery, a save from a device that sent no key -- relays that stored copy, for that account only and only when the vault still advertises the vendor, and otherwise stays keyless on the rules floor. Removing or replacing the key in Settings, disconnecting the vault, a vendor rejection (failure_code request_key_rejected), enrolment and account deletion each delete the copy. Uncovered by a seam-crossing spec: the lane vault would need to be driven through a detached retry or an adepthood restart while the browser session has ended, which no lane harness does yet. Pinned meanwhile by backend/tests/security/test_stored_classification_key.py (through the real HTTP vault adapter: retention, use on retries/recovery/keyless saves, vendor gating, IDOR, every deletion) and the rewritten canary sweep in backend/tests/security/test_ai_boundary_network_matrix.py, whose raw read of every column finds the key nowhere but as ciphertext in its own column.",
+    "description": "An un-enrolled writer with their own Anthropic or OpenAI key saves a page to a managed vault that advertises the key's vendor in request_key_providers (R1-1, ADR 0009 amendment 2026-11-01, Creek-Vault ADR-0015 amendment 2026-11-01). The keyed classification admission keeps the key in vaultclassificationkey.api_key, encrypted with the journal codec and never in plaintext; later classification that no request keys -- a bounded detached retry, a queued successor, restart recovery, a save from a device that sent no key -- relays that stored copy, for that account only and only when the vault still advertises the vendor, and otherwise stays keyless on the rules floor. Removing or replacing the key in Settings, disconnecting the vault, a vendor rejection (failure_code request_key_rejected), enrolment and account deletion each delete the copy. The spec drives this through the production journal.create and vaultClassificationKey.forget wrappers, a live server booted with at-rest encryption on (a per-run JOURNAL_ENCRYPTION_KEYS, as every deployment runs), and the lane vault advertising request_key_providers. Nothing in the server is stubbed: the vault is armed (POST /__lane/refuse-next-classification) to shed one classification admission with Creek's own 503 temporarily_unavailable, so adepthood's bounded detached retry re-submits it after the save has answered, on a continuation started in a keyless context; attempt_count 2 on the run is written only by that retry. Three passes, each one shed admission then its retry: a save carrying the writer's key, whose retry carries the same key by SHA-256 digest on the vault's ledger and leaves a stored row the content-free lane helper reports as anthropic and ciphertext; a save from a device that sent no key, whose two background submits both carry that digest -- no request in the pass held a key, so it can only be the stored copy; and, after DELETE /user/vault-classification-key, the same keyless pass, whose two submits carry no key at all. Restart recovery, queued successors, vendor gating, cross-account isolation and the other deletions stay pinned by backend/tests/security/test_stored_classification_key.py (through the real HTTP vault adapter), and the canary sweep in backend/tests/security/test_ai_boundary_network_matrix.py finds the key nowhere but as ciphertext in its own column.",
     "crosses": {
       "screen": "frontend/src/features/Journal/JournalEntryScreen.tsx",
-      "client": ["journal", "vaultRequestKeys", "vaultClassificationKey"],
+      "client": [
+        "auth",
+        "setTokenGetter",
+        "setLlmApiKeyGetter",
+        "vaultRequestKeys",
+        "journal",
+        "vaultClassificationKey"
+      ],
       "routes": [
+        "POST /auth/login",
+        "GET /user/vault-key-vendors",
         "POST /journal/",
-        "PATCH /journal/{entry_id}",
-        "POST /corpus/import",
         "DELETE /user/vault-classification-key"
       ],
-      "tables": ["journalentry", "vaultpipelinerun", "vaultclassificationkey"]
+      "tables": ["user", "journalentry", "vaultpipelinerun", "vaultclassificationkey"]
     },
-    "status": "uncovered",
-    "issue": 3647
+    "status": "covered",
+    "coveredBy": "frontend/e2e/vault-stored-key-background-classification.e2e.test.ts"
   },
   {
     "id": "settings.managed-vault-rejected-writer-key",

@@ -21,6 +21,7 @@ from models.user import User
 from models.user_vault_config import UserVaultConfig
 from models.vault_activation import VaultActivation, VaultTeardownReceipt
 from routers import vault_provisioning_internal
+from routers.vault_provisioning_internal import _FLEET_ALERT_GUIDANCE, _FleetAlertKind
 from services import creek_provisioning, journal_encryption
 from services import creek_provisioning_client as provisioning_client
 from services.creek_provisioning import (
@@ -58,6 +59,38 @@ _CREDENTIAL = "consumer-credential-" + "c" * 48
 _VAULT_URL = "https://vault-user-001.example.test/v1"
 _ALERT_PATH = "/internal/vault-provisioning/alerts"
 _ALERT_EMAIL = "managed-vault-alerts@example.com"
+# Creek's fleet ``AlertKind``, exactly (#3507). The source of truth is
+# Geoffe-Ga/Creek-Vault ``creek-tools/creek_mcp/provisioning/budget.py``
+# (``AlertKind``), which Creek pins to this same set in
+# ``creek-tools/tests/test_provisioning_budget.py``. Vault-side alerts relayed
+# by Creek PR #2054 (``creek/vault_alerts.py``, ``VAULT_ALERT_KINDS``) are a
+# subset of it and add no kind. No published contract carries this list: the
+# vendored bundle under ``tests/fixtures/creek_v1/`` is the vault's ``/v1`` API,
+# not the control plane's alert callback, so the list is copied here by hand
+# and the two pins are what keep it honest. Change it receiver-first
+# (Creek-Vault ADR 0013): widen this set and ``_FleetAlertKind`` together,
+# deploy adepthood, then ship the Creek build that can send the new kind.
+_CREEK_ALERT_KINDS = frozenset(
+    {
+        "duplicate_resource",
+        "orphan_resource",
+        "stuck_deletion",
+        "continuous_running",
+        "incomplete_create",
+        "monthly_budget_departure",
+        "pool_credential_orphan",
+        "pool_admin_key_unusable",
+        "pool_admin_key_rejected",
+        "pool_admin_key_near_expiry",
+        "provider_credential_expiring",
+        "provider_credential_rejected",
+        "pool_attestation_failed",
+        "pool_credential_rejected",
+        "pool_admission_refused",
+        "pool_vendor_rate_limited",
+        "pool_quota_exhausted",
+    }
+)
 
 
 class FakeEmailSender:
@@ -907,36 +940,61 @@ async def test_fleet_alert_authenticates_before_parsing_the_body(
     assert email_sender.calls == []
 
 
+def test_fleet_alert_vocabulary_is_exactly_creeks_alert_kind() -> None:
+    """The receiver admits Creek's alert vocabulary: no member more, none less.
+
+    One kind Creek can send and this list lacks is answered 400, which Creek
+    holds as undelivered: every kind in the same payload stays owed and new
+    activations stay refused until this list admits it (#3507). A kind this
+    list has and Creek lacks widens the contract with nothing to keep it honest.
+    """
+    assert {kind.value for kind in _FleetAlertKind} == _CREEK_ALERT_KINDS
+
+
+def test_every_fleet_alert_kind_tells_the_operator_what_to_do() -> None:
+    """Each kind carries its own fixed, single-line operator instruction."""
+    assert set(_FLEET_ALERT_GUIDANCE) == set(_FleetAlertKind)
+    assert len(set(_FLEET_ALERT_GUIDANCE.values())) == len(_FLEET_ALERT_GUIDANCE)
+    for guidance in _FLEET_ALERT_GUIDANCE.values():
+        assert guidance.strip() == guidance
+        assert "\n" not in guidance
+        assert guidance.endswith(".")
+        assert "{" not in guidance
+
+
 @pytest.mark.asyncio
-async def test_fleet_alert_delivers_only_sorted_closed_kind_counts(
+@pytest.mark.parametrize("kind", sorted(_CREEK_ALERT_KINDS))
+async def test_fleet_alert_delivers_each_creek_kind_on_its_own(
+    async_client: AsyncClient,
+    email_sender: FakeEmailSender,
+    kind: str,
+) -> None:
+    """A payload naming only one kind, ``pool_credential_orphan`` included, is a 204."""
+    response = await async_client.post(
+        _ALERT_PATH,
+        headers={"Authorization": f"Bearer {_HANDOFF_TOKEN}"},
+        json={"schema": "creek_fleet_alert_v1", "counts": {kind: 1}},
+    )
+
+    assert response.status_code == HTTPStatus.NO_CONTENT
+    [(message, redact_for_log)] = email_sender.calls
+    assert redact_for_log is None
+    guidance = _FLEET_ALERT_GUIDANCE[_FleetAlertKind(kind)]
+    assert f"\n{kind}: 1\n  {guidance}\n" in message.body
+
+
+@pytest.mark.asyncio
+async def test_fleet_alert_email_is_fixed_copy_around_sorted_kind_counts(
     async_client: AsyncClient,
     email_sender: FakeEmailSender,
 ) -> None:
-    """The operator receives counts, never subjects, ids, paths, or content."""
+    """The operator receives fixed per-kind instructions and counts, nothing else."""
     response = await async_client.post(
         _ALERT_PATH,
         headers={"Authorization": f"Bearer {_HANDOFF_TOKEN}"},
         json={
             "schema": "creek_fleet_alert_v1",
-            "counts": {
-                "continuous_running": 1,
-                "duplicate_resource": 2,
-                "incomplete_create": 3,
-                "monthly_budget_departure": 4,
-                "orphan_resource": 5,
-                "pool_admin_key_near_expiry": 9,
-                "pool_admin_key_rejected": 10,
-                "pool_admin_key_unusable": 11,
-                "pool_admission_refused": 12,
-                "pool_attestation_failed": 13,
-                "pool_credential_orphan": 14,
-                "pool_credential_rejected": 15,
-                "pool_quota_exhausted": 16,
-                "pool_vendor_rate_limited": 17,
-                "provider_credential_expiring": 7,
-                "provider_credential_rejected": 8,
-                "stuck_deletion": 6,
-            },
+            "counts": {"stuck_deletion": 6, "pool_credential_orphan": 14},
         },
     )
 
@@ -949,25 +1007,77 @@ async def test_fleet_alert_delivers_only_sorted_closed_kind_counts(
                 to=_ALERT_EMAIL,
                 subject="Managed vault pilot alert",
                 body=(
-                    "Managed vault fleet alerts:\ncontinuous_running: 1\n"
-                    "duplicate_resource: 2\nincomplete_create: 3\n"
-                    "monthly_budget_departure: 4\norphan_resource: 5\n"
-                    "pool_admin_key_near_expiry: 9\n"
-                    "pool_admin_key_rejected: 10\n"
-                    "pool_admin_key_unusable: 11\n"
-                    "pool_admission_refused: 12\n"
-                    "pool_attestation_failed: 13\n"
+                    "Managed vault fleet alerts:\n"
+                    "\n"
                     "pool_credential_orphan: 14\n"
-                    "pool_credential_rejected: 15\n"
-                    "pool_quota_exhausted: 16\n"
-                    "pool_vendor_rate_limited: 17\n"
-                    "provider_credential_expiring: 7\n"
-                    "provider_credential_rejected: 8\nstuck_deletion: 6\n"
+                    "  A pool key outlived its vault, or a replaced key's revocation"
+                    " is stuck, and it can still spend up to its cap. Retry the"
+                    " revocation, or revoke the key in the vendor's portal.\n"
+                    "\n"
+                    "stuck_deletion: 6\n"
+                    "  A vault deletion has gone unconfirmed past its bound."
+                    " Reconcile retries a retryable failure; finish a"
+                    " non-retryable one on the Fly console.\n"
+                    "\n"
+                    "This alert carries kinds and counts only. The fleet report on"
+                    " Creek's control plane has the details, and Creek's runbooks"
+                    " have the full response for each kind.\n"
                 ),
             ),
             None,
         )
     ]
+
+
+@pytest.mark.asyncio
+async def test_fleet_alert_delivers_every_creek_kind_sorted_in_one_email(
+    async_client: AsyncClient,
+    email_sender: FakeEmailSender,
+) -> None:
+    """A payload naming the whole vocabulary lists every kind, sorted, once."""
+    counts = {kind: index for index, kind in enumerate(sorted(_CREEK_ALERT_KINDS), start=1)}
+
+    response = await async_client.post(
+        _ALERT_PATH,
+        headers={"Authorization": f"Bearer {_HANDOFF_TOKEN}"},
+        json={"schema": "creek_fleet_alert_v1", "counts": dict(reversed(counts.items()))},
+    )
+
+    assert response.status_code == HTTPStatus.NO_CONTENT
+    [(message, _)] = email_sender.calls
+    count_lines = [line for line in message.body.splitlines() if line and not line.startswith(" ")]
+    assert count_lines[1:-1] == [f"{kind}: {count}" for kind, count in counts.items()]
+
+
+@pytest.mark.asyncio
+async def test_fleet_alert_with_one_unknown_kind_is_refused_whole(
+    async_client: AsyncClient,
+    email_sender: FakeEmailSender,
+) -> None:
+    """All-or-nothing is the recorded decision: known counts are not split off.
+
+    Creek retries one payload as a unit and keeps it owed until a 204, so the
+    known counts are not lost: they are re-sent with the unknown kind once this
+    receiver admits it. Answering 204 for the known part would acknowledge the
+    unknown kind too, and Creek would drop it; delivering the known part and
+    answering 400 would re-email it on every retry. The cost is the one stated
+    in docs/managed-vault-pilot.md: while a kind is unknown here, Creek keeps
+    new activations closed.
+    """
+    response = await async_client.post(
+        _ALERT_PATH,
+        headers={"Authorization": f"Bearer {_HANDOFF_TOKEN}"},
+        json={
+            "schema": "creek_fleet_alert_v1",
+            "counts": {"orphan_resource": 2, "pool_min_below_one": 1},
+        },
+    )
+
+    assert response.status_code == HTTPStatus.BAD_REQUEST
+    assert response.json() == {"detail": "invalid_fleet_alert"}
+    assert "pool_min_below_one" not in response.text
+    assert email_sender.factory_calls == 0
+    assert email_sender.calls == []
 
 
 @pytest.mark.asyncio
