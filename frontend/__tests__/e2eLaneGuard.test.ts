@@ -54,6 +54,7 @@ const SHARED_BROWSER_SUPPORT = 'journalHabitsBrowserSupport.ts';
  */
 const EXPECTED_BROWSER_JOURNEYS = [
   'account-decline-choices.browser.e2e.test.ts',
+  'account-export-vault-content.browser.e2e.test.ts',
   'invitation-decline.browser.e2e.test.ts',
   'invitation-reason-copy.browser.e2e.test.ts',
   'action-rows.browser.e2e.test.ts',
@@ -675,6 +676,24 @@ describe('the external Creek Vault boundary stays protocol-shaped and narrowly a
     expect(fake).toContain("pathname === '/__lane/enable-pipeline'");
     expect(fake).toContain("pathname === '/__lane/disable-pipeline'");
     expect(fake).not.toContain("'classify'");
+  });
+
+  it("serves the 0.27 owner export only when armed, over Creek's own published cell", () => {
+    // `export` hands a vault's content -- Intimate included -- to whoever reads
+    // it, so it is never in the default list: a journey must arm it, and it
+    // declares 0.27 or is refused. Every item is built over the vendored
+    // `export` success cell and checked key-for-key, so contract drift fails
+    // the lane at boot rather than serving a shape Creek never published.
+    const fake = read(FAKE_VAULT, 'The vault-export journey needs a vault that exports.');
+
+    expect(fake).toContain("let exportMode = 'absent';");
+    expect(fake).toContain(".concat(exportMode === 'absent' ? [] : ['export'])");
+    expect(fake).toContain("const EXPORT_MINOR = '0.27';");
+    expect(fake).toContain("if (exportMode !== 'served' || declared !== EXPORT_MINOR) {");
+    expect(fake).toContain('creek_export_v027/examples/export/success.json');
+    expect(fake).toContain('shapedLike(EXPORT_SUCCESS.documents[0], {');
+    expect(fake).toContain('shapedLike(EXPORT_SUCCESS.fragments[0], {');
+    expect(fake).toContain("['/__lane/withdraw-export', 'absent']");
   });
 
   it('serves reflections on the published request shape and an admitted ceiling only', () => {
