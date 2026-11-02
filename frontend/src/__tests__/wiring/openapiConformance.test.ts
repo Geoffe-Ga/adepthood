@@ -252,6 +252,13 @@ const SCHEMA_VERDICTS: Readonly<Record<string, SchemaVerdict>> = {
     },
   },
   reflectionSourcesResponseSchema: {
+    // #3657 offers Course and letter quotes beside the feed; the composer's
+    // panel that reads them is the epic's own frontend work (#3659), which
+    // parses the field and deletes this waiver.
+    omits: {
+      reading_quotes:
+        'The Course and letter quotes promoted inside the review window; none can exist outside tests until #3658 creates them, and the Sources panel that offers them is #3659.',
+    },
     lax: {
       level:
         'Optional so a feed captured before the sources response echoed its scope still validates; the composer already knows which level it asked for and only uses the echo to confirm it.',

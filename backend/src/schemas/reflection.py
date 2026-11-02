@@ -10,10 +10,12 @@ reflection. ``user_id`` never appears in any of them.
 from __future__ import annotations
 
 from datetime import datetime
+from enum import StrEnum
 
 from pydantic import BaseModel
 
 from domain.cycle_calendar import CycleAnchorStatus
+from models.promoted_quote import PromotedQuoteSourceKind
 
 
 class PromotedQuoteSummary(BaseModel):
@@ -28,6 +30,39 @@ class PromotedQuoteSummary(BaseModel):
     anchor_end: int
     anchor_text: str
     pending: bool
+
+
+class ReadingQuoteSourceKind(StrEnum):
+    """The kinds of promoted quote that wait beside a sources feed rather than inside an item.
+
+    The two members of :class:`models.promoted_quote.PromotedQuoteSourceKind`
+    with no source entry in the window to ride with; an entry quote rides inside
+    its own :class:`ReflectionSourceItem` instead.
+    """
+
+    COURSE = PromotedQuoteSourceKind.COURSE.value
+    LETTER = PromotedQuoteSourceKind.LETTER.value
+
+
+class ReadingQuoteItem(BaseModel):
+    """A quote of something the writer read -- a Course chapter or a Resonance Letter (#3657).
+
+    ``source_title`` names where it came from: the live chapter's title (or the
+    title snapshotted when the quote was made, once that chapter is pruned) for
+    a Course quote, and the title of the entry the letter answered for a letter
+    quote. ``pending`` is True while the quote has not been folded into any
+    reflection. ``created_at`` is when it was promoted, which is what places it
+    in a review's window.
+    """
+
+    id: int
+    source_kind: ReadingQuoteSourceKind
+    source_title: str | None
+    anchor_start: int
+    anchor_end: int
+    anchor_text: str
+    pending: bool
+    created_at: datetime
 
 
 class ReflectionSourceItem(BaseModel):
@@ -72,6 +107,14 @@ class ReflectionSourcesResponse(BaseModel):
     distinction to tell "nothing was written in this period" apart from "this
     period cannot be rebuilt" — without it both read as one silent empty feed.
 
+    ``reading_quotes`` are the caller's Course and letter quotes promoted inside
+    the same half-open window -- the quote waits in the week it was promoted,
+    judged on its ``created_at`` -- ordered oldest first, and only those that may
+    be folded (#3657): a Course quote always, a letter quote only while the
+    entry it answered is live, the caller's own and egress-eligible. It is empty
+    whenever the bounds are ``None``. Entry quotes ride inside their item's
+    ``promoted_quotes`` as before.
+
     Deliberately unpaginated: a single scope's feed is at most a few dozen
     items, so the whole set is returned in one call. Pagination can be layered
     on later if a wider layer's feed ever grows past a comfortable page.
@@ -83,6 +126,7 @@ class ReflectionSourcesResponse(BaseModel):
     window_end: datetime | None
     anchor_status: CycleAnchorStatus
     items: list[ReflectionSourceItem]
+    reading_quotes: list[ReadingQuoteItem]
 
 
 class ReflectionDue(BaseModel):
