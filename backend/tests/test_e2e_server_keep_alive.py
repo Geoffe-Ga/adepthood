@@ -9,10 +9,46 @@ touched it.
 
 from __future__ import annotations
 
+import logging
+
+import pytest
+import uvicorn
+
 from tests.e2e.server import IDLE_KEEP_ALIVE_SECONDS, _server_config
 
 #: uvicorn's own default, which the browser lane outlived between requests.
 _UVICORN_DEFAULT_KEEP_ALIVE_SECONDS = 5
+
+#: The loggers uvicorn's default logging config sets a level or propagation on.
+_UVICORN_LOGGERS = ("uvicorn", "uvicorn.error", "uvicorn.access", "uvicorn.asgi")
+
+
+def _uvicorn_logger_state() -> dict[str, tuple[int, bool, bool, tuple[logging.Handler, ...]]]:
+    """Each uvicorn logger's level, propagation, disabled flag and handlers."""
+    loggers = {name: logging.getLogger(name) for name in _UVICORN_LOGGERS}
+    return {
+        name: (logger.level, logger.propagate, logger.disabled, tuple(logger.handlers))
+        for name, logger in loggers.items()
+    }
+
+
+def _leave_logging_alone(_config: uvicorn.Config) -> None:
+    """Stand-in for ``uvicorn.Config.configure_logging``: these tests only read the config."""
+
+
+@pytest.fixture(autouse=True)
+def _config_without_logging_setup(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Build the server config here without running uvicorn's logging setup.
+
+    ``uvicorn.Config.__init__`` calls ``configure_logging()``, whose default
+    ``dictConfig`` stops ``uvicorn`` / ``uvicorn.access`` propagating and closes
+    every handler already in the process -- pytest's capture handlers among
+    them -- for the rest of the session. Every assertion in this module reads a
+    value off the config, so the side effect proves nothing here and only leaks
+    into whichever test runs next on the same worker.
+    """
+    monkeypatch.setattr(uvicorn.Config, "configure_logging", _leave_logging_alone)
+
 
 #: Longest quiet stretch a browser journey leaves between two API requests
 #: (reloads, navigation and UI waits) with margin to spare.
@@ -36,3 +72,20 @@ def test_the_server_still_listens_only_on_loopback() -> None:
 
     assert config.host == "127.0.0.1"
     assert config.port == port
+
+
+def test_reading_the_server_config_leaves_the_uvicorn_loggers_alone() -> None:
+    """Inspecting the config must not reconfigure logging for the rest of the session.
+
+    ``uvicorn.Config`` runs uvicorn's default ``dictConfig`` as it is built, which
+    stops ``uvicorn`` and ``uvicorn.access`` propagating. pytest then attaches its
+    capture handlers to them at every later phase, and a later
+    ``configure_logging()`` hardens those handlers -- so whichever test shared an
+    xdist worker with this module after it, such as
+    ``test_the_live_server_leaves_a_later_capture_handler_unhardened``, failed.
+    """
+    before = _uvicorn_logger_state()
+
+    _server_config(0)
+
+    assert _uvicorn_logger_state() == before
