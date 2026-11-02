@@ -54,6 +54,19 @@ async function expectFloatingPaper(page: Page, testId: string): Promise<string> 
   return geometry.shadow;
 }
 
+/** Below the desk-side rail a resting timer is put away into the header's timer icon. */
+const DESK_RAIL_MIN_WIDTH = 1020;
+
+/** The resting clock keeps its shadow on the rail; elsewhere it waits as the header icon. */
+async function expectRestingTimer(page: Page, width: number, shadow: string): Promise<void> {
+  if (width >= DESK_RAIL_MIN_WIDTH) {
+    expect(await expectFloatingPaper(page, 'writing-timer-pill')).toBe(shadow);
+  } else {
+    await expect(page.getByTestId('writing-timer-pill')).toHaveCount(0);
+    await expect(page.getByTestId('journal-writing-timer-open')).toBeVisible();
+  }
+}
+
 for (const width of [390, 844, 1280]) {
   test(`timer keeps its elevation through its lifecycle at ${width}px`, async ({
     page,
@@ -78,13 +91,17 @@ for (const width of [390, 844, 1280]) {
     await page.clock.fastForward(20 * 60_000);
     await expect(page.getByTestId('writing-session-banner')).toBeVisible();
     expect(await expectFloatingPaper(page, 'writing-session-banner')).toBe(shadow);
-    expect(await expectFloatingPaper(page, 'writing-timer-pill')).toBe(shadow);
+    await expectRestingTimer(page, width, shadow);
     await page.screenshot({ path: testInfo.outputPath('completed.png') });
 
     await page.getByTestId('writing-session-banner-dismiss').click();
-    expect(await expectFloatingPaper(page, 'writing-timer-pill')).toBe(shadow);
+    await expectRestingTimer(page, width, shadow);
     await page.screenshot({ path: testInfo.outputPath('waiting.png') });
-    await page.getByTestId('writing-timer-compact').click();
+    await page
+      .getByTestId(
+        width < DESK_RAIL_MIN_WIDTH ? 'journal-writing-timer-open' : 'writing-timer-compact',
+      )
+      .click();
     await expect(page.getByTestId('writing-timer-start')).toBeVisible();
     expect(await expectFloatingPaper(page, 'writing-timer-pill')).toBe(shadow);
     await page.screenshot({ path: testInfo.outputPath('ready-again.png') });

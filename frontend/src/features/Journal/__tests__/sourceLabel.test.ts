@@ -1,7 +1,7 @@
 /* eslint-env jest */
 import { describe, expect, it } from '@jest/globals';
 
-import { SOURCE_LABEL_COPY, sourceLabel } from '../sourceLabel';
+import { SOURCE_LABEL_COPY, reportedIdentityCaption, sourceLabel } from '../sourceLabel';
 
 describe('sourceLabel', () => {
   it.each([undefined, null, 'local', 'creek_vault ', 'CREEK_VAULT', 42, {}, [], true])(
@@ -31,5 +31,32 @@ describe('sourceLabel', () => {
     for (const copy of Object.values(SOURCE_LABEL_COPY)) {
       expect(copy).not.toMatch(/local|private|in your vault|on your device|anthropic|openai/i);
     }
+  });
+});
+
+describe('reportedIdentityCaption', () => {
+  it('says nothing when the provider only repeats the source', () => {
+    expect(reportedIdentityCaption('creek_vault', 'creek', null)).toBeNull();
+    expect(reportedIdentityCaption('demo', 'stub', null)).toBeNull();
+  });
+
+  it('says nothing about an identity that was not recorded', () => {
+    expect(reportedIdentityCaption('app_provider', null, null)).toBeNull();
+    expect(reportedIdentityCaption(null, null, '')).toBeNull();
+  });
+
+  it('names a third-party provider and its model on one hedged line', () => {
+    expect(reportedIdentityCaption('app_provider', 'openai', 'gpt-x')).toBe(
+      'Reported: OpenAI · gpt-x',
+    );
+    expect(reportedIdentityCaption('app_provider', 'anthropic', null)).toBe('Reported: Anthropic');
+  });
+
+  it("keeps a demo's reported model while dropping its redundant provider", () => {
+    expect(reportedIdentityCaption('demo', 'stub', 'stub-model')).toBe('Reported: stub-model');
+  });
+
+  it('still names a provider the source does not imply', () => {
+    expect(reportedIdentityCaption('creek_vault', 'openai', null)).toBe('Reported: OpenAI');
   });
 });

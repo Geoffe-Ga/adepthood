@@ -113,7 +113,9 @@ for (const width of [390, 1280]) {
     await openEntry(page, entryId);
     const note = page.getByTestId(`margin-note-${noteId}`);
     await expect(note.getByTestId(`margin-note-source-${noteId}`)).toHaveText(DEMO);
-    await expect(note.getByText('Reported provider: Demo', { exact: true })).toBeVisible();
+    // The card names the demo once: its stub provider would only repeat the label.
+    await expect(note.getByText(/Reported provider/)).toHaveCount(0);
+    await expect(note.getByText(/not recorded/)).toHaveCount(0);
     await expect(page.getByTestId('resonance-pass-receipt')).toHaveCount(0);
     const persisted = await page.request.get(`${backendUrl()}/journal/${entryId}/marginalia`, {
       headers: bearer(token),
@@ -202,6 +204,10 @@ test('bound Creek source and unrecorded model survive a real backend reload', as
     'From your Creek vault',
   );
   await expect(page.getByTestId('resonance-pass-receipt')).toHaveCount(0);
+  // With the pass receipt gone, the notes are all that is left: one caption per vault
+  // note, with no repeated provider and no announced absence of a model.
+  await expect(page.getByText(/Reported provider|Model not recorded/)).toHaveCount(0);
+  await expect(page.locator('[data-testid^="margin-note-identity-"]')).toHaveCount(0);
   await expect(page.getByRole('button', { name: 'Get resonance' })).toBeEnabled();
   await expect
     .poll(() =>
@@ -501,7 +507,7 @@ for (const width of [390, 1280]) {
     await enlargeMarginText(page);
     const noteModel = page
       .locator('[data-testid^="margin-note-"]')
-      .getByText(`Reported model: ${LONG_MODEL}`, { exact: true })
+      .getByText(`Reported: OpenAI · ${LONG_MODEL}`, { exact: true })
       .first();
     await noteModel.scrollIntoViewIfNeeded();
     await expect(noteModel).toBeInViewport({ ratio: 1 });

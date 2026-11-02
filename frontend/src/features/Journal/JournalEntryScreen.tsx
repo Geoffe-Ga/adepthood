@@ -7,7 +7,7 @@
  * on idle — there is no send button and no chat UI.
  */
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
-import { BookOpen, Camera, KeyRound, Pencil, RefreshCw, X } from 'lucide-react-native';
+import { BookOpen, Camera, KeyRound, Pencil, RefreshCw, Timer, X } from 'lucide-react-native';
 import React, { useCallback, useEffect, useMemo, useReducer, useRef, useState } from 'react';
 import {
   Animated,
@@ -100,6 +100,7 @@ import { countWords, wordCountLabel } from './wordCount';
 import type { LoggedWritingSession, WritingSessionResult } from './writingSession';
 import WritingSessionOffer from './WritingSessionOffer';
 import WritingSessionSurface from './WritingSessionSurface';
+import type { WritingTimerStow } from './WritingTimer';
 
 import { journal, prompts, reflections } from '@/api';
 import type {
@@ -3826,7 +3827,9 @@ function useWritingSeams(navigation: ScreenNavigation, autosave: AutosaveApi, bu
   const { handleTitle, handleBody } = useBumpedHandlers(bump, autosave);
   const reflection = useReflectionComposer(autosave);
   const photograph = usePhotographedPage(navigation, autosave, handleBody);
-  return { handleTitle, handleBody, reflection, photograph };
+  // Shared by the header's timer icon and the timer tray it stands in for.
+  const timerStow = useWritingTimerStow();
+  return { handleTitle, handleBody, reflection, photograph, timerStow };
 }
 
 /**
@@ -4423,6 +4426,38 @@ function ApiKeySettingsLink({ onPress }: { onPress: () => void }): React.JSX.Ele
   );
 }
 
+const OPEN_WRITING_TIMER_LABEL = 'Open the writing timer';
+
+/**
+ * Where a minimized writing timer waits on a phone: an icon in the page's
+ * top-right row, so the timer costs the writing column no height until the
+ * writer reaches for it again. Shown only while the timer is stowed.
+ */
+function WritingTimerIconButton({ onPress }: { onPress: () => void }): React.JSX.Element {
+  return (
+    <TouchableOpacity
+      style={styles.entryIconButton}
+      onPress={onPress}
+      accessibilityRole="button"
+      accessibilityLabel={OPEN_WRITING_TIMER_LABEL}
+      testID="journal-writing-timer-open"
+    >
+      <Timer
+        color={accent.primary}
+        size={NAV_ICON_SIZE}
+        strokeWidth={NAV_ICON_STROKE}
+        {...decorativeHidden()}
+      />
+    </TouchableOpacity>
+  );
+}
+
+/** The screen-held stow for the writing timer, shared by the header and the tray. */
+function useWritingTimerStow(): WritingTimerStow {
+  const [stowed, setStowed] = useState(false);
+  return useMemo(() => ({ stowed, onStowedChange: setStowed }), [stowed]);
+}
+
 /**
  * The always-available way out of the writing surface. ``ReturnToReadingLink``
  * only appears for a writer who came from the course reader, which left everyone
@@ -4574,11 +4609,12 @@ function EntryExits({
 
 /**
  * The page's top-right row of page-level doors: the course return when there is
- * one, the API-key door, a reflection's Sources while it is being written, the
- * camera while writing or Edit while reading, and the close always —
- * [Return?][Key][Sources?][Camera | Edit][X]. Camera and Edit share the slot left
- * of the X, so with no reflection the row keeps its width and order in both
- * modes; Sources, writing-only, is the one control that adds width (#3004).
+ * one, the API-key door, a reflection's Sources while it is being written, a
+ * stowed writing timer's icon, the camera while writing or Edit while reading,
+ * and the close always — [Return?][Key][Sources?][Timer?][Camera | Edit][X].
+ * Camera and Edit share the slot left of the X, so with no reflection the row
+ * keeps its width and order in both modes; Sources and a stowed timer, both
+ * writing-only, are the controls that add width (#3004).
  * The return and the close are separate affordances — the return carries the
  * reader back to the exact passage they left, which the close cannot know about.
  * Sources and the camera share the writing column's gate (``editMode``): a
@@ -4599,6 +4635,8 @@ function EntryExitControls({
   guard: HeldExitGuard;
 }): React.JSX.Element {
   const { flush, flushForExit } = ctl.autosave;
+  const { stowed, onStowedChange } = ctl.timerStow;
+  const unstow = useCallback(() => onStowedChange(false), [onStowedChange]);
   return (
     <View style={styles.entryExitRow} testID="journal-entry-exit-row">
       <ReturnToReadingLink
@@ -4611,6 +4649,7 @@ function EntryExitControls({
       {ctl.editGate.editMode && ctl.reflection.active ? (
         <ReflectionSourcesButton toggle={ctl.reflection.sourcesToggle} />
       ) : null}
+      {ctl.editGate.editMode && stowed ? <WritingTimerIconButton onPress={unstow} /> : null}
       {ctl.editGate.editMode ? (
         <PhotographPageButton onPress={ctl.photograph.openCapture} />
       ) : (
@@ -5024,6 +5063,7 @@ function EntryWritingSurfaces({
       loggedSession={loggedSession}
       onClearanceChange={onWritingClearanceChange}
       onIdleDockHeightChange={onIdleDockHeightChange}
+      stow={ctl.timerStow}
       renderOffer={session.launched ? renderLaunchedSessionNote : renderSessionOffer}
     />
   );

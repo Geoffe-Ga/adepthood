@@ -15,6 +15,8 @@ import { BookOpen } from 'lucide-react-native';
 import React from 'react';
 import { StyleSheet } from 'react-native';
 
+import { IDLE_DOCK_TOP_GAP } from '../WritingSessionSurface';
+
 import { ENTRY_WIDTHS, exitRowOrder, spyWidth } from './entryLayoutTestKit';
 import { KEYED } from './idempotencyTestKit';
 
@@ -612,7 +614,7 @@ describe('JournalEntryScreen -- reflection mode', () => {
       );
       expect(
         StyleSheet.flatten(getByTestId('journal-compose-stack').props.style).marginBottom,
-      ).toBe(120 + journalSheet.deskPaddingH + SPACING.md);
+      ).toBe(120 + journalSheet.deskPaddingH + SPACING.md + IDLE_DOCK_TOP_GAP);
       expect(
         StyleSheet.flatten(getByTestId('journal-compose-row').props.style).marginBottom ?? 0,
       ).toBe(0);

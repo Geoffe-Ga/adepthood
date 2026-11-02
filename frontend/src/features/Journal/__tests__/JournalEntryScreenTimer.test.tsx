@@ -164,6 +164,50 @@ describe('JournalEntryScreen — where the writing timer appears', () => {
   });
 });
 
+/**
+ * On a phone a minimized timer is put away into an icon in the page's top-right
+ * row, rather than left as a pill butted against the bottom of the paper.
+ */
+describe('JournalEntryScreen — the minimized timer waits in the header', () => {
+  it('trades the tray for a header icon, and the icon brings the setter back', () => {
+    const { getByTestId, queryByTestId } = renderScreen();
+    expect(queryByTestId('journal-writing-timer-open')).toBeNull();
+
+    fireEvent.press(getByTestId('writing-timer-minimize'));
+
+    expect(queryByTestId('writing-timer-pill')).toBeNull();
+    const open = getByTestId('journal-writing-timer-open');
+    expect(open.props.accessibilityLabel).toBe('Open the writing timer');
+    expect(
+      within(getByTestId('journal-entry-exit-row')).queryByTestId('journal-writing-timer-open'),
+    ).not.toBeNull();
+
+    fireEvent.press(open);
+    expect(queryByTestId('journal-writing-timer-open')).toBeNull();
+    expect(queryByTestId('writing-timer-row-presets')).not.toBeNull();
+  });
+
+  it('puts the timer back in the header after a session ends', async () => {
+    jest.useFakeTimers();
+    const { getByTestId, queryByTestId } = renderScreen();
+
+    fireEvent.press(getByTestId('writing-timer-start'));
+    await settle(TWENTY_MINUTES_MS);
+
+    expect(queryByTestId('writing-timer-pill')).toBeNull();
+    expect(getByTestId('journal-writing-timer-open')).toBeTruthy();
+  });
+
+  it('shows no timer icon in the reading view', async () => {
+    mockGet.mockResolvedValue(entry());
+    const { queryByTestId } = renderScreen({ entryId: 7 });
+
+    await waitFor(() => expect(queryByTestId('journal-edit-button')).not.toBeNull());
+
+    expect(queryByTestId('journal-writing-timer-open')).toBeNull();
+  });
+});
+
 describe('JournalEntryScreen — the timer and the resonance button are both in reach', () => {
   /**
    * The resonance button is up precisely when the writer has paused with
@@ -312,9 +356,9 @@ describe('JournalEntryScreen — an unlinked timer points to Settings', () => {
   const LAUNCH = { minutes: 20, userPracticeId: null };
   const LINKED_HABIT_ID = 42;
 
-  /** A running session collapses the pill; the next one starts from it re-opened. */
+  /** A finished session stows the timer; the next one starts from the header icon. */
   function startAnotherSession(getByTestId: ReturnType<typeof renderScreen>['getByTestId']): void {
-    fireEvent.press(getByTestId('writing-timer-compact'));
+    fireEvent.press(getByTestId('journal-writing-timer-open'));
     fireEvent.press(getByTestId('writing-timer-start'));
   }
 

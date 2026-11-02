@@ -10,7 +10,8 @@ import {
   WRITING_TIMER_CLEARANCE,
 } from '../JournalEntry.styles';
 import { DEFAULT_WRITING_MINUTES, type WritingSessionResult } from '../writingSession';
-import WritingSessionSurface from '../WritingSessionSurface';
+import WritingSessionSurface, { IDLE_DOCK_TOP_GAP } from '../WritingSessionSurface';
+import type { WritingTimerStow } from '../WritingTimer';
 
 import { SPACING, journalSheet, touchTarget } from '@/design/tokens';
 import type { IntervalHandle } from '@/features/Practice/engine/types';
@@ -52,6 +53,83 @@ afterEach(() => {
   jest.useRealTimers();
 });
 
+describe('WritingSessionSurface — the idle tray and the stowed timer', () => {
+  function atPhoneWidth() {
+    const rn = require('react-native');
+    return jest
+      .spyOn(rn, 'useWindowDimensions')
+      .mockReturnValue({ width: 390, height: 844, scale: 1, fontScale: 1 });
+  }
+
+  it('leaves a visible gap between the paper and the idle tray', () => {
+    expect(IDLE_DOCK_TOP_GAP).toBeGreaterThanOrEqual(SPACING.md);
+  });
+
+  it('gives up the gap where the tray already takes over a third of a short window', () => {
+    const rn = require('react-native');
+    const dimensions = jest
+      .spyOn(rn, 'useWindowDimensions')
+      .mockReturnValue({ width: 390, height: 250, scale: 1, fontScale: 1 });
+    const onIdleDockHeightChange = jest.fn();
+    try {
+      const view = render(
+        <WritingSessionSurface onIdleDockHeightChange={onIdleDockHeightChange} />,
+      );
+      fireEvent(view.getByTestId('writing-session-band-content', UNMEASURED), 'layout', {
+        nativeEvent: { layout: { height: 100 } },
+      });
+      // A 128px tray is already past a third of 250px, so the gap would come out of the writing.
+      expect(onIdleDockHeightChange).toHaveBeenLastCalledWith(
+        100 + journalSheet.deskPaddingH + SPACING.md,
+      );
+      view.unmount();
+    } finally {
+      dimensions.mockRestore();
+    }
+  });
+
+  it('gives the page all its room back while the timer is stowed', () => {
+    const dimensions = atPhoneWidth();
+    const onClearanceChange = jest.fn();
+    const onIdleDockHeightChange = jest.fn();
+    const stow: WritingTimerStow = { stowed: true, onStowedChange: jest.fn() };
+    try {
+      const view = render(
+        <WritingSessionSurface
+          stow={stow}
+          onClearanceChange={onClearanceChange}
+          onIdleDockHeightChange={onIdleDockHeightChange}
+        />,
+      );
+      expect(view.queryByTestId('writing-timer-pill', UNMEASURED)).toBeNull();
+      fireEvent(view.getByTestId('writing-session-band-content', UNMEASURED), 'layout', {
+        nativeEvent: { layout: { height: 0 } },
+      });
+      expect(onIdleDockHeightChange).toHaveBeenLastCalledWith(0);
+      expect(onClearanceChange).toHaveBeenLastCalledWith(0);
+      view.unmount();
+    } finally {
+      dimensions.mockRestore();
+    }
+  });
+
+  it('reports the stow when the tray is minimized', () => {
+    const dimensions = atPhoneWidth();
+    const onStowedChange = jest.fn();
+    try {
+      const view = render(<WritingSessionSurface stow={{ stowed: false, onStowedChange }} />);
+      fireEvent(view.getByTestId('writing-session-band-content', UNMEASURED), 'layout', {
+        nativeEvent: { layout: { height: 100 } },
+      });
+      fireEvent.press(view.getByTestId('writing-timer-minimize'));
+      expect(onStowedChange).toHaveBeenLastCalledWith(true);
+      view.unmount();
+    } finally {
+      dimensions.mockRestore();
+    }
+  });
+});
+
 describe('WritingSessionSurface', () => {
   it('docks an untouched phone timer below the paper, then restores the running overlay', () => {
     const rn = require('react-native');
@@ -91,7 +169,7 @@ describe('WritingSessionSurface', () => {
         nativeEvent: { layout: { height: 100 } },
       });
       expect(onIdleDockHeightChange).toHaveBeenLastCalledWith(
-        100 + journalSheet.deskPaddingH + SPACING.md,
+        100 + journalSheet.deskPaddingH + SPACING.md + IDLE_DOCK_TOP_GAP,
       );
       fireEvent.press(getByTestId('writing-timer-start', UNMEASURED));
 
@@ -128,7 +206,7 @@ describe('WritingSessionSurface', () => {
         nativeEvent: { layout: { height: 100 } },
       });
       expect(onIdleDockHeightChange).toHaveBeenLastCalledWith(
-        100 + journalSheet.deskPaddingH + SPACING.md,
+        100 + journalSheet.deskPaddingH + SPACING.md + IDLE_DOCK_TOP_GAP,
       );
       expect(StyleSheet.flatten(band().props.style).opacity).toBe(1);
       expect(band().props.pointerEvents).toBe('box-none');

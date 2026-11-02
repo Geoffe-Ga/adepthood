@@ -392,6 +392,9 @@ test('a long habit offer scrolls without covering the page actions on a short ph
   await expect(page.getByTestId('writing-session-banner')).toHaveCount(0);
 });
 
+/** The narrowest window with the desk-side rail a minimized clock docks on. */
+const DESK_RAIL_MIN_WIDTH = 1020;
+
 for (const width of [844, 1280]) {
   for (const textScale of [1, 2]) {
     for (const height of textScale === 2 ? [390, 560] : [390]) {
@@ -430,11 +433,10 @@ for (const width of [844, 1280]) {
           ratio: 1,
         });
         await page.screenshot({ path: testInfo.outputPath('finished-summary.png') });
-        for (const id of [
-          'save-as-habit-accept',
-          'writing-session-banner-dismiss',
-          'writing-timer-compact',
-        ]) {
+        // Below the desk rail the resting timer waits as the header icon instead.
+        const restingTimer =
+          width >= DESK_RAIL_MIN_WIDTH ? 'writing-timer-compact' : 'journal-writing-timer-open';
+        for (const id of ['save-as-habit-accept', 'writing-session-banner-dismiss', restingTimer]) {
           const control = page.getByTestId(id);
           await control.scrollIntoViewIfNeeded();
           await expect(control).toBeInViewport({ ratio: 1 });
