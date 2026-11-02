@@ -54,8 +54,12 @@ def _apply_vault_outcome(entry: JournalEntry, outcome: VaultWriteOutcome) -> boo
 
 async def record_vault_outcome(
     session: AsyncSession, entry: JournalEntry, vault_client: CreekVaultClient
-) -> None:
+) -> VaultWriteOutcome | None:
     """Store a committed entry via the Creek Vault, reconciling its ref columns.
+
+    Returns the write's outcome, or ``None`` when nothing was offered (an
+    unsaved entry, or one whose earlier copy is owed to another vault). A save
+    ignores it; a sort reads it to stop on a vault that cannot take writing.
 
     Best-effort: :func:`store_and_classify` never raises a vault error, so a
     missing, unreachable, or intimate-skipped write leaves the entry saved. An
@@ -88,10 +92,10 @@ async def record_vault_outcome(
     session transparently checks out a new one for the outcome write below.
     """
     if entry.id is None:
-        return
+        return None
     binding = await _bind_vault_destination(session, entry, vault_client)
     if binding is _Binding.WITHHOLD:
-        return
+        return None
     # A passage folded in from a quote of an Intimate source never reaches the
     # vault inside this entry (#3059, owner decision R5-2).
     body = await egress_body(session, entry, entry.message)
@@ -109,6 +113,7 @@ async def record_vault_outcome(
         await session.commit()
         await session.refresh(entry)
     await _after_vault_write(session, entry, vault_client, outcome)
+    return outcome
 
 
 async def _after_vault_write(

@@ -47,12 +47,13 @@ export const CORPUS_SWEEP_NOTHING_PENDING = 'Nothing is waiting to be sorted.';
  * Why a pass can sort nothing, said beside a remainder that did not move.
  *
  * Each cause is one the backend has: no standing consent sweeps nothing, a
- * vault-bound writer's sweep stops before its first offer (#3156), and an entry
- * the classifier places nowhere stays pending on purpose.
+ * vault-bound writer's pass hands entries to a vault that may not be reachable
+ * right now (``services/corpus_vault_sort.py``), and an entry the classifier
+ * places nowhere stays pending on purpose.
  */
 export const CORPUS_SWEEP_NOTHING_SORTED_REASON =
-  'A pass sorts nothing when sorting is off for what you write here, when a vault of your own ' +
-  'answers for your writing, or when the entries left are ones that could not be placed yet.';
+  'A pass sorts nothing when sorting is off for what you write here, when your vault cannot ' +
+  'be reached right now, or when the entries left are ones that could not be placed yet.';
 
 /** The per-account limit on passes (``429``): a wait, not a fault. */
 export const CORPUS_SWEEP_RATE_LIMITED =
