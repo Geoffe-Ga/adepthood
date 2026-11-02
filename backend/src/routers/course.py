@@ -665,10 +665,10 @@ async def _load_content_with_stage(
     return item, stage
 
 
-async def _resolve_released_content_ref(
+async def resolve_released_content(
     session: AsyncSession, user_id: int, content_id: int, tz: str
-) -> str:
-    """Gate on stage-unlock + proportional drip, return the local chapter id.
+) -> tuple[StageContent, str]:
+    """Gate on stage-unlock + proportional drip; return the row and its local chapter id.
 
     Mirrors the 404-mask used by sibling endpoints (BUG-COURSE-004):
     locked-stage, drip-locked, missing-reference, and nonexistent rows all
@@ -678,6 +678,10 @@ async def _resolve_released_content_ref(
     proportional release.  Rows without a ``content://`` reference
     (legacy/placeholder rows) have no local body and fall under the same
     mask.
+
+    Public because the body route is not its only caller: promoting a passage
+    of a chapter (``routers.promotions``, #3658) passes the same gate, so a
+    chapter is quotable exactly when it is readable.
     """
     item, stage = await _load_content_with_stage(session, content_id)
     if not await _is_stage_unlocked_for_user(session, user_id, stage.stage_number, tz):
@@ -687,7 +691,18 @@ async def _resolve_released_content_ref(
     reference = item.url or ""
     if not reference.startswith(_CONTENT_REF_PREFIX):
         raise not_found("content")
-    return reference.removeprefix(_CONTENT_REF_PREFIX)
+    return item, reference.removeprefix(_CONTENT_REF_PREFIX)
+
+
+def read_chapter_body(chapter_id: str) -> ContentBodyResponse:
+    """The body ``GET /content/{content_id}/body`` serves for a released chapter.
+
+    The one read of a chapter's Markdown, so a promoted Course quote's offsets
+    index exactly the ``body_markdown`` the reader was shown (frontmatter
+    already stripped). An id the manifest does not list is ``content_not_found``;
+    a broken content directory is ``502 content_unavailable``.
+    """
+    return _read_local_body(lambda: get_content_repository().read_body(chapter_id), chapter_id)
 
 
 @router.get("/content/{content_id}/body", response_model=ContentBodyResponse)
@@ -706,8 +721,8 @@ async def get_content_body(
     URL cannot be used as an enumeration oracle.  The drip-feed unlock
     check is applied here too: locked-day content never escapes.
     """
-    chapter_id = await _resolve_released_content_ref(session, current_user, content_id, user_tz)
-    return _read_local_body(lambda: get_content_repository().read_body(chapter_id), chapter_id)
+    _item, chapter_id = await resolve_released_content(session, current_user, content_id, user_tz)
+    return read_chapter_body(chapter_id)
 
 
 def _manifest_resources() -> list[SiteResourceMeta]:
