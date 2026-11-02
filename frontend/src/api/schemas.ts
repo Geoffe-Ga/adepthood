@@ -1166,6 +1166,12 @@ export const promotedQuoteSummarySchema = promotedQuoteSchema.omit({
 });
 
 /**
+ * The kinds that wait beside the sources feed rather than inside an item
+ * (mirrors ``ReadingQuoteSourceKind``): an entry quote rides under its entry.
+ */
+export const readingQuoteSourceKindSchema = promotedQuoteSourceKindSchema.exclude(['entry']);
+
+/**
  * A Course or letter quote waiting for a review, as the sources feed carries it
  * (mirrors the backend ``ReadingQuoteItem``, #3657). Unlike an entry's quotes it
  * has no feed row to ride under, so it travels on the response itself, naming
@@ -1173,7 +1179,7 @@ export const promotedQuoteSummarySchema = promotedQuoteSchema.omit({
  * ``created_at`` is when it was promoted, which is what puts it in this review.
  */
 export const readingQuoteItemSchema = promotedQuoteSummarySchema.extend({
-  source_kind: promotedQuoteSourceKindSchema.exclude(['entry']),
+  source_kind: readingQuoteSourceKindSchema,
   source_title: z.string().nullable(),
   created_at: z.string(),
 });

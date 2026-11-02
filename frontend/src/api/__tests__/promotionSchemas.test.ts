@@ -17,6 +17,7 @@ import {
   promotedQuoteSummarySchema,
   promotionStatusFilterSchema,
   readingQuoteItemSchema,
+  readingQuoteSourceKindSchema,
   reflectionSourcesResponseSchema,
 } from '../schemas';
 
@@ -245,6 +246,10 @@ describe('readingQuoteItemSchema', () => {
     const letter = { ...READING_QUOTE, id: 82, source_kind: 'letter', source_title: null };
     expect(readingQuoteItemSchema.parse(READING_QUOTE)).toEqual(READING_QUOTE);
     expect(readingQuoteItemSchema.parse(letter)).toEqual(letter);
+  });
+
+  it('knows exactly the two kinds that wait beside the feed', () => {
+    expect(readingQuoteSourceKindSchema.options).toEqual(['course', 'letter']);
   });
 
   it('refuses an entry quote, which rides under its own source row instead', () => {
