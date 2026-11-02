@@ -34,6 +34,7 @@ from domain.creek_vault import (
     VaultPipelineJob,
 )
 from routers import journal as journal_router
+from services import journal_vault_write
 
 _UNSERVED = "this vault double does not serve the batch pipeline"
 
@@ -74,7 +75,7 @@ RECORDED_VAULT = "d" * 32
 
 
 def bind_every_account_to_a_recorded_vault(monkeypatch: pytest.MonkeyPatch) -> str:
-    """Make the journal router resolve every account's vault to :data:`RECORDED_VAULT`.
+    """Make the journal router and its vault writer resolve to :data:`RECORDED_VAULT`.
 
     In production a dialable vault client always comes from a recorded vault.
     A test that serves a scripted double without storing a connection would
@@ -86,4 +87,5 @@ def bind_every_account_to_a_recorded_vault(monkeypatch: pytest.MonkeyPatch) -> s
         return RECORDED_VAULT
 
     monkeypatch.setattr(journal_router, "resolved_vault_destination", _recorded)
+    monkeypatch.setattr(journal_vault_write, "resolved_vault_destination", _recorded)
     return RECORDED_VAULT

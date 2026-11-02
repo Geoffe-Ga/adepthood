@@ -57,6 +57,7 @@ from domain.creek_vault import (
 )
 from main import app
 from routers import journal as journal_router
+from services import journal_vault_write
 from services.account_egress_barrier import (
     ACCOUNT_EGRESS_BARRIER_ENABLED_ENV_VAR,
     ensure_account_live,
@@ -299,6 +300,7 @@ async def app_client(
     try:
         with pytest.MonkeyPatch.context() as patch:
             patch.setattr(journal_router, "resolved_vault_destination", _recorded_vault)
+            patch.setattr(journal_vault_write, "resolved_vault_destination", _recorded_vault)
             transport = ASGITransport(app=app)
             async with AsyncClient(transport=transport, base_url="http://test") as client:
                 yield client
