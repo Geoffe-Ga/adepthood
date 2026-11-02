@@ -11,8 +11,10 @@ under test itself.
 
 from __future__ import annotations
 
+import logging
 from datetime import UTC, datetime, time, timedelta
 from http import HTTPStatus
+from typing import Any
 
 import pytest
 from httpx import AsyncClient
@@ -22,10 +24,21 @@ from sqlmodel import col, select
 from domain.constants import STAGE_DURATIONS_DAYS, TOTAL_PROGRAM_DAYS
 from domain.cycle_calendar import CycleAnchorStatus, CycleWindow
 from domain.reflection_hierarchy import due_reflection, scope_weeks
+from models.course_stage import CourseStage
 from models.journal_entry import EntryStatus, JournalEntry, JournalTag
 from models.promoted_quote import PromotedQuote
+from models.stage_content import StageContent
 from models.stage_progress import StageProgress
 from models.user import User
+from tests.support.lineage_canaries import (
+    CHAPTER_TITLE,
+    LETTER_LINE,
+    LINEAGE_SENTINEL,
+    seed_course_quote,
+    seed_folded_lineage,
+    seed_letter_note,
+    seed_letter_quote,
+)
 
 _DAYS_PER_WEEK = 7
 
@@ -1074,3 +1087,184 @@ async def test_sources_never_offers_a_quote_of_intimate_text(
     offered = {item["id"]: item["promoted_quotes"] for item in resp.json()["items"]}
     assert offered[intimate.id] == []
     assert [quote["anchor_text"] for quote in offered[personal.id]] == ["Said"]
+
+
+# ── GET /reflections/sources: Course and letter quotes (#3657) ──────────
+
+
+async def _sources(
+    client: AsyncClient, headers: dict[str, str], scope_key: str = "c1:w1"
+) -> dict[str, Any]:
+    resp = await client.get(
+        "/reflections/sources", params={"level": "week", "scope_key": scope_key}, headers=headers
+    )
+    assert resp.status_code == HTTPStatus.OK, resp.text
+    body: dict[str, Any] = resp.json()
+    return body
+
+
+async def _seed_chapter(db_session: AsyncSession, title: str) -> StageContent:
+    """A published Course chapter, so a Course quote can name its live title."""
+    stage = CourseStage(
+        title="Red",
+        subtitle="Self-Love",
+        stage_number=3,
+        overview_url="https://example.com/red",
+        category="test",
+        aspect="test-aspect",
+        spiral_dynamics_color="red",
+        growing_up_stage="magic",
+        divine_gender_polarity="masculine",
+        relationship_to_free_will="active",
+        free_will_description="Self-Love",
+    )
+    db_session.add(stage)
+    await db_session.commit()
+    chapter = StageContent(
+        course_stage_id=int(stage.id or 0),
+        title=title,
+        content_type="chapter",
+        release_day=0,
+        url="content://red-1",
+    )
+    db_session.add(chapter)
+    await db_session.commit()
+    await db_session.refresh(chapter)
+    return chapter
+
+
+@pytest.mark.asyncio
+async def test_sources_offers_course_and_letter_quotes_promoted_inside_the_window(
+    async_client: AsyncClient, db_session: AsyncSession, caplog: pytest.LogCaptureFixture
+) -> None:
+    """A reading quote waits in the review whose half-open window holds its ``created_at``.
+
+    Each edge has its control: promoted at ``window_start`` is in, a microsecond
+    earlier is out; a microsecond before ``window_end`` is in, at it is out. An
+    entry quote still rides inside its own source item, and another writer's
+    quote is never offered.
+    """
+    now = datetime.now(UTC)
+    anchor = now - timedelta(days=8)
+    headers, user_id = await _signup(async_client, db_session)
+    _, other_id = await _signup(async_client, db_session, username="bob")
+    await _seed_progress(db_session, user_id, anchor=anchor)
+    window = await _sources(async_client, headers)
+    start, end = _aware(window["window_start"]), _aware(window["window_end"])
+    tick = timedelta(microseconds=1)
+    chapter = await _seed_chapter(db_session, "The Red chapter")
+    answered = await _seed_entry(
+        db_session, user_id, "A page the letter answered.", title="Answered", timestamp=start
+    )
+    note = await seed_letter_note(db_session, user_id=user_id, entry=answered)
+    review = await _seed_entry(db_session, user_id, "A review elsewhere.", timestamp=end)
+    at_start = await seed_course_quote(
+        db_session, user_id=user_id, text="first light", created_at=start
+    )
+    lettered = await seed_letter_quote(
+        db_session, user_id=user_id, note=note, created_at=start + timedelta(days=2)
+    )
+    folded = await seed_course_quote(
+        db_session,
+        user_id=user_id,
+        text="last light",
+        source_content_id=chapter.id,
+        included_in_entry_id=review.id,
+        created_at=end - tick,
+    )
+    await seed_course_quote(db_session, user_id=user_id, created_at=start - tick)
+    await seed_course_quote(db_session, user_id=user_id, created_at=end)
+    await seed_course_quote(db_session, user_id=other_id, created_at=start + timedelta(days=1))
+    db_session.add(
+        PromotedQuote(
+            user_id=user_id,
+            source_entry_id=answered.id,
+            anchor_start=0,
+            anchor_end=6,
+            anchor_text="A page",
+            created_at=start + timedelta(days=1),
+        )
+    )
+    await db_session.commit()
+
+    with caplog.at_level(logging.INFO, logger="routers.reflections"):
+        body = await _sources(async_client, headers)
+
+    reading = body["reading_quotes"]
+    assert [quote["id"] for quote in reading] == [at_start.id, lettered.id, folded.id]
+    resolved = [r for r in caplog.records if r.getMessage() == "sources_resolved"]
+    assert [getattr(r, "reading_quote_count", None) for r in resolved] == [len(reading)]
+    assert LETTER_LINE not in "\n".join(str(r.__dict__) for r in caplog.records)
+    assert reading[0] == {
+        "id": at_start.id,
+        "source_kind": "course",
+        "source_title": CHAPTER_TITLE,
+        "anchor_start": 0,
+        "anchor_end": len("first light"),
+        "anchor_text": "first light",
+        "pending": True,
+        "created_at": reading[0]["created_at"],
+    }
+    assert _aware(reading[0]["created_at"]) == start
+    assert reading[1]["source_kind"] == "letter"
+    assert reading[1]["source_title"] == "Answered"
+    assert reading[1]["anchor_text"] == LETTER_LINE
+    assert reading[2]["source_title"] == "The Red chapter"
+    assert reading[2]["pending"] is False
+    assert [len(item["promoted_quotes"]) for item in body["items"]] == [1]
+
+
+@pytest.mark.asyncio
+async def test_sources_never_offers_a_letter_quote_its_entry_does_not_vouch_for(
+    async_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """A letter is offered only as the entry it answered allows (#3059, owner decision R5-2).
+
+    Intimate, deleted, and another account's entries each hold their letter's
+    quote back, as does a quote of a letter line that its entry holds from a
+    restricted fold. The Personal entry beside them is the control.
+    """
+    now = datetime.now(UTC)
+    headers, user_id = await _signup(async_client, db_session)
+    _, other_id = await _signup(async_client, db_session, username="bob")
+    await _seed_progress(db_session, user_id, anchor=now - timedelta(days=_DAY_NINE_ELAPSED))
+    personal = await _seed_entry(db_session, user_id, "Said aloud.", timestamp=now)
+    intimate = await _seed_entry(
+        db_session, user_id, "Kept close.", timestamp=now, classification="intimate"
+    )
+    deleted = await _seed_entry(db_session, user_id, "Taken back.", timestamp=now)
+    foreign = await _seed_entry(db_session, other_id, "Not mine.", timestamp=now)
+    chain = await seed_folded_lineage(db_session, user_id=user_id)
+    holder = await db_session.get(JournalEntry, chain.review_id)
+    assert holder is not None
+    offered = []
+    for entry in (personal, intimate, deleted, foreign, holder):
+        note = await seed_letter_note(db_session, user_id=user_id, entry=entry)
+        offered.append(await seed_letter_quote(db_session, user_id=user_id, note=note))
+    carrying = await seed_letter_quote(
+        db_session, user_id=user_id, note=note, text=f"you wrote {LINEAGE_SENTINEL}"
+    )
+    deleted.deleted_at = datetime.now(UTC)
+    db_session.add(deleted)
+    await db_session.commit()
+
+    body = await _sources(async_client, headers, "c1:w2")
+
+    ids = [quote["id"] for quote in body["reading_quotes"]]
+    assert ids == [offered[0].id, offered[4].id]
+    assert carrying.id not in ids
+
+
+@pytest.mark.asyncio
+async def test_sources_offers_no_reading_quotes_without_a_window(
+    async_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """With no window drawn there is no week a quote could wait in, so none is offered."""
+    headers, user_id = await _signup(async_client, db_session)
+    await seed_course_quote(db_session, user_id=user_id)
+
+    body = await _sources(async_client, headers)
+
+    assert body["anchor_status"] == "no_program"
+    assert body["window_start"] is None
+    assert body["reading_quotes"] == []

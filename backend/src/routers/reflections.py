@@ -11,7 +11,8 @@ Three read surfaces over the nested APTITUDE reflection calendar:
 * ``GET /reflections/sources`` returns the ordered source material feeding a
   reflection at a given ``(level, scope_key)`` — child reflections standing in for
   their spans, and the raw daily entries of every gap — alongside the calendar
-  window it filtered on, so the composer can name the period rather than guess it.
+  window it filtered on, so the composer can name the period rather than guess it,
+  and the Course and letter quotes promoted inside that window (#3657).
 
 All schedule math lives in :mod:`domain.reflection_hierarchy`; this router only
 turns program weeks into datetime windows and shuttles rows to and from it. Those
@@ -29,10 +30,12 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Annotated, cast
+from typing import Annotated, Final, NamedTuple, cast
 
 from fastapi import Depends, Query
+from sqlalchemy import and_
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import aliased
 from sqlmodel import col, select
 
 from database import get_session
@@ -61,11 +64,15 @@ from domain.stage_progress import get_user_progress
 from error_responses import build_router
 from errors import forbidden, unprocessable
 from models.journal_entry import EntryStatus, JournalEntry
-from models.promoted_quote import PromotedQuote
+from models.marginalia import Marginalia
+from models.promoted_quote import PromotedQuote, PromotedQuoteSourceKind
+from models.stage_content import StageContent
 from models.stage_progress import StageProgress
 from routers.auth import get_current_user
 from schemas.reflection import (
     PromotedQuoteSummary,
+    ReadingQuoteItem,
+    ReadingQuoteSourceKind,
     ReflectionCurrentResponse,
     ReflectionCurrentScope,
     ReflectionDue,
@@ -73,7 +80,11 @@ from schemas.reflection import (
     ReflectionSourceItem,
     ReflectionSourcesResponse,
 )
-from services.folded_quote_privacy import quote_is_foldable, restricted_folded_passages
+from services.folded_quote_privacy import (
+    quote_is_foldable,
+    reading_quote_is_foldable,
+    restricted_folded_passages,
+)
 from services.users import get_user_timezone
 
 logger = logging.getLogger(__name__)
@@ -551,7 +562,114 @@ def _to_source_item(
     )
 
 
-def _log_sources_resolved(scope: _SourcesScope, items: list[ReflectionSourceItem]) -> None:
+# Course and letter quotes wait beside the feed, not inside an item: neither has
+# a source entry in the window to ride with (#3657). Each kind reaches what it
+# needs through its own OUTER join, mirroring ``GET /promotions``: a letter's note
+# and the entry it answered are scoped to the caller -- and the entry to live rows
+# -- in the join itself, so a deleted or foreign one joins as nothing and its
+# quote is not offered. A chapter is shared curriculum, with no owner to scope.
+_AnsweredEntry = aliased(JournalEntry, name="answered_entry")
+
+#: The kinds offered as reading quotes: every kind with no source entry.
+_READING_KINDS: Final = tuple(kind.value for kind in ReadingQuoteSourceKind)
+
+
+class _ReadingRow(NamedTuple):
+    """One reading quote, the entry a letter answered (if one vouches), and its chapter's title."""
+
+    quote: PromotedQuote
+    answered: JournalEntry | None
+    chapter_title: str | None
+
+
+async def _reading_rows(session: AsyncSession, scope: _SourcesScope) -> list[_ReadingRow]:
+    """The caller's Course and letter quotes promoted inside the scope's window, oldest first.
+
+    The window is the half-open ``[start, end)`` pair the scope already carries,
+    matched on ``created_at``: a quote waits in the week it was **promoted**. No
+    window, no query.
+    """
+    if scope.window_start is None or scope.window_end is None:
+        return []
+    result = await session.execute(
+        select(PromotedQuote, _AnsweredEntry, col(StageContent.title))
+        .outerjoin(
+            Marginalia,
+            and_(
+                col(Marginalia.id) == col(PromotedQuote.source_marginalia_id),
+                col(Marginalia.user_id) == scope.user_id,
+            ),
+        )
+        .outerjoin(
+            _AnsweredEntry,
+            and_(
+                col(_AnsweredEntry.id) == col(Marginalia.journal_entry_id),
+                col(_AnsweredEntry.user_id) == scope.user_id,
+                col(_AnsweredEntry.deleted_at).is_(None),
+            ),
+        )
+        .outerjoin(StageContent, col(StageContent.id) == col(PromotedQuote.source_content_id))
+        .where(
+            col(PromotedQuote.user_id) == scope.user_id,
+            col(PromotedQuote.source_kind).in_(_READING_KINDS),
+            col(PromotedQuote.created_at) >= scope.window_start,
+            col(PromotedQuote.created_at) < scope.window_end,
+        )
+        .order_by(col(PromotedQuote.created_at), col(PromotedQuote.id))
+    )
+    return [_ReadingRow(*row) for row in result.all()]
+
+
+def _reading_title(row: _ReadingRow) -> str | None:
+    """A letter is named by the entry it answered; a chapter by its live title, else a snapshot."""
+    if row.quote.source_kind == PromotedQuoteSourceKind.LETTER:
+        return None if row.answered is None else row.answered.title
+    return row.chapter_title if row.chapter_title is not None else row.quote.source_title
+
+
+def _reading_quote_item(row: _ReadingRow) -> ReadingQuoteItem:
+    """Map one offered reading quote to its user_id-free DTO; pending == not yet folded in."""
+    quote = row.quote
+    return ReadingQuoteItem(
+        id=cast("int", quote.id),
+        source_kind=ReadingQuoteSourceKind(quote.source_kind),
+        source_title=_reading_title(row),
+        anchor_start=quote.anchor_start,
+        anchor_end=quote.anchor_end,
+        anchor_text=quote.anchor_text,
+        pending=quote.included_in_entry_id is None,
+        created_at=quote.created_at,
+    )
+
+
+def _is_offered(row: _ReadingRow, restricted: dict[int, tuple[str, ...]]) -> bool:
+    """Whether ``row``'s quote may be offered, against what its answered entry holds restricted."""
+    passages = () if row.answered is None else restricted.get(cast("int", row.answered.id), ())
+    return reading_quote_is_foldable(row.quote, row.answered, passages)
+
+
+async def _load_reading_quotes(
+    session: AsyncSession, scope: _SourcesScope
+) -> list[ReadingQuoteItem]:
+    """The scope's Course and letter quotes the composer may be offered to fold.
+
+    Filtered by the same per-kind rule the fold door holds (#3059, owner
+    decision R5-2): a Course quote always; a letter quote only while the entry it
+    answered is live, the caller's own and egress-eligible, and its words carry
+    no passage that entry holds from a restricted fold. The answered entries'
+    restricted passages are resolved in one batch.
+    """
+    rows = await _reading_rows(session, scope)
+    answered_ids = {cast("int", row.answered.id) for row in rows if row.answered is not None}
+    restricted = await restricted_folded_passages(
+        session, user_id=scope.user_id, entry_ids=answered_ids
+    )
+    return [_reading_quote_item(row) for row in rows if _is_offered(row, restricted)]
+
+
+def _log_sources_resolved(
+    scope: _SourcesScope, items: list[ReflectionSourceItem], reading_quotes: int
+) -> None:
     """Record which scope, cycle and window produced which counts — never the words.
 
     The endpoint returns raw journal bodies, so a diagnostic that made a wrong
@@ -570,6 +688,7 @@ def _log_sources_resolved(scope: _SourcesScope, items: list[ReflectionSourceItem
             "timezone": scope.timezone,
             "entry_count": sum(1 for item in items if item.reflection_level is None),
             "reflection_count": sum(1 for item in items if item.reflection_level is not None),
+            "reading_quote_count": reading_quotes,
         },
     )
 
@@ -597,6 +716,11 @@ async def get_reflection_sources(
     shipped, and not reconstructable — the feed comes back empty with no bounds
     and ``anchor_status`` set to ``unrecorded``, so the client can say the
     period cannot be rebuilt rather than implying nothing was written in it.
+
+    Beside the items, ``reading_quotes`` offers the caller's Course and letter
+    quotes promoted inside the same window, drawn once by
+    :func:`_scope_for_request` so the feed, the quotes and the declared bounds
+    agree (#3657). An Intimate entry's letter is never offered.
     """
     scope = await _scope_for_request(session, current_user, level, scope_key)
     reflection_refs = await _load_reflection_refs(session, current_user, scope_key)
@@ -617,7 +741,8 @@ async def get_reflection_sources(
         for item in resolved
         if item.id in entries_by_id
     ]
-    _log_sources_resolved(scope, items)
+    reading_quotes = await _load_reading_quotes(session, scope)
+    _log_sources_resolved(scope, items, len(reading_quotes))
     return ReflectionSourcesResponse(
         level=level.value,
         scope_key=scope_key,
@@ -625,4 +750,5 @@ async def get_reflection_sources(
         window_end=scope.window_end,
         anchor_status=scope.anchor_status,
         items=items,
+        reading_quotes=reading_quotes,
     )

@@ -366,6 +366,30 @@ def quote_is_foldable(source: JournalEntry, text: str, source_passages: tuple[st
     return admits_egress(source.classification) and not carries_passage(text, source_passages)
 
 
+def _is_published(quote: PromotedQuote) -> bool:
+    """Whether ``quote`` is of published Course text, which every reader may carry onward."""
+    return quote.source_kind == PromotedQuoteSourceKind.COURSE and admits_published_content_egress()
+
+
+def reading_quote_is_foldable(
+    quote: PromotedQuote, answered: JournalEntry | None, answered_passages: tuple[str, ...]
+) -> bool:
+    """Whether a Course or letter quote may be offered for folding into a review (#3657).
+
+    ``answered`` is the entry a letter quote's note sits on -- already resolved
+    by the caller as live and the quote owner's own, ``None`` when nothing
+    vouches -- and ``answered_passages`` what :func:`restricted_folded_passages`
+    resolved for it. A Course quote is published text; a letter quote answers
+    to that entry exactly as :func:`refuse_unfoldable_quote` holds it; any other
+    kind is never offered here.
+    """
+    if _is_published(quote):
+        return True
+    if quote.source_kind != PromotedQuoteSourceKind.LETTER or answered is None:
+        return False
+    return quote_is_foldable(answered, quote.anchor_text, answered_passages)
+
+
 def _refused(user_id: int, entry_id: int | None, quote_id: int | None) -> Exception:
     logger.info(
         QUOTE_REFUSED_EVENT,
@@ -443,11 +467,6 @@ async def _vouched_source(session: AsyncSession, quote: PromotedQuote) -> Journa
     """The entry a fold of ``quote`` answers to, per its kind, or ``None`` if nothing vouches."""
     voucher = _VOUCHERS.get(quote.source_kind)
     return None if voucher is None else await voucher(session, quote)
-
-
-def _is_published(quote: PromotedQuote) -> bool:
-    """Whether ``quote`` is of published Course text, which every reader may carry onward."""
-    return quote.source_kind == PromotedQuoteSourceKind.COURSE and admits_published_content_egress()
 
 
 async def refuse_unfoldable_quote(session: AsyncSession, quote: PromotedQuote) -> None:

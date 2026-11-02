@@ -8369,6 +8369,71 @@
         "title": "ReadingInvitation",
         "type": "object"
       },
+      "ReadingQuoteItem": {
+        "description": "A quote of something the writer read -- a Course chapter or a Resonance Letter (#3657).\n\n``source_title`` names where it came from: the live chapter's title (or the\ntitle snapshotted when the quote was made, once that chapter is pruned) for\na Course quote, and the title of the entry the letter answered for a letter\nquote. ``pending`` is True while the quote has not been folded into any\nreflection. ``created_at`` is when it was promoted, which is what places it\nin a review's window.",
+        "properties": {
+          "anchor_end": {
+            "title": "Anchor End",
+            "type": "integer"
+          },
+          "anchor_start": {
+            "title": "Anchor Start",
+            "type": "integer"
+          },
+          "anchor_text": {
+            "title": "Anchor Text",
+            "type": "string"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "id": {
+            "title": "Id",
+            "type": "integer"
+          },
+          "pending": {
+            "title": "Pending",
+            "type": "boolean"
+          },
+          "source_kind": {
+            "$ref": "#/components/schemas/ReadingQuoteSourceKind"
+          },
+          "source_title": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source Title"
+          }
+        },
+        "required": [
+          "id",
+          "source_kind",
+          "source_title",
+          "anchor_start",
+          "anchor_end",
+          "anchor_text",
+          "pending",
+          "created_at"
+        ],
+        "title": "ReadingQuoteItem",
+        "type": "object"
+      },
+      "ReadingQuoteSourceKind": {
+        "description": "The kinds of promoted quote that wait beside a sources feed rather than inside an item.\n\nThe two members of :class:`models.promoted_quote.PromotedQuoteSourceKind`\nwith no source entry in the window to ride with; an entry quote rides inside\nits own :class:`ReflectionSourceItem` instead.",
+        "enum": [
+          "course",
+          "letter"
+        ],
+        "title": "ReadingQuoteSourceKind",
+        "type": "string"
+      },
       "ReflectionCurrentResponse": {
         "description": "The reflection scopes in progress for the caller today (issue #2867).\n\n``scopes`` is ordered week, stage, section, course. It carries no section\nthroughout the section-less final stage, is empty for a caller who has not\nstarted the program, and holds the course alone once the program is over,\nso a late Course Review can still be written.",
         "properties": {
@@ -8566,7 +8631,7 @@
         "type": "object"
       },
       "ReflectionSourcesResponse": {
-        "description": "The ordered source material feeding one reflection, and the period it covers.\n\n``window_start`` / ``window_end`` are the half-open ``[start, end)`` bounds\nthe server actually filtered on — local midnights in the caller's own\ntimezone, with the END EXCLUSIVE (the first instant of the day after the\nspan's final day). They are published so the client can name the review\nperiod without re-deriving it from the scope key and drifting out of step\nwith the feed (issue #2886). A scope naming an earlier cycle is measured\nfrom THAT cycle's own retained anchor and its end is clamped to the local\nmidnight of the day the user began again, so consecutive cycles abut at one\nshared instant instead of overlapping (issue #2894).\n\nBoth bounds are ``None`` whenever no window could be drawn, and\n``anchor_status`` names which of the four causes applies. It is published as\nthe :class:`domain.cycle_calendar.CycleAnchorStatus` enum rather than a bare\nstring so the four members reach the OpenAPI document: typed as ``str`` the\ncontract carried no enumeration at all, and renaming a member or adding a\nfifth cause changed nothing a client could notice. The members are:\n``recorded`` (the bounds are real), ``unrecorded`` (that cycle's anchor was\ndestroyed by ``begin-again`` before #2894 and cannot be reconstructed),\n``unstarted`` (the caller has not reached that cycle), or ``no_program``\n(the caller has no program progress at all). The client needs the\ndistinction to tell \"nothing was written in this period\" apart from \"this\nperiod cannot be rebuilt\" — without it both read as one silent empty feed.\n\nDeliberately unpaginated: a single scope's feed is at most a few dozen\nitems, so the whole set is returned in one call. Pagination can be layered\non later if a wider layer's feed ever grows past a comfortable page.",
+        "description": "The ordered source material feeding one reflection, and the period it covers.\n\n``window_start`` / ``window_end`` are the half-open ``[start, end)`` bounds\nthe server actually filtered on — local midnights in the caller's own\ntimezone, with the END EXCLUSIVE (the first instant of the day after the\nspan's final day). They are published so the client can name the review\nperiod without re-deriving it from the scope key and drifting out of step\nwith the feed (issue #2886). A scope naming an earlier cycle is measured\nfrom THAT cycle's own retained anchor and its end is clamped to the local\nmidnight of the day the user began again, so consecutive cycles abut at one\nshared instant instead of overlapping (issue #2894).\n\nBoth bounds are ``None`` whenever no window could be drawn, and\n``anchor_status`` names which of the four causes applies. It is published as\nthe :class:`domain.cycle_calendar.CycleAnchorStatus` enum rather than a bare\nstring so the four members reach the OpenAPI document: typed as ``str`` the\ncontract carried no enumeration at all, and renaming a member or adding a\nfifth cause changed nothing a client could notice. The members are:\n``recorded`` (the bounds are real), ``unrecorded`` (that cycle's anchor was\ndestroyed by ``begin-again`` before #2894 and cannot be reconstructed),\n``unstarted`` (the caller has not reached that cycle), or ``no_program``\n(the caller has no program progress at all). The client needs the\ndistinction to tell \"nothing was written in this period\" apart from \"this\nperiod cannot be rebuilt\" — without it both read as one silent empty feed.\n\n``reading_quotes`` are the caller's Course and letter quotes promoted inside\nthe same half-open window -- the quote waits in the week it was promoted,\njudged on its ``created_at`` -- ordered oldest first, and only those that may\nbe folded (#3657): a Course quote always, a letter quote only while the\nentry it answered is live, the caller's own and egress-eligible. It is empty\nwhenever the bounds are ``None``. Entry quotes ride inside their item's\n``promoted_quotes`` as before.\n\nDeliberately unpaginated: a single scope's feed is at most a few dozen\nitems, so the whole set is returned in one call. Pagination can be layered\non later if a wider layer's feed ever grows past a comfortable page.",
         "properties": {
           "anchor_status": {
             "$ref": "#/components/schemas/CycleAnchorStatus"
@@ -8581,6 +8646,13 @@
           "level": {
             "title": "Level",
             "type": "string"
+          },
+          "reading_quotes": {
+            "items": {
+              "$ref": "#/components/schemas/ReadingQuoteItem"
+            },
+            "title": "Reading Quotes",
+            "type": "array"
           },
           "scope_key": {
             "title": "Scope Key",
@@ -8617,7 +8689,8 @@
           "window_start",
           "window_end",
           "anchor_status",
-          "items"
+          "items",
+          "reading_quotes"
         ],
         "title": "ReflectionSourcesResponse",
         "type": "object"
@@ -30171,7 +30244,7 @@
     },
     "/reflections/sources": {
       "get": {
-        "description": "Return the ordered source material feeding the reflection at ``(level, scope_key)``.\n\nA malformed key, a level/token mismatch, or an out-of-range index is 422; a\nscope whose first week the caller has not yet reached is 403 ``scope_locked``.\nEvery week of a cycle the caller has already completed counts as reached.\nOtherwise the hierarchy is walked top-down: an existing child reflection\nstands in for its whole span, and every gap decomposes to that week's raw\ndaily entries, yielding a chronological feed with each promoted quote flagged\npending or included.\n\nA scope naming an EARLIER cycle is windowed against that cycle's own\nretained anchor and clamped at the instant it closed (issue #2894). When\nthat anchor is not on record — destroyed by ``begin-again`` before #2894\nshipped, and not reconstructable — the feed comes back empty with no bounds\nand ``anchor_status`` set to ``unrecorded``, so the client can say the\nperiod cannot be rebuilt rather than implying nothing was written in it.",
+        "description": "Return the ordered source material feeding the reflection at ``(level, scope_key)``.\n\nA malformed key, a level/token mismatch, or an out-of-range index is 422; a\nscope whose first week the caller has not yet reached is 403 ``scope_locked``.\nEvery week of a cycle the caller has already completed counts as reached.\nOtherwise the hierarchy is walked top-down: an existing child reflection\nstands in for its whole span, and every gap decomposes to that week's raw\ndaily entries, yielding a chronological feed with each promoted quote flagged\npending or included.\n\nA scope naming an EARLIER cycle is windowed against that cycle's own\nretained anchor and clamped at the instant it closed (issue #2894). When\nthat anchor is not on record — destroyed by ``begin-again`` before #2894\nshipped, and not reconstructable — the feed comes back empty with no bounds\nand ``anchor_status`` set to ``unrecorded``, so the client can say the\nperiod cannot be rebuilt rather than implying nothing was written in it.\n\nBeside the items, ``reading_quotes`` offers the caller's Course and letter\nquotes promoted inside the same window, drawn once by\n:func:`_scope_for_request` so the feed, the quotes and the declared bounds\nagree (#3657). An Intimate entry's letter is never offered.",
         "operationId": "get_reflection_sources_reflections_sources_get",
         "parameters": [
           {
