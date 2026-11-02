@@ -37,6 +37,7 @@ from services.folded_quote_privacy import (
     QUOTE_REFUSED_EVENT,
     QUOTE_SOURCE_RESTRICTED,
     egress_bodies,
+    egress_body,
     restricted_folded_passages,
 )
 from tests.support.lineage_canaries import (
@@ -178,6 +179,65 @@ async def _fold(
     await session.commit()
     await session.refresh(quote)
     return quote
+
+
+#: A line of a Resonance Letter, quoted out of it and folded into a review.
+_LETTER_LINE = "what the letter saw in that page"
+
+
+async def _letter_note(
+    session: AsyncSession, user_id: int, entry: JournalEntry, *, owner_id: int | None = None
+) -> Marginalia:
+    """A margin note on ``entry`` carrying a letter that contains :data:`_LETTER_LINE`.
+
+    ``owner_id`` stamps the note with another account, for the ownership cases.
+    """
+    note = Marginalia(
+        journal_entry_id=int(entry.id or 0),
+        user_id=user_id if owner_id is None else owner_id,
+        kind=MarginaliaKind.THEME,
+        anchor_start=0,
+        anchor_end=min(len(entry.message), 4),
+        anchor_text=entry.message[:4],
+        note="A note in the margin.",
+        essay=f"Dear writer, {_LETTER_LINE}.",
+        essay_generated_at=datetime.now(UTC),
+    )
+    session.add(note)
+    await session.commit()
+    await session.refresh(note)
+    return note
+
+
+async def _letter_quote(
+    session: AsyncSession,
+    user_id: int,
+    note: Marginalia,
+    target_id: int | None,
+    text: str = _LETTER_LINE,
+) -> PromotedQuote:
+    """A quote of ``note``'s letter, folded into ``target_id`` (pending when ``None``)."""
+    quote = PromotedQuote(
+        user_id=user_id,
+        source_kind=PromotedQuoteSourceKind.LETTER,
+        source_marginalia_id=note.id,
+        anchor_start=0,
+        anchor_end=len(text),
+        anchor_text=text,
+        included_in_entry_id=target_id,
+    )
+    session.add(quote)
+    await session.commit()
+    await session.refresh(quote)
+    return quote
+
+
+async def _set_tier(
+    session: AsyncSession, entry: JournalEntry, classification: JournalClassification
+) -> None:
+    entry.classification = classification
+    session.add(entry)
+    await session.commit()
 
 
 async def _signup(client: AsyncClient, username: str) -> tuple[dict[str, str], int]:
@@ -378,6 +438,38 @@ async def test_a_lone_word_requoted_from_a_review_still_egresses(
     assert _KEPT_CLOSE not in bodies[ids[0]]
     assert bodies[ids[1]] == word_body
     assert "never say" not in bodies[ids[2]]
+
+
+# --- egress: a letter quote inherits its entry's tier (#3657) ------------------
+
+
+@pytest.mark.asyncio
+async def test_a_folded_letter_quote_is_withheld_once_its_entry_becomes_intimate(
+    async_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """The fail-open trap: a letter has no tier of its own, so it follows the entry it answered.
+
+    While the entry is Personal the folded letter line goes where the review
+    goes; once the entry is made Intimate, the same review sends it withheld.
+    Against an egress reader that INNER JOINs a fold onto its source entry, the
+    letter quote's row is dropped and its line leaves unmasked.
+    """
+    _, user_id = await _signup(async_client, "letter_fail_open")
+    answered = await _entry(db_session, user_id, "A page the letter answered.")
+    note = await _letter_note(db_session, user_id, answered)
+    review = await _entry(
+        db_session, user_id, f"{REVIEW_PROSE}\n\n{folded_blockquote(_LETTER_LINE)}"
+    )
+    await _letter_quote(db_session, user_id, note, int(review.id or 0))
+
+    assert await egress_body(db_session, review, review.message) == review.message
+
+    await _set_tier(db_session, answered, JournalClassification.INTIMATE)
+    sent = await egress_body(db_session, review, review.message)
+
+    assert _LETTER_LINE not in sent
+    assert WITHHELD_MARK * len(_LETTER_LINE) in sent
+    assert sent.startswith(REVIEW_PROSE)
 
 
 # --- creation: promote ---------------------------------------------------------
