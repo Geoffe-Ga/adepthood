@@ -930,3 +930,29 @@ async def test_a_quote_of_no_known_kind_is_never_folded(
 
     assert refused.value.status_code == HTTPStatus.CONFLICT
     assert refused.value.detail == QUOTE_SOURCE_RESTRICTED
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("kind", [PromotedQuoteSourceKind.ENTRY, PromotedQuoteSourceKind.LETTER])
+async def test_a_quote_missing_its_own_kinds_link_is_never_folded(
+    async_client: AsyncClient, db_session: AsyncSession, kind: PromotedQuoteSourceKind
+) -> None:
+    """An entry quote with no source entry, or a letter quote with no note, vouches for nothing.
+
+    A transient row: the kind/link CHECK keeps either out of the table, so it
+    can reach the fold door only as a row read some other way.
+    """
+    _, user_id = await _signup(async_client, f"fold_unlinked_{kind.value}")
+    quote = PromotedQuote(
+        user_id=user_id,
+        source_kind=kind,
+        anchor_start=0,
+        anchor_end=4,
+        anchor_text=_KEPT_CLOSE[:4],
+    )
+
+    with pytest.raises(HTTPException) as refused:
+        await refuse_unfoldable_quote(db_session, quote)
+
+    assert refused.value.status_code == HTTPStatus.CONFLICT
+    assert refused.value.detail == QUOTE_SOURCE_RESTRICTED
