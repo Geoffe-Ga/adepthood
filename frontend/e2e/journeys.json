@@ -395,7 +395,7 @@
   },
   {
     "id": "journal.list-indent",
-    "description": "A writer nests a list from the keyboard: Tab indents the list item under the caret by the document's own unit, Shift+Tab outdents it, Return on an empty nested item steps out one level (and leaves the list at level 0), and Backspace at a nested item's content start steps out one level too. Tab on prose and Shift+Tab at level 0 are left to the browser, so focus always moves on. On a list line the toolbar offers Indent and Outdent. The stored body is exactly the indentation typed, and read mode draws the same nesting after a cold reload.",
+    "description": "A writer nests a list from the keyboard: Tab indents the list item under the caret by the document's own unit, Shift+Tab outdents it, Return on an empty nested item steps out one level (and leaves the list at level 0), and Backspace at a nested item's content start steps out one level too. Tab on prose and Shift+Tab at level 0 are left to the browser, so focus always moves on. The toolbar always shows Indent and Outdent, enabled on a list line and disabled on prose. The stored body is exactly the indentation typed, and read mode draws the same nesting after a cold reload.",
     "crosses": {
       "screen": "frontend/src/features/Journal/JournalEntryScreen.tsx",
       "client": ["journal"],
@@ -404,6 +404,18 @@
     },
     "status": "covered",
     "coveredBy": "frontend/e2e/journal-list-indent.browser.e2e.test.ts"
+  },
+  {
+    "id": "journal.format-toolbar-scroll",
+    "description": "A writer sees every formatting action the journal offers -- Bold, Italic, Underline, Indent and Outdent -- on show at once in the toolbar above the body, on mobile and web alike, with Indent and Outdent disabled on prose and enabled on a list line. The actions sit on a single line that never wraps; when they outgrow its width the strip scrolls sideways, by a finger swipe on mobile and by a mouse click-and-drag on web. The click that ends a drag never presses the button it is released over, while an ordinary click still formats the selection.",
+    "crosses": {
+      "screen": "frontend/src/features/Journal/JournalEntryScreen.tsx",
+      "client": ["journal"],
+      "routes": ["POST /journal/", "PATCH /journal/{entry_id}"],
+      "tables": ["journalentry"]
+    },
+    "status": "covered",
+    "coveredBy": "frontend/e2e/journal-format-toolbar-scroll.browser.e2e.test.ts"
   },
   {
     "id": "journal.close-fresh-page-after-save-settles",

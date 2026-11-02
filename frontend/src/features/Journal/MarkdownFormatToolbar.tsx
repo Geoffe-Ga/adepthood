@@ -2,7 +2,11 @@
  * The body's formatting actions, for writers without a keyboard shortcut --
  * touch, and anyone who would rather press a button.
  *
- * Indent and Outdent appear only while the caret is on a list item.
+ * Every action is always on show; Indent and Outdent are disabled while the
+ * caret is off a list item, so the bar never shifts under the writer's thumb.
+ * The actions sit on one line that never wraps: when they outgrow it, the
+ * strip scrolls sideways -- a finger swipe on mobile, a click-and-drag (or
+ * trackpad pan) on web.
  *
  * Each action runs the same pure command the keyboard does, against the
  * field's own selection, so the toolbar and Cmd+B can never disagree about
@@ -17,10 +21,11 @@ import {
   Underline,
   type LucideIcon,
 } from 'lucide-react-native';
-import React from 'react';
-import { Pressable, StyleSheet, View, type PressableProps } from 'react-native';
+import React, { useRef } from 'react';
+import { Pressable, ScrollView, StyleSheet, View, type PressableProps } from 'react-native';
 
 import type { MarkdownCommand, MarkdownCommandState } from './markdownCommands';
+import { useWebDragScroll } from './webDragScroll';
 
 import { decorativeHidden } from '@/components/a11yHidden';
 import { NAV_ICON_SIZE, NAV_ICON_STROKE } from '@/components/drawer';
@@ -106,39 +111,55 @@ export default function MarkdownFormatToolbar({
   state,
   onCommand,
 }: MarkdownFormatToolbarProps): React.JSX.Element {
+  const scrollRef = useRef<ScrollView>(null);
+  useWebDragScroll(scrollRef);
+  const offList = state.listLevel == null;
   return (
     <View accessibilityRole="toolbar" style={styles.toolbar} testID="journal-format-toolbar">
-      {STYLE_ACTIONS.map((action) => (
-        <ToolbarButton
-          key={action.command}
-          action={action}
-          selected={state[action.command]}
-          toggle
-          onCommand={onCommand}
-        />
-      ))}
-      {state.listLevel == null ? null : (
-        <>
-          <ToolbarButton action={INDENT_ACTION} selected={false} onCommand={onCommand} />
-          {/* No depth cap, so only outdent has a bound: level 0. */}
+      <ScrollView
+        ref={scrollRef}
+        horizontal
+        showsHorizontalScrollIndicator={false}
+        keyboardShouldPersistTaps="handled"
+        contentContainerStyle={styles.row}
+        testID="journal-format-toolbar-scroll"
+      >
+        {STYLE_ACTIONS.map((action) => (
           <ToolbarButton
-            action={OUTDENT_ACTION}
-            selected={false}
-            disabled={state.listLevel === 0}
+            key={action.command}
+            action={action}
+            selected={state[action.command]}
+            toggle
             onCommand={onCommand}
           />
-        </>
-      )}
+        ))}
+        <ToolbarButton
+          action={INDENT_ACTION}
+          selected={false}
+          disabled={offList}
+          onCommand={onCommand}
+        />
+        {/* No depth cap, so only outdent has a bound: level 0. */}
+        <ToolbarButton
+          action={OUTDENT_ACTION}
+          selected={false}
+          disabled={offList || state.listLevel === 0}
+          onCommand={onCommand}
+        />
+      </ScrollView>
     </View>
   );
 }
 
 const styles = StyleSheet.create({
   toolbar: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: SPACING.xs,
     paddingVertical: SPACING.xs,
+  },
+  /** One line, never wrapped: overflow scrolls instead. */
+  row: {
+    flexDirection: 'row',
+    flexWrap: 'nowrap',
+    gap: SPACING.xs,
   },
   button: {
     minWidth: touchTarget.minimum,

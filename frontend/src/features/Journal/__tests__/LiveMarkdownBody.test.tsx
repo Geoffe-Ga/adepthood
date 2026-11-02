@@ -719,14 +719,16 @@ describe('LiveMarkdownBody formatting toolbar', () => {
     expect(selected('bold')).toBe(false);
   });
 
-  it('offers list actions on a list line and moves the item from the toolbar', () => {
+  it('enables list actions on a list line and moves the item from the toolbar', () => {
     const onChangeBody = jest.fn();
-    const { getByTestId, getByRole, queryByRole } = render(
+    const { getByTestId, getByRole } = render(
       <Harness initial={'prose\n  - b'} onChangeBody={onChangeBody} />,
     );
     const input = getByTestId('journal-body-input');
     select(input, 2);
-    expect(queryByRole('button', { name: 'Indent list item' })).toBeNull();
+    expect(getByTestId('journal-format-indent').props.accessibilityState).toMatchObject({
+      disabled: true,
+    });
 
     select(input, 11);
     fireEvent.press(getByRole('button', { name: 'Outdent list item' }));
