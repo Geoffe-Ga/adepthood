@@ -203,17 +203,6 @@ const SCHEMA_VERDICTS: Readonly<Record<string, SchemaVerdict>> = {
       'GET /stages declares no response_model, so the document types the whole body as an empty schema; this schema is the only description of that payload anywhere.',
   },
 
-  // --- Fields the client reads ahead of the wire sending them -------------
-  // #3659 reads the Course and letter quotes the sources feed carries beside
-  // its entries. The backend half is #3657, which this client is built against
-  // and merges first; until it lands the document has neither the list nor its
-  // item, and both entries below go stale (and must be deleted) the moment it does.
-  readingQuoteItemSchema: {
-    component: null,
-    reason:
-      'The ReadingQuoteItem component arrives with #3657, the backend half of this feature; until then no endpoint in the document returns one, so there is nothing to compare against.',
-  },
-
   // --- Declared laxity on auto-matched pairs ------------------------------
   journalMessageSchema: {
     lax: {
@@ -233,10 +222,6 @@ const SCHEMA_VERDICTS: Readonly<Record<string, SchemaVerdict>> = {
     },
   },
   reflectionSourcesResponseSchema: {
-    ghosts: {
-      reading_quotes:
-        'Sent by GET /reflections/sources from #3657 on; the schema defaults it to an empty list, so a feed from a server without it parses unchanged and the From your reading group simply does not appear.',
-    },
     lax: {
       level:
         'Optional so a feed captured before the sources response echoed its scope still validates; the composer already knows which level it asked for and only uses the echo to confirm it.',

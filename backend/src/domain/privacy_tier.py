@@ -13,6 +13,11 @@ here, and nowhere else. The rule is an **allowlist**:
   ``JournalClassification`` later is therefore **denied by default** until it
   is placed here on purpose; a drift test fails until it is.
 
+Published Course text is not a journal tier at all, but a quote of it can be
+folded into a review beside the writer's own words, so its eligibility is
+decided here too: :func:`admits_published_content_egress` holds it to
+:data:`PUBLISHED_CONTENT_TIER` (#3657).
+
 Why an allowlist rather than ``!= INTIMATE``: a deny-list fails open on every
 value it does not name. Two of the guards this replaced were identity checks
 (``is JournalClassification.INTIMATE``) that a plain ``str`` ``"intimate"``
@@ -45,6 +50,11 @@ EGRESS_ELIGIBLE_TIERS: Final[tuple[str, ...]] = ("personal", "public")
 #: exactly one of the two sets, so a new tier is placed by a reviewed edit.
 DENIED_TIERS: Final[frozenset[str]] = frozenset({"intimate"})
 
+#: The tier published Course text is held to (#3657). A chapter is the
+#: program's own text, identical for every reader, so it carries nothing of any
+#: writer's: it is judged as ``public`` rather than given a tier of its own.
+PUBLISHED_CONTENT_TIER: Final = "public"
+
 
 def admits_egress(classification: object) -> bool:
     """Whether a journal tier may leave the primary boundary; ``False`` for anything unrecognized.
@@ -54,6 +64,18 @@ def admits_egress(classification: object) -> bool:
     string -- including ``None`` and wrong-case spellings -- is denied.
     """
     return isinstance(classification, str) and classification in EGRESS_ELIGIBLE_TIERS
+
+
+def admits_published_content_egress() -> bool:
+    """Whether published Course text may leave the primary boundary -- as tier ``public``, it may.
+
+    The one place a Course quote's eligibility is decided, so a sink never
+    writes ``True`` for it inline. It asks :func:`admits_egress` about
+    :data:`PUBLISHED_CONTENT_TIER` rather than answering itself, so the
+    allowlist stays the only rule: were ``public`` ever taken off it, Course
+    text would be withheld with it.
+    """
+    return admits_egress(PUBLISHED_CONTENT_TIER)
 
 
 def egress_eligible_clause(column: SQLColumnExpression[str]) -> ColumnElement[bool]:

@@ -176,7 +176,8 @@ def test_removing_a_guard_fails_its_claim_suite(
     assert not control.failed
 
 
-#: The guards #3163 names. A row may be added; none of these may be dropped.
+#: The guards #3163 names, and those added since. A row may be added; none of
+#: these may be dropped.
 _REQUIRED_GUARDS: Final = frozenset(
     {
         ("domain.privacy_tier", "admits_egress"),
@@ -189,6 +190,8 @@ _REQUIRED_GUARDS: Final = frozenset(
         ("services.restore_suppression", "_reapply_account"),
         ("services.restore_suppression", "_reapply_entry"),
         ("services.creek_vault_withdraw", "_withdrawal_is_confirmed"),
+        # #3657: the per-kind tier branch, so deleting the letter join is caught.
+        ("services.folded_quote_privacy", "fold_source_admits_egress"),
     }
 )
 
