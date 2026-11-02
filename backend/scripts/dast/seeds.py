@@ -118,6 +118,15 @@ _REPLAY_NAME = "dast replay"
 # The one journal tag a promoted quote may be folded into.
 _HIERARCHICAL_REFLECTION = "hierarchical_reflection"
 
+# A page a margin note can answer. The CI stub seam's reading quotes the page's
+# last *complete* sentence (``services.stub_completions``), so this one must end
+# in a full stop: ``_SEED_NOTE`` has none, and a pass over it keeps no note.
+_LETTERED_PAGE = "The authorization matrix wrote this page so a margin note can answer it."
+
+# A first letter costs a wallet unit, and the route refuses to charge unless the
+# writer was shown that price (#623). The stub seam never charges it.
+_LETTER_PRICE_ACKNOWLEDGED: dict[str, object] = {"price_acknowledged": True}
+
 
 class IdSource(enum.Enum):
     """Where a create response carries the value the next step needs.
@@ -162,6 +171,9 @@ class SeedSpec:
         id_source: Where the response carries the value; see :class:`IdSource`.
         id_pattern: For a text or redirect source, the regular expression whose
             first group is the value.
+        paced: The create spends one of the owner's generations (#623), so the
+            runner paces it and waits out a 429 instead of counting it a
+            throttled probe; see :mod:`scripts.dast.pacing`.
     """
 
     create_method: str
@@ -172,6 +184,7 @@ class SeedSpec:
     form_encoded: bool = False
     id_source: IdSource = IdSource.JSON
     id_pattern: str | None = None
+    paced: bool = False
 
 
 # --- an agent grant, the way a person makes one (#3534) ----------------------
@@ -379,6 +392,32 @@ SEED_REGISTRY: Mapping[str, SeedSpec] = MappingProxyType(
             id_pointer=("id",),
             depends_on=("user_practice_id",),
         ),
+        # A margin note carrying a served Resonance Letter (#3658), made the only
+        # way one can be: a model writes the note, then the letter. Under the CI
+        # stub seam both answers are canned and uncharged, but each still spends
+        # one of the owner's five generations a minute, so both are paced.
+        "lettered_entry_id": SeedSpec(
+            create_method="POST",
+            create_path="/journal/",
+            payload={"message": _LETTERED_PAGE},
+            id_pointer=("id",),
+        ),
+        "lettered_note_id": SeedSpec(
+            create_method="POST",
+            create_path="/journal/{lettered_entry_id}/resonance",
+            payload={},
+            id_pointer=("marginalia", 0, "id"),
+            depends_on=("lettered_entry_id",),
+            paced=True,
+        ),
+        "marginalia_id": SeedSpec(
+            create_method="POST",
+            create_path="/journal/marginalia/{lettered_note_id}/essay",
+            payload=_LETTER_PRICE_ACKNOWLEDGED,
+            id_pointer=("id",),
+            depends_on=("lettered_note_id",),
+            paced=True,
+        ),
         # A quote may only be folded into a *hierarchical reflection*: any other
         # tag is refused 422 for a reason that has nothing to do with who owns
         # the target, which would let the probe pass while proving nothing. So
@@ -454,6 +493,10 @@ REPLAY_BODIES: Mapping[tuple[str, str], Mapping[str, object]] = MappingProxyType
         },
         ("PATCH", "/journal/{entry_id}"): {"title": _REPLAY_NAME},
         ("POST", "/journal/{entry_id}/promote"): {"anchor_start": 0, "anchor_end": 4},
+        ("POST", "/journal/marginalia/{marginalia_id}/letter/promote"): {
+            "anchor_start": 0,
+            "anchor_end": 4,
+        },
         ("PATCH", "/practice-recipes/{recipe_id}"): {
             "name": _REPLAY_NAME,
             "steps": [_RECIPE_STEP],
@@ -463,6 +506,27 @@ REPLAY_BODIES: Mapping[tuple[str, str], Mapping[str, object]] = MappingProxyType
         # ``habit_id`` is required, so ``{}`` would be a 422; ``null`` (unlink)
         # names no other row, leaving the path's selection as the only object.
         ("PATCH", "/user-practices/{user_practice_id}/habit"): {"habit_id": None},
+    },
+)
+
+
+# The routes whose four cells probe *one* seeded object rather than one each.
+#
+# Every other route gets a fresh object per cell, so a cell that destroys its
+# object cannot leave the next cell's control answering 404. These three cannot
+# destroy theirs -- a letter is write-once, a cached letter is reopened, a quote
+# is added beside it, and a list only reads -- and each object costs the owner
+# two paced generations. Seeding one per cell would spend twenty-four of them,
+# about five minutes of waiting at four a minute, and the matrix's 120-second
+# budget would fail the run; one per route spends six. Each cell is still sent
+# and graded on its own, and the owner's control, which runs last, proves the
+# very object the intruder was refused is there to be reached. Never list a
+# route here that can delete or replace its object.
+SHARED_SEED_ROUTES: frozenset[tuple[str, str]] = frozenset(
+    {
+        ("POST", "/journal/marginalia/{marginalia_id}/essay"),
+        ("POST", "/journal/marginalia/{marginalia_id}/letter/promote"),
+        ("GET", "/journal/marginalia/{marginalia_id}/letter/promotions"),
     },
 )
 

@@ -128,6 +128,9 @@ class MatrixReport:
         elapsed_seconds: Wall-clock time the matrix took.
         reference_results: Every graded body- or query-reference cell, in the
             order it ran. Empty for a run given no reference registry.
+        paced_seconds: How much of ``elapsed_seconds`` was spent waiting on the
+            owner's generation window (:mod:`scripts.dast.pacing`).
+        paced_refusals: How many paced seeds were answered 429 and sent again.
     """
 
     base_url: str
@@ -139,6 +142,8 @@ class MatrixReport:
     guard_failures: tuple[GuardFailure, ...]
     elapsed_seconds: float
     reference_results: tuple[ReferenceCellResult, ...] = ()
+    paced_seconds: float = 0.0
+    paced_refusals: int = 0
 
     @property
     def findings(self) -> tuple[CellResult, ...]:
@@ -216,13 +221,17 @@ def _summary_line(label: str, value: str) -> str:
 
 
 def _summary_lines(report: MatrixReport) -> list[str]:
-    """Render the four counts that quantify what the run actually probed."""
+    """Render the counts that quantify what the run actually probed, and what it waited."""
     return [
         _summary_line("routes discovered from /openapi.json", f"{report.discovered} object-scoped"),
         _summary_line("seeded as user A", str(report.seeded)),
         _summary_line("UNCOVERED (no seed strategy)", str(len(report.uncovered))),
         _summary_line("allow-listed", str(report.allowlisted)),
         _summary_line("body/query references probed", str(report.references_probed)),
+        _summary_line(
+            "seeds paced on the generation limit",
+            f"{report.paced_seconds:.1f}s waited, {report.paced_refusals} 429(s) waited out",
+        ),
     ]
 
 

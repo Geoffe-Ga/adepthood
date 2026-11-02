@@ -84,6 +84,32 @@ everybody equally, which reads exactly like a correctly guarded route. Running i
 last, on its own fresh object, is what keeps a destructive cross-user leak
 reportable instead of collapsing into a harness error.
 
+The one exception is `SHARED_SEED_ROUTES` in `seeds.py`: routes that cannot
+delete or replace their object, whose object costs generations to make (below).
+Each seeds one object before its first cell, and all four cells probe it. Every
+cell is still sent and graded on its own, and the owner's control, still last,
+proves the very object the intruder was refused is there to be reached. Never
+list a route there that can destroy its object; a unit test refuses a `DELETE`.
+
+## Seeds that spend a generation
+
+A margin note and its Resonance Letter exist only once a model has written them,
+so `marginalia_id` is seeded through the real routes (#3658): an entry ending in
+a full sentence, `POST /journal/{id}/resonance`, then the first letter. The CI
+instance answers both from the canned stub seam (`BOTMASON_STUB_SEAM=true`),
+uncharged -- but each still spends one of the owner's **five generations a
+minute** (#623), and the whole matrix runs as one owner.
+
+Those creates are marked `paced=True`, and `pacing.py` paces them. A paced create
+is sent only while the owner has spent fewer than four generations in the last
+minute by the harness's own ledger, leaving the fifth for a probe that spends one
+(`POST /journal/{entry_id}/resonance` is probed). A paced create answered 429
+waits its `Retry-After` and is sent again; that 429 is reported as waited out,
+not as throttling. A 429 on any probe or control still fails the run. All the
+waiting counts against a 90-second cap, and a wait past it stops the run with
+exit `3`. The time budget still measures the whole run, waits included, and the
+summary reports how long the run waited. Today's seeds wait about one minute.
+
 ## How one reference is probed
 
 An id carried in a body or a query string cannot be graded on its status. `GET
@@ -239,6 +265,9 @@ each parameter independently. A spec may also earn its keep by being named as th
   the worked example: connect a vault, register an agent, read the consent
   ticket off the page, approve, then read the grant back from `GET
   /vault/agents` (#3534).
+
+A create that spends a generation (a resonance pass, a letter) is marked
+`paced=True`; see "Seeds that spend a generation" above.
 
 If the operation is a mutating verb that requires fields, add a matching entry to
 `REPLAY_BODIES` too. Without one the replay is answered 422 before the ownership
