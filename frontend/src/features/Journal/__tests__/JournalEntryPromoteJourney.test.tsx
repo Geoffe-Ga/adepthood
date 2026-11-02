@@ -191,7 +191,7 @@ async function selectAndConfirmReadMode(
   const input = await openSelectionSurface(screen);
   fireEvent(input, 'selectionChange', { nativeEvent: { selection } });
   await act(async () => {
-    fireEvent.press(screen.getByTestId('quote-select-confirm'));
+    fireEvent.press(screen.getByTestId('promote-selection-fab'));
   });
 }
 
@@ -217,7 +217,7 @@ async function selectAndConfirmSource(
   const input = screen.getByTestId(`source-select-entry-${id}-input`);
   fireEvent(input, 'selectionChange', { nativeEvent: { selection } });
   await act(async () => {
-    fireEvent.press(screen.getByTestId(`source-select-entry-${id}-confirm`));
+    fireEvent.press(screen.getByTestId('promote-selection-fab'));
   });
 }
 
@@ -255,7 +255,7 @@ describe('JournalEntryPromoteJourney -- read-mode journey (finished entry, entry
     expect(input.props.value).toBe(BODY);
     fireEvent(input, 'selectionChange', { nativeEvent: { selection: { start: 2, end: 19 } } });
     await act(async () => {
-      fireEvent.press(screen.getByTestId('quote-select-confirm'));
+      fireEvent.press(screen.getByTestId('promote-selection-fab'));
     });
     expect(mockPromote).toHaveBeenCalledWith(7, { anchor_start: 2, anchor_end: 19 });
     expect(await screen.findByTestId('quote-highlight-90')).toBeTruthy();

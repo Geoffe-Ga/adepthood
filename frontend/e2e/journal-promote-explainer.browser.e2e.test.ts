@@ -108,7 +108,7 @@ test('the first promote explains where a quote goes, and the quote is there', as
   );
   const [promoted] = await Promise.all([
     promoteResponse,
-    page.getByTestId('quote-select-confirm').click(),
+    page.getByTestId('promote-selection-fab').click(),
   ]);
   expect(promoted.ok()).toBe(true);
   const quoteId = ((await promoted.json()) as { id: number }).id;

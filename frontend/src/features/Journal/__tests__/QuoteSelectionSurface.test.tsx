@@ -1,12 +1,13 @@
 /* eslint-env jest */
-// RED: `QuoteSelectionSurface` does not yet render an instruction line, a live
-// preview, a guarded "Promote selection" Button, or an empty-tap hint -- every
-// testID below is missing until the implementation-specialist adds them.
+// The surface's chrome: the instruction, the live preview, Cancel, and the
+// confirm -- by default the floating pill (#3134), and under
+// ``confirmPlacement="footer"`` the guarded footer Button with its empty-tap hint.
 import { jest, describe, it, expect, beforeEach, afterEach } from '@jest/globals';
 import { act, fireEvent, render, within } from '@testing-library/react-native';
 import React from 'react';
 import { StyleSheet } from 'react-native';
 
+import { FLOATING_PROMOTE_TEST_ID } from '../FloatingPromoteButton';
 import QuoteSelectionSurface, { SELECTION_FIELD_MIN_HEIGHT } from '../QuoteSelectionSurface';
 import { pinnedFooterStyle } from '../readingSurfaceStyles';
 import { buildSelectionSurfaceCopy } from '../selectionSurfaceCopy';
@@ -16,6 +17,8 @@ import { accent, colors, editorialType, writingFieldFocus } from '@/design/token
 const Platform = require('react-native').Platform as { OS: string };
 
 const BODY = 'A steady daily walk to the river.';
+
+const FAB = FLOATING_PROMOTE_TEST_ID;
 
 // The jest preset mounts on ios, so the default-platform pins below are the
 // native long-press wording; ``selectionSurfaceCopy.test.ts`` pins the literals.
@@ -50,9 +53,23 @@ describe('QuoteSelectionSurface -- instruction', () => {
 });
 
 describe('QuoteSelectionSurface -- empty selection', () => {
-  it('has no preview and a disabled confirm that ignores a press', () => {
-    const { queryByTestId, getByTestId, onConfirm } = renderSurface();
+  it('offers no promote at all, only the way out, until a passage is chosen', () => {
+    const { queryByTestId, getByTestId } = renderSurface();
     expect(queryByTestId('quote-select-preview')).toBeNull();
+    expect(queryByTestId(FAB, { includeHiddenElements: true })).toBeNull();
+    expect(queryByTestId('quote-select-confirm', { includeHiddenElements: true })).toBeNull();
+    expect(queryByTestId('quote-select-confirm-guard', { includeHiddenElements: true })).toBeNull();
+    within(getByTestId('quote-select-footer')).getByTestId('quote-select-cancel');
+  });
+});
+
+describe('QuoteSelectionSurface -- empty selection, footer confirm', () => {
+  it('has no preview and a disabled confirm that ignores a press', () => {
+    const { queryByTestId, getByTestId, onConfirm } = renderSurface({
+      confirmPlacement: 'footer',
+    });
+    expect(queryByTestId('quote-select-preview')).toBeNull();
+    expect(queryByTestId(FAB, { includeHiddenElements: true })).toBeNull();
     const confirm = getByTestId('quote-select-confirm');
     expect(confirm.props.accessibilityState.disabled).toBe(true);
     fireEvent.press(confirm);
@@ -60,7 +77,7 @@ describe('QuoteSelectionSurface -- empty selection', () => {
   });
 
   it('pressing the confirm guard shows a hint and never confirms', () => {
-    const { getByTestId, onConfirm } = renderSurface();
+    const { getByTestId, onConfirm } = renderSurface({ confirmPlacement: 'footer' });
     fireEvent.press(getByTestId('quote-select-confirm-guard'));
     expect(getByTestId('quote-select-hint').props.children).toBe(EMPTY_HINT_COPY);
     expect(onConfirm).not.toHaveBeenCalled();
@@ -76,6 +93,19 @@ describe('QuoteSelectionSurface -- nonempty ASCII selection', () => {
 
     expect(getByTestId('quote-select-preview').props.children).toBe(BODY.slice(2, 8));
     expect(onSelectionChange).toHaveBeenCalledWith({ start: 2, end: 8 });
+    expect(getByTestId(FAB).props.accessibilityState.disabled).toBe(false);
+
+    await act(async () => {
+      fireEvent.press(getByTestId(FAB));
+    });
+    expect(onConfirm).toHaveBeenCalledTimes(1);
+  });
+
+  it('under the footer confirm, enables the Button and detaches the empty-tap guard', async () => {
+    const { getByTestId, onConfirm } = renderSurface({ confirmPlacement: 'footer' });
+    fireEvent(getByTestId('quote-select-input'), 'selectionChange', {
+      nativeEvent: { selection: { start: 2, end: 8 } },
+    });
     expect(getByTestId('quote-select-confirm').props.accessibilityState.disabled).toBeFalsy();
     expect(getByTestId('quote-select-confirm-guard').props.disabled).toBeUndefined();
     expect(getByTestId('quote-select-confirm-guard').props.onPress).toBeUndefined();
@@ -110,15 +140,24 @@ describe('QuoteSelectionSurface -- non-BMP selection', () => {
 });
 
 describe('QuoteSelectionSurface -- collapsing a selection', () => {
-  it('removes the preview and disables confirm again', () => {
+  it('removes the preview and withdraws the floating confirm', () => {
     const { getByTestId, queryByTestId } = renderSurface();
     const input = getByTestId('quote-select-input');
 
     fireEvent(input, 'selectionChange', { nativeEvent: { selection: { start: 2, end: 8 } } });
     expect(getByTestId('quote-select-preview')).toBeTruthy();
+    expect(getByTestId(FAB)).toBeTruthy();
 
     fireEvent(input, 'selectionChange', { nativeEvent: { selection: { start: 4, end: 4 } } });
     expect(queryByTestId('quote-select-preview')).toBeNull();
+    expect(queryByTestId(FAB)).toBeNull();
+  });
+
+  it('under the footer confirm, disables the Button again', () => {
+    const { getByTestId } = renderSurface({ confirmPlacement: 'footer' });
+    const input = getByTestId('quote-select-input');
+    fireEvent(input, 'selectionChange', { nativeEvent: { selection: { start: 2, end: 8 } } });
+    fireEvent(input, 'selectionChange', { nativeEvent: { selection: { start: 4, end: 4 } } });
     expect(getByTestId('quote-select-confirm').props.accessibilityState.disabled).toBe(true);
   });
 });
@@ -142,10 +181,16 @@ describe('QuoteSelectionSurface -- custom testID prefix', () => {
   it('prefixes every element with the given testID', () => {
     const { getByTestId } = renderSurface({ testID: 'src-1' });
     expect(getByTestId('src-1-instruction')).toBeTruthy();
-    expect(getByTestId('src-1-confirm')).toBeTruthy();
-    expect(getByTestId('src-1-confirm-guard')).toBeTruthy();
     expect(getByTestId('src-1-cancel')).toBeTruthy();
     expect(getByTestId('src-1-input')).toBeTruthy();
+    expect(getByTestId('src-1-footer')).toBeTruthy();
+    expect(getByTestId('src-1-dock')).toBeTruthy();
+  });
+
+  it('prefixes the footer confirm and its guard under the footer placement', () => {
+    const { getByTestId } = renderSurface({ testID: 'src-1', confirmPlacement: 'footer' });
+    expect(getByTestId('src-1-confirm')).toBeTruthy();
+    expect(getByTestId('src-1-confirm-guard')).toBeTruthy();
   });
 });
 
@@ -162,7 +207,7 @@ describe('QuoteSelectionSurface -- platform-appropriate instruction', () => {
 
   it('on web neither the instruction nor the empty hint says touch and hold', () => {
     Platform.OS = 'web';
-    const { getByTestId } = renderSurface();
+    const { getByTestId } = renderSurface({ confirmPlacement: 'footer' });
     expect(getByTestId('quote-select-instruction').props.children).not.toMatch(/touch and hold/i);
     fireEvent.press(getByTestId('quote-select-confirm-guard'));
     expect(getByTestId('quote-select-hint').props.children).not.toMatch(/touch and hold/i);
@@ -170,21 +215,37 @@ describe('QuoteSelectionSurface -- platform-appropriate instruction', () => {
 
   it('on ios the instruction and the empty hint keep the long-press wording', () => {
     Platform.OS = 'ios';
-    const { getByTestId } = renderSurface();
+    const { getByTestId } = renderSurface({ confirmPlacement: 'footer' });
     expect(getByTestId('quote-select-instruction').props.children).toBe(INSTRUCTION_COPY);
     fireEvent.press(getByTestId('quote-select-confirm-guard'));
     expect(getByTestId('quote-select-hint').props.children).toBe(EMPTY_HINT_COPY);
   });
 });
 
+function choosePassage(getByTestId: ReturnType<typeof render>['getByTestId']): void {
+  fireEvent(getByTestId('quote-select-input'), 'selectionChange', {
+    nativeEvent: { selection: { start: 2, end: 8 } },
+  });
+}
+
 describe('QuoteSelectionSurface -- confirmLabel', () => {
-  it('defaults the confirm button label to "Promote selection"', () => {
+  it('defaults the floating confirm label to "Promote selection"', () => {
     const { getByTestId } = renderSurface();
-    within(getByTestId('quote-select-confirm')).getByText('Promote selection');
+    choosePassage(getByTestId);
+    within(getByTestId(FAB)).getByText('Promote selection');
   });
 
-  it('renders the given confirmLabel when provided', () => {
+  it('renders the given confirmLabel on the floating confirm when provided', () => {
     const { getByTestId } = renderSurface({ confirmLabel: 'Write a note' });
+    choosePassage(getByTestId);
+    within(getByTestId(FAB)).getByText('Write a note');
+  });
+
+  it('renders the given confirmLabel on the footer confirm under the footer placement', () => {
+    const { getByTestId } = renderSurface({
+      confirmLabel: 'Write a note',
+      confirmPlacement: 'footer',
+    });
     within(getByTestId('quote-select-confirm')).getByText('Write a note');
   });
 });
@@ -207,7 +268,8 @@ describe('QuoteSelectionSurface -- edge whitespace (#2891)', () => {
       nativeEvent: { selection: { start: 3, end: 6 } },
     });
     expect(queryByTestId('quote-select-preview')).toBeNull();
-    expect(getByTestId('quote-select-confirm').props.accessibilityState.disabled).toBe(true);
+    expect(getByTestId('quote-select-input')).toBeTruthy();
+    expect(queryByTestId(FAB)).toBeNull();
   });
 });
 
@@ -243,8 +305,22 @@ describe('QuoteSelectionSurface -- phone layout (#2952)', () => {
     expect(ruleColor()).toBe('transparent');
   });
 
-  it('keeps the preview, actions and hint together in one footer pinned to the viewport', () => {
+  it('keeps the preview and Cancel in one footer pinned to the viewport, with no primary in it', () => {
     const { getByTestId } = renderSurface();
+    const footer = getByTestId('quote-select-footer');
+    expect(footer.props.style).toContain(pinnedFooterStyle);
+    expect(StyleSheet.flatten(footer.props.style).backgroundColor).toBe(colors.paper.background);
+    within(footer).getByTestId('quote-select-cancel');
+    choosePassage(getByTestId);
+    const chosen = getByTestId('quote-select-footer');
+    within(chosen).getByTestId('quote-select-preview');
+    // The one primary on screen is the floating pill, never a second in the footer.
+    expect(within(chosen).queryByText('Promote selection')).toBeNull();
+    expect(within(chosen).queryByTestId(FAB, { includeHiddenElements: true })).toBeNull();
+  });
+
+  it('under the footer placement keeps the preview, actions and hint together in the footer', () => {
+    const { getByTestId } = renderSurface({ confirmPlacement: 'footer' });
     const footer = getByTestId('quote-select-footer');
     expect(footer.props.style).toContain(pinnedFooterStyle);
     const flat = StyleSheet.flatten(footer.props.style);
@@ -276,16 +352,16 @@ describe('QuoteSelectionSurface -- bounded field (#2883)', () => {
     expect(StyleSheet.flatten(input.props.style).maxHeight).toBe(200);
     expect(input.props.scrollEnabled).toBe(true);
     const tree = JSON.stringify(toJSON());
-    expect(tree.indexOf('quote-select-input')).toBeLessThan(tree.indexOf('quote-select-confirm'));
+    expect(tree.indexOf('quote-select-input')).toBeLessThan(tree.indexOf('quote-select-footer'));
     expect(tree.indexOf('quote-select-input')).toBeLessThan(tree.indexOf('quote-select-cancel'));
   });
 });
 
 describe('QuoteSelectionSurface -- initial selection (#2883)', () => {
   it('starts with nothing chosen when no initial selection is given', () => {
-    const { queryByTestId, getByTestId } = renderSurface();
+    const { queryByTestId } = renderSurface();
     expect(queryByTestId('quote-select-preview')).toBeNull();
-    expect(getByTestId('quote-select-confirm').props.accessibilityState.disabled).toBe(true);
+    expect(queryByTestId(FAB, { includeHiddenElements: true })).toBeNull();
   });
 
   it('carries a code-point selection over a remount, converted back to UTF-16 over a non-BMP body', async () => {
@@ -297,7 +373,7 @@ describe('QuoteSelectionSurface -- initial selection (#2883)', () => {
       initialSelection: { start: 2, end: 6 },
     });
     expect(getByTestId('quote-select-preview').props.children).toBe('went');
-    const confirm = getByTestId('quote-select-confirm');
+    const confirm = getByTestId(FAB);
     expect(confirm.props.accessibilityState.disabled).toBe(false);
     await act(async () => {
       fireEvent.press(confirm);

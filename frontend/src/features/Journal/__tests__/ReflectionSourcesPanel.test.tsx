@@ -272,17 +272,17 @@ describe('ReflectionSourcesPanel -- in-panel re-promotion selection surface', ()
     const input = getByTestId('source-select-entry-1-input');
     fireEvent(input, 'selectionChange', { nativeEvent: { selection: { start: 2, end: 9 } } });
     await act(async () => {
-      fireEvent.press(getByTestId('source-select-entry-1-confirm'));
+      fireEvent.press(getByTestId('promote-selection-fab'));
     });
     // "e full " ends in a space; the server would trim it from anchor_text but
     // keep the offsets, so the span is trimmed to match before it is posted (#2891).
     expect(onPromoteSpan).toHaveBeenCalledWith(sourceItem, { anchor_start: 2, anchor_end: 8 });
   });
 
-  it('pressing the confirm guard on a collapsed selection shows a hint and never calls onPromoteSpan', async () => {
+  it('a collapsed selection raises no floating Promote and never calls onPromoteSpan', () => {
     const onPromoteSpan = jest.fn(() => Promise.resolve(true));
     const items = [item({ id: 1 })];
-    const { getByTestId, findByTestId } = render(
+    const { getByTestId, queryByTestId } = render(
       <ReflectionSourcesPanel
         items={items}
         onInsertQuote={jest.fn()}
@@ -293,8 +293,7 @@ describe('ReflectionSourcesPanel -- in-panel re-promotion selection surface', ()
     fireEvent.press(getByTestId('source-promote-entry-1'));
     const input = getByTestId('source-select-entry-1-input');
     fireEvent(input, 'selectionChange', { nativeEvent: { selection: { start: 5, end: 5 } } });
-    fireEvent.press(getByTestId('source-select-entry-1-confirm-guard'));
-    expect(await findByTestId('source-select-entry-1-hint')).toBeTruthy();
+    expect(queryByTestId('promote-selection-fab', { includeHiddenElements: true })).toBeNull();
     expect(onPromoteSpan).not.toHaveBeenCalled();
     expect(getByTestId('source-select-entry-1-input')).toBeTruthy();
   });
@@ -334,7 +333,7 @@ describe('ReflectionSourcesPanel -- in-panel re-promotion selection surface', ()
     const input = getByTestId('source-select-entry-1-input');
     fireEvent(input, 'selectionChange', { nativeEvent: { selection: { start: 2, end: 9 } } });
     await act(async () => {
-      fireEvent.press(getByTestId('source-select-entry-1-confirm'));
+      fireEvent.press(getByTestId('promote-selection-fab'));
     });
     expect(await findByTestId('source-promote-hint')).toBeTruthy();
     expect(getByTestId('source-promote-entry-1')).toBeTruthy();
@@ -362,7 +361,7 @@ describe('ReflectionSourcesPanel -- in-panel re-promotion code-point anchors (no
     // The one leading astral char shifts every later UTF-16 offset by +1 vs its code-point index.
     fireEvent(input, 'selectionChange', { nativeEvent: { selection: { start: 2, end: 18 } } });
     await act(async () => {
-      fireEvent.press(getByTestId('source-select-entry-1-confirm'));
+      fireEvent.press(getByTestId('promote-selection-fab'));
     });
     expect(onPromoteSpan).toHaveBeenCalledWith(sourceItem, { anchor_start: 1, anchor_end: 17 });
   });
@@ -631,7 +630,7 @@ describe('ReflectionSourcesPanel -- source bodies are rendered, never raw Markdo
       nativeEvent: { selection: { start: 2, end: 9 } },
     });
     await act(async () => {
-      fireEvent.press(getByTestId('source-select-entry-1-confirm'));
+      fireEvent.press(getByTestId('promote-selection-fab'));
     });
     // UTF-16 2..9 of the RAW body is 'Me:** I' -- offsets never shift for display.
     expect(onPromoteSpan).toHaveBeenCalledWith(sourceItem, { anchor_start: 2, anchor_end: 9 });
@@ -818,7 +817,7 @@ describe('ReflectionSourcesPanel -- side-pane breakpoint and sheet dismissal (#2
     return utils;
   }
 
-  it('bounds the selection field on native so Promote selection and Cancel stay in the sheet', () => {
+  it('bounds the selection field on native so the floating Promote and Cancel stay in the sheet', () => {
     // Jest mounts on ios; the bound is a share of the window's height (900).
     const { getByTestId, toJSON } = openSelection(390);
     const input = getByTestId('source-select-entry-3-input');
@@ -826,7 +825,7 @@ describe('ReflectionSourcesPanel -- side-pane breakpoint and sheet dismissal (#2
     expect(input.props.scrollEnabled).toBe(true);
     const tree = JSON.stringify(toJSON());
     const at = (id: string) => tree.indexOf(id);
-    expect(at('source-select-entry-3-input')).toBeLessThan(at('source-select-entry-3-confirm'));
+    expect(at('source-select-entry-3-input')).toBeLessThan(at('source-select-entry-3-dock'));
     expect(at('source-select-entry-3-input')).toBeLessThan(at('source-select-entry-3-cancel'));
   });
 
@@ -909,7 +908,7 @@ describe('ReflectionSourcesPanel -- crossing the side-pane breakpoint while open
       expect(screen.getByTestId('pending-quote-90').props.accessibilityState?.disabled).toBe(true);
       expect(screen.getByTestId('source-select-entry-3-preview').props.children).toBe('steady');
       await act(async () => {
-        fireEvent.press(screen.getByTestId('source-select-entry-3-confirm'));
+        fireEvent.press(screen.getByTestId('promote-selection-fab'));
       });
       expect(onPromoteSpan).toHaveBeenCalledWith(selecting, { anchor_start: 2, anchor_end: 8 });
     },

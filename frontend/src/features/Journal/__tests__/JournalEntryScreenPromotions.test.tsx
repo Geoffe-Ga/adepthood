@@ -197,14 +197,13 @@ describe('JournalEntryScreen -- promote-a-quote affordance', () => {
     expect(await findByTestId('quote-select-preview')).toBeTruthy();
   });
 
-  it('pressing the confirm guard on a collapsed selection shows a hint and promotes nothing', async () => {
-    const { findByTestId, getByTestId } = renderScreen({ entryId: 7 });
+  it('a collapsed selection raises no floating Promote and promotes nothing', async () => {
+    const { findByTestId, getByTestId, queryByTestId } = renderScreen({ entryId: 7 });
     fireEvent.press(await findByTestId('promote-quote-button'));
     const input = getByTestId('quote-select-input');
     // A caret tap with no highlighted span reports start === end.
     fireEvent(input, 'selectionChange', { nativeEvent: { selection: { start: 5, end: 5 } } });
-    fireEvent.press(getByTestId('quote-select-confirm-guard'));
-    expect(await findByTestId('quote-select-hint')).toBeTruthy();
+    expect(queryByTestId('promote-selection-fab', { includeHiddenElements: true })).toBeNull();
     expect(mockPromote).not.toHaveBeenCalled();
     expect(getByTestId('quote-select-input')).toBeTruthy(); // still selecting
   });
@@ -217,7 +216,7 @@ describe('JournalEntryScreen -- promote-a-quote affordance', () => {
     fireEvent(input, 'selectionChange', { nativeEvent: { selection: { start: 2, end: 19 } } });
 
     await act(async () => {
-      fireEvent.press(getByTestId('quote-select-confirm'));
+      fireEvent.press(getByTestId('promote-selection-fab'));
     });
     expect(mockPromote).toHaveBeenCalledWith(7, { anchor_start: 2, anchor_end: 19 });
   });
@@ -234,7 +233,7 @@ describe('JournalEntryScreen -- promote-a-quote affordance', () => {
     const input = getByTestId('quote-select-input');
     fireEvent(input, 'selectionChange', { nativeEvent: { selection: { start: 2, end: 19 } } });
     await act(async () => {
-      fireEvent.press(getByTestId('quote-select-confirm'));
+      fireEvent.press(getByTestId('promote-selection-fab'));
     });
 
     expect(mockCreate).toHaveBeenCalledWith(expect.objectContaining({ message: BODY }), KEYED);
@@ -248,7 +247,7 @@ describe('JournalEntryScreen -- promote-a-quote affordance', () => {
     const input = getByTestId('quote-select-input');
     fireEvent(input, 'selectionChange', { nativeEvent: { selection: { start: 2, end: 19 } } });
     await act(async () => {
-      fireEvent.press(getByTestId('quote-select-confirm'));
+      fireEvent.press(getByTestId('promote-selection-fab'));
     });
     expect(await findByTestId('quote-highlight-90')).toBeTruthy();
   });
@@ -260,7 +259,7 @@ describe('JournalEntryScreen -- promote-a-quote affordance', () => {
     const input = getByTestId('quote-select-input');
     fireEvent(input, 'selectionChange', { nativeEvent: { selection: { start: 0, end: 9999 } } });
     await act(async () => {
-      fireEvent.press(getByTestId('quote-select-confirm'));
+      fireEvent.press(getByTestId('promote-selection-fab'));
     });
 
     expect(await findByTestId('quote-promotion-error')).toBeTruthy();
@@ -287,7 +286,7 @@ describe('JournalEntryScreen -- promote-a-quote code-point anchors (non-BMP)', (
     fireEvent(input, 'selectionChange', { nativeEvent: { selection: { start: 2, end: 18 } } });
 
     await act(async () => {
-      fireEvent.press(getByTestId('quote-select-confirm'));
+      fireEvent.press(getByTestId('promote-selection-fab'));
     });
     expect(mockPromote).toHaveBeenCalledWith(7, { anchor_start: 1, anchor_end: 17 });
   });
@@ -300,7 +299,7 @@ describe('JournalEntryScreen -- removing a promoted quote', () => {
     const input = screen.getByTestId('quote-select-input');
     fireEvent(input, 'selectionChange', { nativeEvent: { selection: { start: 2, end: 19 } } });
     await act(async () => {
-      fireEvent.press(screen.getByTestId('quote-select-confirm'));
+      fireEvent.press(screen.getByTestId('promote-selection-fab'));
     });
     await screen.findByTestId('quote-highlight-90');
   }
@@ -361,7 +360,7 @@ describe('JournalEntryScreen -- promote lifecycle feedback (in-flight, success, 
     mockPromote.mockResolvedValue(promotedQuote({ id: 90 }));
     await confirmSelection(screen);
     await act(async () => {
-      fireEvent.press(screen.getByTestId('quote-select-confirm'));
+      fireEvent.press(screen.getByTestId('promote-selection-fab'));
     });
     await screen.findByTestId('quote-highlight-90');
   }
@@ -372,7 +371,7 @@ describe('JournalEntryScreen -- promote lifecycle feedback (in-flight, success, 
     const screen = renderScreen({ entryId: 7 });
     await confirmSelection(screen);
 
-    fireEvent.press(screen.getByTestId('quote-select-confirm'));
+    fireEvent.press(screen.getByTestId('promote-selection-fab'));
     expect(await screen.findByTestId('quote-promotion-inflight')).toBeTruthy();
     expect(screen.getByTestId('journal-body-read')).toBeTruthy();
     expect(mockGet).toHaveBeenCalledTimes(1);
@@ -392,7 +391,7 @@ describe('JournalEntryScreen -- promote lifecycle feedback (in-flight, success, 
     jest.useFakeTimers();
     try {
       await act(async () => {
-        fireEvent.press(screen.getByTestId('quote-select-confirm'));
+        fireEvent.press(screen.getByTestId('promote-selection-fab'));
       });
       expect(screen.getByTestId('quote-promotion-success')).toBeTruthy();
 
@@ -411,7 +410,7 @@ describe('JournalEntryScreen -- promote lifecycle feedback (in-flight, success, 
     const screen = renderScreen({ entryId: 7 });
     await confirmSelection(screen);
     await act(async () => {
-      fireEvent.press(screen.getByTestId('quote-select-confirm'));
+      fireEvent.press(screen.getByTestId('promote-selection-fab'));
     });
 
     expect(await screen.findByTestId('quote-promotion-error')).toBeTruthy();
@@ -471,7 +470,7 @@ describe('JournalEntryScreen -- promote lifecycle feedback (in-flight, success, 
 
     await confirmSelection(screen);
     await act(async () => {
-      fireEvent.press(screen.getByTestId('quote-select-confirm'));
+      fireEvent.press(screen.getByTestId('promote-selection-fab'));
     });
     expect(await screen.findByTestId('quote-promotion-retry')).toBeTruthy();
 
@@ -666,7 +665,7 @@ describe('JournalEntryScreen -- read mode adopts the server-stored body after Fi
         nativeEvent: { selection: { start: startUtf16, end: startUtf16 + quoted.length } },
       });
       await act(async () => {
-        fireEvent.press(getByTestId('quote-select-confirm'));
+        fireEvent.press(getByTestId('promote-selection-fab'));
       });
       const [, span] = mockPromote.mock.calls[0]!;
       expect(Array.from(stored).slice(span.anchor_start, span.anchor_end).join('')).toBe(quoted);
@@ -768,7 +767,7 @@ describe('JournalEntryScreen -- read mode adopts the server-stored body after Fi
       nativeEvent: { selection: { start: at, end: at + 'river'.length } },
     });
     await act(async () => {
-      fireEvent.press(getByTestId('quote-select-confirm'));
+      fireEvent.press(getByTestId('promote-selection-fab'));
     });
     const [, span] = mockPromote.mock.calls[0]!;
     expect(Array.from(stored).slice(span.anchor_start, span.anchor_end).join('')).toBe('river');
@@ -831,7 +830,7 @@ describe('JournalEntryScreen -- promote posts source offsets, never display offs
       nativeEvent: { selection },
     });
     await act(async () => {
-      fireEvent.press(getByTestId('quote-select-confirm'));
+      fireEvent.press(getByTestId('promote-selection-fab'));
     });
     expect(mockPromote).toHaveBeenCalledWith(7, {
       anchor_start: source.start,

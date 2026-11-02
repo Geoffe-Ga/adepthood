@@ -56,7 +56,7 @@ test('a reader can promote a selected quote, reload it, and remove it over the r
   await expect(preview).toContainText(/\S/u);
   const selectedText = (await preview.textContent())?.trim();
   if (!selectedText) throw new Error('mouse selection produced no promoted text');
-  await page.getByTestId('quote-select-confirm').click();
+  await page.getByTestId('promote-selection-fab').click();
 
   await expect(page.getByTestId('quote-promotion-success')).toHaveText(
     'Promoted — find it any time under Promoted quotes',

@@ -8,10 +8,19 @@ const PHONE_VIEWPORT = { width: 390, height: 844 } as const;
 const FILLER_LINES = 120;
 /** How many viewports tall the field must be, so the in-view checks cannot pass on a short body. */
 const MIN_SCREENS = 3;
-/** The body's last line: the passage a reader deep in the entry wants to promote. */
+/** The body's last line, so the field's end is unmistakable. */
 const CLOSING_LINE = 'the heron lifted off the far bank at dusk';
-const CLOSING_KEY = 'heron';
 const PROMOTED_COPY = 'Promoted — find it any time under Promoted quotes';
+/** How far below the field's first line the promoted sentence lies (#3134). */
+const DEEP_OFFSET_PX = 2000;
+/**
+ * ``RESONANCE_BUTTON_CLEARANCE`` (SPACING.xl + touchTarget.minimum + SPACING.md):
+ * the floating pill's lift above the foot of the scroll viewport.
+ */
+const FLOATING_LIFT_PX = 76;
+/** Sub-pixel rounding allowance on a box comparison. */
+const EPSILON_PX = 1;
+const FAB = 'promote-selection-fab';
 /** Keeps the drag's ends inside the line's glyphs rather than on the field's padding. */
 const DRAG_INSET_PX = 4;
 const DRAG_STEPS = 12;
@@ -22,8 +31,8 @@ interface FieldGeometry {
   bottom: number;
   left: number;
   right: number;
-  /** Client y of the middle of the field's last line of text. */
-  lastLineY: number;
+  /** Client y of the top of the field's first line of text. */
+  firstLineTop: number;
   lineHeight: number;
 }
 
@@ -32,7 +41,6 @@ function fieldGeometry(field: Locator): Promise<FieldGeometry> {
     const rect = element.getBoundingClientRect();
     const style = getComputedStyle(element);
     const lineHeight = Number.parseFloat(style.lineHeight);
-    const contentBottom = rect.bottom - Number.parseFloat(style.paddingBottom);
     return {
       top: rect.top,
       bottom: rect.bottom,
@@ -42,21 +50,24 @@ function fieldGeometry(field: Locator): Promise<FieldGeometry> {
         rect.right -
         Number.parseFloat(style.borderRightWidth) -
         Number.parseFloat(style.paddingRight),
-      lastLineY: contentBottom - lineHeight / 2,
+      firstLineTop:
+        rect.top + Number.parseFloat(style.borderTopWidth) + Number.parseFloat(style.paddingTop),
       lineHeight,
     };
   });
 }
 
-async function topOf(locator: Locator): Promise<number> {
+async function boxOf(
+  locator: Locator,
+): Promise<{ x: number; y: number; width: number; height: number }> {
   const box = await locator.boundingBox();
   if (box === null) throw new Error('expected a laid-out element');
-  return box.y;
+  return box;
 }
 
 test.use({ viewport: PHONE_VIEWPORT });
 
-test('a reader deep in a long entry keeps Promote selection in view and promotes a passage near its end over the real wire', async ({
+test('a reader selects a sentence 2000px down a long entry and promotes it from the floating pill without scrolling', async ({
   page,
 }) => {
   const email = await signUp(page, 'promote-long-entry');
@@ -98,50 +109,89 @@ test('a reader deep in a long entry keeps Promote selection in view and promotes
   expect(opened.bottom - opened.top).toBeGreaterThan(PHONE_VIEWPORT.height * MIN_SCREENS);
 
   // With the field's top at the top of the screen, its end is screens away,
-  // yet the footer sits at the foot of the viewport, pinned over the field.
+  // yet the footer and its way out sit at the foot of the viewport -- and,
+  // nothing being chosen, there is no Promote anywhere on screen.
   await selection.evaluate((element) => element.scrollIntoView({ block: 'start' }));
   const footer = page.getByTestId('quote-select-footer');
-  const confirm = page.getByTestId('quote-select-confirm');
   await expect(footer).toBeInViewport();
-  await expect(confirm).toBeInViewport();
-  const footerBox = await footer.boundingBox();
-  if (footerBox === null) throw new Error('the selection footer has no layout box');
+  await expect(page.getByTestId('quote-select-cancel')).toBeInViewport();
+  const footerBox = await boxOf(footer);
   expect(footerBox.y + footerBox.height).toBeLessThanOrEqual(PHONE_VIEWPORT.height);
   expect(footerBox.y).toBeLessThan((await fieldGeometry(selection)).bottom);
+  await expect(page.getByTestId(FAB)).toHaveCount(0);
+  await expect(page.getByRole('button', { name: 'Promote selection' })).toHaveCount(0);
 
-  // Bring the closing line toward mid-screen in one (possibly clamped) scroll,
-  // then prove it landed on screen and clear of the footer before dragging.
-  const before = await fieldGeometry(selection);
-  await page
-    .getByTestId('journal-page-scroll')
-    .evaluate(
-      (element, delta) => element.scrollBy(0, delta),
-      before.lastLineY - PHONE_VIEWPORT.height / HALF,
-    );
+  // The line whose top lies at least DEEP_OFFSET_PX below the field's first
+  // line, brought to the middle of the screen in one scroll.
+  const top = await fieldGeometry(selection);
+  const lineIndex = Math.ceil(DEEP_OFFSET_PX / top.lineHeight);
+  const deepLine = filler[lineIndex];
+  if (deepLine === undefined) throw new Error('the entry is too short for a line that deep');
+  const scroller = page.getByTestId('journal-page-scroll');
+  await scroller.evaluate(
+    (element, delta) => element.scrollBy(0, delta),
+    top.firstLineTop + lineIndex * top.lineHeight - PHONE_VIEWPORT.height / HALF,
+  );
   const line = await fieldGeometry(selection);
-  const footerTop = await topOf(footer);
-  expect(line.lastLineY).toBeGreaterThanOrEqual(line.lineHeight);
-  expect(line.lastLineY).toBeLessThanOrEqual(footerTop - line.lineHeight / HALF);
+  const lineY = line.firstLineTop + lineIndex * line.lineHeight + line.lineHeight / HALF;
+  expect(lineIndex * line.lineHeight).toBeGreaterThanOrEqual(DEEP_OFFSET_PX);
+  expect(lineY).toBeGreaterThanOrEqual(line.lineHeight);
+  expect(lineY).toBeLessThanOrEqual((await boxOf(footer)).y - line.lineHeight / HALF);
 
-  await page.mouse.move(line.left + DRAG_INSET_PX, line.lastLineY);
+  await page.mouse.move(line.left + DRAG_INSET_PX, lineY);
   await page.mouse.down();
-  await page.mouse.move(line.right - DRAG_INSET_PX, line.lastLineY, { steps: DRAG_STEPS });
+  await page.mouse.move(line.right - DRAG_INSET_PX, lineY, { steps: DRAG_STEPS });
   await page.mouse.up();
   const preview = page.getByTestId('quote-select-preview');
-  await expect(preview).toContainText(CLOSING_KEY);
+  await expect(preview).toContainText(`Line ${lineIndex + 1} `);
   const selectedText = (await preview.textContent())?.trim() ?? '';
-  expect(CLOSING_LINE.includes(selectedText)).toBe(true);
-  await expect(footer).toBeInViewport();
-  await expect(confirm).toBeInViewport();
+  expect(deepLine.includes(selectedText)).toBe(true);
+
+  // The pill has come to the reader: in view, centred over the text column,
+  // floating its lift above the foot of the screen, and the only Promote there.
+  const fab = page.getByTestId(FAB);
+  await expect(fab).toBeInViewport();
+  // Its fade and settle share one progress: full opacity means it has landed.
+  await expect
+    .poll(() =>
+      page.getByTestId(`${FAB}-anchor`).evaluate((node) => getComputedStyle(node).opacity),
+    )
+    .toBe('1');
+  await expect(page.getByRole('button', { name: 'Promote selection' })).toHaveCount(1);
+  await expect(page.getByRole('button', { name: 'Clear selection' })).toBeInViewport();
+  // The pill and its X, read as one centred group, against the text column
+  // and the scroll viewport they float in.
+  const pill = await boxOf(fab);
+  const clear = await boxOf(page.getByTestId(`${FAB}-cancel`));
+  const columnBox = await boxOf(selection);
+  const viewport = await boxOf(scroller);
+  const groupCentre = (pill.x + clear.x + clear.width) / HALF;
+  expect(Math.abs(groupCentre - (columnBox.x + columnBox.width / HALF))).toBeLessThanOrEqual(
+    EPSILON_PX,
+  );
+  const groupBottom = Math.max(pill.y + pill.height, clear.y + clear.height);
+  expect(
+    Math.abs(viewport.y + viewport.height - groupBottom - FLOATING_LIFT_PX),
+  ).toBeLessThanOrEqual(EPSILON_PX);
+  expect(groupBottom).toBeLessThanOrEqual((await boxOf(footer)).y);
+  const column = await fieldGeometry(selection);
+  expect(column.top).toBeLessThan(0);
 
   const promoteResponse = page.waitForResponse(
     (response) =>
       response.request().method() === 'POST' &&
       new URL(response.url()).pathname === `/journal/${entryId}/promote`,
   );
-  const [promoted] = await Promise.all([promoteResponse, confirm.click()]);
+  // A pointer press at the pill's place on screen, not a locator click that
+  // would scroll its target into view first: no scroll stands between the
+  // selection and its promotion.
+  const [promoted] = await Promise.all([
+    promoteResponse,
+    page.mouse.click(pill.x + pill.width / HALF, pill.y + pill.height / HALF),
+  ]);
   expect(promoted.ok()).toBe(true);
   await expect(page.getByTestId('quote-promotion-success')).toHaveText(PROMOTED_COPY);
+  await expect(page.getByTestId(FAB)).toHaveCount(0);
   const promotions = await page.request.get(`${backendUrl()}/journal/${entryId}/promotions`, {
     headers,
   });

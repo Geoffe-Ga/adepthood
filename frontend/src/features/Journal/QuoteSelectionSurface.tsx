@@ -5,17 +5,25 @@
  * Android text selection still works). It guides the whole gesture in place: a
  * warm instruction line worded for the platform's own gesture (long press on a
  * phone, mouse or keyboard in a browser -- see ``selectionSurfaceCopy.ts``), a
- * live preview that echoes the raw selection back, and
- * an honestly disabled "Promote selection" confirm that only lights up once a
- * non-empty passage is chosen (an empty tap surfaces a gentle hint instead of
- * silently promoting nothing). The field trades the browser focus ring for a
- * terracotta rule lit while it holds focus, grows to its text, and the
- * preview, actions and hint sit together in a footer that web pins to the
- * foot of the viewport while a long body scrolls (#2952).
- * Shared by the read-mode promote flow on
- * ``JournalEntryScreen`` and the in-panel re-promotion flow in
- * ``ReflectionSourcesPanel``; ``testID`` prefixes every element so more than one
- * surface can coexist on a page.
+ * live preview that echoes the raw selection back, and a confirm.
+ *
+ * The confirm comes to the selection (#3134): the moment a non-empty passage
+ * is chosen, a floating "Promote selection" pill (``FloatingPromoteButton``)
+ * rises above the bottom-middle of the scroll viewport, wherever in a long body
+ * the passage lies, and withdraws when the selection collapses; its X clears
+ * the selection. The footer under the field keeps the one-line echo and Cancel
+ * (which leaves selection mode) and, on web, stays pinned to the foot of the
+ * viewport (#2952), so there is never a second primary on screen. A surface
+ * that passes ``confirmPlacement="footer"`` keeps the older footer confirm: an
+ * honestly disabled Button that lights once a passage is chosen, an empty tap
+ * surfacing a gentle hint instead.
+ *
+ * The field trades the browser focus ring for a terracotta rule lit while it
+ * holds focus and grows to its text. Shared by the read-mode promote flow on
+ * ``JournalEntryScreen``, the in-panel re-promotion flow in
+ * ``ReflectionSourcesPanel`` and the Course reader's passage selection;
+ * ``testID`` prefixes every element so more than one surface can coexist on a
+ * page.
  */
 import React, { useCallback, useMemo, useRef, useState } from 'react';
 import {
@@ -32,8 +40,9 @@ import {
 
 import { selectionToAnchorSpan } from './anchorSpan';
 import { codePointToUtf16 } from './codePoints';
+import FloatingPromoteButton, { DEFAULT_PROMOTE_LABEL } from './FloatingPromoteButton';
 import styles from './JournalEntry.styles';
-import { pinnedFooterStyle } from './readingSurfaceStyles';
+import { floatingDockStyle, pinnedFooterStyle } from './readingSurfaceStyles';
 import { buildSelectionSurfaceCopy } from './selectionSurfaceCopy';
 import { useGrowingFieldHeight } from './useGrowingFieldHeight';
 import { useWebSelectionListener } from './webSelectionListener';
@@ -70,17 +79,31 @@ interface Utf16Span {
 /** Prefix for the surface's testIDs; the read-mode flow relies on this default. */
 const DEFAULT_TEST_ID = 'quote-select';
 
-const DEFAULT_CONFIRM_LABEL = 'Promote selection';
+/**
+ * Where the surface puts its confirm: on the floating pill that comes to the
+ * selection (the default, #3134), or in the footer under the field.
+ */
+export type ConfirmPlacement = 'floating' | 'footer';
 
 export interface QuoteSelectionSurfaceProps {
   body: string;
   /** Emits the selection as a code-point span (already converted from UTF-16). */
   onSelectionChange: (_span: CodePointSpan) => void;
+  /**
+   * Act on the chosen passage. It settles rather than rejects (each caller maps
+   * its own failures to a hint); the floating confirm is busy until it does.
+   */
   onConfirm: () => Promise<void>;
+  /** Leave selection mode altogether (the footer's Cancel). */
   onCancel: () => void;
   testID?: string;
-  /** Label on the confirm Button; defaults to the promote-flow wording. */
+  /** Label on the confirm; defaults to the promote-flow wording. */
   confirmLabel?: string;
+  /**
+   * The floating pill by default. The Course reader keeps its footer confirm
+   * until its own move onto the pill (#3660).
+   */
+  confirmPlacement?: ConfirmPlacement;
   /**
    * Cap on the field's height, in dp. Unset (read mode, and the panel on web,
    * whose footer is sticky), the field grows to its text and never scrolls
@@ -100,6 +123,8 @@ export interface QuoteSelectionSurfaceProps {
 interface SelectionSurfaceState {
   isEmpty: boolean;
   previewSlice: string;
+  /** The raw selection's UTF-16 end: where clearing the selection collapses it to. */
+  selectionEnd: number;
   hintVisible: boolean;
   emitSpan: (_startUtf16: number, _endUtf16: number) => void;
   handleSelectionChange: (_event: SelectionChangeEvent) => void;
@@ -155,6 +180,7 @@ function useSelectionSurfaceState(
   const isEmpty = anchor.end <= anchor.start;
   return {
     isEmpty,
+    selectionEnd: span.end,
     previewSlice: isEmpty
       ? ''
       : body.slice(codePointToUtf16(body, anchor.start), codePointToUtf16(body, anchor.end)),
@@ -245,6 +271,30 @@ function useSelectionFieldGrowth(): {
   return { growth, onContentSizeChange: measured.onContentSizeChange };
 }
 
+/** Leave selection mode: the one decline, in the footer in both placements. */
+function CancelControl({
+  onCancel,
+  testID,
+  inline,
+}: {
+  onCancel: () => void;
+  testID: string;
+  /** True in the floating footer's row, where the label centres on the row's line. */
+  inline: boolean;
+}): React.JSX.Element {
+  return (
+    <TouchableOpacity
+      onPress={onCancel}
+      accessibilityRole="button"
+      accessibilityLabel="Cancel promoting"
+      style={styles.quoteActionButton}
+      testID={`${testID}-cancel`}
+    >
+      <Text style={inline ? styles.quoteSelectCancelInline : styles.controlLink}>Cancel</Text>
+    </TouchableOpacity>
+  );
+}
+
 interface SelectionActionsProps {
   isEmpty: boolean;
   onConfirm: () => Promise<void>;
@@ -255,10 +305,11 @@ interface SelectionActionsProps {
 }
 
 /**
- * The confirm/cancel row. An empty tap lands on the guard (a hint) and
- * ``onConfirm`` never fires on an empty span. The guard loses its handler once
- * the Button enables; it must not become a disabled ancestor, because web
- * accessibility semantics would then disable the enabled descendant too.
+ * The footer placement's confirm/cancel row. An empty tap lands on the guard (a
+ * hint) and ``onConfirm`` never fires on an empty span. The guard loses its
+ * handler once the Button enables; it must not become a disabled ancestor,
+ * because web accessibility semantics would then disable the enabled
+ * descendant too.
  */
 function SelectionActions({
   isEmpty,
@@ -283,55 +334,237 @@ function SelectionActions({
           testID={`${testID}-confirm`}
         />
       </Pressable>
-      <TouchableOpacity
-        onPress={onCancel}
-        accessibilityRole="button"
-        accessibilityLabel="Cancel promoting"
-        style={styles.quoteActionButton}
-        testID={`${testID}-cancel`}
-      >
-        <Text style={styles.controlLink}>Cancel</Text>
-      </TouchableOpacity>
+      <CancelControl onCancel={onCancel} testID={testID} inline={false} />
     </View>
   );
 }
 
-interface SelectionFooterProps {
-  /** The echoed passage; empty when nothing is selected, and then no card shows. */
+/** The highlighted card echoing the chosen passage back before it is promoted. */
+function PreviewCard({
+  previewSlice,
+  testID,
+  inline,
+}: {
   previewSlice: string;
-  /** The empty-tap hint to show, or null while it is hidden. */
-  emptyHint: string | null;
   testID: string;
-  children: React.ReactNode;
+  /** True in the floating footer's row: one line, sharing the row with Cancel. */
+  inline: boolean;
+}): React.JSX.Element {
+  return (
+    <View style={[styles.quoteSelectPreview, inline && styles.quoteSelectPreviewInline]}>
+      <Text
+        style={styles.quoteSelectPreviewText}
+        numberOfLines={inline ? 1 : undefined}
+        testID={`${testID}-preview`}
+      >
+        {previewSlice}
+      </Text>
+    </View>
+  );
 }
 
 /**
- * The preview card, the action row (``children``) and the empty-tap hint on
- * one opaque plate that web pins to the foot of the scroll viewport, so a
- * reader deep in a long body always has the echo and the confirm in view.
+ * One opaque plate that web pins to the foot of the scroll viewport, so a
+ * reader deep in a long body always has the echo and the way out in view.
  */
 function SelectionFooter({
-  previewSlice,
-  emptyHint,
   testID,
   children,
-}: SelectionFooterProps): React.JSX.Element {
+}: {
+  testID: string;
+  children: React.ReactNode;
+}): React.JSX.Element {
   return (
     <View style={[styles.quoteSelectFooter, pinnedFooterStyle]} testID={`${testID}-footer`}>
-      {previewSlice !== '' && (
-        <View style={styles.quoteSelectPreview}>
-          <Text style={styles.quoteSelectPreviewText} testID={`${testID}-preview`}>
-            {previewSlice}
-          </Text>
-        </View>
-      )}
       {children}
-      {emptyHint != null && (
-        <Text style={styles.quoteSelectHint} testID={`${testID}-hint`}>
-          {emptyHint}
-        </Text>
-      )}
     </View>
+  );
+}
+
+/**
+ * The floating placement's footer: the echo and Cancel on one row, the echo
+ * held to a single line so the plate stays under the floating pill's lift.
+ * Before a passage is chosen a spacer holds Cancel on the same trailing edge.
+ */
+function FloatingFooterRow({
+  previewSlice,
+  onCancel,
+  testID,
+}: {
+  previewSlice: string;
+  onCancel: () => void;
+  testID: string;
+}): React.JSX.Element {
+  return (
+    <View style={styles.quoteSelectFooterRow} testID={`${testID}-footer-row`}>
+      {previewSlice === '' ? (
+        <View style={styles.quoteSelectFooterSpacer} />
+      ) : (
+        <PreviewCard previewSlice={previewSlice} testID={testID} inline />
+      )}
+      <CancelControl onCancel={onCancel} testID={testID} inline />
+    </View>
+  );
+}
+
+/** The selection-moving method each platform's host field exposes, when it does. */
+interface CollapsibleField {
+  /** React Native's TextInput (iOS / Android). */
+  setSelection?: (_start: number, _end: number) => void;
+  /** The DOM textarea react-native-web renders. */
+  setSelectionRange?: (_start: number, _end: number) => void;
+}
+
+/** Collapse the field's own selection to a caret at ``at`` (UTF-16). */
+function collapseFieldSelection(node: TextInput | null, at: number): void {
+  const field = node as unknown as CollapsibleField | null;
+  if (Platform.OS === 'web') {
+    field?.setSelectionRange?.(at, at);
+  } else {
+    field?.setSelection?.(at, at);
+  }
+}
+
+interface FloatingConfirmProps {
+  isEmpty: boolean;
+  selectionEnd: number;
+  emitSpan: (_startUtf16: number, _endUtf16: number) => void;
+  inputRef: React.RefObject<TextInput | null>;
+  onConfirm: () => Promise<void>;
+  confirmLabel: string;
+  testID: string;
+}
+
+/** The floating confirm's press handlers and its in-flight flag. */
+function useFloatingConfirm({
+  selectionEnd,
+  emitSpan,
+  inputRef,
+  onConfirm,
+}: FloatingConfirmProps): { confirming: boolean; confirm: () => void; clear: () => void } {
+  const [confirming, setConfirming] = useState(false);
+  // A ref, not the state above: two presses in one frame both read it before
+  // either re-render lands, so a double tap still posts once.
+  const inFlight = useRef(false);
+
+  const confirm = useCallback(() => {
+    if (inFlight.current) return;
+    inFlight.current = true;
+    setConfirming(true);
+    // ``finally``: the guard lifts whichever way the work settles, and a
+    // rejection (a caller breaking the settle-not-reject contract) still
+    // surfaces rather than being swallowed here.
+    void onConfirm().finally(() => {
+      inFlight.current = false;
+      setConfirming(false);
+    });
+  }, [onConfirm]);
+
+  // Collapse the field's own selection too, so the highlight and the pill
+  // leave together, then hand focus back to the text the X is leaving.
+  const clear = useCallback(() => {
+    collapseFieldSelection(inputRef.current, selectionEnd);
+    emitSpan(selectionEnd, selectionEnd);
+    inputRef.current?.focus();
+  }, [emitSpan, inputRef, selectionEnd]);
+
+  return { confirming, confirm, clear };
+}
+
+/**
+ * The dock the floating pill rides in, the last thing in the surface: pinned
+ * to the foot of the scroll viewport on web and spanning the surface on
+ * native (``floatingDockStyle``). ``box-none`` keeps the text beneath it
+ * selectable.
+ */
+function FloatingConfirm(props: FloatingConfirmProps): React.JSX.Element {
+  const { confirming, confirm, clear } = useFloatingConfirm(props);
+  return (
+    <View style={floatingDockStyle} pointerEvents="box-none" testID={`${props.testID}-dock`}>
+      <FloatingPromoteButton
+        visible={!props.isEmpty}
+        label={props.confirmLabel}
+        onPress={confirm}
+        onCancel={clear}
+        busy={confirming}
+      />
+    </View>
+  );
+}
+
+interface SelectionActionsAreaProps {
+  state: SelectionSurfaceState;
+  floating: boolean;
+  inputRef: React.RefObject<TextInput | null>;
+  onConfirm: () => Promise<void>;
+  onCancel: () => void;
+  testID: string;
+  confirmLabel: string;
+}
+
+/**
+ * Everything after the field: the pinned footer, and -- in the floating
+ * placement -- the band the pill rests in at the text's end, before the
+ * footer, and the dock it rides in, last so it paints over the rest.
+ */
+function SelectionActionsArea({
+  state,
+  floating,
+  inputRef,
+  onConfirm,
+  onCancel,
+  testID,
+  confirmLabel,
+}: SelectionActionsAreaProps): React.JSX.Element {
+  return (
+    <>
+      {floating ? (
+        <View style={styles.quoteSelectPillReserve} testID={`${testID}-pill-reserve`} />
+      ) : null}
+      <SelectionFooter testID={testID}>
+        {floating ? (
+          <FloatingFooterRow
+            previewSlice={state.previewSlice}
+            onCancel={onCancel}
+            testID={testID}
+          />
+        ) : (
+          <FooterConfirm
+            state={state}
+            emptyHint={buildSelectionSurfaceCopy(Platform.OS).emptyHint}
+            onConfirm={onConfirm}
+            onCancel={onCancel}
+            testID={testID}
+            confirmLabel={confirmLabel}
+          />
+        )}
+      </SelectionFooter>
+      {floating ? (
+        <FloatingConfirm
+          isEmpty={state.isEmpty}
+          selectionEnd={state.selectionEnd}
+          emitSpan={state.emitSpan}
+          inputRef={inputRef}
+          onConfirm={onConfirm}
+          confirmLabel={confirmLabel}
+          testID={testID}
+        />
+      ) : null}
+    </>
+  );
+}
+
+/**
+ * The warm guiding line above the field. Its wording is resolved per render
+ * rather than at module load so it follows the platform the surface is
+ * actually mounted on (and so a test that sets ``Platform.OS`` after import
+ * sees the copy change); the footer's empty-tap hint is resolved the same way.
+ */
+function SelectionInstruction({ testID }: { testID: string }): React.JSX.Element {
+  return (
+    <Text style={styles.quoteSelectInstruction} testID={`${testID}-instruction`}>
+      {buildSelectionSurfaceCopy(Platform.OS).instruction}
+    </Text>
   );
 }
 
@@ -341,49 +574,76 @@ function QuoteSelectionSurface({
   onConfirm,
   onCancel,
   testID = DEFAULT_TEST_ID,
-  confirmLabel = DEFAULT_CONFIRM_LABEL,
+  confirmLabel = DEFAULT_PROMOTE_LABEL,
+  confirmPlacement = 'floating',
   maxFieldHeight,
   initialSelection,
 }: QuoteSelectionSurfaceProps): React.JSX.Element {
-  const { isEmpty, previewSlice, hintVisible, emitSpan, handleSelectionChange, showHint } =
-    useSelectionSurfaceState(body, onSelectionChange, initialSelection);
+  const state = useSelectionSurfaceState(body, onSelectionChange, initialSelection);
   const inputRef = useRef<TextInput>(null);
-  useWebSelectionListener(inputRef, emitSpan);
+  useWebSelectionListener(inputRef, state.emitSpan);
   const { growth, onContentSizeChange } = useSelectionFieldGrowth();
-  // Resolved per render rather than at module load so the wording follows the
-  // platform the surface is actually mounted on (and so a test that sets
-  // Platform.OS after import sees the copy change).
-  const copy = buildSelectionSurfaceCopy(Platform.OS);
 
   return (
     <View>
-      <Text style={styles.quoteSelectInstruction} testID={`${testID}-instruction`}>
-        {copy.instruction}
-      </Text>
+      <SelectionInstruction testID={testID} />
       <SelectionBody
         body={body}
-        onSelectionChange={handleSelectionChange}
+        onSelectionChange={state.handleSelectionChange}
         onContentSizeChange={onContentSizeChange}
         growth={growth}
         inputRef={inputRef}
         testID={testID}
         maxFieldHeight={maxFieldHeight}
       />
-      <SelectionFooter
-        previewSlice={previewSlice}
-        emptyHint={hintVisible ? copy.emptyHint : null}
+      <SelectionActionsArea
+        state={state}
+        floating={confirmPlacement === 'floating'}
+        inputRef={inputRef}
+        onConfirm={onConfirm}
+        onCancel={onCancel}
         testID={testID}
-      >
-        <SelectionActions
-          isEmpty={isEmpty}
-          onConfirm={onConfirm}
-          onCancel={onCancel}
-          showHint={showHint}
-          testID={testID}
-          confirmLabel={confirmLabel}
-        />
-      </SelectionFooter>
+        confirmLabel={confirmLabel}
+      />
     </View>
+  );
+}
+
+/** The footer placement's contents: the preview card, the action row and the empty-tap hint. */
+function FooterConfirm({
+  state,
+  emptyHint,
+  onConfirm,
+  onCancel,
+  testID,
+  confirmLabel,
+}: {
+  state: SelectionSurfaceState;
+  emptyHint: string;
+  onConfirm: () => Promise<void>;
+  onCancel: () => void;
+  testID: string;
+  confirmLabel: string;
+}): React.JSX.Element {
+  return (
+    <>
+      {state.previewSlice === '' ? null : (
+        <PreviewCard previewSlice={state.previewSlice} testID={testID} inline={false} />
+      )}
+      <SelectionActions
+        isEmpty={state.isEmpty}
+        onConfirm={onConfirm}
+        onCancel={onCancel}
+        showHint={state.showHint}
+        testID={testID}
+        confirmLabel={confirmLabel}
+      />
+      {state.hintVisible ? (
+        <Text style={styles.quoteSelectHint} testID={`${testID}-hint`}>
+          {emptyHint}
+        </Text>
+      ) : null}
+    </>
   );
 }
 

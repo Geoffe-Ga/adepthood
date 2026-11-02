@@ -138,7 +138,7 @@ describe('anchor paths keep the writer’s words out of diagnostics (#2891)', ()
       nativeEvent: { selection: { start, end: start + PRIVATE_PHRASE.length } },
     });
     await act(async () => {
-      fireEvent.press(getByTestId('quote-select-confirm'));
+      fireEvent.press(getByTestId('promote-selection-fab'));
     });
     const notice = await findByTestId('quote-promotion-error');
     expect(String(notice.props.children)).not.toContain(PRIVATE_PHRASE);

@@ -108,7 +108,7 @@ async function promote(page: Page, stored: string, selected: string): Promise<vo
   expect(start).toBeGreaterThanOrEqual(0);
   await selectRange(page, surface, start, start + selected.length);
   await expect(page.getByTestId('quote-select-preview')).toHaveText(selected.trim());
-  await page.getByTestId('quote-select-confirm').click();
+  await page.getByTestId('promote-selection-fab').click();
   await expect(page.getByTestId('quote-promotion-success')).toHaveText(
     'Promoted — find it any time under Promoted quotes',
   );
