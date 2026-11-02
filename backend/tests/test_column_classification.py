@@ -147,6 +147,8 @@ _PLAINTEXT_COLUMNS: dict[str, frozenset[str]] = {
             "marginalia.source_provider",
             "marginalia.status",
             "practicesession.mode",
+            # Which kind of source a promoted quote was lifted from (#3656).
+            "promotedquote.source_kind",
             "user.timezone",
             "vaultactivation.custody_mode",
             "vaultactivation.state",
@@ -182,6 +184,10 @@ _PLAINTEXT_COLUMNS: dict[str, frozenset[str]] = {
             "coursestage.subtitle",
             "coursestage.title",
             "promptresponse.question",
+            # A snapshot of a published Course chapter's title, kept so a quote
+            # outlives its chapter being re-pinned. A DB CHECK refuses it on any
+            # other kind of quote, so it can never hold an entry's title (#3656).
+            "promotedquote.source_title",
             "resourcecompletion.slug",
             "stagecontent.content_type",
             "stagecontent.title",

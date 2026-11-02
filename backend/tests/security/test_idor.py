@@ -73,7 +73,7 @@ from models.oauth_authorization_code import OAuthAuthorizationCode
 from models.oauth_refresh_token import OAuthRefreshToken
 from models.practice import Practice
 from models.practice_session import PracticeSession
-from models.promoted_quote import PromotedQuote
+from models.promoted_quote import PromotedQuote, PromotedQuoteSourceKind
 from models.prompt_dismissal import PromptDismissal
 from models.prompt_response import PromptResponse
 from models.stage_content import StageContent
@@ -2421,6 +2421,69 @@ async def test_idor_list_all_promotions_never_serves_another_users_quotes(
     assert body["items"][0]["included_in_title"] is None
     assert body["items"][0]["source_title"] == "Mine"
     assert "user_id" not in body["items"][0]
+    assert (await db_session.execute(count_query)).scalar_one() == before
+
+
+def _letter_quote(user_id: int, marginalia_id: int) -> PromotedQuote:
+    """A quote of ``user_id``'s lifted from the letter on note ``marginalia_id``."""
+    return PromotedQuote(
+        user_id=user_id,
+        source_kind=PromotedQuoteSourceKind.LETTER,
+        source_marginalia_id=marginalia_id,
+        anchor_start=0,
+        anchor_end=1,
+        anchor_text="A",
+    )
+
+
+@pytest.mark.asyncio
+async def test_idor_list_all_promotions_never_lists_a_letter_quote_across_tenants(
+    async_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """A letter quote lists only when both its note and the note's entry are the caller's.
+
+    ``GET /promotions`` reaches a letter's parent entry through two joins, each
+    scoped to the caller, and each is pinned by a row only that join excludes
+    (#3656). Both are Alice's quotes, so the quote's own ``user_id`` predicate
+    lets them through:
+
+    * a note whose denormalized ``user_id`` is Bob's, on Alice's entry -- only
+      the margin-note join's ``user_id`` predicate catches it;
+    * a note naming Alice, on Bob's entry -- only the parent-entry join's
+      ``user_id`` predicate catches it, so Bob's entry title never leaks
+      through ``source_title``.
+
+    Alice's control letter quote is present, so "excluded" is never satisfied
+    by an empty list, and the read persists nothing.
+    """
+    alice_headers, alice_id = await _signup(async_client, "alice_list_letter_quotes")
+    _bob_headers, bob_id = await _signup(async_client, "bob_list_letter_quotes")
+    own_note = await _seed_expanded_marginalia(db_session, owner_id=alice_id)
+    bobs_note_on_alices_entry = await _seed_expanded_marginalia(
+        db_session, owner_id=alice_id, column_user_id=bob_id
+    )
+    alices_note_on_bobs_entry = await _seed_expanded_marginalia(
+        db_session, owner_id=bob_id, column_user_id=alice_id
+    )
+    control = _letter_quote(alice_id, own_note)
+    db_session.add_all(
+        [
+            control,
+            _letter_quote(alice_id, bobs_note_on_alices_entry),
+            _letter_quote(alice_id, alices_note_on_bobs_entry),
+        ]
+    )
+    await db_session.commit()
+    count_query = select(func.count()).select_from(PromotedQuote)
+    before = (await db_session.execute(count_query)).scalar_one()
+
+    resp = await async_client.get("/promotions", headers=alice_headers)
+
+    assert resp.status_code == HTTPStatus.OK, resp.text
+    body = resp.json()
+    assert [item["id"] for item in body["items"]] == [control.id]
+    assert body["total"] == 1
+    assert body["items"][0]["source_marginalia_id"] == own_note
     assert (await db_session.execute(count_query)).scalar_one() == before
 
 

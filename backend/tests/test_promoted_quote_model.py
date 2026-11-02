@@ -2,19 +2,41 @@
 
 from __future__ import annotations
 
+import importlib.util
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
+from dataclasses import dataclass
 from datetime import UTC, datetime
+from pathlib import Path
+from types import ModuleType
 
 import pytest
 from cryptography.fernet import Fernet
-from sqlalchemy import func, select, text
+from sqlalchemy import CheckConstraint, func, select, text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlmodel import SQLModel, col
 
+from models.course_stage import CourseStage
 from models.journal_entry import JournalEntry, JournalTag
-from models.promoted_quote import PromotedQuote
+from models.marginalia import Marginalia, MarginaliaKind
+from models.promoted_quote import (
+    CK_PROMOTED_QUOTE_SOURCE_KIND_VALID,
+    CK_PROMOTED_QUOTE_SOURCE_MATCHES_KIND,
+    CK_PROMOTED_QUOTE_SOURCE_TITLE_COURSE_ONLY,
+    PromotedQuote,
+    PromotedQuoteSourceKind,
+)
+from models.stage_content import StageContent
 from models.user import User
 from services import journal_encryption as je
+
+_SOURCE_KIND_MIGRATION = (
+    Path(__file__).parent.parent
+    / "migrations"
+    / "versions"
+    / "e5c1a8f3b7d2_promoted_quote_source_kind.py"
+)
 
 
 async def _user(session: AsyncSession, email: str = "reflect@example.com") -> int:
@@ -324,3 +346,250 @@ async def test_deleting_included_entry_sets_quote_back_to_pending() -> None:
             assert remaining == 1
     finally:
         await isolated_engine.dispose()
+
+
+# --- source kinds: entry, course, letter (#3656) -------------------------------
+
+_CHAPTER_TITLE = "Survival"
+_LETTER_ANCHOR = "a letter's line"
+
+
+@dataclass(frozen=True)
+class _Sources:
+    """One of each thing a quote can be lifted from, all owned by ``user_id``."""
+
+    user_id: int
+    entry_id: int
+    content_id: int
+    marginalia_id: int
+
+
+async def _seed_sources(session: AsyncSession) -> _Sources:
+    """A user with an entry, a Course chapter, and a margin note carrying a letter."""
+    user_id = await _user(session)
+    entry = JournalEntry(sender="user", user_id=user_id, message="A page with a letter.")
+    stage = CourseStage(
+        title="Beige",
+        subtitle="Agency",
+        stage_number=1,
+        overview_url="https://example.com/beige",
+        category="test",
+        aspect="test-aspect",
+        spiral_dynamics_color="beige",
+        growing_up_stage="archaic",
+        divine_gender_polarity="masculine",
+        relationship_to_free_will="active",
+        free_will_description="Active Yes-And-Ness",
+    )
+    session.add_all([entry, stage])
+    await session.flush()
+    assert entry.id is not None
+    assert stage.id is not None
+    chapter = StageContent(
+        course_stage_id=stage.id,
+        title=_CHAPTER_TITLE,
+        content_type="chapter",
+        release_day=0,
+        url="content://beige-1",
+    )
+    letter = Marginalia(
+        journal_entry_id=entry.id,
+        user_id=user_id,
+        kind=MarginaliaKind.THEME,
+        anchor_start=0,
+        anchor_end=4,
+        anchor_text="page",
+        note="A note.",
+        essay=f"The essay holds {_LETTER_ANCHOR}.",
+        essay_generated_at=datetime.now(UTC),
+    )
+    session.add_all([chapter, letter])
+    await session.flush()
+    assert chapter.id is not None
+    assert letter.id is not None
+    return _Sources(user_id, entry.id, chapter.id, letter.id)
+
+
+def _sourced_quote(
+    sources: _Sources, kind: str, links: frozenset[str], *, titled: bool = False
+) -> PromotedQuote:
+    """A quote of ``kind`` carrying exactly the source links named in ``links``."""
+    return PromotedQuote(
+        user_id=sources.user_id,
+        source_kind=kind,
+        source_entry_id=sources.entry_id if "entry" in links else None,
+        source_content_id=sources.content_id if "content" in links else None,
+        source_marginalia_id=sources.marginalia_id if "marginalia" in links else None,
+        source_title=_CHAPTER_TITLE if titled else None,
+        anchor_start=0,
+        anchor_end=len(_LETTER_ANCHOR),
+        anchor_text=_LETTER_ANCHOR,
+    )
+
+
+def test_a_quote_comes_from_an_entry_a_course_chapter_or_a_letter() -> None:
+    """The three source kinds, and nothing else."""
+    assert [kind.value for kind in PromotedQuoteSourceKind] == ["entry", "course", "letter"]
+
+
+@pytest.mark.asyncio
+async def test_a_quote_built_without_a_kind_is_an_entry_quote(db_session: AsyncSession) -> None:
+    """Every existing writer builds an entry quote without naming the kind."""
+    user_id = await _user(db_session)
+    entry = _reflection_entry(user_id)
+    db_session.add(entry)
+    await db_session.flush()
+    assert entry.id is not None
+
+    db_session.add(_quote(user_id, entry.id))
+    await db_session.commit()
+
+    row = (await db_session.execute(select(PromotedQuote))).scalar_one()
+    assert row.source_kind == PromotedQuoteSourceKind.ENTRY
+    assert row.source_content_id is None
+    assert row.source_marginalia_id is None
+    assert row.source_title is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("kind", "links", "titled"),
+    [
+        pytest.param("entry", frozenset({"entry"}), False, id="entry"),
+        pytest.param("course", frozenset({"content"}), True, id="course"),
+        # A pruned chapter SET NULLs the link and leaves the snapshot title.
+        pytest.param("course", frozenset(), True, id="course-chapter-pruned"),
+        pytest.param("letter", frozenset({"marginalia"}), False, id="letter"),
+    ],
+)
+async def test_each_kind_persists_with_its_own_source(
+    db_session: AsyncSession, kind: str, links: frozenset[str], *, titled: bool
+) -> None:
+    """A quote whose links match its kind is accepted."""
+    sources = await _seed_sources(db_session)
+    db_session.add(_sourced_quote(sources, kind, links, titled=titled))
+    await db_session.commit()
+
+    row = (await db_session.execute(select(PromotedQuote))).scalar_one()
+    assert row.source_kind == kind
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("kind", "links", "titled"),
+    [
+        pytest.param("vault", frozenset({"entry"}), False, id="unknown-kind"),
+        pytest.param("entry", frozenset(), False, id="entry-without-entry"),
+        pytest.param("entry", frozenset({"entry", "content"}), False, id="entry-with-chapter"),
+        pytest.param("entry", frozenset({"entry", "marginalia"}), False, id="entry-with-letter"),
+        pytest.param("entry", frozenset({"entry"}), True, id="entry-with-title"),
+        pytest.param("course", frozenset({"content", "entry"}), True, id="course-with-entry"),
+        pytest.param("course", frozenset({"content", "marginalia"}), True, id="course-with-letter"),
+        pytest.param("letter", frozenset(), False, id="letter-without-letter"),
+        pytest.param("letter", frozenset({"marginalia", "entry"}), False, id="letter-with-entry"),
+        pytest.param(
+            "letter", frozenset({"marginalia", "content"}), False, id="letter-with-chapter"
+        ),
+        pytest.param("letter", frozenset({"marginalia"}), True, id="letter-with-title"),
+    ],
+)
+async def test_a_quote_whose_links_contradict_its_kind_is_rejected(
+    db_session: AsyncSession, kind: str, links: frozenset[str], *, titled: bool
+) -> None:
+    """The DB refuses every inconsistent kind/link combination, so no writer can store one.
+
+    ``source_title`` is plaintext and holds a published chapter title only, so a
+    title on an entry or letter quote -- which could only be the writer's own
+    words -- is refused too.
+    """
+    sources = await _seed_sources(db_session)
+    db_session.add(_sourced_quote(sources, kind, links, titled=titled))
+    with pytest.raises(IntegrityError):
+        await db_session.commit()
+
+
+@asynccontextmanager
+async def _enforcing_session() -> AsyncIterator[AsyncSession]:
+    """A session on a private in-memory database with foreign keys enforced.
+
+    SQLite ships with ``PRAGMA foreign_keys`` off; a dedicated engine keeps the
+    pragma from leaking onto the shared test engine.
+    """
+    engine = create_async_engine("sqlite+aiosqlite:///:memory:", echo=False)
+    factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+    try:
+        async with engine.begin() as conn:
+            await conn.run_sync(SQLModel.metadata.create_all)
+        async with factory() as session:
+            await session.execute(text("PRAGMA foreign_keys = ON"))
+            yield session
+    finally:
+        await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_deleting_a_letter_deletes_the_quotes_lifted_from_it() -> None:
+    """A letter quote cascades with its margin note, as an entry quote does with its entry."""
+    async with _enforcing_session() as session:
+        sources = await _seed_sources(session)
+        session.add(_sourced_quote(sources, "letter", frozenset({"marginalia"})))
+        await session.commit()
+
+        await session.execute(
+            text("DELETE FROM marginalia WHERE id = :id"), {"id": sources.marginalia_id}
+        )
+        await session.commit()
+
+        remaining = (
+            await session.execute(select(func.count()).select_from(PromotedQuote))
+        ).scalar_one()
+        assert remaining == 0
+
+
+@pytest.mark.asyncio
+async def test_removing_a_chapter_keeps_its_quotes_and_their_title() -> None:
+    """Re-pinned published content never erases a writer's gathered quote (SET NULL)."""
+    async with _enforcing_session() as session:
+        sources = await _seed_sources(session)
+        session.add(_sourced_quote(sources, "course", frozenset({"content"}), titled=True))
+        await session.commit()
+
+        await session.execute(
+            text("DELETE FROM stagecontent WHERE id = :id"), {"id": sources.content_id}
+        )
+        await session.commit()
+
+        row = (
+            await session.execute(
+                select(col(PromotedQuote.source_content_id), col(PromotedQuote.source_title))
+            )
+        ).one()
+        assert tuple(row) == (None, _CHAPTER_TITLE)
+
+
+def _load_source_kind_migration() -> ModuleType:
+    """Import the source-kind revision by path (versions/ is not a package)."""
+    spec = importlib.util.spec_from_file_location("source_kind_migration", _SOURCE_KIND_MIGRATION)
+    assert spec is not None
+    assert spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def test_the_model_mirrors_the_migrations_checks_exactly() -> None:
+    """Model and migration state the same three CHECKs, so neither can drift alone.
+
+    The migration freezes its SQL rather than importing it from ``src``; this
+    pins today's enum-derived model text to that frozen copy.
+    """
+    migration = _load_source_kind_migration()
+    checks = {
+        constraint.name: str(constraint.sqltext)
+        for constraint in SQLModel.metadata.tables["promotedquote"].constraints
+        if isinstance(constraint, CheckConstraint)
+    }
+
+    assert checks[CK_PROMOTED_QUOTE_SOURCE_KIND_VALID] == migration.KIND_CONDITION
+    assert checks[CK_PROMOTED_QUOTE_SOURCE_MATCHES_KIND] == migration.SOURCE_CONDITION
+    assert checks[CK_PROMOTED_QUOTE_SOURCE_TITLE_COURSE_ONLY] == migration.TITLE_CONDITION

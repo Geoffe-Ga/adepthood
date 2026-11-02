@@ -24,6 +24,7 @@ from sqlmodel import select
 from content_config import CONTENT_REF_SCHEME, all_chapter_records, content_ref
 from models.content_completion import ContentCompletion
 from models.course_stage import CourseStage
+from models.promoted_quote import PromotedQuote, PromotedQuoteSourceKind
 from models.stage_content import StageContent
 from models.user import User
 from seed_content import desired_content_records, seed_content
@@ -1069,3 +1070,102 @@ async def test_seed_content_race_winner_still_warns_on_prune(
 
     prune_records = [r for r in caplog.records if "content_seed_pruned" in r.getMessage()]
     assert len(prune_records) == 1
+
+
+# ── Course quotes ride a pruned chapter's survivor, or keep their snapshot (#3656) ──
+
+_QUOTED_LINE = "the body keeps the score"
+
+
+async def _course_quote(db_session: AsyncSession, email: str, content_id: int, title: str) -> int:
+    """A reader's quote lifted from Course chapter ``content_id``; returns the quote id."""
+    user = User(email=email, password_hash="x")  # pragma: allowlist secret
+    db_session.add(user)
+    await db_session.commit()
+    assert user.id is not None
+    quote = PromotedQuote(
+        user_id=user.id,
+        source_kind=PromotedQuoteSourceKind.COURSE,
+        source_content_id=content_id,
+        source_title=title,
+        anchor_start=0,
+        anchor_end=len(_QUOTED_LINE),
+        anchor_text=_QUOTED_LINE,
+    )
+    db_session.add(quote)
+    await db_session.commit()
+    assert quote.id is not None
+    return quote.id
+
+
+async def _quote_source(db_session: AsyncSession, quote_id: int) -> tuple[int | None, str | None]:
+    """The stored ``(source_content_id, source_title)`` of one quote, read from the DB."""
+    row = (
+        await db_session.execute(
+            select(PromotedQuote.source_content_id, PromotedQuote.source_title).where(
+                PromotedQuote.id == quote_id
+            )
+        )
+    ).one()
+    return row[0], row[1]
+
+
+@pytest.mark.asyncio
+async def test_seed_content_prune_repoints_a_course_quote_onto_the_survivor(
+    db_session: AsyncSession,
+    install_manifest: Callable[[dict[str, Any]], None],
+) -> None:
+    """A quote from a pruned twin follows the read-mark rule onto the surviving chapter."""
+    install_manifest(_MANIFEST)
+    await _seed_stages(db_session, count=1)
+    await seed_content(db_session)
+    survivor = (
+        (await db_session.execute(select(StageContent).where(StageContent.title == "Survival")))
+        .scalars()
+        .one()
+    )
+    stale_twin = StageContent(
+        course_stage_id=survivor.course_stage_id,
+        title="Survival",
+        content_type="chapter",
+        release_day=0,
+        url="https://legacy.example.com/survival",
+    )
+    db_session.add(stale_twin)
+    await db_session.commit()
+    assert stale_twin.id is not None
+    quote_id = await _course_quote(db_session, "twin-quoter@example.com", stale_twin.id, "Survival")
+
+    await seed_content(db_session)
+
+    remaining_ids = {r.id for r in (await db_session.execute(select(StageContent))).scalars().all()}
+    assert stale_twin.id not in remaining_ids
+    assert await _quote_source(db_session, quote_id) == (survivor.id, "Survival")
+
+
+@pytest.mark.asyncio
+async def test_seed_content_prune_keeps_a_course_quote_with_no_survivor(
+    db_session: AsyncSession,
+    install_manifest: Callable[[dict[str, Any]], None],
+) -> None:
+    """With no chapter to move to, the quote stays, unlinked, under its snapshotted title."""
+    await _seed_stages(db_session, count=1)
+    stage_one = (await db_session.execute(select(CourseStage))).scalars().one()
+    fossil = StageContent(
+        course_stage_id=stage_one.id,
+        title="Chapter 1",
+        content_type="chapter",
+        release_day=0,
+        url="https://legacy.example.com/1",
+    )
+    db_session.add(fossil)
+    await db_session.commit()
+    assert fossil.id is not None
+    quote_id = await _course_quote(db_session, "fossil-quoter@example.com", fossil.id, "Chapter 1")
+
+    install_manifest(_MANIFEST)
+    await seed_content(db_session)
+
+    remaining_ids = {r.id for r in (await db_session.execute(select(StageContent))).scalars().all()}
+    assert fossil.id not in remaining_ids
+    assert await _quote_source(db_session, quote_id) == (None, "Chapter 1")

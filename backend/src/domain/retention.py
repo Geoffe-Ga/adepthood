@@ -573,7 +573,10 @@ RETENTION: Mapping[str, RetentionRule] = {
     ),
     "practicetag": until_account_deletion("Tags the account defined."),
     "promotedquote": until_account_deletion(
-        "Passages promoted out of the account's entries, encrypted at rest." + _DERIVED_FROM_ENTRY,
+        "Passages the account promoted, each anchored to an entry, a letter, or a Course "
+        "chapter, encrypted at rest. A letter quote goes with its margin note; a Course "
+        "quote outlives its chapter being re-pinned, keeping the chapter's title."
+        + _DERIVED_FROM_ENTRY,
     ),
     "promptdismissal": until_account_deletion("Prompts the account set aside."),
     "promptresponse": until_account_deletion("Answers to the weekly prompts."),

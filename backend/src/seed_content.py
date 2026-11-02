@@ -30,13 +30,15 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass
 
+from sqlalchemy import update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlmodel import select
+from sqlmodel import col, select
 
 from content_config import ChapterRecord, all_chapter_records
 from models.content_completion import ContentCompletion
 from models.course_stage import CourseStage
+from models.promoted_quote import PromotedQuote
 from models.stage_content import StageContent
 from seed_helpers import try_commit_yielding_to_race_winner
 
@@ -319,18 +321,41 @@ async def _drop_or_repoint_completions(
     return await _repoint_completions(session, completions, survivor_id)
 
 
+async def _rehome_course_quotes(
+    session: AsyncSession,
+    stale: StageContent,
+    survivor: StageContent | None,
+) -> None:
+    """Move a stale row's Course quotes onto its survivor, or unlink them when it has none.
+
+    The survivor is the one :func:`_drop_or_repoint_completions` moves read-marks
+    onto. Unlike a read-mark, a quote is never deleted: it is a passage the writer
+    gathered, not a mark on the chapter. With no survivor its link is cleared here
+    exactly as the ``ON DELETE SET NULL`` foreign key would clear it -- explicitly,
+    because SQLite, which the suite runs on, never fires the FK -- and the quote
+    keeps the ``source_title`` it snapshotted. One statement however many quotes.
+    """
+    survivor_id = survivor.id if survivor is not None else None
+    await session.execute(
+        update(PromotedQuote)
+        .where(col(PromotedQuote.source_content_id) == stale.id)
+        .values(source_content_id=survivor_id)
+    )
+
+
 async def _prune_stale_rows(
     session: AsyncSession,
     existing: _ExistingRows,
     survivors: dict[tuple[int, str], StageContent],
     reconciled_ids: set[int],
 ) -> _PruneCounts:
-    """Delete unclaimed rows in reconciled stages, rehoming their read-marks.
+    """Delete unclaimed rows in reconciled stages, rehoming their read-marks and quotes.
 
     Flushes first so freshly inserted survivors carry ids before any
-    read-mark is repointed onto them, and again once every mark is rehomed
-    so no surviving completion still references a stale row when the row is
-    deleted (the ``content_id`` FK is enforced and not deferrable).
+    read-mark or Course quote is repointed onto them, and again once every
+    mark is rehomed so no surviving completion still references a stale row
+    when the row is deleted (the ``content_id`` FK is enforced and not
+    deferrable).
     Deletion stays inside the caller's transaction; the shared commit point
     is the sole writer.  The first flush executes this run's pending inserts
     early, so on a concurrent seed it can raise the same race-arbitrating
@@ -349,6 +374,7 @@ async def _prune_stale_rows(
         row_repointed, row_dropped = await _drop_or_repoint_completions(session, row, survivor)
         repointed += row_repointed
         dropped += row_dropped
+        await _rehome_course_quotes(session, row, survivor)
     await session.flush()
     for row in stale:
         await session.delete(row)

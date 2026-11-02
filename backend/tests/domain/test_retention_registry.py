@@ -221,6 +221,8 @@ def test_every_entry_foreign_key_has_a_purge_action() -> None:
         ("completionsuggestion", "journal_entry_id"),
         ("corpusfragment", "source_entry_id"),
         ("promotedquote", "source_entry_id"),
+        # A letter quote is reached through the margin note it was lifted from.
+        ("promotedquote", "source_marginalia_id"),
         ("voicedraftretraction", "journal_entry_id"),
     ):
         assert (*deleted, "delete") in triples

@@ -502,7 +502,8 @@ async def _quotes_by_entry(
     )
     grouped: dict[int, list[PromotedQuote]] = {}
     for quote in result.scalars().all():
-        grouped.setdefault(quote.source_entry_id, []).append(quote)
+        # Filtered on ``source_entry_id IN ids``, so every row here has one.
+        grouped.setdefault(cast("int", quote.source_entry_id), []).append(quote)
     return grouped
 
 

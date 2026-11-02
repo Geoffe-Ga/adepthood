@@ -11,6 +11,7 @@ request succeeds when the source may egress.
 from __future__ import annotations
 
 import logging
+from datetime import UTC, datetime
 from http import HTTPStatus
 
 import pytest
@@ -29,7 +30,8 @@ from domain.folded_passages import (
 )
 from main import app
 from models.journal_entry import EntryStatus, JournalClassification, JournalEntry, JournalTag
-from models.promoted_quote import PromotedQuote
+from models.marginalia import Marginalia, MarginaliaKind
+from models.promoted_quote import PromotedQuote, PromotedQuoteSourceKind
 from services.folded_quote_privacy import (
     MAX_FOLD_LEVELS,
     QUOTE_REFUSED_EVENT,
@@ -579,3 +581,77 @@ async def test_folding_a_requote_of_a_restricted_passage_is_refused(
 
     assert resp.status_code == HTTPStatus.CONFLICT
     assert resp.json()["detail"] == QUOTE_SOURCE_RESTRICTED
+
+
+# --- fold: a Course or letter quote fails closed (#3656) -----------------------
+#
+# Every privacy reader of a fold joins ``source_entry_id`` onto the journal, so a
+# quote with no source entry would silently drop out of the egress resolver --
+# failing OPEN. Until the fold-privacy rules learn the new kinds (#3657, which
+# replaces this test), folding one must keep being refused. The rows are seeded
+# straight into the database: no route creates either kind yet (#3658).
+
+
+async def _non_entry_quote(
+    session: AsyncSession, user_id: int, kind: PromotedQuoteSourceKind
+) -> PromotedQuote:
+    """A pending quote of ``kind``: a Course quote, or one from a Personal entry's letter.
+
+    The Course quote carries only its snapshotted title (its chapter link is the
+    one a prune clears); the refusal never reads either, so no chapter is seeded.
+    """
+    links: dict[str, object] = {"source_title": "A published chapter"}
+    if kind is PromotedQuoteSourceKind.LETTER:
+        # A Personal source, so the refusal below is the kind's and not the tier's.
+        entry = await _entry(session, user_id, _KEPT_CLOSE)
+        note = Marginalia(
+            journal_entry_id=int(entry.id or 0),
+            user_id=user_id,
+            kind=MarginaliaKind.THEME,
+            anchor_start=0,
+            anchor_end=len(_KEPT_CLOSE),
+            anchor_text=_KEPT_CLOSE,
+            note="A note.",
+            essay=f"A letter that says {_KEPT_CLOSE}.",
+            essay_generated_at=datetime.now(UTC),
+        )
+        session.add(note)
+        await session.commit()
+        links = {"source_marginalia_id": note.id}
+    quote = PromotedQuote(
+        user_id=user_id,
+        source_kind=kind,
+        anchor_start=0,
+        anchor_end=len(_KEPT_CLOSE),
+        anchor_text=_KEPT_CLOSE,
+        **links,
+    )
+    session.add(quote)
+    await session.commit()
+    await session.refresh(quote)
+    return quote
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("kind", [PromotedQuoteSourceKind.COURSE, PromotedQuoteSourceKind.LETTER])
+async def test_folding_a_quote_with_no_source_entry_is_refused(
+    async_client: AsyncClient,
+    db_session: AsyncSession,
+    caplog: pytest.LogCaptureFixture,
+    kind: PromotedQuoteSourceKind,
+) -> None:
+    """Nothing vouches for a non-entry source's tier yet, so its quote may not be folded."""
+    headers, user_id = await _signup(async_client, f"fold_{kind.value}_quote")
+    quote = await _non_entry_quote(db_session, user_id, kind)
+    target = await _reflection(db_session, user_id)
+
+    with caplog.at_level(logging.INFO, logger="services.folded_quote_privacy"):
+        resp = await async_client.patch(
+            f"/promotions/{quote.id}", json={"included_in_entry_id": target.id}, headers=headers
+        )
+
+    assert resp.status_code == HTTPStatus.CONFLICT, resp.text
+    assert resp.json()["detail"] == QUOTE_SOURCE_RESTRICTED
+    assert any(record.getMessage() == QUOTE_REFUSED_EVENT for record in caplog.records)
+    await db_session.refresh(quote)
+    assert quote.included_in_entry_id is None
