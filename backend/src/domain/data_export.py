@@ -446,7 +446,8 @@ MANIFEST: Mapping[str, ExportRule] = {
     "promotedquote": _include(
         "promoted_passages",
         PromotedQuote,
-        "Passages the account lifted out of one entry to carry into another.",
+        "Passages the account lifted to carry into a review, each anchored to an "
+        "entry, a letter, or a Course chapter.",
     ),
     "promptdismissal": _include(
         "prompts_set_aside",

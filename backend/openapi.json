@@ -7645,7 +7645,7 @@
         "type": "object"
       },
       "PromotedQuoteListItemResponse": {
-        "description": "A promoted quote as listed across every entry, with where it came from.\n\nExtends :class:`PromotedQuoteResponse` so the two quote shapes cannot drift.\n``source_title`` and ``source_timestamp`` describe the live source entry.\n``included_in_title`` is null unless the review the quote was folded into is\nthe caller's own and still live -- a deleted review's title is never shown,\nthough ``included_in_entry_id`` still records that the quote was used.",
+        "description": "A promoted quote as listed across every source, with where it came from.\n\nExtends :class:`PromotedQuoteResponse` so the two quote shapes cannot drift.\n``source_title`` and ``source_timestamp`` describe the live source, per kind:\n\n* ``entry`` -- the source entry's title and timestamp;\n* ``course`` -- the live chapter's title, else the title snapshotted when the\n  quote was made, and the quote's own ``created_at``;\n* ``letter`` -- the title of the entry the letter's note sits on, and when\n  the letter was written (the quote's ``created_at`` if it no longer is).\n\n``source_stage_number`` is the Course stage of a Course quote's live\nchapter, and ``letter_entry_id`` the entry a letter quote's note sits on --\ntogether with ``source_content_id`` what **Open** needs to find the source.\nBoth are null for every other kind. ``included_in_title`` is null unless the\nreview the quote was folded into is the caller's own and still live -- a\ndeleted review's title is never shown, though ``included_in_entry_id`` still\nrecords that the quote was used.",
         "properties": {
           "anchor_end": {
             "title": "Anchor End",
@@ -7690,13 +7690,67 @@
             ],
             "title": "Included In Title"
           },
+          "letter_entry_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Letter Entry Id"
+          },
           "pending": {
             "title": "Pending",
             "type": "boolean"
           },
+          "source_content_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source Content Id"
+          },
           "source_entry_id": {
-            "title": "Source Entry Id",
-            "type": "integer"
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source Entry Id"
+          },
+          "source_kind": {
+            "$ref": "#/components/schemas/PromotedQuoteSourceKind"
+          },
+          "source_marginalia_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source Marginalia Id"
+          },
+          "source_stage_number": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source Stage Number"
           },
           "source_timestamp": {
             "format": "date-time",
@@ -7721,7 +7775,10 @@
         },
         "required": [
           "id",
+          "source_kind",
           "source_entry_id",
+          "source_content_id",
+          "source_marginalia_id",
           "anchor_start",
           "anchor_end",
           "anchor_text",
@@ -7729,6 +7786,8 @@
           "stale",
           "source_title",
           "source_timestamp",
+          "source_stage_number",
+          "letter_entry_id",
           "included_in_entry_id",
           "included_in_title",
           "created_at"
@@ -7764,7 +7823,7 @@
         "type": "object"
       },
       "PromotedQuoteResponse": {
-        "description": "A promoted quote as returned to its owner.\n\n``user_id`` is intentionally excluded — the caller already knows its own\nidentity and exposing surrogate keys aids enumeration.",
+        "description": "A promoted quote as returned to its owner.\n\n``source_kind`` names where the quote was lifted from, and exactly the\nmatching source id is set: ``source_entry_id`` for an entry quote,\n``source_content_id`` for a Course quote (null once its chapter was\npruned), ``source_marginalia_id`` for a letter quote. ``user_id`` is\nintentionally excluded — the caller already knows its own identity and\nexposing surrogate keys aids enumeration.",
         "properties": {
           "anchor_end": {
             "title": "Anchor End",
@@ -7786,9 +7845,41 @@
             "title": "Pending",
             "type": "boolean"
           },
+          "source_content_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source Content Id"
+          },
           "source_entry_id": {
-            "title": "Source Entry Id",
-            "type": "integer"
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source Entry Id"
+          },
+          "source_kind": {
+            "$ref": "#/components/schemas/PromotedQuoteSourceKind"
+          },
+          "source_marginalia_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source Marginalia Id"
           },
           "stale": {
             "title": "Stale",
@@ -7797,7 +7888,10 @@
         },
         "required": [
           "id",
+          "source_kind",
           "source_entry_id",
+          "source_content_id",
+          "source_marginalia_id",
           "anchor_start",
           "anchor_end",
           "anchor_text",
@@ -7806,6 +7900,16 @@
         ],
         "title": "PromotedQuoteResponse",
         "type": "object"
+      },
+      "PromotedQuoteSourceKind": {
+        "description": "Where a promoted quote was lifted from.\n\n``entry`` -- one of the writer's journal entries (``source_entry_id``).\n``course`` -- a published Course chapter (``source_content_id``, which the\nchapter being pruned SET NULLs, leaving the snapshotted ``source_title``).\n``letter`` -- the Resonance Letter on one of the writer's margin notes\n(``source_marginalia_id``).",
+        "enum": [
+          "entry",
+          "course",
+          "letter"
+        ],
+        "title": "PromotedQuoteSourceKind",
+        "type": "string"
       },
       "PromotedQuoteSummary": {
         "description": "A promoted quote as it rides along with its source entry in a sources feed.\n\n``pending`` is True while the quote has not yet been folded into any\nreflection (its ``included_in_entry_id`` is NULL).",
@@ -28565,7 +28669,7 @@
     },
     "/promotions": {
       "get": {
-        "description": "List every quote the caller has promoted, across entries, newest first.\n\nThe route takes no id, so ownership rides on ``user_id`` predicates: on the\nquote, on the source join, and on the inclusion-target join. A quote whose\nsource entry was soft-deleted is excluded; a quote folded into a review that\nwas since deleted stays listed with ``included_in_title`` null. Ordered by\n``(created_at DESC, id DESC)`` so ties page stably.",
+        "description": "List every quote the caller has promoted, from every kind of source, newest first.\n\nThe route takes no id, so ownership rides on ``user_id`` predicates: on the\nquote, on each join onto the caller's own rows (the source entry, a letter's\nmargin note and the entry it sits on), and on the inclusion-target join. A\nquote whose source entry -- or, for a letter quote, whose note's entry -- was\nsoft-deleted is excluded; a Course quote is always listed; a quote folded\ninto a review that was since deleted stays listed with ``included_in_title``\nnull. Ordered by ``(created_at DESC, id DESC)`` so ties page stably.",
         "operationId": "list_all_promotions_promotions_get",
         "parameters": [
           {

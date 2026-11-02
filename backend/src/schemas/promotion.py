@@ -1,9 +1,10 @@
 """Request/response schemas for the quote-promotion API.
 
-A promotion anchors a character span of a source journal entry and, optionally,
-folds it into a later reflection. The client sends only anchor offsets — the
-server slices and snapshots the text — so no schema here carries entry body
-text. ``user_id`` never appears in a response.
+A promotion anchors a character span of its source -- a journal entry, a Course
+chapter, or a Resonance Letter (``source_kind``) -- and, optionally, folds it
+into a later reflection. The client sends only anchor offsets — the server
+slices and snapshots the text — so no schema here carries source body text.
+``user_id`` never appears in a response.
 """
 
 from __future__ import annotations
@@ -15,6 +16,7 @@ from typing import Self
 from pydantic import BaseModel, Field, model_validator
 
 from bounds import RowIdField
+from models.promoted_quote import PromotedQuoteSourceKind
 from schemas.journal import JOURNAL_MESSAGE_MAX_LENGTH
 
 
@@ -51,12 +53,19 @@ class PromotionUpdate(BaseModel):
 class PromotedQuoteResponse(BaseModel):
     """A promoted quote as returned to its owner.
 
-    ``user_id`` is intentionally excluded — the caller already knows its own
-    identity and exposing surrogate keys aids enumeration.
+    ``source_kind`` names where the quote was lifted from, and exactly the
+    matching source id is set: ``source_entry_id`` for an entry quote,
+    ``source_content_id`` for a Course quote (null once its chapter was
+    pruned), ``source_marginalia_id`` for a letter quote. ``user_id`` is
+    intentionally excluded — the caller already knows its own identity and
+    exposing surrogate keys aids enumeration.
     """
 
     id: int
-    source_entry_id: int
+    source_kind: PromotedQuoteSourceKind
+    source_entry_id: int | None
+    source_content_id: int | None
+    source_marginalia_id: int | None
     anchor_start: int
     anchor_end: int
     anchor_text: str
@@ -79,17 +88,30 @@ class PromotionStatusFilter(StrEnum):
 
 
 class PromotedQuoteListItemResponse(PromotedQuoteResponse):
-    """A promoted quote as listed across every entry, with where it came from.
+    """A promoted quote as listed across every source, with where it came from.
 
     Extends :class:`PromotedQuoteResponse` so the two quote shapes cannot drift.
-    ``source_title`` and ``source_timestamp`` describe the live source entry.
-    ``included_in_title`` is null unless the review the quote was folded into is
-    the caller's own and still live -- a deleted review's title is never shown,
-    though ``included_in_entry_id`` still records that the quote was used.
+    ``source_title`` and ``source_timestamp`` describe the live source, per kind:
+
+    * ``entry`` -- the source entry's title and timestamp;
+    * ``course`` -- the live chapter's title, else the title snapshotted when the
+      quote was made, and the quote's own ``created_at``;
+    * ``letter`` -- the title of the entry the letter's note sits on, and when
+      the letter was written (the quote's ``created_at`` if it no longer is).
+
+    ``source_stage_number`` is the Course stage of a Course quote's live
+    chapter, and ``letter_entry_id`` the entry a letter quote's note sits on --
+    together with ``source_content_id`` what **Open** needs to find the source.
+    Both are null for every other kind. ``included_in_title`` is null unless the
+    review the quote was folded into is the caller's own and still live -- a
+    deleted review's title is never shown, though ``included_in_entry_id`` still
+    records that the quote was used.
     """
 
     source_title: str | None
     source_timestamp: datetime
+    source_stage_number: int | None
+    letter_entry_id: int | None
     included_in_entry_id: int | None
     included_in_title: str | None
     created_at: datetime

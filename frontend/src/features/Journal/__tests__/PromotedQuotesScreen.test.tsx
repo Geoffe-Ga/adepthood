@@ -196,6 +196,18 @@ describe('PromotedQuotesScreen sections', () => {
     });
   });
 
+  it('opens nothing for a quote with no source entry, never a blank new page', async () => {
+    // A Course or letter quote (#3655) has no journal entry to open; until the
+    // screen learns where those live, pressing one must not fall through to
+    // ``JournalEntry`` with no ``entryId`` -- which is the route to a new page.
+    serve(page([item({ source_entry_id: null })]), page([]));
+    const { findByTestId } = render(<PromotedQuotesScreen />);
+
+    fireEvent.press(await findByTestId('promoted-quote-1'));
+
+    expect(mockNavigate).not.toHaveBeenCalled();
+  });
+
   it('shows the exact empty copy once both sections settle empty', async () => {
     serve(page([]), page([]));
     const { findByText, queryByText } = render(<PromotedQuotesScreen />);

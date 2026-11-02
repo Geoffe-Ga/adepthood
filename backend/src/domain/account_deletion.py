@@ -355,7 +355,9 @@ POLICY: Mapping[str, TablePolicy] = {
         "owner_user_id",
         "Tags the account defined. System tags carry no owner and are untouched.",
     ),
-    "promotedquote": _erase("user_id", "Passages the account promoted out of its own entries."),
+    "promotedquote": _erase(
+        "user_id", "Passages the account promoted from its entries, its letters, or the Course."
+    ),
     "promptdismissal": _erase(
         "user_id",
         "Prompts the account set aside — a standing preference about what it "

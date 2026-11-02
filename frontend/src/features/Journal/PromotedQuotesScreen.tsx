@@ -382,11 +382,15 @@ function useRowActions(
   const [removeError, setRemoveError] = useState<string | null>(null);
 
   const onOpen = useCallback(
-    (quote: PromotedQuoteListItem) =>
+    (quote: PromotedQuoteListItem) => {
+      // A Course or letter quote has no journal entry to open (#3655). Without
+      // this, JournalEntry would get no entryId -- the route to a blank new page.
+      if (quote.source_entry_id === null) return;
       navigation.navigate('JournalEntry', {
         entryId: quote.source_entry_id,
         highlightSpan: { start: quote.anchor_start, end: quote.anchor_end },
-      }),
+      });
+    },
     [navigation],
   );
   const onKeep = useCallback(() => setConfirmingId(null), []);

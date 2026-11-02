@@ -18,8 +18,11 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import col, select
 
+from models.course_stage import CourseStage
 from models.journal_entry import EntryStatus, JournalEntry, JournalTag
-from models.promoted_quote import PROMOTED_QUOTE_TEXT_MAX, PromotedQuote
+from models.marginalia import Marginalia, MarginaliaKind
+from models.promoted_quote import PROMOTED_QUOTE_TEXT_MAX, PromotedQuote, PromotedQuoteSourceKind
+from models.stage_content import StageContent
 from models.user import User
 from services import journal_encryption as je
 
@@ -108,7 +111,10 @@ async def test_promote_slices_body_server_side(
     assert resp.status_code == HTTPStatus.CREATED
     data = resp.json()
     assert data["anchor_text"] == "quick"
+    assert data["source_kind"] == "entry"
     assert data["source_entry_id"] == entry.id
+    assert data["source_content_id"] is None
+    assert data["source_marginalia_id"] is None
     assert data["anchor_start"] == 4
     assert data["anchor_end"] == 9
     assert data["pending"] is True
@@ -470,7 +476,10 @@ async def test_list_promotions_orders_by_anchor_start_then_id(
         assert "user_id" not in item
     assert data[0] == {
         "id": quote_b.id,
+        "source_kind": "entry",
         "source_entry_id": entry.id,
+        "source_content_id": None,
+        "source_marginalia_id": None,
         "anchor_start": 1,
         "anchor_end": 2,
         "anchor_text": "b",
@@ -871,3 +880,215 @@ async def test_list_all_promotions_decrypts_for_the_owner(
         assert item["included_in_title"] == "Looking back"
     finally:
         je.reset_cache()
+
+
+# ── GET /promotions: every source kind (#3656) ───────────────────────────
+
+_STAGE_NUMBER = 3
+_LIVE_CHAPTER_TITLE = "Self-Love as Power"
+_SNAPSHOT_TITLE = "Self-Love (as first published)"
+
+
+def _utc(moment: datetime) -> datetime:
+    """``moment`` as an aware UTC instant; SQLite hands timestamps back naive, in UTC."""
+    if moment.tzinfo is None:
+        return moment.replace(tzinfo=UTC)
+    return moment.astimezone(UTC)
+
+
+def _parsed(value: str) -> datetime:
+    """A response timestamp parsed back into an aware UTC instant."""
+    return _utc(datetime.fromisoformat(value))
+
+
+async def _seed_chapter(db_session: AsyncSession, title: str = _LIVE_CHAPTER_TITLE) -> StageContent:
+    """A published Course chapter in stage :data:`_STAGE_NUMBER`."""
+    stage = CourseStage(
+        title="Red",
+        subtitle="Self-Love",
+        stage_number=_STAGE_NUMBER,
+        overview_url="https://example.com/red",
+        category="test",
+        aspect="test-aspect",
+        spiral_dynamics_color="red",
+        growing_up_stage="magic",
+        divine_gender_polarity="masculine",
+        relationship_to_free_will="active",
+        free_will_description="Self-Love",
+    )
+    db_session.add(stage)
+    await db_session.commit()
+    assert stage.id is not None
+    chapter = StageContent(
+        course_stage_id=stage.id,
+        title=title,
+        content_type="chapter",
+        release_day=0,
+        url="content://red-1",
+    )
+    db_session.add(chapter)
+    await db_session.commit()
+    await db_session.refresh(chapter)
+    return chapter
+
+
+async def _seed_letter(
+    db_session: AsyncSession, user_id: int, entry: JournalEntry, **overrides: object
+) -> Marginalia:
+    """A margin note on ``entry`` carrying a Resonance Letter (its essay)."""
+    assert entry.id is not None
+    defaults: dict[str, object] = {
+        "journal_entry_id": entry.id,
+        "user_id": user_id,
+        "kind": MarginaliaKind.THEME,
+        "anchor_start": 0,
+        "anchor_end": 4,
+        "anchor_text": entry.message[:4],
+        "note": "A note in the margin.",
+        "essay": "Dear writer, the letter says something true.",
+        "essay_generated_at": _moment(30),
+    }
+    defaults.update(overrides)
+    letter = Marginalia(**defaults)
+    db_session.add(letter)
+    await db_session.commit()
+    await db_session.refresh(letter)
+    return letter
+
+
+async def _seed_course_quote(
+    db_session: AsyncSession, user_id: int, chapter_id: int | None, **overrides: object
+) -> PromotedQuote:
+    """A quote lifted from a Course chapter (``chapter_id`` None once it was pruned)."""
+    defaults: dict[str, object] = {
+        "source_kind": PromotedQuoteSourceKind.COURSE,
+        "source_content_id": chapter_id,
+        "source_title": _SNAPSHOT_TITLE,
+    }
+    defaults.update(overrides)
+    return await _seed_quote(db_session, user_id, None, "true", **defaults)
+
+
+async def _seed_letter_quote(
+    db_session: AsyncSession, user_id: int, letter: Marginalia, **overrides: object
+) -> PromotedQuote:
+    """A quote lifted from the Resonance Letter carried by ``letter``."""
+    defaults: dict[str, object] = {
+        "source_kind": PromotedQuoteSourceKind.LETTER,
+        "source_marginalia_id": letter.id,
+    }
+    defaults.update(overrides)
+    return await _seed_quote(db_session, user_id, None, "Dear", **defaults)
+
+
+@pytest.mark.asyncio
+async def test_list_all_promotions_lists_every_source_kind_in_items_and_total(
+    async_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """Entry, Course and letter quotes all list, each with the provenance its kind has."""
+    headers, user_id = await _signup(async_client, db_session)
+    entry = await _seed_entry(db_session, user_id, "A morning of rain", title="Rain")
+    lettered = await _seed_entry(db_session, user_id, "Kept in the margin", title="Margins")
+    chapter = await _seed_chapter(db_session)
+    letter = await _seed_letter(db_session, user_id, lettered)
+    from_entry = await _seed_quote(db_session, user_id, entry.id, "rain", created_at=_moment(1))
+    from_course = await _seed_course_quote(db_session, user_id, chapter.id, created_at=_moment(2))
+    from_letter = await _seed_letter_quote(db_session, user_id, letter, created_at=_moment(3))
+
+    resp = await async_client.get(_LIST_ALL_URL, headers=headers)
+
+    assert resp.status_code == HTTPStatus.OK, resp.text
+    body = resp.json()
+    assert body["total"] == 3
+    by_id = {item["id"]: item for item in body["items"]}
+    assert list(by_id) == [from_letter.id, from_course.id, from_entry.id]
+
+    entry_item = by_id[from_entry.id]
+    assert entry_item["source_kind"] == "entry"
+    assert entry_item["source_entry_id"] == entry.id
+    assert entry_item["source_content_id"] is None
+    assert entry_item["source_marginalia_id"] is None
+    assert entry_item["source_title"] == "Rain"
+    assert _parsed(entry_item["source_timestamp"]) == _utc(entry.timestamp)
+    assert entry_item["source_stage_number"] is None
+    assert entry_item["letter_entry_id"] is None
+
+    course_item = by_id[from_course.id]
+    assert course_item["source_kind"] == "course"
+    assert course_item["source_entry_id"] is None
+    assert course_item["source_content_id"] == chapter.id
+    assert course_item["source_marginalia_id"] is None
+    # The live chapter title wins over the snapshot taken when the quote was made.
+    assert course_item["source_title"] == _LIVE_CHAPTER_TITLE
+    assert _parsed(course_item["source_timestamp"]) == _moment(2)
+    assert course_item["source_stage_number"] == _STAGE_NUMBER
+    assert course_item["letter_entry_id"] is None
+
+    letter_item = by_id[from_letter.id]
+    assert letter_item["source_kind"] == "letter"
+    assert letter_item["source_entry_id"] is None
+    assert letter_item["source_content_id"] is None
+    assert letter_item["source_marginalia_id"] == letter.id
+    assert letter_item["source_title"] == "Margins"
+    assert _parsed(letter_item["source_timestamp"]) == _moment(30)
+    assert letter_item["source_stage_number"] is None
+    assert letter_item["letter_entry_id"] == lettered.id
+
+
+@pytest.mark.asyncio
+async def test_list_all_promotions_keeps_a_course_quote_whose_chapter_was_pruned(
+    async_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """A Course quote is always listed; with its chapter gone it falls back to the snapshot."""
+    headers, user_id = await _signup(async_client, db_session)
+    quote = await _seed_course_quote(db_session, user_id, None, created_at=_moment(4))
+
+    resp = await async_client.get(_LIST_ALL_URL, headers=headers)
+
+    assert resp.json()["total"] == 1
+    item = resp.json()["items"][0]
+    assert item["id"] == quote.id
+    assert item["source_content_id"] is None
+    assert item["source_title"] == _SNAPSHOT_TITLE
+    assert item["source_stage_number"] is None
+    assert _parsed(item["source_timestamp"]) == _moment(4)
+
+
+@pytest.mark.asyncio
+async def test_list_all_promotions_drops_a_letter_quote_whose_entry_was_deleted(
+    async_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """A letter quote leaves items and total with its parent entry, as an entry quote does."""
+    headers, user_id = await _signup(async_client, db_session)
+    live = await _seed_entry(db_session, user_id, "Still here")
+    gone = await _seed_entry(db_session, user_id, "Since deleted")
+    kept = await _seed_letter_quote(
+        db_session, user_id, await _seed_letter(db_session, user_id, live)
+    )
+    await _seed_letter_quote(db_session, user_id, await _seed_letter(db_session, user_id, gone))
+    gone.deleted_at = datetime.now(UTC)
+    db_session.add(gone)
+    await db_session.commit()
+
+    resp = await async_client.get(_LIST_ALL_URL, headers=headers)
+
+    body = resp.json()
+    assert [item["id"] for item in body["items"]] == [kept.id]
+    assert body["total"] == 1
+
+
+@pytest.mark.asyncio
+async def test_list_all_promotions_falls_back_to_the_quote_time_for_a_letter_with_no_essay(
+    async_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """A note whose letter was since cleared still lists its quote, timed by the quote."""
+    headers, user_id = await _signup(async_client, db_session)
+    entry = await _seed_entry(db_session, user_id, "A page", title="A page")
+    note = await _seed_letter(db_session, user_id, entry, essay=None, essay_generated_at=None)
+    await _seed_letter_quote(db_session, user_id, note, created_at=_moment(5))
+
+    resp = await async_client.get(_LIST_ALL_URL, headers=headers)
+
+    item = resp.json()["items"][0]
+    assert item["source_title"] == "A page"
+    assert _parsed(item["source_timestamp"]) == _moment(5)

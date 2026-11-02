@@ -1121,7 +1121,9 @@ export type VoiceDraftListT = z.infer<typeof voiceDraftListSchema>;
 /** A promoted quote (mirrors the backend ``PromotedQuoteResponse``). */
 export const promotedQuoteSchema = z.object({
   id: z.number().int(),
-  source_entry_id: z.number().int(),
+  // Null for a quote lifted from a Course chapter or a Resonance Letter rather
+  // than a journal entry (#3655); the server creates none of those yet (#3658).
+  source_entry_id: z.number().int().nullable(),
   anchor_start: z.number().int(),
   anchor_end: z.number().int(),
   anchor_text: z.string(),

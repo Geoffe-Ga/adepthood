@@ -76,8 +76,16 @@ _CONSTRAINED_VALUES: dict[str, Any] = {
 
 # Nullable columns the seeder must leave NULL. ``ck_completion_suggestion_target_fk_matches``
 # permits exactly one target reference per row, so filling both would be a row
-# the application itself could never write.
-_OMITTED_COLUMNS = frozenset({"completionsuggestion.user_practice_id"})
+# the application itself could never write. ``ck_promotedquote_source_matches_kind``
+# is the same shape: the seeded quote takes the first kind its CHECK lists
+# (``entry``), and an entry quote names its source entry and no other source.
+_OMITTED_COLUMNS = frozenset(
+    {
+        "completionsuggestion.user_practice_id",
+        "promotedquote.source_content_id",
+        "promotedquote.source_marginalia_id",
+    }
+)
 
 # ``<column> IN ('a', 'b', ...)`` — the shape every "valid value set" check in
 # this schema is written in. Reading the permitted values straight off the

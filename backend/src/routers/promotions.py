@@ -4,19 +4,22 @@ Promoting a quote anchors a character span of a source journal entry; the server
 slices and snapshots the text (the client sends only offsets) so the quote
 survives later edits. A promotion can then be folded into a hierarchical
 reflection or returned to pending. ``GET /promotions`` lists every quote the
-caller has promoted, across entries, for the Promoted quotes screen (#2865).
-``user_id`` is never returned.
+caller has promoted -- from entries, Course chapters and Resonance Letters alike
+(#3656) -- for the Promoted quotes screen (#2865). Only entry quotes are created
+here so far. ``user_id`` is never returned.
 """
 
 from __future__ import annotations
 
 import logging
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Annotated, Any, cast
+from typing import Annotated, Any, NamedTuple, cast
 
 from fastapi import Depends, Query, Request, Response, status
-from sqlalchemy import ColumnElement, and_
+from sqlalchemy import ColumnElement, and_, or_
+from sqlalchemy import select as select_columns
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased
 from sqlalchemy.sql import Select
@@ -27,8 +30,15 @@ from database import get_session
 from dependencies.ownership import require_owned_journal_entry
 from error_responses import build_router
 from errors import not_found, unprocessable
+from models.course_stage import CourseStage
 from models.journal_entry import JournalEntry, JournalTag
-from models.promoted_quote import PROMOTED_QUOTE_TEXT_MAX, PromotedQuote
+from models.marginalia import Marginalia
+from models.promoted_quote import (
+    PROMOTED_QUOTE_TEXT_MAX,
+    PromotedQuote,
+    PromotedQuoteSourceKind,
+)
+from models.stage_content import StageContent
 from observability import route_template
 from rate_limit import limiter
 from routers.auth import get_current_user
@@ -57,7 +67,10 @@ def _quote_response(quote: PromotedQuote) -> PromotedQuoteResponse:
     """Map a promoted-quote row to its user_id-free response DTO."""
     return PromotedQuoteResponse(
         id=cast("int", quote.id),
+        source_kind=PromotedQuoteSourceKind(quote.source_kind),
         source_entry_id=quote.source_entry_id,
+        source_content_id=quote.source_content_id,
+        source_marginalia_id=quote.source_marginalia_id,
         anchor_start=quote.anchor_start,
         anchor_end=quote.anchor_end,
         anchor_text=quote.anchor_text,
@@ -110,6 +123,7 @@ async def promote_quote(
     await refuse_unquotable_span(session, entry, payload.anchor_start, payload.anchor_end)
     quote = PromotedQuote(
         user_id=current_user,
+        source_kind=PromotedQuoteSourceKind.ENTRY,
         source_entry_id=cast("int", entry.id),
         anchor_start=payload.anchor_start,
         anchor_end=payload.anchor_end,
@@ -235,12 +249,18 @@ async def update_promotion(
     return _quote_response(quote)
 
 
-# The two aliases keep the source and inclusion-target joins on ``journalentry``
-# apart. Both are scoped to the caller and to live rows *in the join itself*:
-# the source join is INNER so a quote whose source was deleted (or is somehow
-# foreign) drops out of items and total alike, and the target join is OUTER so a
-# deleted or foreign review hides only its title, never the quote.
+# Each kind of quote reaches its source through its own OUTER join, so no kind
+# can make another vanish, and every join onto an account's rows is scoped to the
+# caller and to live rows *in the join itself*. The WHERE then keeps an entry
+# quote only while its source entry joined, and a letter quote only while the
+# entry its margin note sits on joined -- so a deleted (or somehow foreign)
+# source drops a quote out of items and total alike. A Course quote is always
+# listed: a chapter is published content, shared by every account, and once it
+# is pruned the quote keeps the title it snapshotted. The inclusion-target join
+# is OUTER as before, so a deleted or foreign review hides only its title, never
+# the quote. Three aliases keep the three joins on ``journalentry`` apart.
 _Source = aliased(JournalEntry, name="source_entry")
+_LetterEntry = aliased(JournalEntry, name="letter_entry")
 _Target = aliased(JournalEntry, name="included_entry")
 
 _STATUS_PREDICATES: dict[PromotionStatusFilter, tuple[ColumnElement[bool], ...]] = {
@@ -249,12 +269,57 @@ _STATUS_PREDICATES: dict[PromotionStatusFilter, tuple[ColumnElement[bool], ...]]
     PromotionStatusFilter.ALL: (),
 }
 
+# Which kinds stay listed, given the joins above.
+_SOURCE_IS_LIVE: ColumnElement[bool] = or_(
+    and_(
+        col(PromotedQuote.source_kind) == PromotedQuoteSourceKind.ENTRY.value,
+        col(_Source.id).is_not(None),
+    ),
+    and_(
+        col(PromotedQuote.source_kind) == PromotedQuoteSourceKind.LETTER.value,
+        col(_LetterEntry.id).is_not(None),
+    ),
+    col(PromotedQuote.source_kind) == PromotedQuoteSourceKind.COURSE.value,
+)
+
+
+class _ListRow(NamedTuple):
+    """One row of :func:`_all_promotions_query`, in its column order.
+
+    Only the columns of the quote's own kind are populated; the outer joins
+    leave the others null.
+    """
+
+    quote: PromotedQuote
+    entry_title: str | None
+    entry_timestamp: datetime | None
+    letter_entry_id: int | None
+    letter_entry_title: str | None
+    letter_written_at: datetime | None
+    chapter_title: str | None
+    chapter_stage_number: int | None
+    included_in_title: str | None
+
 
 def _all_promotions_query(user_id: int, status_filter: PromotionStatusFilter) -> Select[Any]:
-    """Select the caller's quotes with their live source and (visible) review titles."""
+    """Select the caller's quotes with each kind's live source and the (visible) review title.
+
+    SQLAlchemy's own ``select`` rather than SQLModel's, which is typed for at most
+    four columns; this reads nine.
+    """
     return (
-        select(PromotedQuote, _Source.title, _Source.timestamp, _Target.title)
-        .join(
+        select_columns(
+            PromotedQuote,
+            col(_Source.title),
+            col(_Source.timestamp),
+            col(_LetterEntry.id),
+            col(_LetterEntry.title),
+            col(Marginalia.essay_generated_at),
+            col(StageContent.title),
+            col(CourseStage.stage_number),
+            col(_Target.title),
+        )
+        .outerjoin(
             _Source,
             and_(
                 col(_Source.id) == col(PromotedQuote.source_entry_id),
@@ -263,6 +328,24 @@ def _all_promotions_query(user_id: int, status_filter: PromotionStatusFilter) ->
             ),
         )
         .outerjoin(
+            Marginalia,
+            and_(
+                col(Marginalia.id) == col(PromotedQuote.source_marginalia_id),
+                col(Marginalia.user_id) == user_id,
+            ),
+        )
+        .outerjoin(
+            _LetterEntry,
+            and_(
+                col(_LetterEntry.id) == col(Marginalia.journal_entry_id),
+                col(_LetterEntry.user_id) == user_id,
+                col(_LetterEntry.deleted_at).is_(None),
+            ),
+        )
+        # Shared curriculum: no account owns a chapter, so there is no user_id to scope.
+        .outerjoin(StageContent, col(StageContent.id) == col(PromotedQuote.source_content_id))
+        .outerjoin(CourseStage, col(CourseStage.id) == col(StageContent.course_stage_id))
+        .outerjoin(
             _Target,
             and_(
                 col(_Target.id) == col(PromotedQuote.included_in_entry_id),
@@ -270,23 +353,60 @@ def _all_promotions_query(user_id: int, status_filter: PromotionStatusFilter) ->
                 col(_Target.deleted_at).is_(None),
             ),
         )
-        .where(PromotedQuote.user_id == user_id, *_STATUS_PREDICATES[status_filter])
+        .where(
+            col(PromotedQuote.user_id) == user_id,
+            _SOURCE_IS_LIVE,
+            *_STATUS_PREDICATES[status_filter],
+        )
     )
 
 
-def _list_item(
-    quote: PromotedQuote,
-    source_title: str | None,
-    source_timestamp: datetime,
-    included_in_title: str | None,
-) -> PromotedQuoteListItemResponse:
+class _Provenance(NamedTuple):
+    """Where a listed quote came from, as the list item states it."""
+
+    title: str | None
+    timestamp: datetime
+    stage_number: int | None = None
+    letter_entry_id: int | None = None
+
+
+def _entry_provenance(row: _ListRow) -> _Provenance:
+    """An entry quote is described by its source entry, as it always was."""
+    # The WHERE lists an entry quote only when its source entry joined.
+    return _Provenance(row.entry_title, cast("datetime", row.entry_timestamp))
+
+
+def _course_provenance(row: _ListRow) -> _Provenance:
+    """A Course quote names its live chapter, or the title it snapshotted once that is gone."""
+    title = row.chapter_title if row.chapter_title is not None else row.quote.source_title
+    return _Provenance(title, row.quote.created_at, stage_number=row.chapter_stage_number)
+
+
+def _letter_provenance(row: _ListRow) -> _Provenance:
+    """A letter quote names the entry its note sits on, timed by when the letter was written."""
+    written_at = row.letter_written_at or row.quote.created_at
+    return _Provenance(row.letter_entry_title, written_at, letter_entry_id=row.letter_entry_id)
+
+
+_PROVENANCE: dict[PromotedQuoteSourceKind, Callable[[_ListRow], _Provenance]] = {
+    PromotedQuoteSourceKind.ENTRY: _entry_provenance,
+    PromotedQuoteSourceKind.COURSE: _course_provenance,
+    PromotedQuoteSourceKind.LETTER: _letter_provenance,
+}
+
+
+def _list_item(row: _ListRow) -> PromotedQuoteListItemResponse:
     """Map one joined row to its user_id-free list item."""
+    quote = row.quote
+    provenance = _PROVENANCE[PromotedQuoteSourceKind(quote.source_kind)](row)
     return PromotedQuoteListItemResponse(
         **_quote_response(quote).model_dump(),
-        source_title=source_title,
-        source_timestamp=source_timestamp,
+        source_title=provenance.title,
+        source_timestamp=provenance.timestamp,
+        source_stage_number=provenance.stage_number,
+        letter_entry_id=provenance.letter_entry_id,
         included_in_entry_id=quote.included_in_entry_id,
-        included_in_title=included_in_title,
+        included_in_title=row.included_in_title,
         created_at=quote.created_at,
     )
 
@@ -308,13 +428,15 @@ async def list_all_promotions(
     session: Annotated[AsyncSession, Depends(get_session)],
     params: Annotated[_ListAllParams, Depends()],
 ) -> PromotedQuoteListResponse:
-    """List every quote the caller has promoted, across entries, newest first.
+    """List every quote the caller has promoted, from every kind of source, newest first.
 
     The route takes no id, so ownership rides on ``user_id`` predicates: on the
-    quote, on the source join, and on the inclusion-target join. A quote whose
-    source entry was soft-deleted is excluded; a quote folded into a review that
-    was since deleted stays listed with ``included_in_title`` null. Ordered by
-    ``(created_at DESC, id DESC)`` so ties page stably.
+    quote, on each join onto the caller's own rows (the source entry, a letter's
+    margin note and the entry it sits on), and on the inclusion-target join. A
+    quote whose source entry -- or, for a letter quote, whose note's entry -- was
+    soft-deleted is excluded; a Course quote is always listed; a quote folded
+    into a review that was since deleted stays listed with ``included_in_title``
+    null. Ordered by ``(created_at DESC, id DESC)`` so ties page stably.
     """
     query = _all_promotions_query(current_user, params.status)
     total = await count_query_total(session, query)
@@ -334,7 +456,7 @@ async def list_all_promotions(
         },
     )
     return PromotedQuoteListResponse(
-        items=[_list_item(*row) for row in page.all()],
+        items=[_list_item(_ListRow(*row)) for row in page.all()],
         total=total,
         has_more=page_has_more(params.offset, params.limit, total),
     )

@@ -300,18 +300,30 @@ async def refuse_unquotable_span(
         raise _refused(entry.user_id, entry.id, None)
 
 
+async def _vouched_source(session: AsyncSession, quote: PromotedQuote) -> JournalEntry | None:
+    """``quote``'s source entry if it has one and it is the quote owner's own, else ``None``."""
+    if quote.source_entry_id is None:
+        return None
+    source = await session.get(JournalEntry, quote.source_entry_id)
+    return source if source is not None and source.user_id == quote.user_id else None
+
+
 async def refuse_unfoldable_quote(session: AsyncSession, quote: PromotedQuote) -> None:
     """Raise 409 unless ``quote`` may still be folded into a review.
 
     It may when its source is egress-eligible and its text carries no passage
     that source holds from a restricted fold. A source that is missing reads as
-    restricted: nothing vouches for its tier.
+    restricted: nothing vouches for its tier. So does a quote with no source
+    entry at all -- a Course or letter quote (#3656): every egress reader here
+    joins a fold onto its source entry, so such a fold would drop out of them
+    and fail open. It stays refused until those readers learn the new kinds.
     """
-    source = await session.get(JournalEntry, quote.source_entry_id)
-    if source is None or source.user_id != quote.user_id:
+    source = await _vouched_source(session, quote)
+    source_id = quote.source_entry_id
+    if source is None or source_id is None:
         raise _refused(quote.user_id, None, quote.id)
     passages = await restricted_folded_passages(
-        session, user_id=quote.user_id, entry_ids=(quote.source_entry_id,)
+        session, user_id=quote.user_id, entry_ids=(source_id,)
     )
-    if not quote_is_foldable(source, quote.anchor_text, passages.get(quote.source_entry_id, ())):
-        raise _refused(quote.user_id, quote.source_entry_id, quote.id)
+    if not quote_is_foldable(source, quote.anchor_text, passages.get(source_id, ())):
+        raise _refused(quote.user_id, source_id, quote.id)
