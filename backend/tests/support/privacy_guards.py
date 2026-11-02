@@ -30,7 +30,9 @@ from sqlalchemy import ColumnElement, SQLColumnExpression, or_
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from domain.creek_vault import CreekVaultClient, CreekVaultError
+from domain.privacy_tier import admits_egress
 from models.journal_entry import JournalEntry
+from models.promoted_quote import PromotedQuoteSourceKind
 from services.marginalia import BotmasonResonanceLLM
 from services.reflection_boundary import ReflectionBoundary
 from services.restore_suppression import AccountTombstone, EntryTombstone
@@ -160,6 +162,19 @@ async def _every_span_is_quotable(
     del session, entry, start, end
 
 
+def _letters_pass_as_published(kind: object, entry_tier: object, letter_tier: object) -> bool:
+    """``fold_source_admits_egress`` with the letter join deleted (#3657).
+
+    The entry branch is kept, so the row isolates the one regression it names:
+    a letter quote read as published text, whatever the tier of the entry it
+    answered.
+    """
+    del letter_tier
+    if kind == PromotedQuoteSourceKind.ENTRY:
+        return admits_egress(entry_tier)
+    return True
+
+
 #: Every guard #3163 names, each against the claims whose suite must notice it.
 #:
 #: C10 is held to the SQL form of the predicate rather than to
@@ -266,6 +281,14 @@ PRIVACY_GUARDS: Final[tuple[GuardMutation, ...]] = (
         "refuse_unquotable_span",
         ("C10",),
         _every_span_is_quotable,
+    ),
+    # #3657: a letter has no tier of its own; it inherits the answered entry's.
+    GuardMutation(
+        "fold_source_admits_egress",
+        "services.folded_quote_privacy",
+        "fold_source_admits_egress",
+        ("C10",),
+        _letters_pass_as_published,
     ),
 )
 

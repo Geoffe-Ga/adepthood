@@ -11,11 +11,15 @@ request succeeds when the source may egress.
 from __future__ import annotations
 
 import logging
+from collections.abc import Awaitable, Callable, Iterator
+from contextlib import contextmanager
 from datetime import UTC, datetime
 from http import HTTPStatus
 
 import pytest
+from fastapi import HTTPException
 from httpx import AsyncClient
+from sqlalchemy import event
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import col, select
 
@@ -30,20 +34,27 @@ from domain.folded_passages import (
 )
 from main import app
 from models.journal_entry import EntryStatus, JournalClassification, JournalEntry, JournalTag
-from models.marginalia import Marginalia, MarginaliaKind
+from models.marginalia import Marginalia
 from models.promoted_quote import PromotedQuote, PromotedQuoteSourceKind
 from services.folded_quote_privacy import (
     MAX_FOLD_LEVELS,
     QUOTE_REFUSED_EVENT,
     QUOTE_SOURCE_RESTRICTED,
     egress_bodies,
+    egress_body,
+    fold_source_admits_egress,
+    refuse_unfoldable_quote,
     restricted_folded_passages,
 )
 from tests.support.lineage_canaries import (
+    LETTER_LINE,
     LINEAGE_SENTINEL,
     REVIEW_PROSE,
     folded_blockquote,
+    seed_course_quote,
     seed_folded_lineage,
+    seed_letter_note,
+    seed_letter_quote,
 )
 
 _KEPT_CLOSE = "the thing I never say aloud"
@@ -178,6 +189,14 @@ async def _fold(
     await session.commit()
     await session.refresh(quote)
     return quote
+
+
+async def _set_tier(
+    session: AsyncSession, entry: JournalEntry, classification: JournalClassification
+) -> None:
+    entry.classification = classification
+    session.add(entry)
+    await session.commit()
 
 
 async def _signup(client: AsyncClient, username: str) -> tuple[dict[str, str], int]:
@@ -378,6 +397,181 @@ async def test_a_lone_word_requoted_from_a_review_still_egresses(
     assert _KEPT_CLOSE not in bodies[ids[0]]
     assert bodies[ids[1]] == word_body
     assert "never say" not in bodies[ids[2]]
+
+
+# --- egress: a letter quote inherits its entry's tier (#3657) ------------------
+
+
+@pytest.mark.asyncio
+async def test_a_folded_letter_quote_is_withheld_once_its_entry_becomes_intimate(
+    async_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """The fail-open trap: a letter has no tier of its own, so it follows the entry it answered.
+
+    While the entry is Personal the folded letter line goes where the review
+    goes; once the entry is made Intimate, the same review sends it withheld.
+    Against an egress reader that INNER JOINs a fold onto its source entry, the
+    letter quote's row is dropped and its line leaves unmasked.
+    """
+    _, user_id = await _signup(async_client, "letter_fail_open")
+    answered = await _entry(db_session, user_id, "A page the letter answered.")
+    note = await seed_letter_note(db_session, user_id=user_id, entry=answered)
+    review = await _entry(
+        db_session, user_id, f"{REVIEW_PROSE}\n\n{folded_blockquote(LETTER_LINE)}"
+    )
+    await seed_letter_quote(
+        db_session, user_id=user_id, note=note, included_in_entry_id=int(review.id or 0)
+    )
+
+    assert await egress_body(db_session, review, review.message) == review.message
+
+    await _set_tier(db_session, answered, JournalClassification.INTIMATE)
+    sent = await egress_body(db_session, review, review.message)
+
+    assert LETTER_LINE not in sent
+    assert WITHHELD_MARK * len(LETTER_LINE) in sent
+    assert sent.startswith(REVIEW_PROSE)
+
+
+_ENTRY = PromotedQuoteSourceKind.ENTRY.value
+_COURSE = PromotedQuoteSourceKind.COURSE.value
+_LETTER = PromotedQuoteSourceKind.LETTER.value
+
+
+@pytest.mark.parametrize(
+    ("kind", "entry_tier", "letter_tier", "expected"),
+    [
+        (_ENTRY, "personal", None, True),
+        (_ENTRY, "intimate", None, False),
+        (_ENTRY, None, None, False),
+        # A letter reads the tier of the entry it answered, never a source entry's.
+        (_LETTER, None, "personal", True),
+        (_LETTER, None, "intimate", False),
+        (_LETTER, "personal", "intimate", False),
+        (_LETTER, "personal", None, False),
+        # A missing note or answered entry joins as NULL: nothing vouches for it.
+        (_LETTER, None, None, False),
+        # Published Course text, whatever either join found.
+        (_COURSE, None, None, True),
+        (_COURSE, "intimate", "intimate", True),
+        # Any other kind, or none, fails closed.
+        (None, "personal", "personal", False),
+        ("ENTRY", "personal", "personal", False),
+        ("chapter", "personal", "personal", False),
+    ],
+)
+def test_each_kind_of_fold_reads_the_tier_it_inherits(
+    kind: object, entry_tier: object, letter_tier: object, *, expected: bool
+) -> None:
+    assert fold_source_admits_egress(kind, entry_tier, letter_tier) is expected
+
+
+@pytest.mark.asyncio
+async def test_a_folded_course_quote_always_egresses(
+    async_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """Course text is the program's published text, identical for every reader."""
+    _, user_id = await _signup(async_client, "course_egress")
+    review = await _entry(
+        db_session, user_id, f"{REVIEW_PROSE}\n\n{folded_blockquote(LETTER_LINE)}"
+    )
+    await seed_course_quote(db_session, user_id=user_id, included_in_entry_id=int(review.id or 0))
+
+    found = await restricted_folded_passages(
+        db_session, user_id=user_id, entry_ids=[int(review.id or 0)]
+    )
+
+    assert found == {}
+    assert await egress_body(db_session, review, review.message) == review.message
+
+
+@pytest.mark.asyncio
+async def test_a_letter_quote_of_a_deleted_intimate_entry_stays_withheld(
+    async_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """The answered entry's tier is read live or soft-deleted; deleting it releases nothing."""
+    _, user_id = await _signup(async_client, "letter_deleted_parent")
+    answered = await _entry(
+        db_session, user_id, "A page made private, then deleted.", JournalClassification.INTIMATE
+    )
+    note = await seed_letter_note(db_session, user_id=user_id, entry=answered)
+    review = await _entry(
+        db_session, user_id, f"{REVIEW_PROSE}\n\n{folded_blockquote(LETTER_LINE)}"
+    )
+    await seed_letter_quote(
+        db_session, user_id=user_id, note=note, included_in_entry_id=int(review.id or 0)
+    )
+    answered.deleted_at = datetime.now(UTC)
+    db_session.add(answered)
+    await db_session.commit()
+
+    assert LETTER_LINE not in await egress_body(db_session, review, review.message)
+
+
+@pytest.mark.asyncio
+async def test_a_letter_quote_on_another_writers_note_is_withheld(
+    async_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """Only the writer's own note vouches for a letter: a foreign one reads as unknown."""
+    _, user_id = await _signup(async_client, "letter_foreign_note")
+    _, other_id = await _signup(async_client, "letter_note_owner")
+    answered = await _entry(db_session, other_id, "Someone else's Personal page.")
+    note = await seed_letter_note(db_session, user_id=user_id, entry=answered, owner_id=other_id)
+    review = await _entry(
+        db_session, user_id, f"{REVIEW_PROSE}\n\n{folded_blockquote(LETTER_LINE)}"
+    )
+    await seed_letter_quote(
+        db_session, user_id=user_id, note=note, included_in_entry_id=int(review.id or 0)
+    )
+
+    assert LETTER_LINE not in await egress_body(db_session, review, review.message)
+
+
+@contextmanager
+def _quote_reads(session: AsyncSession) -> Iterator[list[str]]:
+    """Collect every statement ``session``'s engine runs against ``promotedquote``."""
+    seen: list[str] = []
+    engine = session.get_bind()
+
+    def _record(*args: object) -> None:
+        statement = str(args[2])
+        if "promotedquote" in statement:
+            seen.append(statement)
+
+    event.listen(engine, "before_cursor_execute", _record)
+    try:
+        yield seen
+    finally:
+        event.remove(engine, "before_cursor_execute", _record)
+
+
+@pytest.mark.asyncio
+async def test_the_walk_never_follows_a_course_or_letter_source_upstream(
+    async_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """Only an entry source can itself hold folds, so only one is walked to the next level.
+
+    A review holding a Course fold and a letter fold is resolved in one read;
+    the control, the same review with an entry fold beside them, takes a
+    second read for that entry's own folds.
+    """
+    _, user_id = await _signup(async_client, "walk_entry_only")
+    answered = await _entry(db_session, user_id, "A page the letter answered.")
+    note = await seed_letter_note(db_session, user_id=user_id, entry=answered)
+    review = await _entry(db_session, user_id, REVIEW_PROSE)
+    review_id = int(review.id or 0)
+    await seed_letter_quote(db_session, user_id=user_id, note=note, included_in_entry_id=review_id)
+    await seed_course_quote(db_session, user_id=user_id, included_in_entry_id=review_id)
+
+    with _quote_reads(db_session) as reading_only:
+        await restricted_folded_passages(db_session, user_id=user_id, entry_ids=[review_id])
+    upstream = await _entry(db_session, user_id, _PASSED_ALONG)
+    await _fold(db_session, user_id, upstream, _PASSED_ALONG, review_id)
+    with _quote_reads(db_session) as with_an_entry:
+        await restricted_folded_passages(db_session, user_id=user_id, entry_ids=[review_id])
+
+    assert len(reading_only) == 1
+    assert len(with_an_entry) == 2
 
 
 # --- creation: promote ---------------------------------------------------------
@@ -583,75 +777,182 @@ async def test_folding_a_requote_of_a_restricted_passage_is_refused(
     assert resp.json()["detail"] == QUOTE_SOURCE_RESTRICTED
 
 
-# --- fold: a Course or letter quote fails closed (#3656) -----------------------
+# --- fold: each kind answers to the tier it inherits (#3657) ------------------
 #
-# Every privacy reader of a fold joins ``source_entry_id`` onto the journal, so a
-# quote with no source entry would silently drop out of the egress resolver --
-# failing OPEN. Until the fold-privacy rules learn the new kinds (#3657, which
-# replaces this test), folding one must keep being refused. The rows are seeded
-# straight into the database: no route creates either kind yet (#3658).
+# These replace #3656's pin, which refused every non-entry fold while the egress
+# readers still dropped one. The rows are seeded straight into the database: no
+# route creates a Course or letter quote yet (#3658).
 
 
-async def _non_entry_quote(
-    session: AsyncSession, user_id: int, kind: PromotedQuoteSourceKind
-) -> PromotedQuote:
-    """A pending quote of ``kind``: a Course quote, or one from a Personal entry's letter.
+async def _fold_patch(
+    client: AsyncClient, headers: dict[str, str], quote: PromotedQuote, target: JournalEntry
+) -> int:
+    resp = await client.patch(
+        f"/promotions/{quote.id}", json={"included_in_entry_id": target.id}, headers=headers
+    )
+    if resp.status_code == HTTPStatus.CONFLICT:
+        assert resp.json()["detail"] == QUOTE_SOURCE_RESTRICTED
+    return resp.status_code
 
-    The Course quote carries only its snapshotted title (its chapter link is the
-    one a prune clears); the refusal never reads either, so no chapter is seeded.
-    """
-    links: dict[str, object] = {"source_title": "A published chapter"}
-    if kind is PromotedQuoteSourceKind.LETTER:
-        # A Personal source, so the refusal below is the kind's and not the tier's.
-        entry = await _entry(session, user_id, _KEPT_CLOSE)
-        note = Marginalia(
-            journal_entry_id=int(entry.id or 0),
-            user_id=user_id,
-            kind=MarginaliaKind.THEME,
-            anchor_start=0,
-            anchor_end=len(_KEPT_CLOSE),
-            anchor_text=_KEPT_CLOSE,
-            note="A note.",
-            essay=f"A letter that says {_KEPT_CLOSE}.",
-            essay_generated_at=datetime.now(UTC),
+
+@pytest.mark.asyncio
+async def test_folding_a_course_quote_is_allowed(
+    async_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """Published text may always be folded: its tier is ``public``."""
+    headers, user_id = await _signup(async_client, "fold_course_quote")
+    quote = await seed_course_quote(db_session, user_id=user_id)
+    target = await _reflection(db_session, user_id)
+
+    assert await _fold_patch(async_client, headers, quote, target) == HTTPStatus.OK
+    await db_session.refresh(quote)
+    assert quote.included_in_entry_id == target.id
+
+
+async def _make_intimate(session: AsyncSession, entry: JournalEntry, _: int) -> None:
+    await _set_tier(session, entry, JournalClassification.INTIMATE)
+
+
+async def _soft_delete(session: AsyncSession, entry: JournalEntry, _: int) -> None:
+    entry.deleted_at = datetime.now(UTC)
+    session.add(entry)
+    await session.commit()
+
+
+async def _hand_the_note_away(session: AsyncSession, entry: JournalEntry, other_id: int) -> None:
+    """The note under the quote is stamped with another account."""
+    note = (
+        await session.execute(
+            select(Marginalia).where(col(Marginalia.journal_entry_id) == entry.id)
         )
-        session.add(note)
-        await session.commit()
-        links = {"source_marginalia_id": note.id}
+    ).scalar_one()
+    note.user_id = other_id
+    session.add(note)
+    await session.commit()
+
+
+async def _hand_the_entry_away(session: AsyncSession, entry: JournalEntry, other_id: int) -> None:
+    """The answered entry belongs to another account while the note stays the writer's."""
+    entry.user_id = other_id
+    session.add(entry)
+    await session.commit()
+
+
+async def _leave_it_be(session: AsyncSession, entry: JournalEntry, _: int) -> None:
+    del session, entry
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("change", "expected"),
+    [
+        (_leave_it_be, HTTPStatus.OK),
+        (_make_intimate, HTTPStatus.CONFLICT),
+        (_soft_delete, HTTPStatus.CONFLICT),
+        (_hand_the_note_away, HTTPStatus.CONFLICT),
+        (_hand_the_entry_away, HTTPStatus.CONFLICT),
+    ],
+    ids=["personal", "intimate", "deleted", "foreign_note", "foreign_entry"],
+)
+async def test_folding_a_letter_quote_follows_the_entry_it_answered(
+    async_client: AsyncClient,
+    db_session: AsyncSession,
+    caplog: pytest.LogCaptureFixture,
+    change: Callable[[AsyncSession, JournalEntry, int], Awaitable[None]],
+    expected: HTTPStatus,
+) -> None:
+    """A letter folds only while its entry is live, the writer's own, and egress-eligible."""
+    headers, user_id = await _signup(async_client, f"fold_letter{change.__name__}")
+    _, other_id = await _signup(async_client, f"letter_other{change.__name__}")
+    answered = await _entry(db_session, user_id, "A Personal page the letter answered.")
+    note = await seed_letter_note(db_session, user_id=user_id, entry=answered)
+    quote = await seed_letter_quote(db_session, user_id=user_id, note=note)
+    target = await _reflection(db_session, user_id)
+    await change(db_session, answered, other_id)
+
+    with caplog.at_level(logging.INFO, logger="services.folded_quote_privacy"):
+        status = await _fold_patch(async_client, headers, quote, target)
+
+    assert status == expected
+    await db_session.refresh(quote)
+    refused = expected == HTTPStatus.CONFLICT
+    assert (quote.included_in_entry_id is None) is refused
+    assert any(r.getMessage() == QUOTE_REFUSED_EVENT for r in caplog.records) is refused
+
+
+@pytest.mark.asyncio
+async def test_folding_a_letter_quote_that_carries_a_restricted_passage_is_refused(
+    async_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """Defence in depth: a letter written before its entry's fold became restricted.
+
+    The letter answered a Personal review that holds an Intimate fold, and it
+    quotes that fold's words; a quote of the letter's own other words still folds.
+    """
+    headers, user_id = await _signup(async_client, "fold_letter_restricted_line")
+    chain = await seed_folded_lineage(db_session, user_id=user_id)
+    review = await db_session.get(JournalEntry, chain.review_id)
+    assert review is not None
+    note = await seed_letter_note(db_session, user_id=user_id, entry=review)
+    carrying = await seed_letter_quote(
+        db_session, user_id=user_id, note=note, text=f"you wrote {LINEAGE_SENTINEL}"
+    )
+    clean = await seed_letter_quote(db_session, user_id=user_id, note=note)
+    target = await _reflection(db_session, user_id)
+
+    assert await _fold_patch(async_client, headers, carrying, target) == HTTPStatus.CONFLICT
+    assert await _fold_patch(async_client, headers, clean, target) == HTTPStatus.OK
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("kind", ["", "ENTRY", "chapter"])
+async def test_a_quote_of_no_known_kind_is_never_folded(
+    async_client: AsyncClient, db_session: AsyncSession, kind: str
+) -> None:
+    """A kind nobody placed is refused, even with a Personal entry link beside it.
+
+    A transient row: the kind CHECK keeps such a value out of the table, so it
+    can reach the fold door only as a row read some other way.
+    """
+    _, user_id = await _signup(async_client, f"fold_unknown_kind_{len(kind)}_{kind.lower()}")
+    source = await _entry(db_session, user_id, _KEPT_CLOSE)
+    quote = PromotedQuote(
+        user_id=user_id,
+        source_kind=kind,
+        source_entry_id=source.id,
+        anchor_start=0,
+        anchor_end=4,
+        anchor_text=_KEPT_CLOSE[:4],
+    )
+
+    with pytest.raises(HTTPException) as refused:
+        await refuse_unfoldable_quote(db_session, quote)
+
+    assert refused.value.status_code == HTTPStatus.CONFLICT
+    assert refused.value.detail == QUOTE_SOURCE_RESTRICTED
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("kind", [PromotedQuoteSourceKind.ENTRY, PromotedQuoteSourceKind.LETTER])
+async def test_a_quote_missing_its_own_kinds_link_is_never_folded(
+    async_client: AsyncClient, db_session: AsyncSession, kind: PromotedQuoteSourceKind
+) -> None:
+    """An entry quote with no source entry, or a letter quote with no note, vouches for nothing.
+
+    A transient row: the kind/link CHECK keeps either out of the table, so it
+    can reach the fold door only as a row read some other way.
+    """
+    _, user_id = await _signup(async_client, f"fold_unlinked_{kind.value}")
     quote = PromotedQuote(
         user_id=user_id,
         source_kind=kind,
         anchor_start=0,
-        anchor_end=len(_KEPT_CLOSE),
-        anchor_text=_KEPT_CLOSE,
-        **links,
+        anchor_end=4,
+        anchor_text=_KEPT_CLOSE[:4],
     )
-    session.add(quote)
-    await session.commit()
-    await session.refresh(quote)
-    return quote
 
+    with pytest.raises(HTTPException) as refused:
+        await refuse_unfoldable_quote(db_session, quote)
 
-@pytest.mark.asyncio
-@pytest.mark.parametrize("kind", [PromotedQuoteSourceKind.COURSE, PromotedQuoteSourceKind.LETTER])
-async def test_folding_a_quote_with_no_source_entry_is_refused(
-    async_client: AsyncClient,
-    db_session: AsyncSession,
-    caplog: pytest.LogCaptureFixture,
-    kind: PromotedQuoteSourceKind,
-) -> None:
-    """Nothing vouches for a non-entry source's tier yet, so its quote may not be folded."""
-    headers, user_id = await _signup(async_client, f"fold_{kind.value}_quote")
-    quote = await _non_entry_quote(db_session, user_id, kind)
-    target = await _reflection(db_session, user_id)
-
-    with caplog.at_level(logging.INFO, logger="services.folded_quote_privacy"):
-        resp = await async_client.patch(
-            f"/promotions/{quote.id}", json={"included_in_entry_id": target.id}, headers=headers
-        )
-
-    assert resp.status_code == HTTPStatus.CONFLICT, resp.text
-    assert resp.json()["detail"] == QUOTE_SOURCE_RESTRICTED
-    assert any(record.getMessage() == QUOTE_REFUSED_EVENT for record in caplog.records)
-    await db_session.refresh(quote)
-    assert quote.included_in_entry_id is None
+    assert refused.value.status_code == HTTPStatus.CONFLICT
+    assert refused.value.detail == QUOTE_SOURCE_RESTRICTED
