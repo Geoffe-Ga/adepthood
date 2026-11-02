@@ -387,13 +387,27 @@ for (const viewport of [PHONE, LAPTOP]) {
     await visible(page, `entry-source-${sourceId}`).click();
     await visible(page, `source-promote-entry-${sourceId}`).click();
     const prefix = `source-select-entry-${sourceId}`;
-    await expect(visible(page, `${prefix}-input`)).toBeFocused();
+    const field = visible(page, `${prefix}-input`);
+    await expect(field).toBeFocused();
     const frame = frameId(page);
-    const boxes = await settledBoxes(page, [frame, `${prefix}-confirm`, `${prefix}-cancel`]);
-    expectInside(boxes[`${prefix}-confirm`]!, boxes[frame]!);
-    expectInside(boxes[`${prefix}-cancel`]!, boxes[frame]!);
-    expectInside(boxes[`${prefix}-confirm`]!, viewportBox(page));
-    await expect(page.getByRole('button', { name: 'Promote selection' })).toBeVisible();
+    // Nothing chosen yet: the way out is in the panel, and no Promote is anywhere.
+    const before = await settledBoxes(page, [frame, `${prefix}-cancel`]);
+    expectInside(before[`${prefix}-cancel`]!, before[frame]!);
     await expect(page.getByRole('button', { name: 'Cancel promoting' })).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Promote selection' })).toHaveCount(0);
+
+    // A word chosen: the floating Promote and its X rise inside the panel (#3134).
+    await field.dblclick({ position: { x: 40, y: 24 } });
+    await expect(page.getByRole('button', { name: 'Promote selection' })).toBeVisible();
+    const after = await settledBoxes(page, [
+      frame,
+      'promote-selection-fab',
+      'promote-selection-fab-cancel',
+      `${prefix}-cancel`,
+    ]);
+    expectInside(after['promote-selection-fab']!, after[frame]!);
+    expectInside(after['promote-selection-fab-cancel']!, after[frame]!);
+    expectInside(after['promote-selection-fab']!, viewportBox(page));
+    expectInside(after[`${prefix}-cancel`]!, after[frame]!);
   });
 }
