@@ -176,8 +176,9 @@ function PrimaryMark({
       />
     );
   }
-  // The label names the action, so the mark is hidden on its wrapper (the
-  // svg's own props are forwarded to the DOM on web, #2829).
+  // The label names the action, so the mark is decoration: hidden on a wrapper
+  // that also carries the testID, which a lucide glyph does not forward on
+  // every platform.
   return (
     <View testID={`${testID}-icon`} {...decorativeHidden()}>
       <Quote size={QUOTE_ICON_SIZE} color={accent.onPrimary} />

@@ -1,5 +1,6 @@
 /* eslint-env jest */
-// RED: '../FloatingPromoteButton' does not exist yet (#3134).
+// #3134: the floating pill that comes to a selection -- presence and fade,
+// placement, Candle & Ink fills, its X, a secondary action, and busy.
 import { jest, describe, it, expect, beforeEach } from '@jest/globals';
 import { act, fireEvent, render, waitFor } from '@testing-library/react-native';
 import { X } from 'lucide-react-native';
