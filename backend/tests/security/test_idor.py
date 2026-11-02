@@ -47,6 +47,7 @@ from sqlalchemy import ColumnElement, func
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import col, select, update
 
+from content_config import content_ref
 from domain.frequencies import Frequency
 from models.agent_grant import AgentGrant
 from models.completion_suggestion import (
@@ -85,6 +86,11 @@ from models.user_vault_config import UserVaultConfig
 from models.vault_activation import VaultActivation, VaultActivationState
 from security.idempotency import hash_idem_key
 from services import frequency_classification as fc
+from services.content_repository import (
+    ContentRepository,
+    reset_content_repository_for_tests,
+    set_content_repository_for_tests,
+)
 from services.creek_vault_agent_connection import reset_agent_discovery_cache
 from services.creek_vault_client import HttpCreekVaultClient
 from services.journal_retention import PURGE_MIN_RETENTION_DAYS
@@ -2485,6 +2491,176 @@ async def test_idor_list_all_promotions_never_lists_a_letter_quote_across_tenant
     assert body["total"] == 1
     assert body["items"][0]["source_marginalia_id"] == own_note
     assert (await db_session.execute(count_query)).scalar_one() == before
+
+
+# ── #3658: promoting from a letter or a chapter ──────────────────────────
+
+#: ``"An"`` of :func:`_seed_expanded_marginalia`'s letter, "An expanded letter."
+_LETTER_SPAN: dict[str, int] = {"anchor_start": 0, "anchor_end": 2}
+
+
+def _letter_routes(marginalia_id: int) -> tuple[str, str]:
+    """The letter promote and promotions paths for note ``marginalia_id``."""
+    base = f"/journal/marginalia/{marginalia_id}/letter"
+    return f"{base}/promote", f"{base}/promotions"
+
+
+async def _promoted_quote_count(db_session: AsyncSession) -> int:
+    """Every ``promotedquote`` row in storage."""
+    count_query = select(func.count()).select_from(PromotedQuote)
+    return int((await db_session.execute(count_query)).scalar_one())
+
+
+@pytest.mark.asyncio
+async def test_idor_letter_promote_routes_404_on_another_users_note_and_persist_nothing(
+    async_client: AsyncClient, db_session: AsyncSession, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Bob's note is ``marginalia_not_found`` to Alice on both letter routes, and audited.
+
+    The denial reads exactly like a note that never existed, so the id is no
+    oracle, and the audit row names the note and the prober. Nothing is stored.
+    """
+    alice_headers, alice_id = await _signup(async_client, "alice_letter_promote")
+    _bob_headers, bob_id = await _signup(async_client, "bob_letter_promote")
+    bobs_note = await _seed_expanded_marginalia(db_session, owner_id=bob_id)
+    promote, promotions = _letter_routes(bobs_note)
+    missing_promote, _missing_promotions = _letter_routes(_DEFINITELY_MISSING_ID)
+
+    with caplog.at_level(logging.WARNING):
+        write = await async_client.post(promote, json=_LETTER_SPAN, headers=alice_headers)
+        read = await async_client.get(promotions, headers=alice_headers)
+    missing = await async_client.post(missing_promote, json=_LETTER_SPAN, headers=alice_headers)
+
+    assert write.status_code == read.status_code == HTTPStatus.NOT_FOUND
+    assert write.json() == read.json() == missing.json() == {"detail": "marginalia_not_found"}
+    assert await _promoted_quote_count(db_session) == 0
+    denials = [
+        (getattr(record, "resource", None), getattr(record, "resource_id", None))
+        for record in _denial_records(caplog)
+        if getattr(record, "user_id", None) == alice_id
+    ]
+    assert denials == [("marginalia", bobs_note), ("marginalia", bobs_note)]
+
+
+@pytest.mark.asyncio
+async def test_idor_letter_promote_routes_404_on_a_drifted_note_and_persist_nothing(
+    async_client: AsyncClient, db_session: AsyncSession, caplog: pytest.LogCaptureFixture
+) -> None:
+    """A note reaches Alice only when both it and the entry it sits on are hers.
+
+    * a note whose denormalized ``user_id`` is Bob's, on Alice's entry -- the
+      note's own scope refuses it;
+    * a note naming Alice, on Bob's entry -- only the parent-entry check
+      refuses it, and that denial is audited against the entry.
+
+    Both letter routes 404 on each, and no quote is stored.
+    """
+    alice_headers, alice_id = await _signup(async_client, "alice_letter_drift")
+    _bob_headers, bob_id = await _signup(async_client, "bob_letter_drift")
+    bobs_note_on_alices_entry = await _seed_expanded_marginalia(
+        db_session, owner_id=alice_id, column_user_id=bob_id
+    )
+    alices_note_on_bobs_entry = await _seed_expanded_marginalia(
+        db_session, owner_id=bob_id, column_user_id=alice_id
+    )
+    drifted_entry = (
+        await db_session.execute(
+            select(col(Marginalia.journal_entry_id)).where(
+                col(Marginalia.id) == alices_note_on_bobs_entry
+            )
+        )
+    ).scalar_one()
+
+    with caplog.at_level(logging.WARNING):
+        for note, detail in (
+            (bobs_note_on_alices_entry, "marginalia_not_found"),
+            (alices_note_on_bobs_entry, "journal_entry_not_found"),
+        ):
+            promote, promotions = _letter_routes(note)
+            write = await async_client.post(promote, json=_LETTER_SPAN, headers=alice_headers)
+            read = await async_client.get(promotions, headers=alice_headers)
+            assert write.status_code == read.status_code == HTTPStatus.NOT_FOUND
+            assert write.json() == read.json() == {"detail": detail}
+
+    assert await _promoted_quote_count(db_session) == 0
+    audited = {
+        (getattr(record, "resource", None), getattr(record, "resource_id", None))
+        for record in _denial_records(caplog)
+    }
+    assert ("journal_entry", drifted_entry) in audited
+    assert ("marginalia", bobs_note_on_alices_entry) in audited
+
+
+@pytest.mark.asyncio
+async def test_idor_course_promote_routes_mask_a_locked_chapter_and_persist_nothing(
+    async_client: AsyncClient, db_session: AsyncSession, tmp_path: Path
+) -> None:
+    """A chapter locked for the caller is ``content_not_found`` on both course routes.
+
+    The chapter's body is on the shelf, so a gate that let the write through
+    would store a quote: the empty table is what proves the mask held, and the
+    detail matches a chapter that never existed (BUG-COURSE-004).
+    """
+    headers, _ = await _signup(async_client, "locked_chapter_promote")
+    shelf = tmp_path / "content"
+    (shelf / "markdown").mkdir(parents=True)
+    (shelf / "markdown" / "locked.md").write_text("A locked chapter body.")
+    chapter_meta = {
+        "id": "idor-locked-1",
+        "stage": 2,
+        "chapter": 1,
+        "slug": "locked",
+        "title": "Locked",
+        "content_type": "chapter",
+        "release_day": 0,
+        "order": 1,
+        "path": "markdown/locked.md",
+    }
+    (shelf / "manifest.json").write_text(
+        json.dumps({"schema_version": "1.1.0", "chapters": [chapter_meta], "site_resources": []})
+    )
+    stage = CourseStage(
+        title="S2",
+        subtitle="x",
+        stage_number=2,
+        overview_url="https://example.com/s2",
+        category="x",
+        aspect="x",
+        spiral_dynamics_color="x",
+        growing_up_stage="x",
+        divine_gender_polarity="x",
+        relationship_to_free_will="active",
+        free_will_description="x",
+    )
+    db_session.add(stage)
+    await db_session.flush()
+    item = StageContent(
+        course_stage_id=stage.id,
+        title="Locked",
+        content_type="chapter",
+        release_day=0,
+        url=content_ref("idor-locked-1"),
+    )
+    db_session.add(item)
+    await db_session.commit()
+    await db_session.refresh(item)
+    span = {"anchor_start": 0, "anchor_end": 8}
+
+    set_content_repository_for_tests(ContentRepository(shelf))
+    try:
+        write = await async_client.post(
+            f"/course/content/{item.id}/promote", json=span, headers=headers
+        )
+        read = await async_client.get(f"/course/content/{item.id}/promotions", headers=headers)
+        missing = await async_client.post(
+            f"/course/content/{_DEFINITELY_MISSING_ID}/promote", json=span, headers=headers
+        )
+    finally:
+        reset_content_repository_for_tests()
+
+    assert write.status_code == read.status_code == missing.status_code == HTTPStatus.NOT_FOUND
+    assert write.json() == read.json() == missing.json() == {"detail": "content_not_found"}
+    assert await _promoted_quote_count(db_session) == 0
 
 
 async def _ui_flags_row(db_session: AsyncSession, user_id: int) -> UserUiFlags:

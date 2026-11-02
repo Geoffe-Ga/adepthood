@@ -12,7 +12,9 @@ Three doors, each closed at the narrowest point that sees it:
   source that may not egress (Intimate, or any tier outside the allowlist of
   :func:`domain.privacy_tier.admits_egress` -- an unknown tier fails closed),
   and a span that overlaps a restricted passage the source itself carries from
-  an earlier fold. :func:`refuse_unfoldable_quote` refuses to fold a quote
+  an earlier fold (:func:`refuse_unquotable_letter_span` does the same for a
+  span of a Resonance Letter, held to the tier of the entry its note sits on,
+  #3658). :func:`refuse_unfoldable_quote` refuses to fold a quote
   whose source has *since* become restricted. Both answer 409
   :data:`QUOTE_SOURCE_RESTRICTED` and log ids and the code only.
 * **Offer.** The reflection composer is offered no quote that carries
@@ -257,6 +259,30 @@ async def letter_body(session: AsyncSession, entry: JournalEntry, anchor_text: s
     # released with its own before anything leaves the process.
     await observe_entry_lineage(session, LineageOperation.ESSAY, entry)
     return withhold_passages(entry.message, held)
+
+
+async def refuse_unquotable_letter_span(
+    session: AsyncSession, entry: JournalEntry, text: str
+) -> None:
+    """Raise 409 unless ``text``, a span of a letter on a note of ``entry``'s, may become a quote.
+
+    A letter has no tier of its own: it answers to the entry its note sits on,
+    so it is refused when that entry may not egress -- the letter may predate
+    the entry becoming Intimate -- exactly as :func:`refuse_unquotable_span`
+    refuses a span of the entry itself. It is also refused when ``text`` carries
+    a passage the entry holds from a restricted fold: a letter is written from
+    the masked body, but one written before that fold's source became Intimate
+    may repeat it. Nothing is stored either way.
+    """
+    if not admits_egress(entry.classification):
+        raise _refused(entry.user_id, entry.id, None)
+    if entry.id is None:
+        return
+    passages = await restricted_folded_passages(
+        session, user_id=entry.user_id, entry_ids=(entry.id,)
+    )
+    if carries_passage(text, passages.get(entry.id, ())):
+        raise _refused(entry.user_id, entry.id, None)
 
 
 def quote_is_foldable(source: JournalEntry, text: str, source_passages: tuple[str, ...]) -> bool:

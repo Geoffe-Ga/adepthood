@@ -7621,8 +7621,31 @@
         "title": "ProgressRhythm",
         "type": "object"
       },
+      "PromoteCourseQuoteCreate": {
+        "description": "Payload for promoting a span of a Course chapter, bounded by the chapter bound.\n\nThe same offsets-only contract and span check as :class:`PromoteQuoteCreate`;\nonly the bound differs (:data:`COURSE_CHAPTER_OFFSET_MAX`). Offsets index the\n``body_markdown`` that ``GET /course/content/{content_id}/body`` returns.",
+        "properties": {
+          "anchor_end": {
+            "maximum": 100000.0,
+            "minimum": 1.0,
+            "title": "Anchor End",
+            "type": "integer"
+          },
+          "anchor_start": {
+            "maximum": 100000.0,
+            "minimum": 0.0,
+            "title": "Anchor Start",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "anchor_start",
+          "anchor_end"
+        ],
+        "title": "PromoteCourseQuoteCreate",
+        "type": "object"
+      },
       "PromoteQuoteCreate": {
-        "description": "Payload for promoting a span of a source entry into a pending quote.\n\nOnly offsets are accepted; the server slices ``anchor_text`` from the\npersisted body. ``anchor_end`` must lie strictly past ``anchor_start`` so an\nempty or inverted span is rejected before it reaches the database.",
+        "description": "Payload for promoting a span of a source entry or a letter into a pending quote.\n\nOnly offsets are accepted; the server slices ``anchor_text`` from the\npersisted body. ``anchor_end`` must lie strictly past ``anchor_start`` so an\nempty or inverted span is rejected before it reaches the database. The\nbound fits both bodies: a letter is capped at ``domain.resonance.ESSAY_MAX``,\nno more than an entry may hold.",
         "properties": {
           "anchor_end": {
             "maximum": 10000.0,
@@ -16718,6 +16741,272 @@
         ]
       }
     },
+    "/course/content/{content_id}/promote": {
+      "post": {
+        "description": "Promote a span of a released Course chapter into a pending quote.\n\nThe chapter passes the gate ``GET /course/content/{content_id}/body``\napplies -- stage unlocked, released by the proportional drip, a local\nbody -- so a missing, locked or unreleased chapter is 404\n``content_not_found``, masked identically (BUG-COURSE-004), and nothing is\nstored. Offsets are code points into ``body_markdown`` exactly as that route\nreturns it (frontmatter already stripped), bounded by the chapter bound\nrather than the entry one; a span past the body is 422\n``anchor_out_of_range`` and one past the quote cap 422 ``quote_too_long``.\nA content directory that cannot serve the listed chapter is 502\n``content_unavailable``.\n\nCourse text is published, the same for every reader, so no writer's tier\napplies to it. The quote snapshots the chapter's title (truncated to its\ncolumn) so it still names its chapter once a content pin prunes it.",
+        "operationId": "promote_course_quote_course_content__content_id__promote_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "content_id",
+            "required": true,
+            "schema": {
+              "maximum": 2147483647,
+              "minimum": 1,
+              "title": "Content Id",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PromoteCourseQuoteCreate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PromotedQuoteResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "The request body could not be parsed, or a value it carried was refused."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "No usable credential was presented."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "The caller is authenticated but does not own the resource."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "No such resource -- or none this caller is allowed to see."
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "The request conflicts with the resource's current state."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ValidationErrorResponse"
+                }
+              }
+            },
+            "description": "The request failed validation -- an array of rejected fields -- or a check applied after the schema refused it, as one snake_case code."
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "The caller went past a rate limit."
+          },
+          "502": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "An upstream dependency this route relies on failed."
+          }
+        },
+        "summary": "Promote Course Quote",
+        "tags": [
+          "promotions"
+        ]
+      }
+    },
+    "/course/content/{content_id}/promotions": {
+      "get": {
+        "description": "List every quote the caller promoted from one released Course chapter.\n\nThe chapter passes the same release gate as its promote route, so a\nmissing, locked or unreleased chapter is 404 ``content_not_found``.\nScoped to the caller, every status, ordered by ``(anchor_start, id)`` --\nwhat a reopened chapter needs to rehydrate its highlights.",
+        "operationId": "list_course_promotions_course_content__content_id__promotions_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "content_id",
+            "required": true,
+            "schema": {
+              "maximum": 2147483647,
+              "minimum": 1,
+              "title": "Content Id",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/PromotedQuoteResponse"
+                  },
+                  "title": "Response List Course Promotions Course Content  Content Id  Promotions Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "The request body could not be parsed, or a value it carried was refused."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "No usable credential was presented."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "The caller is authenticated but does not own the resource."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "No such resource -- or none this caller is allowed to see."
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "The request conflicts with the resource's current state."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ValidationErrorResponse"
+                }
+              }
+            },
+            "description": "The request failed validation -- an array of rejected fields -- or a check applied after the schema refused it, as one snake_case code."
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "The caller went past a rate limit."
+          }
+        },
+        "summary": "List Course Promotions",
+        "tags": [
+          "promotions"
+        ]
+      }
+    },
     "/course/next-unread": {
       "get": {
         "description": "The reader's next unread page -- Start Here first, then chapters -- or ``null``.\n\nWhile any Start Here resource the current pin ships is unread, the\nanswer is the lowest-``order`` one (issue #3234).  Otherwise it is the\nearliest unlocked, unread chapter across every open stage, ordered by\nstage, then ``release_day``, then ``id`` -- the release order the\nper-stage listing already uses -- so \"Read next\" always lands on the\nchapter a reader would reach by walking the stages in order. Drip lock\nsemantics come from the same :func:`filter_content_for_user` path as the\nlisting; nothing is re-derived here. ``null`` (not 404) means \"caught\nup\": the endpoint is the reader's position, and it always exists.\n\nThe request carries no id at all -- the answer is scoped to the JWT\nsubject -- so there is no foreign id to authorize.",
@@ -21377,6 +21666,262 @@
         "summary": "Expand Marginalia Essay",
         "tags": [
           "journal"
+        ]
+      }
+    },
+    "/journal/marginalia/{marginalia_id}/letter/promote": {
+      "post": {
+        "description": "Promote a span of the Resonance Letter on one of the caller's margin notes.\n\nA missing, foreign or hidden note is 404 ``marginalia_not_found``; a note\nwhose entry is deleted (or not the caller's) is 404\n``journal_entry_not_found``; a note with no letter, or only a withheld stub\none, is 404 ``letter_not_found``. An entry whose deletion is in progress is\n409 ``journal_entry_deletion_pending``. Offsets are code points into the\nletter; a span past it is 422 ``anchor_out_of_range`` and one past the\nquote cap 422 ``quote_too_long``. Letters are write-once, so no re-anchoring\nfollows.\n\nA letter has no tier of its own: it inherits its entry's. A letter on an\nentry that may not egress (Intimate, or an unknown tier), or a span carrying\na passage that entry holds from a restricted fold, is 409\n``quote_source_restricted``, and nothing is stored.",
+        "operationId": "promote_letter_quote_journal_marginalia__marginalia_id__letter_promote_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "marginalia_id",
+            "required": true,
+            "schema": {
+              "maximum": 2147483647,
+              "minimum": 1,
+              "title": "Marginalia Id",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PromoteQuoteCreate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PromotedQuoteResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "The request body could not be parsed, or a value it carried was refused."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "No usable credential was presented."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "The caller is authenticated but does not own the resource."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "No such resource -- or none this caller is allowed to see."
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "The request conflicts with the resource's current state."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ValidationErrorResponse"
+                }
+              }
+            },
+            "description": "The request failed validation -- an array of rejected fields -- or a check applied after the schema refused it, as one snake_case code."
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "The caller went past a rate limit."
+          }
+        },
+        "summary": "Promote Letter Quote",
+        "tags": [
+          "promotions"
+        ]
+      }
+    },
+    "/journal/marginalia/{marginalia_id}/letter/promotions": {
+      "get": {
+        "description": "List every quote the caller promoted from the letter on one of their margin notes.\n\nThe same gate as its promote route: a missing, foreign or hidden note is\n404 ``marginalia_not_found``, a deleted entry 404 ``journal_entry_not_found``,\nand a note with no served letter 404 ``letter_not_found``. Scoped to the\ncaller, every status, ordered by ``(anchor_start, id)``.",
+        "operationId": "list_letter_promotions_journal_marginalia__marginalia_id__letter_promotions_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "marginalia_id",
+            "required": true,
+            "schema": {
+              "maximum": 2147483647,
+              "minimum": 1,
+              "title": "Marginalia Id",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/PromotedQuoteResponse"
+                  },
+                  "title": "Response List Letter Promotions Journal Marginalia  Marginalia Id  Letter Promotions Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "The request body could not be parsed, or a value it carried was refused."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "No usable credential was presented."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "The caller is authenticated but does not own the resource."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "No such resource -- or none this caller is allowed to see."
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "The request conflicts with the resource's current state."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ValidationErrorResponse"
+                }
+              }
+            },
+            "description": "The request failed validation -- an array of rejected fields -- or a check applied after the schema refused it, as one snake_case code."
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "The caller went past a rate limit."
+          }
+        },
+        "summary": "List Letter Promotions",
+        "tags": [
+          "promotions"
         ]
       }
     },
