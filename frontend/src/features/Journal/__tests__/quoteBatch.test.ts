@@ -6,13 +6,19 @@ import { describe, it, expect } from '@jest/globals';
 import {
   byPassageOrder,
   candidateFromListItem,
+  candidateFromReadingQuote,
   candidateFromSource,
   planQuoteBatch,
   type FoldCandidate,
 } from '../quoteBatch';
 import { formatSourceDate, quoteAttribution, sourceAttribution } from '../reflectionCopy';
 
-import type { PromotedQuoteListItem, PromotedQuoteSummary, ReflectionSourceItem } from '@/api';
+import type {
+  PromotedQuoteListItem,
+  PromotedQuoteSummary,
+  ReadingQuoteItem,
+  ReflectionSourceItem,
+} from '@/api';
 
 const A: FoldCandidate = { id: 1, anchorText: 'first', attribution: 'Runs' };
 const B: FoldCandidate = { id: 2, anchorText: 'second', attribution: 'Runs' };
@@ -38,7 +44,10 @@ function sourceItem(overrides: Partial<ReflectionSourceItem> = {}): ReflectionSo
 function listItem(overrides: Partial<PromotedQuoteListItem> = {}): PromotedQuoteListItem {
   return {
     id: 11,
+    source_kind: 'entry',
     source_entry_id: 7,
+    source_content_id: null,
+    source_marginalia_id: null,
     anchor_start: 0,
     anchor_end: 4,
     anchor_text: 'went',
@@ -47,6 +56,8 @@ function listItem(overrides: Partial<PromotedQuoteListItem> = {}): PromotedQuote
     created_at: '2026-06-20T00:00:00Z',
     source_title: 'Runs',
     source_timestamp: '2026-06-15T12:00:00Z',
+    source_stage_number: null,
+    letter_entry_id: null,
     included_in_entry_id: null,
     included_in_title: null,
     ...overrides,
@@ -147,7 +158,85 @@ describe('candidate adapters -- one attribution whichever surface folds (#2885)'
   });
 });
 
+/** A Course quote as the Promoted quotes screen lists it (#3659). */
+const COURSE_ITEM: Partial<PromotedQuoteListItem> = {
+  source_kind: 'course',
+  source_entry_id: null,
+  source_content_id: 12,
+  source_title: 'Beige 1',
+  source_stage_number: 1,
+};
+
+/** A letter quote as the screen lists it: the title is the page the letter answered. */
+const LETTER_ITEM: Partial<PromotedQuoteListItem> = {
+  source_kind: 'letter',
+  source_entry_id: null,
+  source_marginalia_id: 40,
+  source_title: 'Runs',
+  letter_entry_id: 7,
+};
+
+function readingQuote(overrides: Partial<ReadingQuoteItem> = {}): ReadingQuoteItem {
+  return {
+    id: 21,
+    source_kind: 'course',
+    source_title: 'Beige 1',
+    anchor_start: 0,
+    anchor_end: 4,
+    anchor_text: 'went',
+    pending: true,
+    created_at: '2026-06-20T00:00:00Z',
+    ...overrides,
+  };
+}
+
+describe('candidate adapters -- a chapter or a letter names its own source (#3659)', () => {
+  it('attributes a Course quote from the screen to its chapter', () => {
+    expect(candidateFromListItem(listItem({ ...COURSE_ITEM, id: 12 }))).toEqual({
+      id: 12,
+      anchorText: 'went',
+      attribution: 'From “Beige 1”',
+    });
+  });
+
+  it('attributes a letter quote from the screen to a letter, not to the page it answered', () => {
+    expect(candidateFromListItem(listItem({ ...LETTER_ITEM })).attribution).toBe('From a letter');
+  });
+
+  it('builds a panel candidate from a reading quote on the sources feed', () => {
+    expect(candidateFromReadingQuote(readingQuote())).toEqual({
+      id: 21,
+      anchorText: 'went',
+      attribution: 'From “Beige 1”',
+    });
+    expect(
+      candidateFromReadingQuote(readingQuote({ source_kind: 'letter', source_title: null }))
+        .attribution,
+    ).toBe('From a letter');
+  });
+
+  it.each([
+    ['a Course quote', COURSE_ITEM, 'course' as const],
+    ['a letter quote', LETTER_ITEM, 'letter' as const],
+  ])('writes the same block from the screen as from the panel for %s', (_name, overrides, kind) => {
+    const fromScreen = candidateFromListItem(listItem(overrides));
+    const fromPanel = candidateFromReadingQuote(
+      readingQuote({ source_kind: kind, source_title: overrides.source_title ?? null }),
+    );
+    expect(fromScreen.attribution).toBe(fromPanel.attribution);
+  });
+});
+
 describe('byPassageOrder -- the screen folds in the order the panel would (#2885)', () => {
+  it('orders a chapter and a letter quote by the source time the server sends per kind', () => {
+    // A Course quote's source time is when it was promoted, a letter's when the
+    // letter was written; either sorts among the entries by that one instant.
+    const entry = listItem({ id: 1, source_timestamp: '2026-06-15T12:00:00Z' });
+    const course = listItem({ ...COURSE_ITEM, id: 2, source_timestamp: '2026-06-14T00:00:00Z' });
+    const letter = listItem({ ...LETTER_ITEM, id: 3, source_timestamp: '2026-06-16T00:00:00Z' });
+    expect([letter, entry, course].sort(byPassageOrder).map((row) => row.id)).toEqual([2, 1, 3]);
+  });
+
   it('orders by source date, then by where the passage sits, then by id', () => {
     const later = listItem({ id: 1, source_timestamp: '2026-06-16T00:00:00Z', anchor_start: 0 });
     const tail = listItem({ id: 2, anchor_start: 30, created_at: '2026-06-01T00:00:00Z' });

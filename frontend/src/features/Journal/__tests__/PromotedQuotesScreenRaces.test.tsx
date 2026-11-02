@@ -61,7 +61,10 @@ const EPOCH = Date.UTC(2026, 0, 1);
 function row(n: number): PromotedQuoteListItem {
   return {
     id: n,
+    source_kind: 'entry',
     source_entry_id: 7,
+    source_content_id: null,
+    source_marginalia_id: null,
     anchor_start: 0,
     anchor_end: 5,
     anchor_text: `quote ${n}`,
@@ -69,6 +72,8 @@ function row(n: number): PromotedQuoteListItem {
     stale: false,
     source_title: 'Rain',
     source_timestamp: '2026-01-01T00:00:00Z',
+    source_stage_number: null,
+    letter_entry_id: null,
     included_in_entry_id: null,
     included_in_title: null,
     created_at: new Date(EPOCH - n * MINUTE_MS).toISOString(),

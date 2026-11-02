@@ -86,7 +86,10 @@ function entry(overrides: Partial<JournalMessage> = {}): JournalMessage {
 function promotedQuote(overrides: Partial<PromotedQuote> = {}): PromotedQuote {
   return {
     id: 55,
+    source_kind: 'entry',
     source_entry_id: 7,
+    source_content_id: null,
+    source_marginalia_id: null,
     anchor_start: 2,
     anchor_end: 19,
     // Must spell its own text in BODY, or the body draws it apart as detached.

@@ -9,7 +9,10 @@ const BODY = 'I walked by the river and the willow bent.';
 function quote(overrides: Partial<PromotedQuote> = {}): PromotedQuote {
   return {
     id: 9,
+    source_kind: 'entry',
     source_entry_id: 1,
+    source_content_id: null,
+    source_marginalia_id: null,
     anchor_start: 16,
     anchor_end: 21,
     anchor_text: 'river',

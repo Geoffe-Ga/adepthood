@@ -27,7 +27,10 @@ function jsonResponse(data: unknown, status = 200) {
 function quote(overrides: Partial<PromotedQuote> = {}): PromotedQuote {
   return {
     id: 1,
+    source_kind: 'entry',
     source_entry_id: 7,
+    source_content_id: null,
+    source_marginalia_id: null,
     anchor_start: 2,
     anchor_end: 19,
     anchor_text: 'went for a run to',
@@ -141,6 +144,8 @@ describe('promotions.listAll', () => {
     ...quote({ id: 4, pending: false }),
     source_title: 'Rain',
     source_timestamp: '2026-03-01T09:00:00Z',
+    source_stage_number: null,
+    letter_entry_id: null,
     included_in_entry_id: 12,
     included_in_title: 'The windy week',
     created_at: '2026-03-02T09:00:00Z',

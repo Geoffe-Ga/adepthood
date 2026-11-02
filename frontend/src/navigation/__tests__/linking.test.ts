@@ -69,6 +69,29 @@ describe('stage deep links (#2958)', () => {
     });
   });
 
+  it('round-trips a Course passage to preselect as start-end, never [object Object] (#3659)', () => {
+    const state = tabState('Course', {
+      stageNumber: 1,
+      contentId: 5,
+      highlightSpan: { start: 8, end: 32, text: 'the body keeps the score' },
+    });
+    const path = getPathFromState(state, linking.config);
+    expect(path).toBe('/course/1?contentId=5&highlightSpan=8-32');
+    expect(leafParams(path).params).toEqual({
+      stageNumber: 1,
+      contentId: 5,
+      highlightSpan: { start: 8, end: 32 },
+    });
+  });
+
+  it('drops a malformed Course passage query param', () => {
+    expect(leafParams('course/1?contentId=5&highlightSpan=%5Bobject%20Object%5D').params).toEqual({
+      stageNumber: 1,
+      contentId: 5,
+      highlightSpan: undefined,
+    });
+  });
+
   it('drops malformed Course reading-restore query params', () => {
     const { params } = leafParams('course/2?contentId=0&scrollOffset=-1');
     expect(params).toEqual({ stageNumber: 2, contentId: undefined, scrollOffset: undefined });

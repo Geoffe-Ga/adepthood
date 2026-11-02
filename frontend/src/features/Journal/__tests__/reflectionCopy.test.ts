@@ -4,6 +4,9 @@ import {
   reflectionTitle,
   formatBlockquote,
   formatQuotePrefill,
+  quoteAttribution,
+  quoteSourceLabel,
+  quoteSourceSpoken,
   sourceAttribution,
   spliceQuoteBlock,
 } from '../reflectionCopy';
@@ -177,5 +180,99 @@ describe('sourceAttribution', () => {
     const attribution = sourceAttribution(sourceItem({ title: '   ' }));
     expect(attribution).toContain('Jun');
     expect(attribution).toContain('2026');
+  });
+});
+
+/**
+ * #3659: a quote can come from a Course chapter or a Resonance Letter as well
+ * as a page, and every surface -- the Promoted quotes caption, the Sources pane
+ * and the attribution a fold writes -- names that source the same way.
+ */
+describe('quoteAttribution, per source kind (#3659)', () => {
+  const WHEN = '2026-06-15T12:00:00Z';
+
+  it('leaves an entry exactly as it was: its title, else its date', () => {
+    expect(quoteAttribution({ sourceKind: 'entry', title: 'Rain', timestamp: WHEN })).toBe('Rain');
+    expect(quoteAttribution({ title: 'Rain', timestamp: WHEN })).toBe('Rain');
+    expect(quoteAttribution({ sourceKind: 'entry', title: null, timestamp: WHEN })).toMatch(
+      /Jun.*2026/,
+    );
+  });
+
+  it('names a Course chapter in curly quotes', () => {
+    expect(quoteAttribution({ sourceKind: 'course', title: ' Beige 1 ', timestamp: WHEN })).toBe(
+      'From “Beige 1”',
+    );
+  });
+
+  it('still says where an untitled chapter quote came from', () => {
+    expect(quoteAttribution({ sourceKind: 'course', title: '  ', timestamp: WHEN })).toBe(
+      'From a Course chapter',
+    );
+  });
+
+  it('attributes a letter quote to a letter, whatever page it answered', () => {
+    expect(quoteAttribution({ sourceKind: 'letter', title: 'Rain', timestamp: WHEN })).toBe(
+      'From a letter',
+    );
+    expect(quoteAttribution({ sourceKind: 'letter', title: null, timestamp: WHEN })).toBe(
+      'From a letter',
+    );
+  });
+
+  it('writes the folded block the issue names', () => {
+    const course = quoteAttribution({ sourceKind: 'course', title: 'Beige 1', timestamp: WHEN });
+    const letter = quoteAttribution({ sourceKind: 'letter', title: 'Rain', timestamp: WHEN });
+    expect(formatBlockquote('the body keeps the score', course)).toBe(
+      '> the body keeps the score\n> — From “Beige 1”',
+    );
+    expect(formatBlockquote('you are allowed to rest', letter)).toBe(
+      '> you are allowed to rest\n> — From a letter',
+    );
+  });
+});
+
+describe('quoteSourceLabel: the caption beneath a listed quote (#3659)', () => {
+  const WHEN = '2026-06-15T12:00:00Z';
+
+  it('is the attribution for an entry and a chapter', () => {
+    expect(quoteSourceLabel({ sourceKind: 'entry', title: 'Rain', timestamp: WHEN })).toBe('Rain');
+    expect(quoteSourceLabel({ sourceKind: 'course', title: 'Beige 1', timestamp: WHEN })).toBe(
+      'From “Beige 1”',
+    );
+  });
+
+  it('names the page a letter answered, so the writer recognises it', () => {
+    expect(quoteSourceLabel({ sourceKind: 'letter', title: 'Rain', timestamp: WHEN })).toBe(
+      'From a letter · Rain',
+    );
+  });
+
+  it("falls back to the letter's date when the page it answered is untitled", () => {
+    expect(quoteSourceLabel({ sourceKind: 'letter', title: null, timestamp: WHEN })).toMatch(
+      /^From a letter · Jun 1[45], 2026$/,
+    );
+  });
+
+  it('says only "From a letter" when it has neither a title nor a readable date', () => {
+    expect(quoteSourceLabel({ sourceKind: 'letter', title: null, timestamp: 'not a date' })).toBe(
+      'From a letter',
+    );
+  });
+});
+
+describe("quoteSourceSpoken: the source as a row's accessible name says it (#3659)", () => {
+  const WHEN = '2026-06-15T12:00:00Z';
+
+  it('reads "from" and the caption, so what is seen is part of what is heard', () => {
+    expect(quoteSourceSpoken({ sourceKind: 'entry', title: 'Rain', timestamp: WHEN })).toBe(
+      'from Rain',
+    );
+    expect(quoteSourceSpoken({ sourceKind: 'course', title: 'Beige 1', timestamp: WHEN })).toBe(
+      'from “Beige 1”',
+    );
+    expect(quoteSourceSpoken({ sourceKind: 'letter', title: 'Rain', timestamp: WHEN })).toBe(
+      'from a letter, Rain',
+    );
   });
 });

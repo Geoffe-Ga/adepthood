@@ -9,6 +9,7 @@ import { StyleSheet, TouchableOpacity, View } from 'react-native';
 
 import { FeatureErrorBoundary } from '../components/FeatureErrorBoundary';
 import { accent, SPACING, touchTarget } from '../design/tokens';
+import type { CoursePassageSpan } from '../features/Course/coursePassage';
 import CourseScreen from '../features/Course/CourseScreen';
 import { FEEDBACK_CONTROL_TOKENS } from '../features/Feedback/feedbackControlTokens';
 import { openFeedbackComposer } from '../features/Feedback/navigation';
@@ -51,6 +52,15 @@ export type RootTabParamList = {
         /** Optional restore hints from a Back-to-reading return. */
         contentId?: number;
         scrollOffset?: number;
+        /**
+         * One-shot request to open ``contentId`` with this passage preselected
+         * (a Course quote's Open on the Promoted quotes screen, #3659): code-point
+         * offsets into the chapter's ``body_markdown`` as served -- the anchor
+         * API's own units -- and, when known, the words they should select.
+         * Consumed once the chapter opens; a span that no longer matches the
+         * chapter's text opens it normally.
+         */
+        highlightSpan?: CoursePassageSpan;
       }
     | undefined;
   Journal: undefined;

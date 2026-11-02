@@ -1,6 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it, jest } from '@jest/globals';
 
-import { onWebFontsSettled, readWebContentHeight, readWebNaturalHeight } from '../webFieldMeasure';
+import {
+  onWebFontsSettled,
+  readWebContentHeight,
+  readWebNaturalHeight,
+  revealWebCaret,
+} from '../webFieldMeasure';
 
 const Platform = require('react-native').Platform as { OS: string };
 
@@ -177,5 +182,96 @@ describe('onWebFontsSettled (#3325)', () => {
     (globalThis as { document?: unknown }).document = { fonts };
     onWebFontsSettled(jest.fn())();
     expect(fonts.addEventListener).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * A Course quote's Open (#3659) lands on a chapter mirrored whole in one grown
+ * textarea, which never scrolls inside: the passage it preselected can sit
+ * screens below. The caret's depth is read off a copy holding only the text
+ * before it, and a marker at that depth -- placed where the field is, inside
+ * whatever scrolls it -- is scrolled to the middle of the view.
+ */
+describe('revealWebCaret (#3659)', () => {
+  let originalOS: string;
+  beforeEach(() => {
+    originalOS = Platform.OS;
+    Platform.OS = 'web';
+  });
+  afterEach(() => {
+    Platform.OS = originalOS;
+  });
+
+  const BEFORE_CARET = 740;
+
+  function revealableTextarea() {
+    const { node, twin, appendChild } = hostTextarea(BEFORE_CARET, 2400);
+    const marker = {
+      style: {} as Record<string, string>,
+      setAttribute: jest.fn(),
+      scrollIntoView: jest.fn(),
+      remove: jest.fn(),
+    };
+    const offsetParent = { appendChild: jest.fn() };
+    const field = Object.assign(node, {
+      value: 'one two three four five',
+      offsetTop: 120,
+      offsetLeft: 16,
+      offsetParent,
+      ownerDocument: { ...node.ownerDocument, createElement: jest.fn(() => marker) },
+    });
+    return { field, twin, appendChild, marker, offsetParent };
+  }
+
+  it('scrolls a marker at the depth of the text before the caret into the middle of the view', () => {
+    const { field, twin, marker, offsetParent } = revealableTextarea();
+
+    revealWebCaret(field, 8);
+
+    expect(twin.value).toBe('one two ');
+    expect(twin.remove).toHaveBeenCalledTimes(1);
+    expect(field.ownerDocument.createElement).toHaveBeenCalledWith('div');
+    expect(marker.style).toMatchObject({
+      position: 'absolute',
+      top: `${120 + BEFORE_CARET}px`,
+      left: '16px',
+      visibility: 'hidden',
+    });
+    expect(marker.setAttribute).toHaveBeenCalledWith('aria-hidden', 'true');
+    expect(offsetParent.appendChild).toHaveBeenCalledWith(marker);
+    expect(marker.scrollIntoView).toHaveBeenCalledWith({ block: 'center' });
+    expect(marker.remove).toHaveBeenCalledTimes(1);
+  });
+
+  it('scrolls nothing for a field with no positioned ancestor to place the marker in', () => {
+    const { field, marker } = revealableTextarea();
+    Object.assign(field, { offsetParent: null });
+
+    revealWebCaret(field, 8);
+
+    expect(marker.scrollIntoView).not.toHaveBeenCalled();
+  });
+
+  it('scrolls nothing for a caret at the very top, which is already where the field opens', () => {
+    const { field, marker } = revealableTextarea();
+
+    revealWebCaret(field, 0);
+
+    expect(marker.scrollIntoView).not.toHaveBeenCalled();
+  });
+
+  it('scrolls nothing for a node that is not a measurable field', () => {
+    expect(() => revealWebCaret({ scrollHeight: 10 }, 4)).not.toThrow();
+    expect(() => revealWebCaret(null, 4)).not.toThrow();
+  });
+
+  it('scrolls nothing on native', () => {
+    Platform.OS = 'ios';
+    const { field, marker } = revealableTextarea();
+
+    revealWebCaret(field, 8);
+
+    expect(field.cloneNode).not.toHaveBeenCalled();
+    expect(marker.scrollIntoView).not.toHaveBeenCalled();
   });
 });

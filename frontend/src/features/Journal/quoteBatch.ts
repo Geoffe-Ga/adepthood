@@ -15,7 +15,12 @@
  */
 import { formatBlockquote, quoteAttribution, spliceQuoteBlock } from './reflectionCopy';
 
-import type { PromotedQuoteListItem, PromotedQuoteSummary, ReflectionSourceItem } from '@/api';
+import type {
+  PromotedQuoteListItem,
+  PromotedQuoteSummary,
+  ReadingQuoteItem,
+  ReflectionSourceItem,
+} from '@/api';
 
 /** One quote ready to fold in: its id, its words, and the line naming its source. */
 export interface FoldCandidate {
@@ -41,21 +46,50 @@ export function candidateFromSource(
   return { id: quote.id, anchorText: quote.anchor_text, attribution: quoteAttribution(item) };
 }
 
-/** A candidate from the Promoted quotes screen, attributed exactly as the panel would. */
+/**
+ * A Course or letter quote from the sources panel's "From your reading" group
+ * (#3659), attributed by its kind: ``From “Beige 1”`` / ``From a letter``.
+ */
+export function candidateFromReadingQuote(quote: ReadingQuoteItem): FoldCandidate {
+  return {
+    id: quote.id,
+    anchorText: quote.anchor_text,
+    attribution: quoteAttribution({
+      sourceKind: quote.source_kind,
+      title: quote.source_title,
+      timestamp: quote.created_at,
+    }),
+  };
+}
+
+/**
+ * A candidate from the Promoted quotes screen, attributed exactly as the panel
+ * would: by the per-kind ``source_title`` the server sends (an entry's title, a
+ * chapter's, or for a letter the page it answered, which the letter's
+ * attribution leaves unnamed).
+ */
 export function candidateFromListItem(quote: PromotedQuoteListItem): FoldCandidate {
   return {
     id: quote.id,
     anchorText: quote.anchor_text,
-    attribution: quoteAttribution({ title: quote.source_title, timestamp: quote.source_timestamp }),
+    attribution: quoteAttribution({
+      sourceKind: quote.source_kind,
+      title: quote.source_title,
+      timestamp: quote.source_timestamp,
+    }),
   };
 }
 
 /**
  * The order the Promoted quotes screen folds a selection in: the oldest source
- * first, then where each passage sits within its source, then id. That is the
- * sources panel's own order (sources oldest first, each source's quotes by
- * anchor), so the same pair lands the same way round from either surface --
- * not the screen's display order, which is newest-promoted first.
+ * first, then where each passage sits within its source, then id. For entry
+ * quotes that is the sources panel's own order (sources oldest first, each
+ * source's quotes by anchor), so the same pair lands the same way round from
+ * either surface -- not the screen's display order, which is newest-promoted
+ * first. ``source_timestamp`` is per kind (#3659): when a chapter quote was
+ * promoted, when a letter was written, so either sorts among the entries by
+ * that one instant. (The panel folds its "From your reading" group after the
+ * entry quotes above it, the order it shows them in.)
  */
 export function byPassageOrder(a: PromotedQuoteListItem, b: PromotedQuoteListItem): number {
   const bySource = Date.parse(a.source_timestamp) - Date.parse(b.source_timestamp);

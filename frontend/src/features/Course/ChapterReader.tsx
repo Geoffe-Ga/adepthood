@@ -19,6 +19,7 @@ import ConfirmDialog from '../Habits/components/ConfirmDialog';
 import QuoteSelectionSurface, { type CodePointSpan } from '../Journal/QuoteSelectionSurface';
 
 import styles, { markdownStyles } from './Course.styles';
+import { alignPassage, type CoursePassageSpan } from './coursePassage';
 import RetryButton from './RetryButton';
 import { stripLeadingTitleHeading } from './stripLeadingTitleHeading';
 
@@ -83,6 +84,13 @@ interface ChapterReaderProps {
   onWriteNote?: (_passage: WriteNotePassage) => void;
   /** Restores the reading ScrollView to this offset on a warm return. */
   initialScrollOffset?: number;
+  /**
+   * A passage to open on, already chosen (a Course quote's Open, #3659): the
+   * chapter opens on its selection surface with this passage selected, as code
+   * points into ``body_markdown`` as served. Ignored unless ``onWriteNote`` is
+   * given, and when it no longer fits the body (see ``alignPassage``).
+   */
+  preselectedPassage?: CoursePassageSpan;
 }
 
 /**
@@ -268,6 +276,8 @@ function useContentBody(source: ChapterReaderSource): {
 
 interface PassageSelection {
   selecting: boolean;
+  /** The passage the surface opens on: a preselection, until the reader leaves it. */
+  seed: CodePointSpan | undefined;
   dialogVisible: boolean;
   onScroll: (_event: NativeSyntheticEvent<NativeScrollEvent>) => void;
   beginSelection: () => void;
@@ -281,16 +291,20 @@ interface PassageSelection {
 /**
  * Own the write-note gesture: track the latest scroll offset, snapshot it at the
  * moment the affordance is pressed, hold the emitted code-point span, and slice
- * the passage by code points when the reader confirms.
+ * the passage by code points when the reader confirms. A ``preselection`` opens
+ * the gesture already under way, on that passage (#3659); leaving it, or
+ * starting afresh, lets it go.
  */
 function usePassageSelection(
   markdown: string,
   sourceTitle: string,
-  onWriteNote?: (_passage: WriteNotePassage) => void,
+  onWriteNote: ((_passage: WriteNotePassage) => void) | undefined,
+  preselection: CodePointSpan | null,
 ): PassageSelection {
-  const [selecting, setSelecting] = useState(false);
+  const [selecting, setSelecting] = useState(preselection !== null);
+  const [seed, setSeed] = useState<CodePointSpan | undefined>(preselection ?? undefined);
   const [dialogVisible, setDialogVisible] = useState(false);
-  const [span, setSpan] = useState<CodePointSpan | null>(null);
+  const [span, setSpan] = useState<CodePointSpan | null>(preselection);
   const [capturedOffset, setCapturedOffset] = useState(0);
   const scrollOffsetRef = useRef(0);
 
@@ -300,10 +314,14 @@ function usePassageSelection(
 
   const beginSelection = useCallback(() => {
     setCapturedOffset(scrollOffsetRef.current);
+    setSeed(undefined);
     setSelecting(true);
   }, []);
 
-  const cancelSelection = useCallback(() => setSelecting(false), []);
+  const cancelSelection = useCallback(() => {
+    setSeed(undefined);
+    setSelecting(false);
+  }, []);
   const handleSelectionChange = useCallback((next: CodePointSpan) => setSpan(next), []);
   const openDialog = useCallback(async () => setDialogVisible(true), []);
   const closeDialog = useCallback(() => setDialogVisible(false), []);
@@ -319,6 +337,7 @@ function usePassageSelection(
 
   return {
     selecting,
+    seed,
     dialogVisible,
     onScroll,
     beginSelection,
@@ -501,6 +520,7 @@ const SelectingSheet = ({
           onSelectionChange={selection.handleSelectionChange}
           onCancel={selection.cancelSelection}
           onConfirm={selection.openDialog}
+          initialSelection={selection.seed}
         />
       </View>
     </ScrollView>
@@ -523,9 +543,36 @@ interface ReaderBodyProps {
   body: ContentBody;
   onWriteNote?: (_passage: WriteNotePassage) => void;
   initialScrollOffset?: number;
+  preselectedPassage?: CoursePassageSpan;
   /** Told whether the essay's end is in view, so the reader can offer its
    *  chapter controls only once there is nothing left to read. */
   onEndReachedChange: (_reached: boolean) => void;
+}
+
+/**
+ * The body as shown (its title heading stripped) and the write-note gesture over
+ * it, opened on the preselected passage when one was asked for, the reader takes
+ * notes, and it still fits (``alignPassage``). Only the first preselection is
+ * used -- it seeds the gesture's state -- and a new passage remounts the body
+ * instead (``passageKey``).
+ */
+function useReaderSelection(
+  body: ContentBody,
+  onWriteNote: ((_passage: WriteNotePassage) => void) | undefined,
+  passage: CoursePassageSpan | undefined,
+): { markdown: string; selection: PassageSelection } {
+  const served = body.body_markdown;
+  const markdown = useMemo(
+    () => stripLeadingTitleHeading(served, body.title),
+    [served, body.title],
+  );
+  const canWriteNote = onWriteNote != null;
+  const preselection = useMemo(
+    () => (canWriteNote && passage != null ? alignPassage(served, markdown, passage) : null),
+    [served, markdown, canWriteNote, passage],
+  );
+  const selection = usePassageSelection(markdown, body.title, onWriteNote, preselection);
+  return { markdown, selection };
 }
 
 /** Renders the loaded body: empty notice, reading sheet, or selection surface. */
@@ -533,13 +580,10 @@ const ReaderBody = ({
   body,
   onWriteNote,
   initialScrollOffset,
+  preselectedPassage,
   onEndReachedChange,
 }: ReaderBodyProps): React.JSX.Element => {
-  const markdown = useMemo(
-    () => stripLeadingTitleHeading(body.body_markdown, body.title),
-    [body.body_markdown, body.title],
-  );
-  const selection = usePassageSelection(markdown, body.title, onWriteNote);
+  const { markdown, selection } = useReaderSelection(body, onWriteNote, preselectedPassage);
   const eyebrow = READER_EYEBROWS[body.content_type];
   const isEmpty = markdown.trim() === '';
   const essayEnd = useEssayEndSignal(onEndReachedChange, isEmpty);
@@ -614,7 +658,16 @@ interface ReaderContentProps {
   retry: () => void;
   onWriteNote?: (_passage: WriteNotePassage) => void;
   initialScrollOffset?: number;
+  preselectedPassage?: CoursePassageSpan;
   onEndReachedChange: (_reached: boolean) => void;
+}
+
+/**
+ * Identity for a preselected passage, so the body remounts -- and opens on the
+ * new passage -- when a different one is asked for while the chapter is open.
+ */
+function passageKey(passage: CoursePassageSpan | undefined): string {
+  return passage == null ? 'none' : `${String(passage.start)}-${String(passage.end)}`;
 }
 
 /** The reader's one live region: spinner, error, or the loaded body. */
@@ -625,6 +678,7 @@ const ReaderContent = ({
   retry,
   onWriteNote,
   initialScrollOffset,
+  preselectedPassage,
   onEndReachedChange,
 }: ReaderContentProps): React.JSX.Element | null => {
   if (loading) {
@@ -642,9 +696,11 @@ const ReaderContent = ({
   }
   return (
     <ReaderBody
+      key={passageKey(preselectedPassage)}
       body={body}
       onWriteNote={onWriteNote}
       initialScrollOffset={initialScrollOffset}
+      preselectedPassage={preselectedPassage}
       onEndReachedChange={onEndReachedChange}
     />
   );
@@ -657,6 +713,7 @@ const ChapterReader = ({
   onBack,
   onWriteNote,
   initialScrollOffset,
+  preselectedPassage,
 }: ChapterReaderProps): React.JSX.Element => {
   const { body, loading, error, retry } = useContentBody(source);
   const controls = useChapterControls(sourceKey(source), loading, error);
@@ -671,6 +728,7 @@ const ChapterReader = ({
         retry={retry}
         onWriteNote={onWriteNote}
         initialScrollOffset={initialScrollOffset}
+        preselectedPassage={preselectedPassage}
         onEndReachedChange={controls.onEndReachedChange}
       />
       {renderFooter !== undefined && (

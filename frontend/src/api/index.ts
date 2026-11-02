@@ -108,9 +108,11 @@ import {
   type StagePromptsResponseT,
   type PromotedQuoteListItemT,
   type PromotedQuoteListResponseT,
+  type PromotedQuoteSourceKindT,
   type PromotedQuoteT,
   type PromotionStatusFilterT,
   type PromotedQuoteSummaryT,
+  type ReadingQuoteItemT,
   type ReflectionAnchorStatusT,
   type ReflectionCurrentScopeT,
   type ReflectionDueT,
@@ -1948,14 +1950,19 @@ export interface Marginalia {
   receipt_version?: number | null;
 }
 
+/** Where a promoted quote was lifted from: an entry, a Course chapter or a letter. */
+export type PromotedQuoteSourceKind = PromotedQuoteSourceKindT;
 /**
- * A promoted quote — a reader-chosen span of an entry raised into the corpus
- * (mirrors the backend ``PromotedQuoteResponse``). ``pending`` is true until the
- * quote is folded into another entry.
+ * A promoted quote — a reader-chosen span of an entry, a Course chapter or a
+ * Resonance Letter raised into the corpus (mirrors the backend
+ * ``PromotedQuoteResponse``). ``pending`` is true until the quote is folded into
+ * a review.
  */
 export type PromotedQuote = PromotedQuoteT;
-/** A promoted quote in the cross-entry sources feed (no ``source_entry_id``). */
+/** A promoted quote in the cross-entry sources feed (no source fields of its own). */
 export type PromotedQuoteSummary = PromotedQuoteSummaryT;
+/** A Course or letter quote waiting for a review, carried on the sources feed (#3657). */
+export type ReadingQuoteItem = ReadingQuoteItemT;
 /** Which quotes ``promotions.listAll`` asks for: waiting, used, or both. */
 export type PromotionStatusFilter = PromotionStatusFilterT;
 /** A promoted quote listed across entries, with its source and review titles. */
@@ -2682,6 +2689,12 @@ export interface ReflectionSourcesResponse {
   window_end?: string | null;
   anchor_status?: ReflectionAnchorStatus;
   items: ReflectionSourceItem[];
+  /**
+   * Course and letter quotes waiting for this review (#3657), which have no
+   * entry in ``items`` to ride under. Empty, never absent: the schema reads an
+   * older server's missing list as ``[]``.
+   */
+  reading_quotes: ReadingQuoteItem[];
 }
 
 /**

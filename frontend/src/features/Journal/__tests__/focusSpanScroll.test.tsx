@@ -28,7 +28,10 @@ const RIVER_END = RIVER_START + 'river'.length;
 function quote(overrides: Partial<PromotedQuote> = {}): PromotedQuote {
   return {
     id: 9,
+    source_kind: 'entry',
     source_entry_id: 1,
+    source_content_id: null,
+    source_marginalia_id: null,
     anchor_start: RIVER_START,
     anchor_end: RIVER_END,
     anchor_text: 'river',

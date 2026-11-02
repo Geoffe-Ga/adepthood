@@ -153,6 +153,13 @@ export type RootStackParamList = {
          */
         highlightSpan?: { start: number; end: number };
         /**
+         * A margin note whose Resonance Letter the reader arrived to see (a
+         * letter quote's Open on the Promoted quotes screen, #3659): the page
+         * opens that letter once its notes have loaded, and opens nothing if
+         * the note is gone.
+         */
+        openLetterFor?: number;
+        /**
          * A timed writing session this page was OPENED in order to run — the
          * quick launch from a saved ``Journaling`` practice. The timer opens at
          * ``minutes`` and is already running, and the finished session is

@@ -5,8 +5,10 @@ import type { LinkingOptions, NavigatorScreenParams } from '@react-navigation/na
 import type { RootTabParamList } from './BottomTabs';
 import {
   parseContentIdParam,
+  parseHighlightSpanParam,
   parseScrollOffsetParam,
   parseStageNumberParam,
+  stringifyHighlightSpanParam,
 } from './linkingParams';
 import type { RootStackParamList } from './RootStack';
 
@@ -36,8 +38,8 @@ export const linking: LinkingOptions<LinkedRootParamList> = {
         screens: {
           Habits: 'habits',
           // Path segments and query values arrive as strings; ``parse`` turns
-          // them into the numbers ``RootTabParamList`` promises (#2958). No
-          // ``stringify`` is needed: getPathFromState already String()s them.
+          // them into the numbers ``RootTabParamList`` promises (#2958). A number
+          // needs no ``stringify``: getPathFromState already String()s it.
           Practice: {
             path: 'practice/:stageNumber?',
             parse: { stageNumber: parseStageNumberParam },
@@ -48,7 +50,12 @@ export const linking: LinkingOptions<LinkedRootParamList> = {
               stageNumber: parseStageNumberParam,
               contentId: parseContentIdParam,
               scrollOffset: parseScrollOffsetParam,
+              highlightSpan: parseHighlightSpanParam,
             },
+            // The one object-valued param: written as ``start-end``, since a
+            // query value is a string and an object would print as
+            // ``[object Object]`` (#3659).
+            stringify: { highlightSpan: stringifyHighlightSpanParam },
           },
           Journal: 'journal',
           Prompts: 'prompts',

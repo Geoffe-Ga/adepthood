@@ -3,8 +3,10 @@ import { describe, expect, it } from '@jest/globals';
 import { MAX_STAGE, MIN_STAGE } from '@/features/Practice/constants';
 import {
   parseContentIdParam,
+  parseHighlightSpanParam,
   parseScrollOffsetParam,
   parseStageNumberParam,
+  stringifyHighlightSpanParam,
 } from '@/navigation/linkingParams';
 
 /** A digit run long enough that ``Number()`` overflows to ``Infinity``. */
@@ -65,5 +67,36 @@ describe('parseScrollOffsetParam', () => {
 
   it('rejects a digit run that overflows to Infinity', () => {
     expect(parseScrollOffsetParam(OVERFLOWING_DIGITS)).toBeUndefined();
+  });
+});
+
+/**
+ * A Course quote's Open carries the passage to preselect (#3659). On the web the
+ * route's params are the URL's query, which can hold only strings: an object
+ * would print as ``[object Object]`` and read back as that string.
+ */
+describe('highlightSpan codec', () => {
+  it('writes a span as start-end, leaving its words out of the URL', () => {
+    expect(stringifyHighlightSpanParam({ start: 8, end: 32, text: 'the body keeps' })).toBe('8-32');
+  });
+
+  it('reads start-end back as a span with no words to check', () => {
+    expect(parseHighlightSpanParam('8-32')).toEqual({ start: 8, end: 32 });
+    expect(parseHighlightSpanParam('0-1')).toEqual({ start: 0, end: 1 });
+  });
+
+  it.each([
+    '',
+    '8',
+    '8-',
+    '-32',
+    '32-8',
+    '8-8',
+    'a-b',
+    '1.5-4',
+    '[object Object]',
+    `0-${UNSAFE_INTEGER}`,
+  ])('reads %p as no passage asked for', (raw) => {
+    expect(parseHighlightSpanParam(raw)).toBeUndefined();
   });
 });

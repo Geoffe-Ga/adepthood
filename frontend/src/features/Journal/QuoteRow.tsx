@@ -80,7 +80,13 @@ export interface QuoteRowProps {
    * state, and draws a box beside the words. Absent, it stays a button.
    */
   checked?: boolean;
-  onPress: () => void;
+  /**
+   * The row's one press. Absent -- a quote with nowhere left to open, such as
+   * one from a since-pruned chapter (#3659), and not a checkbox just now -- the
+   * row is still drawn, but as plain text rather than a button that does nothing.
+   */
+  onPress?: () => void;
+  /** The pressable row's accessible name; a static row lets its words speak. */
   accessibilityLabel: string;
   accessibilityState?: AccessibilityState;
   testID: string;
@@ -156,7 +162,41 @@ function QuoteLine({
   );
 }
 
-/** A promoted quote as a tappable, stripe-marked row. */
+/** What every row holds, pressable or not: the quote's line and, when given, its caption. */
+function RowContent({
+  text,
+  caption,
+  checked,
+  marked,
+  numberOfLines,
+  testID,
+}: {
+  text: string;
+  caption: string | undefined;
+  checked: boolean | undefined;
+  marked: boolean;
+  numberOfLines: number;
+  testID: string;
+}): React.JSX.Element {
+  return (
+    <>
+      <QuoteLine
+        text={text}
+        checked={checked}
+        marked={marked}
+        numberOfLines={numberOfLines}
+        testID={testID}
+      />
+      {caption ? (
+        <Text style={styles.caption} numberOfLines={1} testID={`${testID}-caption`}>
+          {caption}
+        </Text>
+      ) : null}
+    </>
+  );
+}
+
+/** A promoted quote as a tappable, stripe-marked row (or a static one with no press). */
 export function QuoteRow({
   text,
   caption,
@@ -171,28 +211,28 @@ export function QuoteRow({
   trailing,
   style,
 }: QuoteRowProps): React.JSX.Element {
-  const row = (
-    <TouchableOpacity
-      style={[styles.row, dimmed && styles.dimmed, trailing != null && styles.rowWithTrailing]}
-      onPress={onPress}
-      {...roleProps(checked, accessibilityState)}
-      accessibilityLabel={accessibilityLabel}
-      testID={testID}
-    >
-      <QuoteLine
-        text={text}
-        checked={checked}
-        marked={marked}
-        numberOfLines={numberOfLines}
+  const rowStyle = [
+    styles.row,
+    dimmed && styles.dimmed,
+    trailing != null && styles.rowWithTrailing,
+  ];
+  const content = <RowContent {...{ text, caption, checked, marked, numberOfLines, testID }} />;
+  const row =
+    onPress === undefined ? (
+      <View style={rowStyle} testID={testID}>
+        {content}
+      </View>
+    ) : (
+      <TouchableOpacity
+        style={rowStyle}
+        onPress={onPress}
+        {...roleProps(checked, accessibilityState)}
+        accessibilityLabel={accessibilityLabel}
         testID={testID}
-      />
-      {caption ? (
-        <Text style={styles.caption} numberOfLines={1} testID={`${testID}-caption`}>
-          {caption}
-        </Text>
-      ) : null}
-    </TouchableOpacity>
-  );
+      >
+        {content}
+      </TouchableOpacity>
+    );
   if (trailing == null) return style == null ? row : <View style={style}>{row}</View>;
   return (
     <View style={[styles.withTrailing, style]}>

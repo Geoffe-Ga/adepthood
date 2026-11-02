@@ -1118,12 +1118,28 @@ export type VoiceDraftListT = z.infer<typeof voiceDraftListSchema>;
 // Promoted quotes (select-a-span -> promote-quote)
 // ---------------------------------------------------------------------------
 
-/** A promoted quote (mirrors the backend ``PromotedQuoteResponse``). */
+/**
+ * Where a promoted quote was lifted from (mirrors ``PromotedQuoteSourceKind``,
+ * #3655): one of the writer's own entries, a Course chapter, or the Resonance
+ * Letter on one of their margin notes. An unknown kind is rejected at the
+ * boundary, so no surface can caption or open a quote it does not understand.
+ */
+export const promotedQuoteSourceKindSchema = z.enum(['entry', 'course', 'letter']);
+
+/**
+ * A promoted quote (mirrors the backend ``PromotedQuoteResponse``).
+ *
+ * Exactly the source id matching ``source_kind`` is set and the other two are
+ * null: ``source_entry_id`` for an entry quote, ``source_content_id`` for a
+ * Course quote (null too once its chapter was pruned), ``source_marginalia_id``
+ * for a letter quote.
+ */
 export const promotedQuoteSchema = z.object({
   id: z.number().int(),
-  // Null for a quote lifted from a Course chapter or a Resonance Letter rather
-  // than a journal entry (#3655); the server creates none of those yet (#3658).
+  source_kind: promotedQuoteSourceKindSchema,
   source_entry_id: z.number().int().nullable(),
+  source_content_id: z.number().int().nullable(),
+  source_marginalia_id: z.number().int().nullable(),
   anchor_start: z.number().int(),
   anchor_end: z.number().int(),
   anchor_text: z.string(),
@@ -1136,32 +1152,60 @@ export const promotedQuoteSchema = z.object({
 
 /**
  * A promoted quote as it appears in the cross-entry sources feed (mirrors the
- * backend ``PromotedQuoteSummary``): the same shape minus ``source_entry_id``,
- * which the feed groups by rather than repeating on every row, and minus
- * ``stale``, which the feed does not compute for quotes drawn from other
- * entries.
+ * backend ``PromotedQuoteSummary``): the same shape minus its source fields,
+ * which the feed groups by rather than repeating on every row (a summary rides
+ * under its own entry, so it is always an entry quote), and minus ``stale``,
+ * which the feed does not compute for quotes drawn from other entries.
  */
 export const promotedQuoteSummarySchema = promotedQuoteSchema.omit({
+  source_kind: true,
   source_entry_id: true,
+  source_content_id: true,
+  source_marginalia_id: true,
   stale: true,
 });
 
+/**
+ * A Course or letter quote waiting for a review, as the sources feed carries it
+ * (mirrors the backend ``ReadingQuoteItem``, #3657). Unlike an entry's quotes it
+ * has no feed row to ride under, so it travels on the response itself, naming
+ * its own source: the chapter's title, or for a letter the page it answered.
+ * ``created_at`` is when it was promoted, which is what puts it in this review.
+ */
+export const readingQuoteItemSchema = promotedQuoteSummarySchema.extend({
+  source_kind: promotedQuoteSourceKindSchema.exclude(['entry']),
+  source_title: z.string().nullable(),
+  created_at: z.string(),
+});
+
+export type PromotedQuoteSourceKindT = z.infer<typeof promotedQuoteSourceKindSchema>;
 export type PromotedQuoteT = z.infer<typeof promotedQuoteSchema>;
 export type PromotedQuoteSummaryT = z.infer<typeof promotedQuoteSummarySchema>;
+export type ReadingQuoteItemT = z.infer<typeof readingQuoteItemSchema>;
 
 /** Which quotes ``GET /promotions`` returns (mirrors ``PromotionStatusFilter``). */
 export const promotionStatusFilterSchema = z.enum(['pending', 'included', 'all']);
 
 /**
- * A promoted quote as listed across every entry (mirrors the backend
+ * A promoted quote as listed across every source (mirrors the backend
  * ``PromotedQuoteListItemResponse``, which extends ``PromotedQuoteResponse``, so
  * this extends ``promotedQuoteSchema`` and the two cannot drift). The server
  * nulls ``included_in_title`` when the review it was folded into was deleted,
  * while ``included_in_entry_id`` still says the quote was used.
+ *
+ * ``source_title`` / ``source_timestamp`` describe the source per kind: an
+ * entry's own title and time; a chapter's live title (else the one snapshotted
+ * when the quote was made) and the quote's ``created_at``; for a letter, the
+ * title of the page its note sits on and when the letter was written.
+ * ``source_stage_number`` (a Course quote's stage) and ``letter_entry_id`` (the
+ * page a letter quote's note sits on) are what **Open** needs to find a source
+ * that is not an entry; both are null for every other kind.
  */
 export const promotedQuoteListItemSchema = promotedQuoteSchema.extend({
   source_title: z.string().nullable(),
   source_timestamp: z.string(),
+  source_stage_number: z.number().int().nullable(),
+  letter_entry_id: z.number().int().nullable(),
   included_in_entry_id: z.number().int().nullable(),
   included_in_title: z.string().nullable(),
   created_at: z.string(),
@@ -1852,6 +1896,9 @@ export const reflectionSourcesResponseSchema = z.object({
   window_end: isoDateTime.nullish().catch(null),
   anchor_status: anchorStatusSchema.optional().catch(undefined),
   items: z.array(reflectionSourceItemSchema),
+  // Course and letter quotes waiting for this review (#3657). An older server
+  // sends none, which reads as the empty list rather than failing the feed.
+  reading_quotes: z.array(readingQuoteItemSchema).default([]),
 });
 
 export type ReflectionLevelT = z.infer<typeof reflectionLevelSchema>;

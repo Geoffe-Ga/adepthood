@@ -28,7 +28,12 @@ import {
 } from 'react';
 
 import { classifyMarkFailure, type MarkOutcome } from './inclusionMark';
-import { candidateFromSource, planQuoteBatch, type FoldCandidate } from './quoteBatch';
+import {
+  candidateFromReadingQuote,
+  candidateFromSource,
+  planQuoteBatch,
+  type FoldCandidate,
+} from './quoteBatch';
 import type { ReviewWindow } from './reflectionCopy';
 import type { SourcesFeedStatus } from './ReflectionSourcesPanel';
 
@@ -37,6 +42,7 @@ import type {
   PromoteQuoteSpan,
   PromotedQuote,
   PromotedQuoteSummary,
+  ReadingQuoteItem,
   ReflectionAnchorStatus,
   ReflectionLevel,
   ReflectionSourceItem,
@@ -67,6 +73,11 @@ export interface UseReflectionModeResult {
   active: boolean;
   /** The rereadable entries + earlier reflections in scope. */
   sources: ReflectionSourceItem[];
+  /**
+   * Course and letter quotes waiting for this review (#3659), which have no
+   * entry in ``sources`` to ride under; the panel's "From your reading" group.
+   */
+  readingQuotes: ReadingQuoteItem[];
   /**
    * The period the SERVER filtered the feed on, for the panel to name. Undefined
    * while a scope is loading, when the fetch failed, and whenever the server
@@ -115,6 +126,11 @@ export interface UseReflectionModeResult {
     _quote: PromotedQuoteSummary,
     _sourceItem: ReflectionSourceItem,
   ) => Promise<boolean>;
+  /**
+   * Fold a Course or letter quote in (#3659) through the same path as an entry
+   * quote; resolves true when it was marked included.
+   */
+  onInsertReadingQuote: (_quote: ReadingQuoteItem) => Promise<boolean>;
   /**
    * Fold a whole selection in (#2885): ONE body change at the caret, in the
    * order given, ONE entry write, then one inclusion mark per quote.
@@ -177,6 +193,19 @@ function withoutQuotes(
   return changed ? next : items;
 }
 
+/**
+ * Drop the reading quotes ``ids`` (#2754, #3659), returning ``quotes`` itself
+ * when none of them was there, so a no-op prune re-renders nothing.
+ */
+function withoutReadingQuotes(
+  quotes: ReadingQuoteItem[],
+  ids: readonly number[],
+): ReadingQuoteItem[] {
+  const drop = new Set(ids);
+  const kept = quotes.filter((quote) => !drop.has(quote.id));
+  return kept.length === quotes.length ? quotes : kept;
+}
+
 /** The period a response declared, or undefined when the server named none. */
 function declaredWindow(result: ReflectionSourcesResponse): ReviewWindow | undefined {
   const start = result.window_start;
@@ -187,6 +216,8 @@ function declaredWindow(result: ReflectionSourcesResponse): ReviewWindow | undef
 interface SourcesFeed {
   sources: ReflectionSourceItem[];
   setSources: Dispatch<SetStateAction<ReflectionSourceItem[]>>;
+  readingQuotes: ReadingQuoteItem[];
+  setReadingQuotes: Dispatch<SetStateAction<ReadingQuoteItem[]>>;
   window: ReviewWindow | undefined;
   anchorStatus: ReflectionAnchorStatus | undefined;
   feedStatus: SourcesFeedStatus;
@@ -215,11 +246,13 @@ function useSourcesFeed(
   reflectionScopeKey: string | undefined,
 ): SourcesFeed {
   const [sources, setSources] = useState<ReflectionSourceItem[]>([]);
+  const [readingQuotes, setReadingQuotes] = useState<ReadingQuoteItem[]>([]);
   const [window, setWindow] = useState<ReviewWindow | undefined>(undefined);
   const [anchorStatus, setAnchorStatus] = useState<ReflectionAnchorStatus | undefined>(undefined);
   const [feedStatus, setFeedStatus] = useState<SourcesFeedStatus>('ready');
   useEffect(() => {
     setSources([]);
+    setReadingQuotes([]);
     setWindow(undefined);
     setAnchorStatus(undefined);
     if (reflectionLevel == null || reflectionScopeKey == null) {
@@ -233,6 +266,7 @@ function useSourcesFeed(
       .then((result) => {
         if (!alive) return;
         setSources(result.items);
+        setReadingQuotes(result.reading_quotes);
         setWindow(declaredWindow(result));
         setAnchorStatus(result.anchor_status);
         setFeedStatus('ready');
@@ -247,7 +281,7 @@ function useSourcesFeed(
       alive = false;
     };
   }, [reflectionLevel, reflectionScopeKey]);
-  return { sources, setSources, window, anchorStatus, feedStatus };
+  return { sources, setSources, readingQuotes, setReadingQuotes, window, anchorStatus, feedStatus };
 }
 
 /**
@@ -550,6 +584,27 @@ function useFoldIn(
     [track, retryBatch, failedCandidates],
   );
 
+  return {
+    inclusionHint: ledger.failedCount > 0,
+    failedCount: ledger.failedCount,
+    foldedIds: ledger.foldedIds,
+    foldingIn: anyInFlight,
+    onBodySelectionChange,
+    ...useSingleFolds(onInsertQuotes),
+    onInsertQuotes,
+    retryInclusion,
+  };
+}
+
+/**
+ * A single tap's fold: a batch of one, resolving true when its quote was
+ * marked. A Course or letter quote (#3659) folds in exactly as an entry quote
+ * does; only its candidate -- the attribution -- is built from its own kind.
+ */
+function useSingleFolds(onInsertQuotes: FoldBatch): {
+  onInsertQuote: UseReflectionModeResult['onInsertQuote'];
+  onInsertReadingQuote: UseReflectionModeResult['onInsertReadingQuote'];
+} {
   const onInsertQuote = useCallback(
     async (quote: PromotedQuoteSummary, sourceItem: ReflectionSourceItem): Promise<boolean> => {
       const outcome = await onInsertQuotes([candidateFromSource(quote, sourceItem)]);
@@ -557,17 +612,14 @@ function useFoldIn(
     },
     [onInsertQuotes],
   );
-
-  return {
-    inclusionHint: ledger.failedCount > 0,
-    failedCount: ledger.failedCount,
-    foldedIds: ledger.foldedIds,
-    foldingIn: anyInFlight,
-    onBodySelectionChange,
-    onInsertQuote,
-    onInsertQuotes,
-    retryInclusion,
-  };
+  const onInsertReadingQuote = useCallback(
+    async (quote: ReadingQuoteItem): Promise<boolean> => {
+      const outcome = await onInsertQuotes([candidateFromReadingQuote(quote)]);
+      return outcome.included.includes(quote.id);
+    },
+    [onInsertQuotes],
+  );
+  return { onInsertQuote, onInsertReadingQuote };
 }
 
 /** The in-panel re-promote flow: lift a fresh span into its source's pending set. */
@@ -603,17 +655,21 @@ export function useReflectionMode({
   flush,
 }: UseReflectionModeArgs): UseReflectionModeResult {
   const active = reflectionLevel != null && reflectionScopeKey != null;
-  const { sources, setSources, window, anchorStatus, feedStatus } = useSourcesFeed(
+  const { setSources, setReadingQuotes, ...feed } = useSourcesFeed(
     reflectionLevel,
     reflectionScopeKey,
   );
   const write = useMemo(() => ({ onChangeBody, flush }), [onChangeBody, flush]);
+  // A quote removed elsewhere leaves whichever list it was in (#2754).
   const onQuotesGone = useCallback(
-    (ids: readonly number[]) => setSources((prev) => withoutQuotes(prev, ids)),
-    [setSources],
+    (ids: readonly number[]) => {
+      setSources((prev) => withoutQuotes(prev, ids));
+      setReadingQuotes((prev) => withoutReadingQuotes(prev, ids));
+    },
+    [setSources, setReadingQuotes],
   );
   const foldIn = useFoldIn(bodyRef, write, onQuotesGone);
   const onPromoteSpan = usePromoteSpan(setSources);
 
-  return { active, sources, window, anchorStatus, feedStatus, ...foldIn, onPromoteSpan };
+  return { active, ...feed, ...foldIn, onPromoteSpan };
 }

@@ -55,6 +55,7 @@ import LiveMarkdownBody, { type LiveMarkdownBodyProps } from './LiveMarkdownBody
 import { buildMarginItems, drawnNoteIds, type MarginItem } from './marginLayout';
 import { MarginNavigationProvider } from './marginNavigation';
 import MarginNote from './MarginNote';
+import { useOpenLetterOnArrival } from './openLetterOnArrival';
 import PassReceiptNotice from './PassReceiptNotice';
 import PrivacyTierControl, { DEFAULT_TIER, tierLabel } from './PrivacyTierControl';
 import { PROMOTED_NOTICE_COPY } from './promoteExplainerCopy';
@@ -4684,6 +4685,8 @@ function ReflectionSourcesDock({
       feedStatus={reflection.feedStatus}
       timeZone={userTimezone}
       onInsertQuote={reflection.onInsertQuote}
+      readingQuotes={reflection.readingQuotes}
+      onInsertReadingQuote={reflection.onInsertReadingQuote}
       onInsertQuotes={reflection.onInsertQuotes}
       foldedIds={reflection.foldedIds}
       onPromoteSpan={reflection.onPromoteSpan}
@@ -5230,6 +5233,7 @@ function JournalEntryScreen({
   );
   const entryDrawer = useEntryDrawerWithHandoff(navigation, ctl, route.params?.injectQuotes);
   const openApiKey = useOpenApiKey(navigation, ctl.explainer.cancelPending);
+  useOpenLetterOnArrival(route.params, ctl.resonance.marginalia, ctl.modal.onOpenNote);
   return (
     <SafeAreaView style={styles.safeArea} testID="journal-screen">
       <EntryCareSurfaces ctl={ctl} />

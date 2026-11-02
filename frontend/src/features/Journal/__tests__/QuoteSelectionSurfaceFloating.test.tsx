@@ -220,3 +220,37 @@ describe('QuoteSelectionSurface floating confirm -- the band the pill floats in'
     expect(queryByTestId('quote-select-pill-reserve', { includeHiddenElements: true })).toBeNull();
   });
 });
+
+/**
+ * A passage chosen before the surface mounted -- a Course quote's Open (#3659),
+ * or the sources panel swapping sheet for pane mid-selection -- is shown as the
+ * field's own selection, not only echoed in the footer, in UTF-16 units.
+ */
+describe('QuoteSelectionSurface -- a passage chosen before it mounted', () => {
+  const EMOJI_BODY = '\u{1F3B8} walk on';
+  // Code points {2, 6} -- "walk" past the emoji -- are UTF-16 {3, 7}.
+  const WALK = { start: 2, end: 6 };
+
+  it('selects it in the native field on mount', () => {
+    fieldPrototype.setSelection = jest.fn();
+    renderSurface({ body: EMOJI_BODY, initialSelection: WALK });
+
+    expect(fieldPrototype.setSelection).toHaveBeenCalledWith(3, 7);
+  });
+
+  it('selects it in the textarea the browser holds on web', () => {
+    Platform.OS = 'web';
+    fieldPrototype.setSelectionRange = jest.fn();
+    renderSurface({ body: EMOJI_BODY, initialSelection: WALK });
+
+    expect(fieldPrototype.setSelectionRange).toHaveBeenCalledWith(3, 7);
+  });
+
+  it('moves no selection when nothing was chosen before', () => {
+    fieldPrototype.setSelection = jest.fn();
+    renderSurface({ body: EMOJI_BODY, initialSelection: { start: 4, end: 4 } });
+    renderSurface({ body: EMOJI_BODY });
+
+    expect(fieldPrototype.setSelection).not.toHaveBeenCalled();
+  });
+});

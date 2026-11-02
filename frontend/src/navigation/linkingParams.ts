@@ -21,12 +21,14 @@
  * | Course.stageNumber        | string     | parsed ({@link parseStageNumberParam}) |
  * | Course.contentId          | string     | parsed ({@link parseContentIdParam})   |
  * | Course.scrollOffset       | string     | parsed ({@link parseScrollOffsetParam}) |
+ * | Course.highlightSpan      | string     | ``start-end`` both ways ({@link parseHighlightSpanParam}) |
  * | SharePreview.token        | string     | string by design                 |
  * | ResetPassword.token       | string     | string by design                 |
  * | CancelReset.token         | string     | string by design                 |
  * | Signup.licenseKey         | string     | string by design                 |
  * | Catalog.stageNumber       | n/a        | not in the config; reached only by in-app numeric navigate |
  */
+import type { CoursePassageSpan } from '@/features/Course/coursePassage';
 import { MAX_STAGE, MIN_STAGE } from '@/features/Practice/constants';
 
 const DIGITS_ONLY = /^\d+$/;
@@ -66,4 +68,34 @@ export function parseScrollOffsetParam(raw: string): number | undefined {
   if (!NON_NEGATIVE_DECIMAL.test(raw)) return undefined;
   const offset = Number(raw);
   return Number.isFinite(offset) ? offset : undefined;
+}
+
+/** ``start-end``: two code-point offsets, the second strictly past the first. */
+const HIGHLIGHT_SPAN = /^(\d+)-(\d+)$/;
+
+/**
+ * Write a Course passage to preselect (#3659) as ``start-end`` for the URL.
+ *
+ * Only the offsets travel. The words the span should hold stay in the in-app
+ * params, so a quote's text never reaches the address bar or history; a span
+ * read back off a URL is checked against the chapter's length alone.
+ */
+export function stringifyHighlightSpanParam(span: CoursePassageSpan): string {
+  return `${String(span.start)}-${String(span.end)}`;
+}
+
+/**
+ * Read a ``start-end`` query value back into a non-empty span of safe integers.
+ *
+ * ``undefined`` -- anything else, including the ``[object Object]`` an
+ * unstringified object would have printed -- means "no passage asked for", and
+ * the chapter (if any) opens normally.
+ */
+export function parseHighlightSpanParam(raw: string): CoursePassageSpan | undefined {
+  const match = HIGHLIGHT_SPAN.exec(raw);
+  if (match === null) return undefined;
+  const start = Number(match[1]);
+  const end = Number(match[2]);
+  if (!Number.isSafeInteger(start) || !Number.isSafeInteger(end) || end <= start) return undefined;
+  return { start, end };
 }

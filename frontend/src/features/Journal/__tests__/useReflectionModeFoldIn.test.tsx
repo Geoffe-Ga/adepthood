@@ -12,12 +12,12 @@ import { formatBlockquote, formatSourceDate, sourceAttribution } from '../reflec
 import { useReflectionMode } from '../useReflectionMode';
 
 import { ApiError } from '@/api';
-import type { PromotedQuoteSummary, ReflectionSourceItem } from '@/api';
+import type { PromotedQuoteSummary, ReadingQuoteItem, ReflectionSourceItem } from '@/api';
 
 const mockSetIncluded = jest.fn<(_id: number, _entryId: number | null) => Promise<unknown>>();
-const mockSources = jest.fn<() => Promise<{ items: ReflectionSourceItem[] }>>(() =>
-  Promise.resolve({ items: [] }),
-);
+const mockSources = jest.fn<
+  () => Promise<{ items: ReflectionSourceItem[]; reading_quotes: ReadingQuoteItem[] }>
+>(() => Promise.resolve({ items: [], reading_quotes: [] }));
 
 jest.mock('@/api', () => ({
   ApiError: (jest.requireActual('@/api') as { ApiError: typeof ApiError }).ApiError,
@@ -648,6 +648,7 @@ describe('#2754 per-quote inclusion warning', () => {
         { ...S1, promoted_quotes: [Q1, Q2] },
         { ...S2, promoted_quotes: [Q3] },
       ],
+      reading_quotes: [],
     });
     mockSetIncluded.mockImplementation((id) =>
       id === 2 ? Promise.reject(GONE) : Promise.resolve({}),
@@ -672,7 +673,10 @@ describe('#2754 per-quote inclusion warning', () => {
   });
 
   it('leaves the feed untouched when a removed quote was never in it (a hand-off from Promoted quotes)', async () => {
-    mockSources.mockResolvedValueOnce({ items: [{ ...S1, promoted_quotes: [Q1] }] });
+    mockSources.mockResolvedValueOnce({
+      items: [{ ...S1, promoted_quotes: [Q1] }],
+      reading_quotes: [],
+    });
     mockSetIncluded.mockRejectedValue(GONE);
     const { result, insertMany } = batchSetup();
     await act(async () => {
@@ -711,5 +715,103 @@ describe('#2754 per-quote inclusion warning', () => {
     mockSetIncluded.mockReset();
     await retry();
     expect(mockSetIncluded).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * #3659: a Course or letter quote waiting for this review rides on the feed
+ * beside its entries (``reading_quotes``) and folds in through the very same
+ * splice-then-mark path, attributed by its kind.
+ */
+describe('useReflectionMode -- quotes from your reading (#3659)', () => {
+  const COURSE_QUOTE: ReadingQuoteItem = {
+    id: 81,
+    source_kind: 'course',
+    source_title: 'Beige 1',
+    anchor_start: 4,
+    anchor_end: 28,
+    anchor_text: 'the body keeps the score',
+    pending: true,
+    created_at: '2026-06-02T10:00:00Z',
+  };
+  const LETTER_QUOTE: ReadingQuoteItem = {
+    ...COURSE_QUOTE,
+    id: 82,
+    source_kind: 'letter',
+    source_title: 'Runs',
+    anchor_text: 'you are allowed to rest',
+  };
+
+  async function loaded(readingQuotes: ReadingQuoteItem[]) {
+    mockSources.mockResolvedValueOnce({ items: [SOURCE], reading_quotes: readingQuotes });
+    const ctx = setup();
+    await act(async () => {
+      await Promise.resolve();
+    });
+    return ctx;
+  }
+
+  it('hands the panel the reading quotes the feed carries', async () => {
+    const { result } = await loaded([COURSE_QUOTE, LETTER_QUOTE]);
+    expect(result.current.readingQuotes).toEqual([COURSE_QUOTE, LETTER_QUOTE]);
+  });
+
+  it('folds a Course quote in, attributed to its chapter, and marks it on the review', async () => {
+    mockSetIncluded.mockResolvedValue({});
+    const { result, bodyRef } = await loaded([COURSE_QUOTE]);
+    let folded = false;
+    await act(async () => {
+      folded = await result.current.onInsertReadingQuote(COURSE_QUOTE);
+    });
+
+    expect(folded).toBe(true);
+    expect(bodyRef.current).toBe('My week.\n\n> the body keeps the score\n> — From “Beige 1”\n\n');
+    expect(mockSetIncluded).toHaveBeenCalledWith(81, 42);
+    expect(result.current.foldedIds.has(81)).toBe(true);
+  });
+
+  it('attributes a letter quote to a letter', async () => {
+    mockSetIncluded.mockResolvedValue({});
+    const { result, bodyRef } = await loaded([LETTER_QUOTE]);
+    await act(async () => {
+      await result.current.onInsertReadingQuote(LETTER_QUOTE);
+    });
+
+    expect(bodyRef.current).toContain('> you are allowed to rest\n> — From a letter');
+  });
+
+  it('keeps a refused mark on the retry list, as any fold does', async () => {
+    mockSetIncluded.mockRejectedValueOnce(new Error('offline'));
+    const { result } = await loaded([COURSE_QUOTE]);
+    let folded = true;
+    await act(async () => {
+      folded = await result.current.onInsertReadingQuote(COURSE_QUOTE);
+    });
+
+    expect(folded).toBe(false);
+    expect(result.current.inclusionHint).toBe(true);
+  });
+
+  it('drops a reading quote removed elsewhere from the feed, leaving the rest', async () => {
+    mockSetIncluded.mockImplementation((id) =>
+      id === 81 ? Promise.reject(GONE) : Promise.resolve({}),
+    );
+    const { result } = await loaded([COURSE_QUOTE, LETTER_QUOTE]);
+    await act(async () => {
+      await result.current.onInsertReadingQuote(COURSE_QUOTE);
+    });
+
+    expect(result.current.readingQuotes.map((quote) => quote.id)).toEqual([82]);
+  });
+
+  it('clears the reading quotes when the feed fails', async () => {
+    mockSources.mockRejectedValueOnce(new Error('offline'));
+    const { result } = setup();
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    expect(result.current.readingQuotes).toEqual([]);
+    expect(result.current.feedStatus).toBe('failed');
   });
 });

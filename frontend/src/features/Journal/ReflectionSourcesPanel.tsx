@@ -7,7 +7,10 @@
  *      A folded quote dims and stays (a gentle "already used" trace), never
  *      vanishing under the reader's finger. "Select quotes" turns the rows into
  *      checkboxes instead, and one fixed action beneath the scroll folds every
- *      checked quote in as a single batch (#2885).
+ *      checked quote in as a single batch (#2885). Quotes lifted from a Course
+ *      chapter or a Resonance Letter have no source in the feed to ride under,
+ *      so they follow in their own "From your reading" group, each captioned
+ *      with where it came from (#3659).
  *   2. The chronological feed (oldest → newest) of the entries and earlier
  *      reflections in scope. Each row collapses to an excerpt and expands to its
  *      full body on tap.
@@ -41,7 +44,7 @@ import {
 } from 'react-native';
 
 import { excerpt } from './excerpt';
-import { candidateFromSource, type FoldCandidate } from './quoteBatch';
+import { candidateFromReadingQuote, candidateFromSource, type FoldCandidate } from './quoteBatch';
 import { FOLDED_SUFFIX, foldQuoteA11y, foldSelectedLabel, selectQuoteA11y } from './quoteFoldCopy';
 import { QUOTE_STRIPE_WIDTH, QuoteRow } from './QuoteRow';
 import { QuoteFoldBar, SelectionHeader } from './QuoteSelectionControls';
@@ -49,8 +52,11 @@ import QuoteSelectionSurface, { type CodePointSpan } from './QuoteSelectionSurfa
 import ReadOnlyMarkdownText from './ReadOnlyMarkdownText';
 import {
   formatReviewPeriod,
+  quoteSourceLabel,
+  quoteSourceSpoken,
   sourceAttribution,
   sourceDateLabel,
+  type AttributionSource,
   type ReviewWindow,
 } from './reflectionCopy';
 import { CLOSE_ICON_SIZE } from './ReflectionDismiss';
@@ -60,6 +66,7 @@ import type { BatchFoldResult } from './useReflectionMode';
 import type {
   PromoteQuoteSpan,
   PromotedQuoteSummary,
+  ReadingQuoteItem,
   ReflectionAnchorStatus,
   ReflectionSourceItem,
 } from '@/api';
@@ -204,6 +211,18 @@ export interface ReflectionSourcesPanelProps {
     _sourceItem: ReflectionSourceItem,
   ) => Promise<boolean> | undefined;
   /**
+   * Course and letter quotes waiting for this review (#3659), shown in their
+   * own "From your reading" group: they have no source in ``items`` to ride
+   * under. Only the pending ones are offered.
+   */
+  readingQuotes?: ReadingQuoteItem[];
+  /**
+   * Fold one of ``readingQuotes`` in, resolving like ``onInsertQuote``. Absent,
+   * the group is not offered: a row the reader could tap to no effect would
+   * only mislead.
+   */
+  onInsertReadingQuote?: (_quote: ReadingQuoteItem) => Promise<boolean> | undefined;
+  /**
    * Fold a whole selection in as one batch (#2885). Absent, the panel offers
    * no selection mode and a tap folds one quote at a time, as it always has.
    */
@@ -233,6 +252,21 @@ function levelLabel(level: string | null): string {
 /** Feed order: oldest → newest by timestamp. */
 function byTimestamp(a: ReflectionSourceItem, b: ReflectionSourceItem): number {
   return new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime();
+}
+
+/** Reading-group order: oldest promoted first, like the feed beneath it; ties by id. */
+function byPromotedAt(a: ReadingQuoteItem, b: ReadingQuoteItem): number {
+  return Date.parse(a.created_at) - Date.parse(b.created_at) || a.id - b.id;
+}
+
+/** The reading quotes still waiting to be folded in, in the order the group shows them. */
+function collectReading(quotes: readonly ReadingQuoteItem[] | undefined): ReadingQuoteItem[] {
+  return (quotes ?? []).filter((quote) => quote.pending).sort(byPromotedAt);
+}
+
+/** Where a reading quote came from, in the words every quote surface uses (#3659). */
+function readingSource(quote: ReadingQuoteItem): AttributionSource {
+  return { sourceKind: quote.source_kind, title: quote.source_title, timestamp: quote.created_at };
 }
 
 /** A copy of ``ids`` with every one of ``more`` added (a batch's optimistic dim). */
@@ -269,84 +303,165 @@ function collectPending(items: ReflectionSourceItem[]): PendingEntry[] {
   return pending;
 }
 
+/** What a foldable row shows and says: its words, and -- for a reading quote -- its source. */
+interface FoldableQuote {
+  id: number;
+  text: string;
+  /** The caption beneath the words; an entry quote's source is the feed below. */
+  caption?: string;
+  /** The source as the row's name says it ("from “Beige 1”"); with ``caption``. */
+  spokenSource?: string;
+  testID: string;
+}
+
+/** A row's accessible name: what a press does, the words, and any visible caption. */
+function foldableA11y(quote: FoldableQuote, checkable: boolean, included: boolean): string {
+  const action = checkable ? selectQuoteA11y(quote.text) : foldQuoteA11y(quote.text);
+  const source = quote.spokenSource === undefined ? '' : `, ${quote.spokenSource}`;
+  return `${action}${source}${!checkable && included ? FOLDED_SUFFIX : ''}`;
+}
+
 /**
  * One pending quote. Outside selection mode a tap folds it in; inside, it is a
  * checkbox and a tap checks it. Once folded it dims, takes a check glyph and
  * says so in its name (#2952) -- carried as ``disabled``, never as ``selected``
  * or ``checked``, which belong to the selection.
  */
-function PendingQuoteRow({
-  entry,
+function FoldableQuoteRow({
+  quote,
   included,
   selection,
-  onInsert,
+  onFold,
 }: {
-  entry: PendingEntry;
+  quote: FoldableQuote;
   included: boolean;
   selection: QuoteSelection;
-  onInsert: (_e: PendingEntry) => void;
+  onFold: () => void;
 }): React.JSX.Element {
-  const { id, anchor_text: text } = entry.quote;
+  const { id } = quote;
   const checkable = selection.selecting && !included;
   const onPress = (): void => {
     if (included) return;
     if (checkable) selection.toggle(id);
-    else onInsert(entry);
+    else onFold();
   };
   return (
     <QuoteRow
-      text={text}
+      text={quote.text}
+      caption={quote.caption}
       dimmed={included}
       marked={included}
       checked={checkable ? selection.selected.has(id) : undefined}
       onPress={onPress}
       accessibilityState={{ disabled: included }}
-      accessibilityLabel={
-        checkable ? selectQuoteA11y(text) : `${foldQuoteA11y(text)}${included ? FOLDED_SUFFIX : ''}`
-      }
-      testID={`pending-quote-${id}`}
+      accessibilityLabel={foldableA11y(quote, checkable, included)}
+      testID={quote.testID}
     />
   );
 }
 
-/** The pending-quotes group above the feed; renders nothing when empty. */
-function PendingQuotesGroup({
-  pending,
-  includedIds,
-  selection,
-  canSelect,
-  onInsert,
+/** One group of foldable quotes under the panel's one eyebrow face. */
+function QuoteGroup({
+  heading,
+  header,
+  testID,
+  children,
 }: {
-  pending: PendingEntry[];
-  includedIds: ReadonlySet<number>;
-  selection: QuoteSelection;
-  canSelect: boolean;
-  onInsert: (_e: PendingEntry) => void;
-}): React.JSX.Element | null {
-  if (pending.length === 0) return null;
-  const selectable = pending.map((e) => e.quote.id).filter((id) => !includedIds.has(id));
+  heading: string;
+  /** The selection controls, which the first group shown carries. */
+  header: React.ReactNode;
+  testID?: string;
+  children: React.ReactNode;
+}): React.JSX.Element {
   return (
-    <View style={styles.group}>
-      <Text style={[styles.eyebrow, styles.groupEyebrowSpacing]}>Quotes to fold in</Text>
-      {canSelect ? (
-        <SelectionHeader
-          selecting={selection.selecting}
-          onToggleMode={selection.toggleMode}
-          onSelectAll={() => selection.selectAll(selectable)}
-          onClear={selection.clear}
-          testIDPrefix="pending-quotes"
-        />
+    <View style={styles.group} testID={testID}>
+      <Text style={[styles.eyebrow, styles.groupEyebrowSpacing]}>{heading}</Text>
+      {header}
+      {children}
+    </View>
+  );
+}
+
+/** The quotes waiting to be folded in, and the panel state that folds them. */
+interface FoldableGroupsProps {
+  pending: PendingEntry[];
+  reading: ReadingQuoteItem[];
+  state: Pick<PanelState, 'includedIds' | 'selection' | 'onInsert' | 'onInsertReading'>;
+  canSelect: boolean;
+}
+
+/**
+ * The quotes above the feed: the entries' own ("Quotes to fold in"), then the
+ * Course and letter quotes ("From your reading", #3659). Each group renders
+ * only when it has quotes; one set of selection controls covers both, on the
+ * first group shown.
+ */
+function FoldableGroups(props: FoldableGroupsProps): React.JSX.Element | null {
+  const { pending, reading, state } = props;
+  const { includedIds, selection } = state;
+  if (pending.length + reading.length === 0) return null;
+  const selectable = [...pending.map((e) => e.quote.id), ...reading.map((q) => q.id)].filter(
+    (id) => !includedIds.has(id),
+  );
+  const header = props.canSelect ? (
+    <SelectionHeader
+      selecting={selection.selecting}
+      onToggleMode={selection.toggleMode}
+      onSelectAll={() => selection.selectAll(selectable)}
+      onClear={selection.clear}
+      testIDPrefix="pending-quotes"
+    />
+  ) : null;
+  return (
+    <>
+      {pending.length > 0 ? (
+        <QuoteGroup heading="Quotes to fold in" header={header}>
+          {pending.map((entry) => (
+            <FoldableQuoteRow
+              key={entry.quote.id}
+              quote={{
+                id: entry.quote.id,
+                text: entry.quote.anchor_text,
+                testID: `pending-quote-${entry.quote.id}`,
+              }}
+              included={includedIds.has(entry.quote.id)}
+              selection={selection}
+              onFold={() => state.onInsert(entry)}
+            />
+          ))}
+        </QuoteGroup>
       ) : null}
-      {pending.map((entry) => (
-        <PendingQuoteRow
-          key={entry.quote.id}
-          entry={entry}
-          included={includedIds.has(entry.quote.id)}
+      <ReadingGroup {...props} header={pending.length > 0 ? null : header} />
+    </>
+  );
+}
+
+/** "From your reading" (#3659): the Course and letter quotes, each with its source. */
+function ReadingGroup({
+  reading,
+  state,
+  header,
+}: FoldableGroupsProps & { header: React.ReactNode }): React.JSX.Element | null {
+  if (reading.length === 0) return null;
+  const { includedIds, selection, onInsertReading } = state;
+  return (
+    <QuoteGroup heading="From your reading" header={header} testID="reading-quotes">
+      {reading.map((quote) => (
+        <FoldableQuoteRow
+          key={quote.id}
+          quote={{
+            id: quote.id,
+            text: quote.anchor_text,
+            caption: quoteSourceLabel(readingSource(quote)),
+            spokenSource: quoteSourceSpoken(readingSource(quote)),
+            testID: `reading-quote-${quote.id}`,
+          }}
+          included={includedIds.has(quote.id)}
           selection={selection}
-          onInsert={onInsert}
+          onFold={() => onInsertReading(quote)}
         />
       ))}
-    </View>
+    </QuoteGroup>
   );
 }
 
@@ -598,18 +713,21 @@ function SourceFeed({
  * fold-in outcome: dim on tap, revert on a ``false``/rejected result, keep the
  * dim on ``true`` or when no outcome is reported (skip the confirmation state).
  */
-function useDimReconciler(onInsertQuote: ReflectionSourcesPanelProps['onInsertQuote']): {
+function useDimReconciler(
+  onInsertQuote: ReflectionSourcesPanelProps['onInsertQuote'],
+  onInsertReadingQuote: ReflectionSourcesPanelProps['onInsertReadingQuote'],
+): {
   includedIds: ReadonlySet<number>;
   setIncludedIds: Dispatch<SetStateAction<ReadonlySet<number>>>;
   onInsert: (_entry: PendingEntry) => void;
+  onInsertReading: (_quote: ReadingQuoteItem) => void;
 } {
   const [includedIds, setIncludedIds] = useState<ReadonlySet<number>>(() => new Set<number>());
 
   const reconcileInsert = useCallback(
-    async (entry: PendingEntry): Promise<void> => {
-      const { id } = entry.quote;
+    async (id: number, fold: () => Promise<boolean> | undefined): Promise<void> => {
       setIncludedIds((prev) => withIds(prev, [id])); // Dim optimistically.
-      const outcome = onInsertQuote(entry.quote, entry.item);
+      const outcome = fold();
       if (outcome == null) return; // No outcome reported — skip the confirmation state.
       let foldedIn = false;
       try {
@@ -619,17 +737,24 @@ function useDimReconciler(onInsertQuote: ReflectionSourcesPanelProps['onInsertQu
       }
       if (!foldedIn) setIncludedIds((prev) => withoutIds(prev, [id]));
     },
-    [onInsertQuote],
+    [],
   );
 
   const onInsert = useCallback(
     (entry: PendingEntry): void => {
-      void reconcileInsert(entry);
+      void reconcileInsert(entry.quote.id, () => onInsertQuote(entry.quote, entry.item));
     },
-    [reconcileInsert],
+    [reconcileInsert, onInsertQuote],
   );
 
-  return { includedIds, setIncludedIds, onInsert };
+  const onInsertReading = useCallback(
+    (quote: ReadingQuoteItem): void => {
+      void reconcileInsert(quote.id, () => onInsertReadingQuote?.(quote));
+    },
+    [reconcileInsert, onInsertReadingQuote],
+  );
+
+  return { includedIds, setIncludedIds, onInsert, onInsertReading };
 }
 
 /**
@@ -655,8 +780,25 @@ async function settleBatch(
 
 /** The batch fold the panel's bar runs, and whether one is on the wire now. */
 interface BatchFold {
-  onFoldSelected: (_pending: readonly PendingEntry[]) => void;
+  onFoldSelected: (
+    _pending: readonly PendingEntry[],
+    _reading: readonly ReadingQuoteItem[],
+  ) => void;
   folding: boolean;
+}
+
+/** The checked quotes as fold candidates, in the order the panel shows them. */
+function chosenCandidates(
+  selected: ReadonlySet<number>,
+  pending: readonly PendingEntry[],
+  reading: readonly ReadingQuoteItem[],
+): FoldCandidate[] {
+  return [
+    ...pending
+      .filter((entry) => selected.has(entry.quote.id))
+      .map((entry) => candidateFromSource(entry.quote, entry.item)),
+    ...reading.filter((quote) => selected.has(quote.id)).map(candidateFromReadingQuote),
+  ];
 }
 
 /**
@@ -678,14 +820,17 @@ function useBatchFold(
   const { selected, settle } = selection;
   const [folding, setFolding] = useState(false);
   const foldChosen = useCallback(
-    async (pending: readonly PendingEntry[]): Promise<void> => {
+    async (
+      pending: readonly PendingEntry[],
+      reading: readonly ReadingQuoteItem[],
+    ): Promise<void> => {
       if (onInsertQuotes == null) return;
-      const chosen = pending.filter((entry) => selected.has(entry.quote.id));
+      const chosen = chosenCandidates(selected, pending, reading);
       if (chosen.length === 0) return;
-      const ids = chosen.map((entry) => entry.quote.id);
+      const ids = chosen.map((candidate) => candidate.id);
       setFolding(true);
       setIncludedIds((prev) => withIds(prev, ids));
-      const outcome = onInsertQuotes(chosen.map((e) => candidateFromSource(e.quote, e.item)));
+      const outcome = onInsertQuotes(chosen);
       const { failed, admittedAny } = await settleBatch(outcome, ids);
       setFolding(false);
       setIncludedIds((prev) => withoutIds(prev, failed));
@@ -694,8 +839,8 @@ function useBatchFold(
     [onInsertQuotes, selected, settle, setIncludedIds],
   );
   const onFoldSelected = useCallback(
-    (pending: readonly PendingEntry[]) => {
-      void foldChosen(pending);
+    (pending: readonly PendingEntry[], reading: readonly ReadingQuoteItem[]) => {
+      void foldChosen(pending, reading);
     },
     [foldChosen],
   );
@@ -830,25 +975,42 @@ interface PanelState {
   /** Dimmed as folded: this panel's own folds, plus the composer's ``foldedIds``. */
   includedIds: ReadonlySet<number>;
   onInsert: (_entry: PendingEntry) => void;
+  onInsertReading: (_quote: ReadingQuoteItem) => void;
   /** The checked quotes -- here, above the switch, so a resize keeps them (#2885). */
   selection: QuoteSelection;
-  onFoldSelected: (_pending: readonly PendingEntry[]) => void;
+  onFoldSelected: BatchFold['onFoldSelected'];
   /** True while this panel's batch is on the wire; the bar rests meanwhile. */
   folding: boolean;
 }
 
+/**
+ * The reading quotes the panel offers: the pending ones, oldest first -- none
+ * at all when nothing was wired to fold them in.
+ */
+function useOfferedReading(
+  readingQuotes: ReflectionSourcesPanelProps['readingQuotes'],
+  onInsertReadingQuote: ReflectionSourcesPanelProps['onInsertReadingQuote'],
+): ReadingQuoteItem[] {
+  const wired = onInsertReadingQuote != null;
+  return useMemo(() => (wired ? collectReading(readingQuotes) : []), [wired, readingQuotes]);
+}
+
 function usePanelState(props: ReflectionSourcesPanelProps): PanelState {
   const feed = useFeedState(props.onPromoteSpan);
-  const dims = useDimReconciler(props.onInsertQuote);
+  const dims = useDimReconciler(props.onInsertQuote, props.onInsertReadingQuote);
   const selection = useQuoteSelection();
   // A checked quote can leave the feed while it waits -- the composer prunes a
   // quote removed elsewhere (#2754) -- so the selection narrows to what is still
   // listed, and the bar never counts, or offers to fold, a row that is gone.
   const { keepOnly } = selection;
   const { items } = props;
+  const reading = useOfferedReading(props.readingQuotes, props.onInsertReadingQuote);
   useEffect(() => {
-    keepOnly(collectPending(items).map((entry) => entry.quote.id));
-  }, [items, keepOnly]);
+    keepOnly([
+      ...collectPending(items).map((entry) => entry.quote.id),
+      ...reading.map((quote) => quote.id),
+    ]);
+  }, [items, reading, keepOnly]);
   const { onFoldSelected, folding } = useBatchFold(
     props.onInsertQuotes,
     selection,
@@ -860,7 +1022,15 @@ function usePanelState(props: ReflectionSourcesPanelProps): PanelState {
     () => (foldedIds == null || foldedIds.size === 0 ? own : withIds(own, [...foldedIds])),
     [own, foldedIds],
   );
-  return { feed, includedIds, onInsert: dims.onInsert, selection, onFoldSelected, folding };
+  return {
+    feed,
+    includedIds,
+    onInsert: dims.onInsert,
+    onInsertReading: dims.onInsertReading,
+    selection,
+    onFoldSelected,
+    folding,
+  };
 }
 
 /** The props every container hands its content: the caller's, plus the lifted state. */
@@ -875,11 +1045,14 @@ function SourcesContent({
   feedStatus = 'ready',
   onClose,
   onInsertQuotes,
+  readingQuotes,
+  onInsertReadingQuote,
   state,
 }: ContainerProps): React.JSX.Element {
   const pending = useMemo(() => collectPending(items), [items]);
+  const reading = useOfferedReading(readingQuotes, onInsertReadingQuote);
   const feed = useMemo(() => [...items].sort(byTimestamp), [items]);
-  const { includedIds, onInsert, selection, onFoldSelected, folding } = state;
+  const { selection, onFoldSelected, folding } = state;
 
   // The heading is the panel's navigation, so it stands ABOVE the scroll: only
   // the quotes and the feed move, and the way out never scrolls away (#2883).
@@ -892,12 +1065,11 @@ function SourcesContent({
         keyboardShouldPersistTaps="handled"
         testID="reflection-sources-scroll"
       >
-        <PendingQuotesGroup
+        <FoldableGroups
           pending={pending}
-          includedIds={includedIds}
-          selection={selection}
+          reading={reading}
+          state={state}
           canSelect={onInsertQuotes != null}
-          onInsert={onInsert}
         />
         {feed.length === 0 ? (
           <EmptyFeed anchorStatus={anchorStatus} feedStatus={feedStatus} />
@@ -912,7 +1084,7 @@ function SourcesContent({
           label={foldSelectedLabel(selection.selected.size)}
           count={selection.selected.size}
           disabled={folding}
-          onPress={() => onFoldSelected(pending)}
+          onPress={() => onFoldSelected(pending, reading)}
         />
       ) : null}
     </>

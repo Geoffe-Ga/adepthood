@@ -11,6 +11,7 @@ import { useReducedMotion } from '../../hooks/useReducedMotion';
 import type { ChapterNav } from './chapterNav';
 import ChapterReader, { type WriteNotePassage } from './ChapterReader';
 import styles from './Course.styles';
+import type { CoursePassageSpan } from './coursePassage';
 
 import { useMountedRef } from '@/hooks/useMountedRef';
 import { reportDiagnostic } from '@/observability/diagnostics';
@@ -335,6 +336,8 @@ interface ContentViewerProps {
   nav: ChapterNav;
   onWriteNote?: (_passage: WriteNotePassage) => void;
   initialScrollOffset?: number;
+  /** A passage to open on, already chosen (a Course quote's Open, #3659). */
+  preselectedPassage?: CoursePassageSpan;
 }
 
 function useMarkReadHandler(
@@ -404,6 +407,7 @@ const ContentViewer = ({
   nav,
   onWriteNote,
   initialScrollOffset,
+  preselectedPassage,
 }: ContentViewerProps): React.JSX.Element => {
   const toast = useReadToast(item.id);
   const { marking, isRead, handleMarkRead } = useMarkReadHandler(item, onMarkRead, toast.trigger);
@@ -415,6 +419,7 @@ const ContentViewer = ({
       onBack={onBack}
       onWriteNote={onWriteNote}
       initialScrollOffset={initialScrollOffset}
+      preselectedPassage={preselectedPassage}
       renderFooter={(atEssayEnd) => (
         <ViewerFooter
           isRead={isRead}

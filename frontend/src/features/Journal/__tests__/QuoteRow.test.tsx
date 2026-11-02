@@ -36,6 +36,26 @@ describe('QuoteRow', () => {
     expect(onPress).toHaveBeenCalledTimes(1);
   });
 
+  it('draws a quote with no press as the same row, but as text rather than a dead button (#3659)', () => {
+    const { getByTestId } = render(
+      <QuoteRow
+        text="the body keeps the score"
+        caption="From “Beige 1”"
+        accessibilityLabel="“the body keeps the score” from “Beige 1”"
+        testID="row"
+      />,
+    );
+
+    const row = getByTestId('row');
+    expect(row.props.accessibilityRole).toBeUndefined();
+    expect(row.props.onPress).toBeUndefined();
+    expect(getByTestId('row-caption').props.children).toBe('From “Beige 1”');
+    const style = StyleSheet.flatten(row.props.style);
+    expect(style.minHeight).toBe(touchTarget.minimum);
+    expect(style.borderLeftColor).toBe(accent.primary);
+    expect(style.backgroundColor).toBe(colors.paper.quoteHighlight);
+  });
+
   it('omits the caption line when there is none, and dims a used quote', () => {
     const { getByTestId, queryByTestId } = render(
       <QuoteRow text="q" dimmed onPress={jest.fn()} accessibilityLabel="q" testID="row" />,

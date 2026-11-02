@@ -58,7 +58,7 @@ jest.mock('@/api', () => {
       setIncluded: (...a: [number, number | null]) => mockSetIncluded(...a),
       list: (...a: [number]) => mockPromotionsList(...a),
     },
-    reflections: { sources: () => Promise.resolve({ items: [] }) },
+    reflections: { sources: () => Promise.resolve({ items: [], reading_quotes: [] }) },
   };
 });
 
@@ -151,7 +151,10 @@ describe('anchor paths keep the writer’s words out of diagnostics (#2891)', ()
       mockPromotionsList.mockResolvedValueOnce([
         {
           id: 1,
+          source_kind: 'entry',
           source_entry_id: 7,
+          source_content_id: null,
+          source_marginalia_id: null,
           anchor_start: BODY.indexOf(PRIVATE_PHRASE),
           anchor_end: BODY.indexOf(PRIVATE_PHRASE) + PRIVATE_PHRASE.length,
           anchor_text: PRIVATE_PHRASE,

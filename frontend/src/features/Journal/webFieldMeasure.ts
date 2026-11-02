@@ -85,6 +85,15 @@ function isTwinnable(node: object): node is TwinnableHostNode {
  * page's scroll position under the writer).
  */
 export function readWebNaturalHeight(node: unknown): number | undefined {
+  return readTwinHeight(node, (value) => value);
+}
+
+/**
+ * The height an unseen copy of a rendered web field reports holding
+ * ``textOf(field.value)`` at the field's own width, or ``undefined`` off web,
+ * for an unrendered field, or when the copy cannot be measured.
+ */
+function readTwinHeight(node: unknown, textOf: (_value: string) => string): number | undefined {
   // Unrendered (hidden or detached) has no width to wrap at: no measurement.
   if (readWebContentHeight(node) === undefined || !isTwinnable(node as object)) return undefined;
   const field = node as TwinnableHostNode;
@@ -96,11 +105,74 @@ export function readWebNaturalHeight(node: unknown): number | undefined {
   twin.setAttribute('aria-hidden', 'true');
   twin.setAttribute('tabindex', '-1');
   Object.assign(twin.style, TWIN_STYLE, { width: view.getComputedStyle(field).width });
-  twin.value = field.value;
+  twin.value = textOf(field.value);
   field.ownerDocument.body.appendChild(twin);
   const { scrollHeight } = twin;
   twin.remove();
   return isMeasurableHeight(scrollHeight) ? scrollHeight : undefined;
+}
+
+/** The out-of-flow, unseen marker a caret reveal scrolls into view. */
+interface MarkerNode {
+  style: Record<string, string>;
+  setAttribute: (name: string, value: string) => void;
+  scrollIntoView: (options: { block: 'center' }) => void;
+  remove: () => void;
+}
+
+/** The parts of a host textarea a caret reveal reads beyond a measurement's. */
+interface RevealableHostNode extends TwinnableHostNode {
+  offsetTop: number;
+  offsetLeft: number;
+  offsetParent: { appendChild: (child: MarkerNode) => unknown } | null;
+  ownerDocument: TwinnableHostNode['ownerDocument'] & { createElement: (tag: 'div') => MarkerNode };
+}
+
+/** True when ``node`` is a field a marker can be placed beside. */
+function isRevealable(node: unknown): node is RevealableHostNode {
+  const candidate = node as Partial<RevealableHostNode> | null;
+  return (
+    typeof candidate?.offsetTop === 'number' &&
+    candidate.offsetParent != null &&
+    typeof candidate.ownerDocument?.createElement === 'function'
+  );
+}
+
+/** A point-sized, unseen marker, positioned by the caller. */
+const MARKER_STYLE: Readonly<Record<string, string>> = {
+  position: 'absolute',
+  width: '1px',
+  height: '1px',
+  visibility: 'hidden',
+  pointerEvents: 'none',
+};
+
+/**
+ * Bring the caret at UTF-16 ``at`` of a grown web field into the middle of the
+ * view (#3659). Off web, for a caret at the top (where the field opens), or
+ * for a field that cannot be measured, nothing scrolls.
+ *
+ * A grown field never scrolls inside, so a selection set from code -- a Course
+ * quote's passage preselected screens down a chapter -- is drawn but out of
+ * sight, and the browser does not bring it in. Its depth is read off an unseen
+ * copy holding only the text before it; a marker at that depth, placed in the
+ * field's own positioned ancestor (so inside whatever scroller holds the
+ * field), is scrolled to the centre, and every scroller on the way follows.
+ */
+export function revealWebCaret(node: unknown, at: number): void {
+  if (at <= 0 || !isRevealable(node)) return;
+  const depth = readTwinHeight(node, (value) => value.slice(0, at));
+  const host = node.offsetParent;
+  if (depth === undefined || host == null) return;
+  const marker = node.ownerDocument.createElement('div');
+  marker.setAttribute('aria-hidden', 'true');
+  Object.assign(marker.style, MARKER_STYLE, {
+    top: `${String(node.offsetTop + depth)}px`,
+    left: `${String(node.offsetLeft)}px`,
+  });
+  host.appendChild(marker);
+  marker.scrollIntoView({ block: 'center' });
+  marker.remove();
 }
 
 /** The page's font set, where the browser exposes one. */

@@ -25,7 +25,7 @@
  * ``testID`` prefixes every element so more than one surface can coexist on a
  * page.
  */
-import React, { useCallback, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Platform,
   Pressable,
@@ -45,6 +45,7 @@ import styles from './JournalEntry.styles';
 import { floatingDockStyle, pinnedFooterStyle } from './readingSurfaceStyles';
 import { buildSelectionSurfaceCopy } from './selectionSurfaceCopy';
 import { useGrowingFieldHeight } from './useGrowingFieldHeight';
+import { revealWebCaret } from './webFieldMeasure';
 import { useWebSelectionListener } from './webSelectionListener';
 
 import { Button } from '@/components/Button';
@@ -415,14 +416,71 @@ interface CollapsibleField {
   setSelectionRange?: (_start: number, _end: number) => void;
 }
 
-/** Collapse the field's own selection to a caret at ``at`` (UTF-16). */
-function collapseFieldSelection(node: TextInput | null, at: number): void {
+/** Move the field's own selection to ``[start, end)`` (UTF-16); a caret when equal. */
+function setFieldSelection(node: TextInput | null, start: number, end: number): void {
   const field = node as unknown as CollapsibleField | null;
   if (Platform.OS === 'web') {
-    field?.setSelectionRange?.(at, at);
+    field?.setSelectionRange?.(start, end);
   } else {
-    field?.setSelection?.(at, at);
+    field?.setSelection?.(start, end);
   }
+}
+
+/**
+ * Show a passage chosen before the surface mounted (``initialSelection``) as
+ * the field's own selection, once, on mount -- not only as the footer's echo.
+ * A Course quote's Open lands here with its passage chosen (#3659), and the
+ * sources panel remounts the surface mid-selection as it swaps sheet for pane.
+ * Read from a ref: the seed describes where the reader WAS, so a later render
+ * must never move a selection they have since changed.
+ */
+function useSeededFieldSelection(
+  inputRef: React.RefObject<TextInput | null>,
+  body: string,
+  initialSelection: CodePointSpan | undefined,
+  fieldHeight: number | undefined,
+): void {
+  const seed = useRef({ body, span: chosen(initialSelection) });
+  useEffect(() => {
+    const { body: text, span } = seed.current;
+    if (span === undefined) return;
+    setFieldSelection(
+      inputRef.current,
+      codePointToUtf16(text, span.start),
+      codePointToUtf16(text, span.end),
+    );
+  }, [inputRef]);
+  useRevealSeed(inputRef, seed.current, fieldHeight);
+}
+
+/** A span that selects something, or undefined. */
+function chosen(span: CodePointSpan | undefined): CodePointSpan | undefined {
+  return span != null && span.end > span.start ? span : undefined;
+}
+
+/**
+ * Bring the seeded passage into view, once, a frame after the field has grown
+ * past its floor to hold its text: a grown field never scrolls inside, so a
+ * passage screens down is selected but out of sight until the page scrolls to
+ * it (web only; see ``revealWebCaret``). Measured before the field has grown,
+ * the page would not yet be tall enough to scroll there.
+ */
+function useRevealSeed(
+  inputRef: React.RefObject<TextInput | null>,
+  seed: { body: string; span: CodePointSpan | undefined },
+  fieldHeight: number | undefined,
+): void {
+  const revealed = useRef(false);
+  const grown = fieldHeight !== undefined && fieldHeight > SELECTION_FIELD_MIN_HEIGHT;
+  const { body, span } = seed;
+  useEffect(() => {
+    if (revealed.current || span === undefined || !grown) return undefined;
+    const frame = requestAnimationFrame(() => {
+      revealed.current = true;
+      revealWebCaret(inputRef.current, codePointToUtf16(body, span.start));
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [inputRef, body, span, grown, fieldHeight]);
 }
 
 interface FloatingConfirmProps {
@@ -463,7 +521,7 @@ function useFloatingConfirm({
   // Collapse the field's own selection too, so the highlight and the pill
   // leave together, then hand focus back to the text the X is leaving.
   const clear = useCallback(() => {
-    collapseFieldSelection(inputRef.current, selectionEnd);
+    setFieldSelection(inputRef.current, selectionEnd, selectionEnd);
     emitSpan(selectionEnd, selectionEnd);
     inputRef.current?.focus();
   }, [emitSpan, inputRef, selectionEnd]);
@@ -583,6 +641,7 @@ function QuoteSelectionSurface({
   const inputRef = useRef<TextInput>(null);
   useWebSelectionListener(inputRef, state.emitSpan);
   const { growth, onContentSizeChange } = useSelectionFieldGrowth();
+  useSeededFieldSelection(inputRef, body, initialSelection, growth.height);
 
   return (
     <View>

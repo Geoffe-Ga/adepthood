@@ -8,7 +8,7 @@
  * course). A section is spelled ``x`` because ``s`` already names a stage and
  * ``c`` already prefixes the cycle.
  */
-import type { ReflectionLevel, ReflectionSourceItem } from '@/api';
+import type { PromotedQuoteSourceKind, ReflectionLevel, ReflectionSourceItem } from '@/api';
 import { STAGES_PER_SECTION } from '@/constants/program';
 import { STAGE_ORDER } from '@/design/tokens';
 
@@ -155,25 +155,92 @@ export function formatSourceDate(timestamp: string, timeZone?: string): string {
   });
 }
 
-/** The two facts an attribution is built from, whichever feed carried them. */
+/** The facts an attribution is built from, whichever feed carried them. */
 export interface AttributionSource {
+  /**
+   * What the quote was lifted from (#3659). Absent reads as an entry, the only
+   * kind there was before a chapter or a letter could be quoted. Not ``kind``:
+   * a feed's ``ReflectionSourceItem`` -- passed here whole -- has its own.
+   */
+  sourceKind?: PromotedQuoteSourceKind;
+  /** An entry's or chapter's title; for a letter, the title of the page it answered. */
   title: string | null | undefined;
+  /** When the source was written; for a letter, when the letter was. */
   timestamp: string;
 }
 
-/**
- * The attribution line written beneath a folded quote: the source's trimmed
- * title, else the day it was written (in the device zone).
- *
- * The ONE composer of that line. The sources panel and the Promoted quotes
- * screen read the same entry through two different feeds, and the batch
- * fold-in decides "already in the body" by looking for the exact rendered
- * block -- so a second, drifting copy of this rule would make the same quote,
- * folded from the other surface, land twice.
- */
-export function quoteAttribution(source: AttributionSource): string {
+/** A letter, as the words after "From": the same whichever page it answered. */
+const LETTER_SOURCE = 'a letter';
+
+/** A chapter quote whose title the server could not give (it always tries). */
+const UNTITLED_CHAPTER_SOURCE = 'a Course chapter';
+
+/** How the caption separates a letter from the page it answered. */
+const LETTER_PAGE_SEPARATOR = ' · ';
+
+/** How a spoken name separates them: a pause, where the eye reads a dot. */
+const SPOKEN_PAGE_SEPARATOR = ', ';
+
+/** A page's attribution: its trimmed title, else the day it was written. */
+function pageAttribution(source: AttributionSource): string {
   const title = source.title?.trim();
   return title ? title : formatSourceDate(source.timestamp);
+}
+
+/** A chapter or a letter, as the words after "From": “Beige 1”, a letter. */
+function readingSource(source: AttributionSource): string {
+  if (source.sourceKind === 'letter') return LETTER_SOURCE;
+  const title = source.title?.trim();
+  return title ? `“${title}”` : UNTITLED_CHAPTER_SOURCE;
+}
+
+/**
+ * The attribution line written beneath a folded quote, by where it came from:
+ * an entry's trimmed title, else the day it was written (in the device zone);
+ * a chapter as ``From “Beige 1”``; a letter as ``From a letter``.
+ *
+ * The ONE composer of that line. The sources panel and the Promoted quotes
+ * screen read the same quote through two different feeds, and the batch
+ * fold-in decides "already in the body" by looking for the exact rendered
+ * block -- so a second, drifting copy of this rule would make the same quote,
+ * folded from the other surface, land twice. A letter's attribution names no
+ * page for the same reason: the two feeds date an untitled page differently.
+ */
+export function quoteAttribution(source: AttributionSource): string {
+  if (source.sourceKind === 'course' || source.sourceKind === 'letter') {
+    return `From ${readingSource(source)}`;
+  }
+  return pageAttribution(source);
+}
+
+/** A letter and the page it answered, joined by ``separator`` -- or the letter alone. */
+function letterWithPage(source: AttributionSource, separator: string): string {
+  const page = pageAttribution(source);
+  return page === '' ? LETTER_SOURCE : `${LETTER_SOURCE}${separator}${page}`;
+}
+
+/**
+ * The caption beneath a listed quote: its attribution, except that a letter
+ * also names the page it answered (its title, else the letter's date) --
+ * "From a letter · Rain" -- because the writer recognises their own page more
+ * readily than the day a letter was written.
+ */
+export function quoteSourceLabel(source: AttributionSource): string {
+  return source.sourceKind === 'letter'
+    ? `From ${letterWithPage(source, LETTER_PAGE_SEPARATOR)}`
+    : quoteAttribution(source);
+}
+
+/**
+ * The same source as a row's accessible name says it, after the quote itself:
+ * "from Rain", "from “Beige 1”", "from a letter, Rain". Every word of the
+ * visible caption is in it, so a speech user can say what they see.
+ */
+export function quoteSourceSpoken(source: AttributionSource): string {
+  if (source.sourceKind === 'letter')
+    return `from ${letterWithPage(source, SPOKEN_PAGE_SEPARATOR)}`;
+  if (source.sourceKind === 'course') return `from ${readingSource(source)}`;
+  return `from ${pageAttribution(source)}`;
 }
 
 /** The attribution shown beneath a folded quote: the source's title, else its date. */

@@ -9,7 +9,13 @@ import React from 'react';
 
 import { spyOnFocus } from './focusSpyTestKit';
 
-import type { JournalMessage, PromotedQuote, ReflectionDue, ReflectionSourceItem } from '@/api';
+import type {
+  JournalMessage,
+  PromotedQuote,
+  ReflectionDue,
+  ReflectionSourceItem,
+  ReflectionSourcesResponse,
+} from '@/api';
 
 /** A never-settling promise plus its resolve, for pinning a slow ``promotions.list`` hydrate. */
 function deferredPromotionsList(): {
@@ -47,7 +53,7 @@ const mockReflectionsDue = jest.fn() as jest.MockedFunction<
   () => Promise<{ due: ReflectionDue | null }>
 >;
 const mockReflectionsSources = jest.fn() as jest.MockedFunction<
-  (_level: string, _scopeKey: string) => Promise<{ items: ReflectionSourceItem[] }>
+  (_level: string, _scopeKey: string) => Promise<ReflectionSourcesResponse>
 >;
 
 // ``useAuth`` throws outside a provider; the screen reads only the zone.
@@ -129,7 +135,10 @@ function promotedQuote(overrides: Partial<PromotedQuote> = {}): PromotedQuote {
   const end = overrides.anchor_end ?? 19;
   return {
     id: 55,
+    source_kind: 'entry',
     source_entry_id: 7,
+    source_content_id: null,
+    source_marginalia_id: null,
     anchor_start: start,
     anchor_end: end,
     anchor_text: Array.from(BODY).slice(start, end).join('').trim(),
@@ -242,7 +251,7 @@ beforeEach(() => {
   mockReflectionsDue.mockReset();
   mockReflectionsDue.mockResolvedValue({ due: null });
   mockReflectionsSources.mockReset();
-  mockReflectionsSources.mockResolvedValue({ items: [] });
+  mockReflectionsSources.mockResolvedValue({ reading_quotes: [], items: [] });
   mockGet.mockResolvedValue(entry());
 });
 
@@ -335,7 +344,7 @@ describe('JournalEntryPromoteJourney -- read-mode journey (finished entry, entry
 
 describe('JournalEntryPromoteJourney -- reflection-panel re-promotion (draft entry)', () => {
   it('promotes a selected span through the real sources panel with code-point anchors', async () => {
-    mockReflectionsSources.mockResolvedValue({ items: [sourceItem] });
+    mockReflectionsSources.mockResolvedValue({ reading_quotes: [], items: [sourceItem] });
     mockPromote.mockResolvedValue(
       promotedQuote({
         id: 501,
@@ -354,7 +363,7 @@ describe('JournalEntryPromoteJourney -- reflection-panel re-promotion (draft ent
   });
 
   it('shows the row hint by testID when the in-panel re-promotion fails', async () => {
-    mockReflectionsSources.mockResolvedValue({ items: [sourceItem] });
+    mockReflectionsSources.mockResolvedValue({ reading_quotes: [], items: [sourceItem] });
     mockPromote.mockRejectedValue({ status: 500, detail: 'boom' });
     const screen = renderScreen(REFLECTION_PARAMS);
     await openReflectionSources(screen);
@@ -390,7 +399,7 @@ describe('JournalEntryPromoteJourney -- sources panel navigation (#2883)', () =>
 
   /** Opens Sources on a drafted reflection and folds the pending quote in. */
   async function openWithDraftAndFold(): Promise<Screen> {
-    mockReflectionsSources.mockResolvedValue({ items: [foldSource] });
+    mockReflectionsSources.mockResolvedValue({ reading_quotes: [], items: [foldSource] });
     const screen = renderScreen(REFLECTION_PARAMS);
     fireEvent.changeText(screen.getByTestId('journal-body-input'), DRAFT);
     await openReflectionSources(screen);

@@ -57,7 +57,10 @@ jest.mock('../ReviewScopePicker', () => {
 function item(overrides: Partial<PromotedQuoteListItem> = {}): PromotedQuoteListItem {
   return {
     id: 1,
+    source_kind: 'entry',
     source_entry_id: 7,
+    source_content_id: null,
+    source_marginalia_id: null,
     anchor_start: 4,
     anchor_end: 21,
     anchor_text: 'the anger was grief',
@@ -65,6 +68,8 @@ function item(overrides: Partial<PromotedQuoteListItem> = {}): PromotedQuoteList
     stale: false,
     source_title: 'Rain',
     source_timestamp: '2026-03-01T12:00:00Z',
+    source_stage_number: null,
+    letter_entry_id: null,
     included_in_entry_id: null,
     included_in_title: null,
     created_at: '2026-03-02T09:00:00Z',
@@ -253,6 +258,44 @@ describe('PromotedQuotesScreen -- folding into the review it was opened from (#2
     ]);
     expect(mockGoBack).toHaveBeenCalledTimes(1);
     expect(mockNavigate).not.toHaveBeenCalled();
+  });
+});
+
+describe('PromotedQuotesScreen -- folding a chapter or a letter quote (#3659)', () => {
+  it('attributes each by where it came from, and folds them among the entries by source time', async () => {
+    const course = item({
+      id: 21,
+      source_kind: 'course',
+      source_entry_id: null,
+      source_content_id: 12,
+      source_stage_number: 1,
+      anchor_text: 'the body keeps the score',
+      source_title: 'Beige 1',
+      // A chapter quote's source time is when it was promoted.
+      source_timestamp: '2026-02-28T09:00:00Z',
+    });
+    const letter = item({
+      id: 22,
+      source_kind: 'letter',
+      source_entry_id: null,
+      source_marginalia_id: 40,
+      letter_entry_id: 7,
+      anchor_text: 'you are allowed to rest',
+      source_title: 'Rain',
+      // A letter's source time is when the letter was written.
+      source_timestamp: '2026-03-02T09:00:00Z',
+    });
+    serve([letter, LATE_IN_OLD, course]);
+    const { getByTestId, getByLabelText } = await renderScreen('quotes-5');
+    fireEvent.press(getByLabelText('Select quotes'));
+    fireEvent.press(getByLabelText('Select all'));
+    fireEvent.press(getByTestId('quote-fold-action'));
+
+    expect(usePromotedQuoteHandoffStore.getState().pending?.candidates).toEqual([
+      { id: 21, anchorText: 'the body keeps the score', attribution: 'From “Beige 1”' },
+      { id: 11, anchorText: 'late', attribution: 'Rain' },
+      { id: 22, anchorText: 'you are allowed to rest', attribution: 'From a letter' },
+    ]);
   });
 });
 

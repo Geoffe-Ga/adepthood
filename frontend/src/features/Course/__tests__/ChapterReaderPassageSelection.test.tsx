@@ -255,3 +255,118 @@ describe('ChapterReader -- initialScrollOffset', () => {
     expect(scrollView.props.contentOffset).toEqual({ x: 0, y: 125 });
   });
 });
+
+/**
+ * A Course quote's Open (#3659) lands on its chapter with the passage already
+ * chosen. Its anchors index ``body_markdown`` AS SERVED, while the surface
+ * mirrors the body with its title heading stripped, so the reader shifts the
+ * span back by the code points that heading took: ``# Chapter One\n\n`` is 15,
+ * so the served {22, 26} is the surface's {7, 11} -- "riff", past the emoji.
+ */
+describe('ChapterReader -- opening with a passage preselected (#3659)', () => {
+  const SERVED_RIFF = { start: 22, end: 26, text: 'riff' };
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+    mockContentBody.mockResolvedValue(NOTE_CHAPTER);
+  });
+
+  async function renderPreselected(
+    preselectedPassage: { start: number; end: number; text?: string },
+    overrides: Partial<React.ComponentProps<typeof ChapterReader>> = {},
+  ): Promise<RenderResult & { onWriteNote: jest.Mock }> {
+    const onWriteNote = jest.fn();
+    const utils = render(
+      <ChapterReader
+        source={{ kind: 'content', id: 1 }}
+        fallbackTitle="x"
+        onBack={jest.fn()}
+        onWriteNote={onWriteNote}
+        preselectedPassage={preselectedPassage}
+        {...overrides}
+      />,
+    );
+    await utils.findByTestId('reader-sheet-title');
+    return { ...utils, onWriteNote };
+  }
+
+  it('opens straight on the selection surface with the passage chosen and the confirm lit', async () => {
+    const { getByTestId, queryByTestId } = await renderPreselected(SERVED_RIFF);
+
+    expect(queryByTestId('reader-markdown')).toBeNull();
+    expect(getByTestId('passage-select-input')).toBeTruthy();
+    expect(getByTestId('passage-select-preview').props.children).toBe('riff');
+    expect(getByTestId('passage-select-confirm').props.accessibilityState).toMatchObject({
+      disabled: false,
+    });
+  });
+
+  it('writes a note on the preselected passage without a fresh selection', async () => {
+    const { getByTestId, onWriteNote } = await renderPreselected(SERVED_RIFF);
+
+    await act(async () => {
+      fireEvent.press(getByTestId('passage-select-confirm'));
+    });
+    await act(async () => {
+      fireEvent.press(getByTestId('write-note-dialog-confirm'));
+    });
+
+    expect(onWriteNote).toHaveBeenCalledWith({
+      text: 'riff',
+      sourceTitle: 'Chapter One',
+      scrollOffset: 0,
+    });
+  });
+
+  it('returns to the rendered chapter on Cancel', async () => {
+    const { getByTestId, findByTestId, queryByTestId } = await renderPreselected(SERVED_RIFF);
+
+    fireEvent.press(getByTestId('passage-select-cancel'));
+
+    await findByTestId('reader-markdown');
+    expect(queryByTestId('passage-select-input')).toBeNull();
+  });
+
+  it('preselects a span read back off a URL, which carries no words to check', async () => {
+    const { getByTestId } = await renderPreselected({ start: 22, end: 26 });
+
+    expect(getByTestId('passage-select-preview').props.children).toBe('riff');
+  });
+
+  it.each([
+    ['whose words the chapter no longer holds there', { start: 22, end: 26, text: 'solo' }],
+    ['that runs past the end of the chapter', { start: 22, end: 400 }],
+    ['that starts inside the stripped title heading', { start: 2, end: 26 }],
+    ['that selects nothing', { start: 22, end: 22 }],
+  ])('opens the chapter normally for a span %s', async (_name, span) => {
+    const { getByTestId, queryByTestId } = await renderPreselected(span);
+
+    expect(getByTestId('reader-markdown')).toBeTruthy();
+    expect(queryByTestId('passage-select-input')).toBeNull();
+  });
+
+  it('offers no preselection to a reader that cannot take a note', async () => {
+    const { getByTestId, queryByTestId } = await renderPreselected(SERVED_RIFF, {
+      onWriteNote: undefined,
+    });
+
+    expect(getByTestId('reader-markdown')).toBeTruthy();
+    expect(queryByTestId('passage-select-input')).toBeNull();
+  });
+
+  it('preselects a new passage asked for while the same chapter is already open', async () => {
+    const onWriteNote = jest.fn();
+    const props = {
+      source: { kind: 'content' as const, id: 1 },
+      fallbackTitle: 'x',
+      onBack: jest.fn(),
+      onWriteNote,
+    };
+    const utils = render(<ChapterReader {...props} />);
+    await utils.findByTestId('reader-markdown');
+
+    utils.rerender(<ChapterReader {...props} preselectedPassage={SERVED_RIFF} />);
+
+    expect(utils.getByTestId('passage-select-preview').props.children).toBe('riff');
+  });
+});

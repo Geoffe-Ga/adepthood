@@ -40,6 +40,7 @@ import ContentCard from './ContentCard';
 import ContentViewer from './ContentViewer';
 import styles from './Course.styles';
 import CourseDrawer, { useCourseDrawerBodies, useCourseDrawerContent } from './CourseDrawer';
+import type { CoursePassageSpan } from './coursePassage';
 import { captureCourseSession, type CourseSession } from './courseSession';
 import { useCourseSessionKey, useEachCourseSession } from './courseSessionLifecycle';
 import { loadInitialReadingStage } from './initialReadingStage';
@@ -531,25 +532,89 @@ function useJournalHandoff(
   return { handleReflect, handleWriteNote };
 }
 
-function useCourseViewer(selectedStage: number, setSelectedStage: (_stageNumber: number) => void) {
+/**
+ * The passage a Course quote's Open asked the reader to preselect (#3659), and
+ * a count of those requests. The count only rises: the viewer is keyed on it,
+ * so asking for a passage -- even the very one already shown, which the reader
+ * may have cancelled since -- opens the chapter afresh on it.
+ */
+function usePassageRequest() {
+  const [passage, setPassage] = useState<CoursePassageSpan | undefined>(undefined);
+  const [request, setRequest] = useState(0);
+  const ask = useCallback((span: CoursePassageSpan) => {
+    setPassage(span);
+    setRequest((count) => count + 1);
+  }, []);
+  const clear = useCallback(() => setPassage(undefined), []);
+  return { passage, request, ask, clear };
+}
+
+/** How a chapter was opened: a warm return's scroll offset, or a quote's passage. */
+interface ChapterOpening {
+  offset?: number;
+  passage?: CoursePassageSpan;
+}
+
+/**
+ * The chapter on screen and how it was opened. Each opening replaces the last
+ * one's restore hints, so a warm return's scroll offset or a quote's passage
+ * never leaks onto the next chapter the reader opens by hand.
+ */
+function useOpenChapter() {
   const [viewingItem, setViewingItem] = useState<ContentItem | null>(null);
-  const [viewingResource, setViewingResource] = useState<ResourceTarget | null>(null);
-  const [viewingIntro, setViewingIntro] = useState<number | null>(null);
   // Only set on a warm return; a manual open clears it so no stale scroll leaks.
   const [restoreOffset, setRestoreOffset] = useState<number | undefined>(undefined);
+  const passageRequest = usePassageRequest();
+  const { ask, clear } = passageRequest;
 
-  const clearViewingItem = useCallback(() => setViewingItem(null), []);
-
-  const handleContentPress = useCallback((item: ContentItem) => {
-    if (item.is_locked) return;
+  const open = useCallback(
+    (item: ContentItem, opening: ChapterOpening) => {
+      setRestoreOffset(opening.offset);
+      if (opening.passage === undefined) clear();
+      else ask(opening.passage);
+      setViewingItem(item);
+    },
+    [ask, clear],
+  );
+  const close = useCallback(() => {
+    setViewingItem(null);
     setRestoreOffset(undefined);
-    setViewingItem(item);
-  }, []);
+    clear();
+  }, [clear]);
 
-  const openForRestore = useCallback((item: ContentItem, offset: number) => {
-    setRestoreOffset(offset);
-    setViewingItem(item);
-  }, []);
+  const handleContentPress = useCallback(
+    (item: ContentItem) => {
+      if (item.is_locked) return;
+      open(item, {});
+    },
+    [open],
+  );
+  const openForRestore = useCallback(
+    (item: ContentItem, offset: number) => open(item, { offset }),
+    [open],
+  );
+  const openForPassage = useCallback(
+    (item: ContentItem, passage: CoursePassageSpan) => open(item, { passage }),
+    [open],
+  );
+
+  return {
+    viewingItem,
+    restoreOffset,
+    passage: passageRequest.passage,
+    passageRequest: passageRequest.request,
+    handleContentPress,
+    openForRestore,
+    openForPassage,
+    close,
+  };
+}
+
+function useCourseViewer(selectedStage: number, setSelectedStage: (_stageNumber: number) => void) {
+  const { close: clearViewingItem, ...chapter } = useOpenChapter();
+  const { viewingItem } = chapter;
+  const [viewingResource, setViewingResource] = useState<ResourceTarget | null>(null);
+  const [viewingIntro, setViewingIntro] = useState<number | null>(null);
 
   const handleResourcePress = useCallback((resource: ResourceTarget) => {
     setViewingResource(resource);
@@ -560,11 +625,10 @@ function useCourseViewer(selectedStage: number, setSelectedStage: (_stageNumber:
   }, []);
 
   const handleBack = useCallback(() => {
-    setViewingItem(null);
+    clearViewingItem();
     setViewingResource(null);
     setViewingIntro(null);
-    setRestoreOffset(undefined);
-  }, []);
+  }, [clearViewingItem]);
 
   const { handleReflect, handleWriteNote } = useJournalHandoff(
     selectedStage,
@@ -574,12 +638,9 @@ function useCourseViewer(selectedStage: number, setSelectedStage: (_stageNumber:
   useOpenCourseSection(setSelectedStage, handleBack);
 
   return {
-    viewingItem,
+    ...chapter,
     viewingResource,
     viewingIntro,
-    restoreOffset,
-    openForRestore,
-    handleContentPress,
     handleResourcePress,
     handleIntroPress,
     handleBack,
@@ -639,11 +700,13 @@ function useReaderRestore(
   content: ContentItem[],
   currentViewingId: number | null,
   openForRestore: (_item: ContentItem, _offset: number) => void,
+  openForPassage: (_item: ContentItem, _span: CoursePassageSpan) => void,
 ): { rearm: () => void } {
   const route = useAppRoute<'Course'>();
   const contentId = route.params?.contentId ?? null;
   const scrollOffset = route.params?.scrollOffset ?? 0;
   const openingSection = route.params?.openSection === true || route.params?.openReading === true;
+  const passageAsked = route.params?.highlightSpan !== undefined;
   const restoredIdRef = useRef<number | null>(null);
   const [armSeq, setArmSeq] = useState(0);
 
@@ -652,20 +715,81 @@ function useReaderRestore(
     setArmSeq((seq) => seq + 1);
   }, []);
 
+  useOpenPassage(content, restoredIdRef, openForPassage);
+
   useEffect(() => {
     if (openingSection) {
       restoredIdRef.current = null;
       return;
     }
-    if (contentId === null || restoredIdRef.current === contentId) return;
+    // A passage request opens the chapter itself (``useOpenPassage``).
+    if (passageAsked || contentId === null || restoredIdRef.current === contentId) return;
     if (currentViewingId === contentId) return;
     const item = content.find((c) => c.id === contentId);
     if (!item || item.is_locked) return;
     restoredIdRef.current = contentId;
     openForRestore(item, scrollOffset);
-  }, [openingSection, contentId, scrollOffset, currentViewingId, content, openForRestore, armSeq]);
+  }, [
+    openingSection,
+    passageAsked,
+    contentId,
+    scrollOffset,
+    currentViewingId,
+    content,
+    openForRestore,
+    armSeq,
+  ]);
 
   return { rearm };
+}
+
+/**
+ * A Course quote's Open (#3659): once the routed chapter is in the loaded
+ * stage, open it with the quoted passage preselected -- even when it is the
+ * chapter already open -- then consume the one-shot ``highlightSpan`` so it
+ * never fires twice. ``restoredIdRef`` is the reading-restore's own record, so
+ * closing the chapter afterwards does not let the lingering ``contentId`` drag
+ * it back open.
+ */
+function useOpenPassage(
+  content: ContentItem[],
+  restoredIdRef: React.MutableRefObject<number | null>,
+  openForPassage: (_item: ContentItem, _span: CoursePassageSpan) => void,
+): void {
+  const route = useAppRoute<'Course'>();
+  const navigation = useNavigation<BottomTabNavigationProp<RootTabParamList, 'Course'>>();
+  const contentId = route.params?.contentId ?? null;
+  const span = route.params?.highlightSpan;
+  const start = span?.start;
+  const end = span?.end;
+  const text = span?.text;
+
+  useEffect(() => {
+    if (contentId === null || start === undefined || end === undefined) return;
+    const item = content.find((c) => c.id === contentId);
+    if (!item || item.is_locked) return;
+    restoredIdRef.current = contentId;
+    openForPassage(item, text === undefined ? { start, end } : { start, end, text });
+    navigation.setParams({ highlightSpan: undefined });
+  }, [contentId, start, end, text, content, restoredIdRef, openForPassage, navigation]);
+}
+
+/**
+ * A passage request names its chapter's stage. Select that stage directly, as
+ * "Read next" does: a route already carrying this stage number would not move
+ * a selection the reader has since changed with the pills, and the chapter
+ * would never be found in the stage that loaded.
+ */
+function usePassageStage(setSelectedStage: (_stageNumber: number) => void): void {
+  const route = useAppRoute<'Course'>();
+  const stageNumber = route.params?.stageNumber;
+  const span = route.params?.highlightSpan;
+  const start = span?.start;
+  const end = span?.end;
+  useEffect(() => {
+    if (stageNumber === undefined || start === undefined || end === undefined) return;
+    setSelectedStage(stageNumber);
+  }, [stageNumber, start, end, setSelectedStage]);
 }
 
 interface ReadNextProps {
@@ -727,7 +851,9 @@ function useCourseReadingPosition(
     stageContent.content,
     viewer.viewingItem?.id ?? null,
     viewer.openForRestore,
+    viewer.openForPassage,
   );
+  usePassageStage(setSelectedStage);
   const { state, refresh, openNext } = useReadNext(
     setSelectedStage,
     rearm,
@@ -782,6 +908,8 @@ function renderOverlay(
     const nav = buildChapterNav(viewer, content, viewer.viewingItem);
     return (
       <ContentViewer
+        // A new passage request opens the chapter afresh on it (#3659).
+        key={viewer.passageRequest}
         item={viewer.viewingItem}
         onBack={viewer.handleBack}
         onMarkRead={onMarkRead}
@@ -789,6 +917,7 @@ function renderOverlay(
         nav={nav}
         onWriteNote={viewer.handleWriteNote}
         initialScrollOffset={viewer.restoreOffset}
+        preselectedPassage={viewer.passage}
       />
     );
   }

@@ -57,7 +57,7 @@ jest.mock('@/api', () => ({
   },
   // A reopened review asks for its sources; the drawer tests need only a reply.
   reflections: {
-    sources: jest.fn(() => Promise.resolve({ items: [] })),
+    sources: jest.fn(() => Promise.resolve({ items: [], reading_quotes: [] })),
   },
   corpus: {
     voiceReadiness: (...a: unknown[]) =>

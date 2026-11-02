@@ -73,7 +73,10 @@ jest.mock('../ReviewScopePicker', () => {
 function item(overrides: Partial<PromotedQuoteListItem> = {}): PromotedQuoteListItem {
   return {
     id: 1,
+    source_kind: 'entry',
     source_entry_id: 7,
+    source_content_id: null,
+    source_marginalia_id: null,
     anchor_start: 4,
     anchor_end: 21,
     anchor_text: 'the anger was grief',
@@ -81,6 +84,8 @@ function item(overrides: Partial<PromotedQuoteListItem> = {}): PromotedQuoteList
     stale: false,
     source_title: 'Rain',
     source_timestamp: '2026-03-01T12:00:00Z',
+    source_stage_number: null,
+    letter_entry_id: null,
     included_in_entry_id: null,
     included_in_title: null,
     created_at: '2026-03-02T09:00:00Z',
@@ -197,9 +202,9 @@ describe('PromotedQuotesScreen sections', () => {
   });
 
   it('opens nothing for a quote with no source entry, never a blank new page', async () => {
-    // A Course or letter quote (#3655) has no journal entry to open; until the
-    // screen learns where those live, pressing one must not fall through to
-    // ``JournalEntry`` with no ``entryId`` -- which is the route to a new page.
+    // Each kind narrows its own ids (#3659): an entry quote missing its entry
+    // must not fall through to ``JournalEntry`` with no ``entryId`` -- which is
+    // the route to a new page.
     serve(page([item({ source_entry_id: null })]), page([]));
     const { findByTestId } = render(<PromotedQuotesScreen />);
 
@@ -212,9 +217,11 @@ describe('PromotedQuotesScreen sections', () => {
     serve(page([]), page([]));
     const { findByText, queryByText } = render(<PromotedQuotesScreen />);
 
+    // A passage can be lifted from a chapter or a letter as well as a page
+    // (#3659), so the invitation names all three without naming one button.
     expect(await findByText(EMPTY_COPY)).toBeTruthy();
     expect(EMPTY_COPY).toBe(
-      'Nothing promoted yet. While reading an entry, tap Promote a quote to carry a passage forward.',
+      'Nothing promoted yet. While reading an entry, a chapter or a letter, select a passage and promote it to carry it forward.',
     );
     expect(queryByText(/^Not yet in a review/)).toBeNull();
     expect(queryByText(/^Used in a review/)).toBeNull();
@@ -384,5 +391,145 @@ describe('PromotedQuotesScreen — navigation owns the title (#2962)', () => {
     expectNavigationOwnsTitle(screen, 'Promoted quotes');
     expect(screen.getByText('CARRIED FORWARD')).toBeTruthy();
     focus.expectNone();
+  });
+});
+
+/** A Course quote as the list sends it: no entry, its chapter and that chapter's stage. */
+const COURSE = item({
+  id: 3,
+  source_kind: 'course',
+  source_entry_id: null,
+  source_content_id: 12,
+  source_stage_number: 1,
+  anchor_start: 8,
+  anchor_end: 32,
+  anchor_text: 'the body keeps the score',
+  source_title: 'Beige 1',
+});
+
+/** A letter quote: its margin note, and the page the note sits on (and its title). */
+const LETTER = item({
+  id: 4,
+  source_kind: 'letter',
+  source_entry_id: null,
+  source_marginalia_id: 40,
+  letter_entry_id: 7,
+  anchor_start: 0,
+  anchor_end: 23,
+  anchor_text: 'you are allowed to rest',
+  source_title: 'Rain',
+});
+
+describe('PromotedQuotesScreen — a quote from a chapter or a letter (#3659)', () => {
+  it('names the chapter and the letter a quote came from, in the caption and its name', async () => {
+    serve(page([COURSE, LETTER]), page([]));
+    const { findByTestId, getByTestId } = render(<PromotedQuotesScreen />);
+
+    expect((await findByTestId('promoted-quote-3-caption')).props.children).toBe('From “Beige 1”');
+    expect(getByTestId('promoted-quote-4-caption').props.children).toBe('From a letter · Rain');
+    expect(getByTestId('promoted-quote-3').props.accessibilityLabel).toBe(
+      '“the body keeps the score” from “Beige 1”',
+    );
+    expect(getByTestId('promoted-quote-4').props.accessibilityLabel).toBe(
+      '“you are allowed to rest” from a letter, Rain',
+    );
+  });
+
+  it('dates a letter whose page is untitled, and keeps where it was used after it', async () => {
+    serve(
+      page([]),
+      page([
+        item({
+          ...LETTER,
+          pending: false,
+          source_title: null,
+          included_in_entry_id: 30,
+          included_in_title: 'The windy week',
+        }),
+      ]),
+    );
+    const { findByTestId } = render(<PromotedQuotesScreen />);
+
+    expect((await findByTestId('promoted-quote-4-caption')).props.children).toMatch(
+      /^From a letter · Mar 1, 2026 · In The windy week$/,
+    );
+  });
+
+  it('opens a Course quote in its chapter, with the passage to preselect', async () => {
+    serve(page([COURSE]), page([]));
+    const { findByTestId } = render(<PromotedQuotesScreen />);
+
+    fireEvent.press(await findByTestId('promoted-quote-3'));
+
+    expect(mockNavigate).toHaveBeenCalledWith('Tabs', {
+      screen: 'Course',
+      params: {
+        stageNumber: 1,
+        contentId: 12,
+        highlightSpan: { start: 8, end: 32, text: 'the body keeps the score' },
+      },
+    });
+  });
+
+  it("opens a letter quote on the page its note sits on, asking for that note's letter", async () => {
+    serve(page([LETTER]), page([]));
+    const { findByTestId } = render(<PromotedQuotesScreen />);
+
+    fireEvent.press(await findByTestId('promoted-quote-4'));
+
+    // No highlightSpan: the span indexes the letter, not the page, and the
+    // page would read it as a passage of its own body.
+    expect(mockNavigate).toHaveBeenCalledWith('JournalEntry', { entryId: 7, openLetterFor: 40 });
+  });
+
+  it('shows a quote from a since-pruned chapter with its caption, but offers no Open', async () => {
+    serve(
+      page([item({ ...COURSE, source_content_id: null, source_stage_number: null })]),
+      page([]),
+    );
+    const { findByTestId, getByTestId } = render(<PromotedQuotesScreen />);
+
+    const row = await findByTestId('promoted-quote-3');
+    expect(getByTestId('promoted-quote-3-caption').props.children).toBe('From “Beige 1”');
+    expect(row.props.accessibilityRole).toBeUndefined();
+    expect(row.props.onPress).toBeUndefined();
+    fireEvent.press(row);
+    expect(mockNavigate).not.toHaveBeenCalled();
+    // Remove is still offered beside it: the quote is the writer's to let go of.
+    expect(getByTestId('promoted-quote-3-remove')).toBeTruthy();
+  });
+
+  it('offers no Open for a letter quote whose note is gone', async () => {
+    serve(page([item({ ...LETTER, source_marginalia_id: null })]), page([]));
+    const { findByTestId } = render(<PromotedQuotesScreen />);
+
+    const row = await findByTestId('promoted-quote-4');
+    expect(row.props.accessibilityRole).toBeUndefined();
+    fireEvent.press(row);
+    expect(mockNavigate).not.toHaveBeenCalled();
+  });
+
+  it('still lets a pruned-chapter quote be checked for a fold, where there is no Open to lose', async () => {
+    serve(page([item({ ...COURSE, source_content_id: null })]), page([]));
+    const { findByTestId, getByTestId } = render(<PromotedQuotesScreen />);
+
+    fireEvent.press(await findByTestId('promoted-quotes-pending-select-toggle'));
+    const row = getByTestId('promoted-quote-3');
+    expect(row.props.accessibilityRole).toBe('checkbox');
+    fireEvent.press(row);
+    expect(getByTestId('promoted-quote-3').props.accessibilityState).toMatchObject({
+      checked: true,
+    });
+  });
+
+  it('says in its lead that passages come from pages, the Course and letters', async () => {
+    serve(page([]), page([]));
+    const { findByText } = render(<PromotedQuotesScreen />);
+
+    expect(
+      await findByText(
+        'Passages you lifted from your pages, the Course and your letters, waiting for a review or woven into one.',
+      ),
+    ).toBeTruthy();
   });
 });

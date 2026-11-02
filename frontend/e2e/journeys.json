@@ -3426,5 +3426,17 @@
     },
     "status": "covered",
     "coveredBy": "frontend/e2e/habit-ledger.browser.e2e.test.ts"
+  },
+  {
+    "id": "journal.fold-a-reading-quote-into-a-review",
+    "description": "A writer composing a review whose window holds a passage they promoted from a Course chapter or a Resonance Letter opens Sources and finds it under its own From your reading group (#3659), below Quotes to fold in: the same quote row, captioned From “Beige 1” or From a letter · <the page it answered>, absent when there is none. A tap folds it into the body as a blockquote attributed — From “Beige 1” / — From a letter and marks it included over PATCH /promotions/{promotion_id}, the same path as an entry quote; Select quotes checks it with the rest. On the Promoted quotes screen the same quote is captioned the same way, and Open returns to its source: a Course quote opens its chapter on the selection surface with the passage preselected (a pruned chapter shows its caption and no Open), a letter quote opens the page its note sits on with that letter open. Uncovered in the browser until #3660, which builds the only way to create a Course or letter quote end to end (the promote routes are #3658); pinned meanwhile by Jest: ReflectionSourcesPanelReading.test.tsx, useReflectionModeFoldIn.test.tsx and JournalEntryScreenReflection.test.tsx for the group and the fold, PromotedQuotesScreen.test.tsx and PromotedQuotesScreenFold.test.tsx for the captions, Open and the screen's fold, CourseScreenOpenPassage.test.tsx and ChapterReaderPassageSelection.test.tsx for the preselected chapter, and JournalEntryScreenOpenLetter.test.tsx for the letter.",
+    "crosses": {
+      "screen": "frontend/src/features/Journal/ReflectionSourcesPanel.tsx",
+      "client": ["promotions", "reflections"],
+      "routes": ["GET /reflections/sources", "PATCH /promotions/{promotion_id}", "GET /promotions"],
+      "tables": ["promotedquote"]
+    },
+    "status": "uncovered",
+    "issue": 3660
   }
 ]
