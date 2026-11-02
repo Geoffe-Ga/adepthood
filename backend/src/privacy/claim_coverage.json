@@ -210,10 +210,21 @@
       "backend/tests/test_folded_quote_privacy.py::test_promoting_from_an_intimate_entry_is_refused_and_stores_nothing",
       "backend/tests/test_privacy_lineage.py::test_every_egress_operation_withholds_a_folded_intimate_passage",
       "backend/tests/test_privacy_lineage.py::test_a_note_anchored_in_a_folded_intimate_passage_gets_no_letter",
+      "backend/tests/test_folded_quote_privacy.py::test_each_kind_of_fold_reads_the_tier_it_inherits",
+      "backend/tests/test_folded_quote_privacy.py::test_the_walk_never_follows_a_course_or_letter_source_upstream",
+      "backend/tests/test_folded_quote_privacy.py::test_a_letter_quote_on_another_writers_note_is_withheld",
+      "backend/tests/test_folded_quote_privacy.py::test_a_letter_quote_of_a_deleted_intimate_entry_stays_withheld",
+      "backend/tests/test_folded_quote_privacy.py::test_a_quote_of_no_known_kind_is_never_folded",
+      "backend/tests/test_folded_quote_privacy.py::test_folding_a_letter_quote_that_carries_a_restricted_passage_is_refused",
+      "backend/tests/test_folded_quote_privacy.py::test_folding_a_letter_quote_follows_the_entry_it_answered",
+      "backend/tests/test_privacy_lineage.py::test_a_folded_letter_quote_counts_its_entrys_restriction_and_withdrawal",
+      "backend/tests/test_reflections_api.py::test_sources_never_offers_a_letter_quote_its_entry_does_not_vouch_for",
+      "backend/tests/test_folded_quote_privacy.py::test_a_folded_letter_quote_is_withheld_once_its_entry_becomes_intimate",
       "backend/tests/security/test_privacy_guard_mutations.py::test_removing_a_guard_fails_its_claim_suite[egress_eligible_clause-C10]",
       "backend/tests/security/test_privacy_guard_mutations.py::test_removing_a_guard_fails_its_claim_suite[withhold_passages-C10]",
       "backend/tests/security/test_privacy_guard_mutations.py::test_removing_a_guard_fails_its_claim_suite[quote_is_foldable-C10]",
-      "backend/tests/security/test_privacy_guard_mutations.py::test_removing_a_guard_fails_its_claim_suite[refuse_unquotable_span-C10]"
+      "backend/tests/security/test_privacy_guard_mutations.py::test_removing_a_guard_fails_its_claim_suite[refuse_unquotable_span-C10]",
+      "backend/tests/security/test_privacy_guard_mutations.py::test_removing_a_guard_fails_its_claim_suite[fold_source_admits_egress-C10]"
     ],
     "sinks": [
       "net.openai",
