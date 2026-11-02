@@ -14,11 +14,14 @@ import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import col, select
 
+from domain import privacy_tier
 from domain.creek_vault import VaultTierCeiling, tier_ceiling_for
 from domain.privacy_tier import (
     DENIED_TIERS,
     EGRESS_ELIGIBLE_TIERS,
+    PUBLISHED_CONTENT_TIER,
     admits_egress,
+    admits_published_content_egress,
     egress_denied_clause,
     egress_eligible_clause,
 )
@@ -49,6 +52,19 @@ from models.user import User
 def test_admits_egress_allowlist_only(classification: object, *, expected: bool) -> None:
     """Only an exact allowlisted spelling egresses; every other value is denied."""
     assert admits_egress(classification) is expected
+
+
+def test_published_course_text_is_held_to_the_public_tier() -> None:
+    """A Course chapter is the program's own text, so it is judged as ``public`` (#3657)."""
+    assert JournalClassification.PUBLIC.value == PUBLISHED_CONTENT_TIER
+    assert admits_published_content_egress() is True
+
+
+def test_published_course_text_follows_the_allowlist(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The helper asks the allowlist rather than answering itself: drop ``public`` and it denies."""
+    monkeypatch.setattr(privacy_tier, "EGRESS_ELIGIBLE_TIERS", ("personal",))
+
+    assert admits_published_content_egress() is False
 
 
 def test_every_classification_member_is_placed_exactly_once() -> None:
