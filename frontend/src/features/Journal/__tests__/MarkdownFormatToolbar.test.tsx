@@ -92,16 +92,24 @@ describe('MarkdownFormatToolbar -- inline styles', () => {
 });
 
 describe('MarkdownFormatToolbar -- list nesting', () => {
-  it('offers Indent and Outdent only while the caret is on a list line', () => {
-    const { queryByRole, rerender } = render(
-      <MarkdownFormatToolbar state={PLAIN} onCommand={jest.fn()} />,
+  it('always shows Indent and Outdent, disabled while the caret is off a list line', () => {
+    const onCommand = jest.fn();
+    const { getByRole, rerender } = render(
+      <MarkdownFormatToolbar state={PLAIN} onCommand={onCommand} />,
     );
-    expect(queryByRole('button', { name: 'Indent list item' })).toBeNull();
-    expect(queryByRole('button', { name: 'Outdent list item' })).toBeNull();
+    for (const name of ['Indent list item', 'Outdent list item']) {
+      const button = getByRole('button', { name });
+      expect(button.props.accessibilityState).toMatchObject({ disabled: true });
+      fireEvent.press(button);
+    }
+    expect(onCommand).not.toHaveBeenCalled();
 
-    rerender(<MarkdownFormatToolbar state={{ ...PLAIN, listLevel: 1 }} onCommand={jest.fn()} />);
-    expect(queryByRole('button', { name: 'Indent list item' })).toBeTruthy();
-    expect(queryByRole('button', { name: 'Outdent list item' })).toBeTruthy();
+    rerender(<MarkdownFormatToolbar state={{ ...PLAIN, listLevel: 1 }} onCommand={onCommand} />);
+    for (const name of ['Indent list item', 'Outdent list item']) {
+      expect(getByRole('button', { name }).props.accessibilityState).toMatchObject({
+        disabled: false,
+      });
+    }
   });
 
   it('disables Outdent at level 0 and enables it one level in', () => {
@@ -134,6 +142,25 @@ describe('MarkdownFormatToolbar -- list nesting', () => {
       const flat = StyleSheet.flatten(getByTestId(id).props.style);
       expect(flat.minWidth).toBeGreaterThanOrEqual(touchTarget.minimum);
       expect(flat.minHeight).toBeGreaterThanOrEqual(touchTarget.minimum);
+    }
+  });
+});
+
+describe('MarkdownFormatToolbar -- one scrolling line', () => {
+  it('lays every action on a single line that scrolls sideways instead of wrapping', () => {
+    const { getByTestId } = render(<MarkdownFormatToolbar state={PLAIN} onCommand={jest.fn()} />);
+    const strip = getByTestId('journal-format-toolbar-scroll');
+    expect(strip.props.horizontal).toBe(true);
+    const row = StyleSheet.flatten(strip.props.contentContainerStyle);
+    expect(row.flexDirection).toBe('row');
+    expect(row.flexWrap ?? 'nowrap').toBe('nowrap');
+  });
+
+  it('puts all five actions in the toolbar on every line', () => {
+    const { getByTestId } = render(<MarkdownFormatToolbar state={PLAIN} onCommand={jest.fn()} />);
+    const toolbar = getByTestId('journal-format-toolbar');
+    for (const command of ['bold', 'italic', 'underline', 'indent', 'outdent']) {
+      expect(within(toolbar).getByTestId(`journal-format-${command}`)).toBeTruthy();
     }
   });
 });
