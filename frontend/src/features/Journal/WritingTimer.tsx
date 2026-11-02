@@ -18,7 +18,7 @@
  * wrote for however long they wrote.
  */
 import { Minus, Pause, Play, Square } from 'lucide-react-native';
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { StyleSheet, Text, TouchableOpacity, View, useWindowDimensions } from 'react-native';
 
 import {
@@ -86,6 +86,19 @@ const PRESET_GAP = SPACING.sm;
  */
 const PRESET_GAP_RAIL = SPACING.xs;
 
+/**
+ * A parent-held place to put the resting timer away (the journal's header icon).
+ *
+ * Where there is no desk-side rail to dock a minimized clock on (a phone, a
+ * narrow window), a minimized pill would sit in the writing column's way. With
+ * a stow, minimizing hides the timer entirely and the parent shows its own
+ * icon; clearing ``stowed`` brings the full setter back.
+ */
+export interface WritingTimerStow {
+  stowed: boolean;
+  onStowedChange: (stowed: boolean) => void;
+}
+
 export interface WritingTimerProps {
   /** The length the timer opens at; the writer can change it before starting. */
   initialMinutes?: number;
@@ -104,6 +117,8 @@ export interface WritingTimerProps {
   onStart?: () => void;
   /** The session surface already supplies the absolute floating band. */
   withinBand?: boolean;
+  /** Put a resting, minimized timer away instead of leaving a pill (phone only). */
+  stow?: WritingTimerStow;
   /** The engine's clock and adapter seam; tests inject it, production does not. */
   deps?: EngineDeps;
 }
@@ -393,6 +408,42 @@ function useCompactPill(status: EngineStatus): {
 }
 
 /**
+ * Turn a resting minimized pill into a stowed timer where stowing applies.
+ *
+ * One rule covers both ways a resting timer becomes compact — the Minimize
+ * control, and a session ending — so neither leaves a pill in the column. The
+ * pill is un-compacted as it is stowed, so the header icon reopens the full
+ * setter. A layout effect, so the interim pill is never painted. Where the
+ * stow no longer applies (the window widened onto the desk-side rail) the
+ * parent's flag is cleared, so its icon never points at a visible timer.
+ * Returns whether the timer is currently put away.
+ */
+function useStowRestingPill(
+  stow: WritingTimerStow | undefined,
+  noRail: boolean,
+  idle: boolean,
+  compact: boolean,
+  expand: () => void,
+): boolean {
+  const onStowedChange = stow?.onStowedChange;
+  const stowed = stow?.stowed ?? false;
+  const stowable = onStowedChange != null && noRail;
+  const restingCompact = idle && compact;
+  useLayoutEffect(() => {
+    if (onStowedChange == null) return;
+    if (!stowable) {
+      if (stowed) onStowedChange(false);
+      return;
+    }
+    if (!restingCompact) return;
+    expand();
+    onStowedChange(true);
+  }, [expand, onStowedChange, restingCompact, stowable, stowed]);
+  // Hidden while put away; true is the caller's cue to render nothing.
+  return stowable && idle && stowed;
+}
+
+/**
  * Start the session once, on mount, when the page was opened to run one.
  *
  * Latched on a ref rather than on the engine's status: the status leaves
@@ -642,17 +693,14 @@ function WritingTimer({
   onComplete,
   onStart,
   withinBand = false,
+  stow,
   deps = NO_DEPS,
-}: WritingTimerProps): React.JSX.Element {
+}: WritingTimerProps): React.JSX.Element | null {
   const [minutes, setMinutes] = useState(initialMinutes);
   const [state, controls] = useRitualEngine(useWritingConfig(minutes), deps);
   const { compact, collapse, expand } = useCompactPill(state.status);
   const { desktopRail, docked } = useTimerMountLayout(compact);
-  const view = describeTimer({
-    status: state.status,
-    remainingMs: state.remainingMs,
-    minutes,
-  });
+  const view = describeTimer({ status: state.status, remainingMs: state.remainingMs, minutes });
   useSessionReport({
     status: state.status,
     elapsedMs: state.elapsedMs,
@@ -662,12 +710,15 @@ function WritingTimer({
   });
   const actions = useTimerActions(state.status, controls, collapse, setMinutes, onStart);
   useAutoStart(autoStart, actions.start);
+  const idle = state.status === 'idle';
+  const putAway = useStowRestingPill(stow, !desktopRail, idle, compact, expand);
+  if (putAway) return null;
   return (
     <TimerMount
       compact={compact}
       docked={docked}
       expandedRail={desktopRail}
-      idle={state.status === 'idle'}
+      idle={idle}
       onExpand={expand}
       withinBand={withinBand}
     >
@@ -675,7 +726,7 @@ function WritingTimer({
         expandedRail={desktopRail}
         compact={compact}
         docked={docked}
-        idle={state.status === 'idle'}
+        idle={idle}
         minutes={minutes}
         view={view}
         controls={controls}

@@ -53,7 +53,7 @@ import {
 } from './JournalEntry.styles';
 import type { LoggedWritingSession, WritingSessionResult } from './writingSession';
 import WritingSessionBanner from './WritingSessionBanner';
-import WritingTimer from './WritingTimer';
+import WritingTimer, { type WritingTimerStow } from './WritingTimer';
 
 import { decorativeHidden } from '@/components/a11yHidden';
 import { SPACING, journalSheet, touchTarget } from '@/design/tokens';
@@ -61,6 +61,16 @@ import type { EngineDeps } from '@/features/Practice/engine/types';
 
 /** Room for the downward shadow at the phone viewport's bottom edge. */
 const IDLE_DOCK_BOTTOM_INSET = journalSheet.deskPaddingH + SPACING.md;
+/**
+ * Paper left between the bottom of the writing sheet and the idle tray, so the
+ * two read as separate objects rather than one card butted against the next.
+ * Cosmetic, so it is kept only while tray and gap together take at most a
+ * third of the window. Past that the writing is already short of room (a
+ * short window, or 200% zoom on a phone), and the gap would come out of it.
+ */
+export const IDLE_DOCK_TOP_GAP = SPACING.lg;
+/** The tray keeps its gap while tray plus gap fit in 1/N of the window's height. */
+const IDLE_DOCK_GAP_WINDOW_SHARE = 3;
 
 export interface WritingSessionSurfaceProps {
   /** A confirmed log may also give an early-stopped session a factual note. */
@@ -101,6 +111,8 @@ export interface WritingSessionSurfaceProps {
   onClearanceChange?: (_clearance: number) => void;
   /** Reserve an untouched phone timer outside the paper instead of inside its scroller. */
   onIdleDockHeightChange?: (_height: number) => void;
+  /** Where a minimized resting timer is put away; see {@link WritingTimerStow}. */
+  stow?: WritingTimerStow;
   /** The engine's clock and adapter seam; tests inject it, production does not. */
   deps?: EngineDeps;
 }
@@ -120,12 +132,49 @@ interface StandingNote {
   ordinal: number;
 }
 
+/**
+ * What the page must reserve for the band: scroller clearance for a floating
+ * band, or height below the paper for an idle phone tray. ``undefined`` leaves
+ * a value as it was, which is how an unmeasured band holds still.
+ */
+function bandReservation({
+  empty,
+  idleDocked,
+  gapLimit,
+  lift,
+  scrollWholeSurface,
+  visibleHeight,
+}: BandPlacement & {
+  lift: number;
+  scrollWholeSurface: boolean;
+  visibleHeight: number | null;
+}): { clearance?: number; dockHeight?: number } {
+  // A stowed timer with no note shows nothing, so the page keeps all its room.
+  if (empty) return { clearance: 0, dockHeight: 0 };
+  if (idleDocked) {
+    if (visibleHeight === null) return { clearance: 0 };
+    const tray = visibleHeight + IDLE_DOCK_BOTTOM_INSET;
+    const gapped = tray + IDLE_DOCK_TOP_GAP;
+    return { clearance: 0, dockHeight: gapped <= gapLimit ? gapped : tray };
+  }
+  if (visibleHeight === null) return { dockHeight: 0 };
+  const floor = scrollWholeSurface ? 0 : WRITING_TIMER_CLEARANCE;
+  return { clearance: Math.max(floor, visibleHeight + lift + SPACING.md), dockHeight: 0 };
+}
+
+/** Where the band sits now, and the most an idle tray may take with its gap. */
+interface BandPlacement {
+  empty: boolean;
+  idleDocked: boolean;
+  gapLimit: number;
+}
+
 function useBandClearance(
   onClearanceChange: WritingSessionSurfaceProps['onClearanceChange'],
   onIdleDockHeightChange: WritingSessionSurfaceProps['onIdleDockHeightChange'],
   scrollWholeSurface: boolean,
   lift: number,
-  idleDocked: boolean,
+  { empty, idleDocked, gapLimit }: BandPlacement,
 ) {
   const [visibleHeight, setVisibleHeight] = useState<number | null>(null);
   const reportLayout = useCallback((event: LayoutChangeEvent) => {
@@ -135,17 +184,19 @@ function useBandClearance(
   // the same commit that measured it, so no frame is painted between the two
   // with the band over writing that has not yet moved out of its way (#3481).
   useLayoutEffect(() => {
-    if (idleDocked) {
-      onClearanceChange?.(0);
-      if (visibleHeight !== null) onIdleDockHeightChange?.(visibleHeight + IDLE_DOCK_BOTTOM_INSET);
-      return;
-    }
-    onIdleDockHeightChange?.(0);
-    if (visibleHeight === null) return;
-    onClearanceChange?.(
-      Math.max(scrollWholeSurface ? 0 : WRITING_TIMER_CLEARANCE, visibleHeight + lift + SPACING.md),
-    );
+    const { clearance, dockHeight } = bandReservation({
+      empty,
+      idleDocked,
+      gapLimit,
+      lift,
+      scrollWholeSurface,
+      visibleHeight,
+    });
+    if (clearance !== undefined) onClearanceChange?.(clearance);
+    if (dockHeight !== undefined) onIdleDockHeightChange?.(dockHeight);
   }, [
+    empty,
+    gapLimit,
     idleDocked,
     lift,
     onClearanceChange,
@@ -208,6 +259,7 @@ export const IDLE_TIMER_DOCK_MAX_WIDTH = 600;
 function useIdleTimerDock(): {
   idleDocked: boolean;
   idleDockMaxHeight: number;
+  gapLimit: number;
   beginFloatingSession: () => void;
 } {
   const [hasStarted, setHasStarted] = useState(false);
@@ -217,7 +269,8 @@ function useIdleTimerDock(): {
   // RN Web applies maxHeight to the content box; leave the tray's outer inset
   // outside that cap so padding can never push its top above the viewport.
   const idleDockMaxHeight = Math.max(0, window.height - touchTarget.minimum - SPACING.lg);
-  return { idleDocked, idleDockMaxHeight, beginFloatingSession };
+  const gapLimit = window.height / IDLE_DOCK_GAP_WINDOW_SHARE;
+  return { idleDocked, idleDockMaxHeight, gapLimit, beginFloatingSession };
 }
 
 function useBandBounds() {
@@ -313,8 +366,9 @@ function writingScrollStyles(layout: ReturnType<typeof useWritingBandLayout>) {
 function useWritingBandLayout(
   onClearanceChange: WritingSessionSurfaceProps['onClearanceChange'],
   onIdleDockHeightChange: WritingSessionSurfaceProps['onIdleDockHeightChange'],
+  { empty }: { empty: boolean },
 ) {
-  const { idleDocked, idleDockMaxHeight, beginFloatingSession } = useIdleTimerDock();
+  const { idleDocked, idleDockMaxHeight, gapLimit, beginFloatingSession } = useIdleTimerDock();
   const bounds = useBandBounds();
   // A dock has no lift to give up: compare its natural height directly with
   // its capped viewport instead of using the floating band's lift arithmetic.
@@ -326,7 +380,7 @@ function useWritingBandLayout(
     onIdleDockHeightChange,
     scrollWholeSurface,
     bounds.lift,
-    idleDocked,
+    { empty, idleDocked, gapLimit },
   );
   // An untouched dock has room on the page only once it has been measured, so
   // until then it lays out unpainted and untouchable instead of over the writing.
@@ -345,17 +399,19 @@ function useWritingBandLayout(
 
 function WritingSessionSurface({
   loggedSession,
-  initialMinutes,
   rightInset = 0,
-  autoStart,
   renderOffer,
   onSession,
   onClearanceChange,
   onIdleDockHeightChange,
-  deps,
+  stow,
+  // initialMinutes, autoStart and deps belong to the timer alone.
+  ...timer
 }: WritingSessionSurfaceProps): React.JSX.Element {
   const { note, dismiss, record } = useStandingNote(onSession, loggedSession);
-  const layout = useWritingBandLayout(onClearanceChange, onIdleDockHeightChange);
+  const layout = useWritingBandLayout(onClearanceChange, onIdleDockHeightChange, {
+    empty: stow?.stowed === true && note === null,
+  });
   return (
     <View
       style={writingBandStyle(layout, rightInset)}
@@ -382,12 +438,11 @@ function WritingSessionSurface({
           renderOffer={renderOffer}
         />
         <WritingTimer
-          initialMinutes={initialMinutes}
-          autoStart={autoStart}
+          {...timer}
           onComplete={record}
           onStart={layout.beginFloatingSession}
           withinBand
-          deps={deps}
+          stow={stow}
         />
       </ScrollView>
     </View>

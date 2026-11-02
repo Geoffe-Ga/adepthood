@@ -546,3 +546,111 @@ describe('WritingTimer — a session the device slept through', () => {
     });
   });
 });
+
+describe('WritingTimer — stowed into the page header on a phone', () => {
+  function mockWidth(width: number) {
+    const rn = require('react-native');
+    return jest
+      .spyOn(rn, 'useWindowDimensions')
+      .mockReturnValue({ width, height: 844, scale: 1, fontScale: 1 });
+  }
+
+  /** Mirrors the screen: a parent owns the flag and the header icon that clears it. */
+  function StowHarness({
+    deps,
+    onStowedChange,
+  }: {
+    deps: EngineDeps;
+    onStowedChange: (stowed: boolean) => void;
+  }): React.JSX.Element {
+    const [stowed, setStowed] = React.useState(false);
+    const change = React.useCallback(
+      (next: boolean) => {
+        onStowedChange(next);
+        setStowed(next);
+      },
+      [onStowedChange],
+    );
+    return (
+      <>
+        {stowed ? <Text onPress={() => change(false)}>reopen</Text> : null}
+        <WritingTimer
+          onComplete={jest.fn()}
+          deps={deps}
+          stow={{ stowed, onStowedChange: change }}
+        />
+      </>
+    );
+  }
+
+  it('minimizing leaves no pill behind and hands the timer to the header', () => {
+    const spy = mockWidth(390);
+    try {
+      const onStowedChange = jest.fn<(stowed: boolean) => void>();
+      const { deps } = makeDeps();
+      const view = render(<StowHarness deps={deps} onStowedChange={onStowedChange} />);
+      fireEvent.press(view.getByTestId('writing-timer-minimize'));
+
+      expect(onStowedChange).toHaveBeenLastCalledWith(true);
+      expect(view.queryByTestId('writing-timer-pill')).toBeNull();
+      expect(view.queryByTestId('writing-timer-compact')).toBeNull();
+
+      fireEvent.press(view.getByText('reopen'));
+      expect(onStowedChange).toHaveBeenLastCalledWith(false);
+      expect(view.queryByTestId('writing-timer-row-presets')).not.toBeNull();
+      view.unmount();
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it('keeps the chosen length while stowed', () => {
+    const spy = mockWidth(390);
+    try {
+      const { deps } = makeDeps();
+      const view = render(<StowHarness deps={deps} onStowedChange={jest.fn()} />);
+      fireEvent.press(view.getByTestId('writing-timer-preset-10'));
+      fireEvent.press(view.getByTestId('writing-timer-minimize'));
+      fireEvent.press(view.getByText('reopen'));
+
+      expect(view.getByTestId('writing-timer-readout').props.children).toBe('10:00');
+      view.unmount();
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it('stows the resting timer again once a session finishes', () => {
+    const spy = mockWidth(390);
+    try {
+      const onStowedChange = jest.fn<(stowed: boolean) => void>();
+      const { deps } = makeDeps();
+      const view = render(<StowHarness deps={deps} onStowedChange={onStowedChange} />);
+      fireEvent.press(view.getByTestId('writing-timer-start'));
+      expect(view.getByTestId('writing-timer-compact')).toBeTruthy();
+      tickTo(T0 + DEFAULT_WRITING_MINUTES * MS_PER_MINUTE);
+
+      expect(onStowedChange).toHaveBeenLastCalledWith(true);
+      expect(view.queryByTestId('writing-timer-pill')).toBeNull();
+      view.unmount();
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it('keeps the desk-side readout on the desktop rail', () => {
+    const spy = mockWidth(1280);
+    try {
+      const onStowedChange = jest.fn<(stowed: boolean) => void>();
+      const { deps } = makeDeps();
+      const view = render(<StowHarness deps={deps} onStowedChange={onStowedChange} />);
+      fireEvent.press(view.getByTestId('writing-timer-minimize'));
+
+      expect(onStowedChange).not.toHaveBeenCalled();
+      expect(view.getByTestId('writing-timer-compact')).toBeTruthy();
+      view.unmount();
+    } finally {
+      spy.mockRestore();
+    }
+  });
+});

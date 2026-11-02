@@ -80,6 +80,9 @@ async function openEntry(page: Page) {
   await page.getByTestId('journal-body-input').fill(BODY);
 }
 async function startTimer(page: Page, minutes = 20) {
+  // A resting timer is folded on the desk rail, or put away in the header on a phone.
+  const stowed = page.getByTestId('journal-writing-timer-open');
+  if (await stowed.isVisible()) await stowed.click();
   const folded = page.getByTestId('writing-timer-compact');
   if (await folded.isVisible()) await folded.click();
   await page.getByTestId(`writing-timer-preset-${minutes}`).click();

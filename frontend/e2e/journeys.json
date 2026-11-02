@@ -957,7 +957,7 @@
   },
   {
     "id": "journal.margin-note-source-survives-reload",
-    "description": "A writer requests resonance through the real screen, reads independently validated notes and completion receipts plus the live reported payment route, and reopens the page after reload (#3206, Refs #3062). The real stub route persists demo source/provider/model/version and leaves the wallet unchanged; the real bound-owner route talks to the isolated Creek contract process and persists Creek source/provider with no model identity. The demo letter is explicitly requested over the real essay endpoint and appears on the real Voice Drafts shelf. Live payer data vanishes on reload while each stored note keeps its own recorded tuple. Separately labelled controlled-response cases prove client rendering for app-provider, legacy/missing, future-version, contradictory provider/demo-payer, and malformed mixed-operation metadata without losing prose; letters use only essay_source. Notes and completion can name different reported providers, and checked=false with a non-none receipt denotes an unconfirmed attempted check rather than an unsent check. All three supported payment-route labels are driven by response metadata, never inferred from a stored key or connection. Long reported model identities wrap at phone/desktop widths with 200% receipt text. Controlled cases do not prove third-party inference, real billing, backend persistence of their overrides, local models, attestation or custody; source identity is reported disclosure. Unsupported device-direct receipt contracts remain unrecorded pending their separate owner decision.",
+    "description": "A writer requests resonance through the real screen, reads independently validated notes and completion receipts plus the live reported payment route, and reopens the page after reload (#3206, Refs #3062). The real stub route persists demo source/provider/model/version and leaves the wallet unchanged; the real bound-owner route talks to the isolated Creek contract process and persists Creek source/provider with no model identity. The demo letter is explicitly requested over the real essay endpoint and appears on the real Voice Drafts shelf. Live payer data vanishes on reload while each stored note keeps its own recorded tuple. Each reloaded note card carries one source caption plus at most one hedged 'Reported:' line, only for identity the label does not already imply: a Creek note shows no repeated Creek provider and no 'Model not recorded', and a demo note no repeated Demo provider. Separately labelled controlled-response cases prove client rendering for app-provider, legacy/missing, future-version, contradictory provider/demo-payer, and malformed mixed-operation metadata without losing prose; letters use only essay_source. Notes and completion can name different reported providers, and checked=false with a non-none receipt denotes an unconfirmed attempted check rather than an unsent check. All three supported payment-route labels are driven by response metadata, never inferred from a stored key or connection. Long reported model identities wrap at phone/desktop widths with 200% receipt text. Controlled cases do not prove third-party inference, real billing, backend persistence of their overrides, local models, attestation or custody; source identity is reported disclosure. Unsupported device-direct receipt contracts remain unrecorded pending their separate owner decision.",
     "crosses": {
       "screen": "frontend/src/features/Journal/JournalEntryScreen.tsx",
       "client": ["journal", "resonance", "voiceDrafts", "botmasonUsage"],
@@ -2999,6 +2999,18 @@
     },
     "status": "covered",
     "coveredBy": "frontend/e2e/journal-idle-timer-obstruction.browser.e2e.test.ts"
+  },
+  {
+    "id": "journal.minimized-writing-timer-waits-in-the-header",
+    "description": "A writer opens a draft at 390x844 and meets the idle writing timer's tray below the paper with at least 12px of page between the two, so the tray never butts against the sheet. Minimizing it removes the tray entirely: no pill is left in the writing column, a timer icon named 'Open the writing timer' appears in the page's top-right exit row, and the sheet grows into the height the tray held. Tapping the icon brings the full setter back (every preset in reach, the gap restored) and a session starts from it. Below the 1020px desk-side rail a finished session also puts the resting timer away into that icon rather than leaving a compact clock; at the rail the established docked clock is unchanged (journal.writing-timer-elevation-through-its-lifecycle exercises both).",
+    "crosses": {
+      "screen": "frontend/src/features/Journal/JournalEntryScreen.tsx",
+      "client": ["auth", "journal"],
+      "routes": ["POST /auth/signup", "GET /journal/"],
+      "tables": ["user", "journalentry"]
+    },
+    "status": "covered",
+    "coveredBy": "frontend/e2e/journal-timer-stows-in-header.browser.e2e.test.ts"
   },
   {
     "id": "journal.money-copy-route-and-credit-pack",
