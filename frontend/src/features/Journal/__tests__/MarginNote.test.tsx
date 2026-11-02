@@ -100,7 +100,7 @@ describe('MarginNote source label (#3062)', () => {
 
 describe('persisted note receipts (#3206)', () => {
   it('shows the recorded provider and model rather than the current connection', () => {
-    const { getByText } = render(
+    const { getByTestId } = render(
       <MarginNote
         note={note({
           source: 'app_provider',
@@ -111,8 +111,33 @@ describe('persisted note receipts (#3206)', () => {
         onOpen={jest.fn()}
       />,
     );
-    expect(getByText('Reported provider: OpenAI')).toBeTruthy();
-    expect(getByText('Reported model: reported-model')).toBeTruthy();
+    expect(getByTestId('margin-note-identity-3').props.children).toBe(
+      'Reported: OpenAI · reported-model',
+    );
+  });
+
+  it('gives a vault note one caption: the provider repeats the source and no model is reported', () => {
+    const { getByTestId, queryByTestId, queryByText } = render(
+      <MarginNote
+        note={note({ source: 'creek_vault', source_provider: 'creek', receipt_version: 1 })}
+        onOpen={jest.fn()}
+      />,
+    );
+    expect(getByTestId('margin-note-source-3').props.children).toBe('From your Creek vault');
+    expect(queryByTestId('margin-note-identity-3')).toBeNull();
+    expect(queryByText(/Reported provider/)).toBeNull();
+    expect(queryByText(/not recorded/)).toBeNull();
+  });
+
+  it('never states an absent model or provider on the card', () => {
+    const { getByTestId, queryByText } = render(
+      <MarginNote
+        note={note({ source: 'app_provider', source_provider: 'anthropic', receipt_version: 1 })}
+        onOpen={jest.fn()}
+      />,
+    );
+    expect(getByTestId('margin-note-identity-3').props.children).toBe('Reported: Anthropic');
+    expect(queryByText(/not recorded/)).toBeNull();
   });
 
   it.each([

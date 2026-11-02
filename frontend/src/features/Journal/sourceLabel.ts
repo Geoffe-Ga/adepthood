@@ -47,3 +47,42 @@ export function sourceLabel(source: unknown): string {
 export function isDemoSource(source: unknown): boolean {
   return source === 'demo';
 }
+
+type InferenceProvider = 'openai' | 'anthropic' | 'creek' | 'stub';
+
+/** A recorded provider's display name. Shared with the pass receipt's fuller lines. */
+export const INFERENCE_PROVIDER_NAMES: Record<InferenceProvider, string> = {
+  openai: 'OpenAI',
+  anthropic: 'Anthropic',
+  creek: 'Creek',
+  stub: 'Demo',
+};
+
+/** The provider each source already names, so repeating it says nothing new. */
+const PROVIDER_IMPLIED_BY_SOURCE: Partial<Record<string, InferenceProvider>> = {
+  creek_vault: 'creek',
+  demo: 'stub',
+};
+
+/**
+ * The one quiet line a margin note adds beneath its source label: the reported
+ * provider and model, or ``null`` when there is nothing the label has not said.
+ *
+ * A card repeats on every note, so it carries only what adds information. A
+ * provider the source already implies ("From your Creek vault" / Creek) is
+ * dropped, and an identity that was not recorded is left unsaid rather than
+ * announced -- the pass receipt still spells out every absence. "Reported"
+ * keeps the hedge: the identity is the server's disclosure, not attestation.
+ */
+export function reportedIdentityCaption(
+  source: unknown,
+  provider: InferenceProvider | null | undefined,
+  model: string | null | undefined,
+): string | null {
+  const parts: string[] = [];
+  if (provider != null && PROVIDER_IMPLIED_BY_SOURCE[String(source)] !== provider) {
+    parts.push(INFERENCE_PROVIDER_NAMES[provider]);
+  }
+  if (model) parts.push(model);
+  return parts.length > 0 ? `Reported: ${parts.join(' · ')}` : null;
+}

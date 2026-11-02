@@ -4,17 +4,18 @@
  * the note text, and a subtle open affordance. Stale notes render dimmed and
  * show a caption noting the passage has changed. Tapping signals ``onOpen``.
  * A caption under the note says which side answered it, as the server recorded
- * it (#3062) -- "Source not recorded" when it did not.
+ * it (#3062) -- "Source not recorded" when it did not. A second, optional line
+ * names a reported provider or model only when it adds to that label; the card
+ * never spends a line on an identity that was not recorded.
  */
 import React from 'react';
-import { Animated, StyleSheet, Text, TouchableOpacity } from 'react-native';
-import type { TouchableOpacityProps } from 'react-native';
+import { Animated, Platform, StyleSheet, Text, TouchableOpacity } from 'react-native';
+import type { TextStyle, TouchableOpacityProps } from 'react-native';
 
-import InferenceReceiptDetails from './InferenceReceiptDetails';
 import { useMarginNavigation } from './marginNavigation';
 import { usePressScale } from './motion';
 import { PAPER_STRIPE_WIDTH, paperMarginCard } from './noteCards';
-import { sourceLabel } from './sourceLabel';
+import { reportedIdentityCaption, sourceLabel } from './sourceLabel';
 import { STALE_OPACITY } from './staleTreatment';
 
 import type { Marginalia } from '@/api';
@@ -113,13 +114,7 @@ function NoteContent({
       <Text style={styles.sourceCaption} testID={`margin-note-source-${note.id}`}>
         {sourceLabel(receipt?.source)}
       </Text>
-      {receipt ? (
-        <InferenceReceiptDetails
-          provider={receipt.source_provider}
-          model={receipt.source_model}
-          style={styles.sourceCaption}
-        />
-      ) : null}
+      <ReportedIdentity note={note} receipt={receipt} />
       {!showPassage ? (
         <Text style={styles.open}>Open</Text>
       ) : (
@@ -128,6 +123,28 @@ function NoteContent({
     </>
   );
 }
+
+function ReportedIdentity({
+  note,
+  receipt,
+}: {
+  note: Marginalia;
+  receipt: ReturnType<typeof readNoteReceiptMetadata>['data'] | null;
+}): React.JSX.Element | null {
+  const caption = receipt
+    ? reportedIdentityCaption(receipt.source, receipt.source_provider, receipt.source_model)
+    : null;
+  if (caption == null) return null;
+  return (
+    <Text style={[styles.sourceCaption, identityWrap]} testID={`margin-note-identity-${note.id}`}>
+      {caption}
+    </Text>
+  );
+}
+
+// A reported model can be one long token; web text must wrap inside the margin.
+const identityWrap =
+  Platform.OS === 'web' ? ({ overflowWrap: 'anywhere' } as TextStyle) : undefined;
 
 const styles = StyleSheet.create({
   // default hairline stripe; overridden per kind inline at the callsite

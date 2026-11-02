@@ -1,16 +1,11 @@
 import React from 'react';
 import { Platform, Text, View, type StyleProp, type TextStyle } from 'react-native';
 
+import { INFERENCE_PROVIDER_NAMES as providerNames } from './sourceLabel';
+
 import type { PassProvenanceT } from '@/api/schemas';
 
 type Provider = NonNullable<NonNullable<PassProvenanceT['notes']>['provider']>;
-
-const providerNames: Record<Provider, string> = {
-  openai: 'OpenAI',
-  anthropic: 'Anthropic',
-  creek: 'Creek',
-  stub: 'Demo',
-};
 
 /** Reported identity is disclosure, never evidence of a local model or attestation. */
 export default function InferenceReceiptDetails({

@@ -665,7 +665,7 @@ for (const width of [390, 1280]) {
       await openPage(page, id);
       await expect(page.getByTestId('resonance-pass-receipt')).toHaveCount(0);
       const note = page.getByTestId(`margin-note-${result.marginalia[0].id}`);
-      await expect(note).toContainText('Reported provider: OpenAI');
+      await expect(note).toContainText('Reported: OpenAI');
       await note.scrollIntoViewIfNeeded();
       await frame(page, `care-and-receipt-${width}-reload`);
     } finally {
