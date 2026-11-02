@@ -1187,6 +1187,8 @@ async def test_sources_offers_course_and_letter_quotes_promoted_inside_the_windo
     )
     await db_session.commit()
 
+    # Only this call's records: the window probe above may have logged too.
+    caplog.clear()
     with caplog.at_level(logging.INFO, logger="routers.reflections"):
         body = await _sources(async_client, headers)
 
