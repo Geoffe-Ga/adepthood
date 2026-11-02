@@ -31,9 +31,12 @@ const PREVIEW_STRIPE_WIDTH = 3;
  * to float in that band on a phone; it now sits in the margin's flow (#3004),
  * and the name keeps the measure it was sized from.
  *
- * Applies to the writing surface ONLY, via ``pageWithFloatingAction``: the
- * reading view has nothing floating, so reserving the band there would leave a
- * dead strip under the last line of the entry.
+ * The page inset it sizes applies to the writing surface ONLY, via
+ * ``pageWithFloatingAction``: the reading view has nothing floating, so
+ * reserving the band there would leave a dead strip under the last line of the
+ * entry. The one exception is quote selection, whose promote pill floats at
+ * this same lift (#3134) and which reserves its own band only while it is open
+ * (``FLOATING_PILL_RESERVE``).
  */
 export const RESONANCE_BUTTON_CLEARANCE = SPACING.xl + touchTarget.minimum + SPACING.md;
 
@@ -45,6 +48,27 @@ export const RESONANCE_BUTTON_CLEARANCE = SPACING.xl + touchTarget.minimum + SPA
  * in the lift any more, so lowering covers no control.
  */
 export const WRITING_BAND_LOWERED_CLEARANCE = SPACING.md;
+
+/** The inset above and below the floating footer's one row (#3134). */
+const FLOATING_FOOTER_INSET = spacing(1);
+
+/** The floating footer's height: its row, one touch target tall, between two insets. */
+const FLOATING_FOOTER_HEIGHT = FLOATING_FOOTER_INSET + touchTarget.minimum + FLOATING_FOOTER_INSET;
+
+/** The breath left between the end of the text and the top of the pill resting under it. */
+const FLOATING_PILL_BREATH = SPACING.sm;
+
+/**
+ * The band the quote-selection surface leaves between its field and its
+ * floating footer, where the promote pill floats once the end of the text is
+ * in view (#3134). With the footer it reaches the pill's top -- its
+ * ``RESONANCE_BUTTON_CLEARANCE`` lift plus its touch-target height -- and a
+ * breath beyond, so the pill never lies over text that cannot be scrolled
+ * clear of it: a short entry, the end of a long one, or the bounded field on
+ * native.
+ */
+const FLOATING_PILL_RESERVE =
+  RESONANCE_BUTTON_CLEARANCE + touchTarget.minimum + FLOATING_PILL_BREATH - FLOATING_FOOTER_HEIGHT;
 
 /**
  * Minimum row geometry for the floating writing timer. Readout and controls
@@ -422,13 +446,14 @@ const styles = StyleSheet.create({
     borderLeftColor: accent.primary,
   },
   /**
-   * The footer under the field — preview, Promote / Cancel, and the empty-tap
-   * hint — on an opaque paper plate so the body reads cleanly beneath it when
-   * ``pinnedFooterStyle`` holds it at the foot of the viewport.
+   * The footer under the field — the preview and Cancel (plus Promote and the
+   * empty-tap hint under the footer placement) — on an opaque paper plate so
+   * the body reads cleanly beneath it when ``pinnedFooterStyle`` holds it at
+   * the foot of the viewport.
    */
   quoteSelectFooter: {
     backgroundColor: colors.paper.background,
-    paddingBottom: spacing(1),
+    paddingBottom: FLOATING_FOOTER_INSET,
   },
   /** Warm guiding line above the field: how to select a passage to promote. */
   quoteSelectInstruction: {
@@ -448,6 +473,37 @@ const styles = StyleSheet.create({
   quoteSelectPreviewText: {
     ...editorialType.note,
     color: colors.paper.ink,
+  },
+  /**
+   * The floating placement's footer row (#3134): the one-line echo and Cancel
+   * side by side on one centre line. Kept to a single touch-target-tall row so
+   * the pinned plate stays under the floating pill's lift
+   * (``RESONANCE_BUTTON_CLEARANCE``) and the two never overlap.
+   */
+  quoteSelectFooterRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: SPACING.md,
+    paddingTop: FLOATING_FOOTER_INSET,
+  },
+  /** The band the floating pill rides in at the text's end: see ``FLOATING_PILL_RESERVE``. */
+  quoteSelectPillReserve: {
+    height: FLOATING_PILL_RESERVE,
+  },
+  /** Holds Cancel on the row's trailing edge before any passage is chosen. */
+  quoteSelectFooterSpacer: {
+    flex: 1,
+  },
+  /** The echo inside that row: it takes the free width and a slimmer inset, one line tall. */
+  quoteSelectPreviewInline: {
+    flex: 1,
+    marginTop: 0,
+    paddingVertical: SPACING.sm,
+  },
+  /** Cancel's label in that row: the action face, centred on the row rather than dropped below it. */
+  quoteSelectCancelInline: {
+    ...editorialType.action,
+    color: accent.primary,
   },
   /** Warm (not alarming) nudge shown when confirm is tapped with no selection. */
   quoteSelectHint: {

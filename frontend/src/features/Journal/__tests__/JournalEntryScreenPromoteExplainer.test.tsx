@@ -219,7 +219,7 @@ describe('JournalEntryScreen — the Promoted notice names where the quote went'
     jest.useFakeTimers();
     try {
       await act(async () => {
-        fireEvent.press(screen.getByTestId('quote-select-confirm'));
+        fireEvent.press(screen.getByTestId('promote-selection-fab'));
       });
       const notice = screen.getByTestId('quote-promotion-success');
       expect(notice).toHaveTextContent('Promoted — find it any time under Promoted quotes');

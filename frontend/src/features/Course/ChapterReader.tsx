@@ -495,6 +495,9 @@ const SelectingSheet = ({
           body={markdown}
           testID={PASSAGE_SELECT_TEST_ID}
           confirmLabel={WRITE_NOTE_CONFIRM_LABEL}
+          // A chapter keeps its footer confirm until it moves onto the
+          // floating pill with Promote beside Write a note (#3660).
+          confirmPlacement="footer"
           onSelectionChange={selection.handleSelectionChange}
           onCancel={selection.cancelSelection}
           onConfirm={selection.openDialog}
