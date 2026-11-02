@@ -1673,6 +1673,18 @@
     "coveredBy": "frontend/e2e/corpus-sweep.e2e.test.ts"
   },
   {
+    "id": "corpus.vault-bound-sort-hands-the-vault-what-it-lacks",
+    "description": "Someone who connected a Creek vault and has a standing yes for sorting what they write here opens Settings, finds 'Sort the rest of your writing' counting the entries their vault does not have yet (saved before the vault was connected, or whose save could not reach it; never anything marked Intimate), and presses Sort. The pass hands those entries to their vault down the journal save's own path, so the vault classifies them, and the screen reports them sorted with nothing left. The app provider's classifier is never dialled for them (#3156). Before this, the pass stopped at the vault boundary every time and the screen said nothing was sorted against a remainder that never moved. Uncovered across the seam until #3663; pinned meanwhile over HTTP against a vault double by backend/tests/test_corpus_sweep_vault_bound.py.",
+    "crosses": {
+      "screen": "frontend/src/features/Settings/CorpusSweepScreen.tsx",
+      "client": ["corpus"],
+      "routes": ["GET /corpus/sweep", "POST /corpus/sweep"],
+      "tables": ["journalentry", "corpusconsentevent", "uservaultconfig"]
+    },
+    "status": "uncovered",
+    "issue": 3663
+  },
+  {
     "id": "corpus.settings-share-confirmed-decisions",
     "description": "The Settings hub keeps its inline sorting switches. Pushing What reflections draw on while the genuine consent GET is held reuses the same read; a real confirmed PUT grant appears in the detail and the retained hub. The hub withdrawal still asks, cancellation writes nothing, confirmation is retained after reload. Phone and desktop normal and targeted doubled rendered Settings text keep copy contained, keyboard grant reachable and withdrawal targets44px. This browser proof does not certify native text scaling, corpus classification providers or live vendor retention.",
     "crosses": {
