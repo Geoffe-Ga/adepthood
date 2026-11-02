@@ -129,10 +129,12 @@ from services.corpus_import import (
 )
 from services.corpus_ingest import INGEST_SOURCE
 from services.corpus_invitation import InvitationOffer, dismiss_invitation, load_invitation
+from services.corpus_vault_sort import count_vault_pending, sort_into_vault
 from services.creek_vault_pipeline import VaultPipelineTrigger, drive_vault_pipeline
 from services.creek_vault_relay import forwarding_provider_key
 from services.creek_vault_upload import FolderSource, UploadedDocument
 from services.creek_vault_upload_limits import ManagedUploadTooLargeError
+from services.reflection_boundary import ReflectionBoundary
 from services.voice_readiness import VoiceReadiness, load_voice_readiness
 
 router = build_router(
@@ -305,9 +307,19 @@ async def get_corpus_sweep_estimate(
     The account comes from the token, so no request can read anyone else's
     backlog. One indexed count, no commit, and no provider call.
     """
-    return CorpusSweepEstimateResponse(
-        entries_pending=await corpus_backfill.count_pending_entries(session, user_id)
-    )
+    return CorpusSweepEstimateResponse(entries_pending=await _count_unsorted(session, user_id))
+
+
+async def _count_unsorted(session: AsyncSession, user_id: int) -> int:
+    """What this account's sort would still reach, on the side its boundary allows.
+
+    A vault-bound writer's writing is sorted by their vault, so what is
+    unsorted is what the vault does not have yet (:mod:`services.corpus_vault_sort`);
+    counting app-side fragments for them quoted a backlog no pass could move.
+    """
+    if await resolve_reflection_boundary(session, user_id) is ReflectionBoundary.VAULT_BOUND:
+        return await count_vault_pending(session, user_id)
+    return await corpus_backfill.count_pending_entries(session, user_id)
 
 
 @router.post("/sweep", response_model=CorpusSweepResponse)
@@ -316,8 +328,16 @@ async def run_corpus_sweep(
     request: Request,  # noqa: ARG001 — consumed by @limiter.limit decorator
     user_id: Annotated[int, Depends(get_current_user)],
     session: Annotated[AsyncSession, Depends(get_session)],
+    vault: Annotated[OnboardingVault, Depends(get_onboarding_vault)],
 ) -> CorpusSweepResponse:
     """Sort the next bounded share of this account's backlog, and say what is left.
+
+    A vault-bound writer is sorted by their vault, never by the app provider
+    (#3156), so for them a pass hands the vault the writing it does not have
+    yet, down the journal save's own path, and the vault classifies what it
+    receives -- see :func:`services.corpus_vault_sort.sort_into_vault`. Before
+    that branch the pass below stopped at the boundary every time, and a
+    vault-connected account was told "nothing sorted" for ever.
 
     Until this route the remainder of a bounded sweep was reachable only by
     re-sending a consent decision already given. This is the same pass given a
@@ -349,8 +369,16 @@ async def run_corpus_sweep(
     so an account the sweep declined to reach is told what is actually waiting
     instead of the zero a sweep that never started reports.
     """
-    change = await standing_consent_change(session, user_id=user_id, source=INGEST_SOURCE)
     boundary = await resolve_reflection_boundary(session, user_id)
+    if boundary is ReflectionBoundary.VAULT_BOUND:
+        with forwarding_provider_key(vault.relay_key):
+            sorted_into_vault = await sort_into_vault(session, user_id=user_id, client=vault.client)
+        return CorpusSweepResponse(
+            entries_pending=sorted_into_vault.entries_remaining,
+            entries_sorted=sorted_into_vault.entries_sent,
+            entries_remaining=sorted_into_vault.entries_remaining,
+        )
+    change = await standing_consent_change(session, user_id=user_id, source=INGEST_SOURCE)
     outcome = await backfill_after_consent(
         session, user_id=user_id, change=change, boundary=boundary
     )

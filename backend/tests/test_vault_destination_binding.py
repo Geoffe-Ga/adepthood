@@ -41,9 +41,9 @@ from models.journal_entry import VAULT_DESTINATION_WIDTH, JournalEntry
 from models.journal_withdrawal_obligation import JournalWithdrawalObligation
 from models.marginalia import Marginalia, MarginaliaKind
 from models.voice_draft_retraction import VoiceDraftRetraction, VoiceDraftRetractionState
-from routers import journal as journal_router
 from routers.auth import get_current_user
 from services import creek_vault_withdraw as withdraw_module
+from services import journal_vault_write
 from services.creek_vault_client import LocalFallbackCreekVaultClient
 from services.creek_vault_voice_drafts import record_mirror_intent
 from services.creek_vault_write import VaultWriteOutcome
@@ -609,7 +609,7 @@ async def test_intimate_create_never_stages_a_destination_even_transiently(
     vault = SequencedVaultClient()
     app.dependency_overrides[get_creek_vault_client] = lambda: vault
     staged: list[str | None] = []
-    real_store = journal_router.store_and_classify
+    real_store = journal_vault_write.store_and_classify
 
     async def _observing_store(
         client: CreekVaultClient,
@@ -628,7 +628,7 @@ async def test_intimate_create_never_stages_a_destination_even_transiently(
             created_at=created_at,
         )
 
-    monkeypatch.setattr(journal_router, "store_and_classify", _observing_store)
+    monkeypatch.setattr(journal_vault_write, "store_and_classify", _observing_store)
     await _create_intimate_entry(async_client, headers)
 
     assert staged == [None]
