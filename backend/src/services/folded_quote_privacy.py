@@ -16,8 +16,9 @@ Three doors, each closed at the narrowest point that sees it:
   whose source has *since* become restricted. Both answer 409
   :data:`QUOTE_SOURCE_RESTRICTED` and log ids and the code only.
 * **Offer.** The reflection composer is offered no quote that carries
-  restricted text (``routers.reflections`` filters with
-  :func:`quote_is_foldable`), so it never splices one into a review.
+  restricted text (``routers.reflections`` filters entry quotes with
+  :func:`quote_is_foldable`, and Course and letter quotes with
+  :func:`reading_quote_is_foldable`), so it never splices one into a review.
 * **Egress.** A review can already hold the passage: the client splices the
   quote into the body *before* it PATCHes the fold, and a source can be made
   Intimate after its quote was folded. :func:`restricted_folded_passages`
