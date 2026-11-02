@@ -990,3 +990,44 @@ async def test_patch_returns_a_letter_quote_to_pending(
     assert resp.status_code == HTTPStatus.OK, resp.text
     assert resp.json()["pending"] is True
     assert resp.json()["source_kind"] == "letter"
+
+
+# ── Folding a Course or letter quote into a live review (needs #3657) ────
+
+
+@pytest.mark.asyncio
+async def test_patch_folds_a_course_quote_into_a_live_reflection(
+    async_client: AsyncClient, db_session: AsyncSession, shelf: _Shelf
+) -> None:
+    """A Course quote is published text: it folds into the caller's live review unchanged."""
+    headers, user_id, quote_id = await _promote_course_quote(async_client, db_session, shelf)
+    review = await _seed_review(db_session, user_id, "My week")
+
+    resp = await async_client.patch(
+        f"/promotions/{quote_id}", json={"included_in_entry_id": review.id}, headers=headers
+    )
+
+    assert resp.status_code == HTTPStatus.OK, resp.text
+    assert resp.json()["pending"] is False
+    assert resp.json()["source_kind"] == "course"
+    stored = await _stored_quote(db_session, quote_id)
+    assert stored.included_in_entry_id == review.id
+
+
+@pytest.mark.asyncio
+async def test_patch_folds_a_letter_quote_into_a_live_reflection(
+    async_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """A letter quote on a Personal page folds into the caller's live review unchanged."""
+    headers, user_id, quote_id = await _promote_letter_quote(async_client, db_session)
+    review = await _seed_review(db_session, user_id, "My week")
+
+    resp = await async_client.patch(
+        f"/promotions/{quote_id}", json={"included_in_entry_id": review.id}, headers=headers
+    )
+
+    assert resp.status_code == HTTPStatus.OK, resp.text
+    assert resp.json()["pending"] is False
+    assert resp.json()["source_kind"] == "letter"
+    stored = await _stored_quote(db_session, quote_id)
+    assert stored.included_in_entry_id == review.id
