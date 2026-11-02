@@ -80,13 +80,19 @@ from tests.support.lineage_canaries import (
     LINEAGE_SENTINEL,
     REVIEW_PROSE,
     FoldedLineage,
+    seed_course_quote,
     seed_folded_lineage,
+    seed_letter_note,
+    seed_letter_quote,
 )
 from tests.support.reflecting_vault import DEFAULT_REFLECT_CAPABILITIES, ReflectingVaultClient
 
 _SRC_ROOT = Path(__file__).resolve().parents[1] / "src"
 
 _CLASSIFIED_REPLY = json.dumps({"weights": {Frequency.F5.value: 0.9}, "overall_confidence": 0.9})
+
+#: The shadow-series version that began counting a letter quote by its entry (#3657).
+_LETTER_LINEAGE_POLICY_VERSION = 2
 
 _SHADOW_FIELDS = frozenset(
     {"operation", "user_id", "entry_id", "count", "withdrawn_count", "policy_version"}
@@ -276,6 +282,96 @@ async def test_lineage_resolver_issues_one_statement_and_never_reads_anchor_text
     with _statements(db_session) as seen:
         assert await restricted_lineage_counts(db_session, user_id=user_id, entry_ids=[]) == {}
     assert seen == []
+
+
+async def _review_with_a_letter_fold(
+    session: AsyncSession, user_id: int
+) -> tuple[JournalEntry, int]:
+    """A Personal entry with a letter on it, and the id of a review that folds a quote of it."""
+    answered = JournalEntry(
+        user_id=user_id,
+        message="A page the letter answered.",
+        sender="user",
+        classification=JournalClassification.PERSONAL,
+    )
+    review = JournalEntry(user_id=user_id, message=REVIEW_PROSE, sender="user")
+    session.add_all([answered, review])
+    await session.commit()
+    note = await seed_letter_note(session, user_id=user_id, entry=answered)
+    review_id = int(review.id or 0)
+    await seed_letter_quote(session, user_id=user_id, note=note, included_in_entry_id=review_id)
+    return answered, review_id
+
+
+@pytest.mark.asyncio
+async def test_a_folded_letter_quote_counts_its_entrys_restriction_and_withdrawal(
+    async_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """A letter has no tier of its own: it is counted by the entry it answered (#3657)."""
+    _, user_id = await _signup(async_client, "lineage_letter")
+    answered, review_id = await _review_with_a_letter_fold(db_session, user_id)
+
+    async def _counts() -> LineageCounts | None:
+        found = await restricted_lineage_counts(db_session, user_id=user_id, entry_ids=[review_id])
+        return found.get(review_id)
+
+    assert await _counts() == LineageCounts(restricted=0, withdrawn=0)
+
+    await _set_source_tier(db_session, int(answered.id or 0), JournalClassification.INTIMATE)
+    assert await _counts() == LineageCounts(restricted=1, withdrawn=0)
+
+    answered.deleted_at = datetime.now(UTC)
+    db_session.add(answered)
+    await db_session.commit()
+    assert await _counts() == LineageCounts(restricted=0, withdrawn=1)
+
+
+@pytest.mark.asyncio
+async def test_a_folded_course_quote_is_never_counted(
+    async_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """Published text is nobody's restricted lineage, beside an entry fold that is counted."""
+    _, user_id = await _signup(async_client, "lineage_course")
+    chain = await seed_folded_lineage(db_session, user_id=user_id)
+    await seed_course_quote(db_session, user_id=user_id, included_in_entry_id=chain.review_id)
+    review = JournalEntry(user_id=user_id, message=REVIEW_PROSE, sender="user")
+    db_session.add(review)
+    await db_session.commit()
+    course_only = int(review.id or 0)
+    await seed_course_quote(db_session, user_id=user_id, included_in_entry_id=course_only)
+
+    found = await restricted_lineage_counts(
+        db_session, user_id=user_id, entry_ids=[chain.review_id, course_only]
+    )
+
+    assert found[chain.review_id] == LineageCounts(restricted=1, withdrawn=0)
+    assert found.get(course_only, LineageCounts(0, 0)) == LineageCounts(restricted=0, withdrawn=0)
+
+
+@pytest.mark.asyncio
+async def test_letter_and_course_lineage_is_read_in_the_same_one_statement(
+    async_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """Every kind is counted by one read, and still none selects the quote's text."""
+    _, user_id = await _signup(async_client, "lineage_kinds_one_query")
+    chain = await seed_folded_lineage(db_session, user_id=user_id)
+    _, letter_review = await _review_with_a_letter_fold(db_session, user_id)
+    await seed_course_quote(db_session, user_id=user_id, included_in_entry_id=letter_review)
+
+    with _statements(db_session) as seen:
+        found = await restricted_lineage_counts(
+            db_session, user_id=user_id, entry_ids=[chain.review_id, letter_review]
+        )
+
+    assert len(seen) == 1
+    assert "anchor_text" not in seen[0]
+    assert found[chain.review_id] == LineageCounts(restricted=1, withdrawn=0)
+    assert found[letter_review] == LineageCounts(restricted=0, withdrawn=0)
+
+
+def test_letter_lineage_opens_policy_version_two() -> None:
+    """Counting letter quotes changed what restricted lineage is, so the series splits there."""
+    assert POLICY_VERSION == _LETTER_LINEAGE_POLICY_VERSION
 
 
 # --- the shadow event ----------------------------------------------------------

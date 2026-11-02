@@ -34,7 +34,7 @@ from domain.folded_passages import (
 )
 from main import app
 from models.journal_entry import EntryStatus, JournalClassification, JournalEntry, JournalTag
-from models.marginalia import Marginalia, MarginaliaKind
+from models.marginalia import Marginalia
 from models.promoted_quote import PromotedQuote, PromotedQuoteSourceKind
 from services.folded_quote_privacy import (
     MAX_FOLD_LEVELS,
@@ -47,10 +47,14 @@ from services.folded_quote_privacy import (
     restricted_folded_passages,
 )
 from tests.support.lineage_canaries import (
+    LETTER_LINE,
     LINEAGE_SENTINEL,
     REVIEW_PROSE,
     folded_blockquote,
+    seed_course_quote,
     seed_folded_lineage,
+    seed_letter_note,
+    seed_letter_quote,
 )
 
 _KEPT_CLOSE = "the thing I never say aloud"
@@ -178,57 +182,6 @@ async def _fold(
         source_entry_id=int(source.id or 0),
         anchor_start=start,
         anchor_end=start + len(text),
-        anchor_text=text,
-        included_in_entry_id=target_id,
-    )
-    session.add(quote)
-    await session.commit()
-    await session.refresh(quote)
-    return quote
-
-
-#: A line of a Resonance Letter, quoted out of it and folded into a review.
-_LETTER_LINE = "what the letter saw in that page"
-
-
-async def _letter_note(
-    session: AsyncSession, user_id: int, entry: JournalEntry, *, owner_id: int | None = None
-) -> Marginalia:
-    """A margin note on ``entry`` carrying a letter that contains :data:`_LETTER_LINE`.
-
-    ``owner_id`` stamps the note with another account, for the ownership cases.
-    """
-    note = Marginalia(
-        journal_entry_id=int(entry.id or 0),
-        user_id=user_id if owner_id is None else owner_id,
-        kind=MarginaliaKind.THEME,
-        anchor_start=0,
-        anchor_end=min(len(entry.message), 4),
-        anchor_text=entry.message[:4],
-        note="A note in the margin.",
-        essay=f"Dear writer, {_LETTER_LINE}.",
-        essay_generated_at=datetime.now(UTC),
-    )
-    session.add(note)
-    await session.commit()
-    await session.refresh(note)
-    return note
-
-
-async def _letter_quote(
-    session: AsyncSession,
-    user_id: int,
-    note: Marginalia,
-    target_id: int | None,
-    text: str = _LETTER_LINE,
-) -> PromotedQuote:
-    """A quote of ``note``'s letter, folded into ``target_id`` (pending when ``None``)."""
-    quote = PromotedQuote(
-        user_id=user_id,
-        source_kind=PromotedQuoteSourceKind.LETTER,
-        source_marginalia_id=note.id,
-        anchor_start=0,
-        anchor_end=len(text),
         anchor_text=text,
         included_in_entry_id=target_id,
     )
@@ -462,19 +415,21 @@ async def test_a_folded_letter_quote_is_withheld_once_its_entry_becomes_intimate
     """
     _, user_id = await _signup(async_client, "letter_fail_open")
     answered = await _entry(db_session, user_id, "A page the letter answered.")
-    note = await _letter_note(db_session, user_id, answered)
+    note = await seed_letter_note(db_session, user_id=user_id, entry=answered)
     review = await _entry(
-        db_session, user_id, f"{REVIEW_PROSE}\n\n{folded_blockquote(_LETTER_LINE)}"
+        db_session, user_id, f"{REVIEW_PROSE}\n\n{folded_blockquote(LETTER_LINE)}"
     )
-    await _letter_quote(db_session, user_id, note, int(review.id or 0))
+    await seed_letter_quote(
+        db_session, user_id=user_id, note=note, included_in_entry_id=int(review.id or 0)
+    )
 
     assert await egress_body(db_session, review, review.message) == review.message
 
     await _set_tier(db_session, answered, JournalClassification.INTIMATE)
     sent = await egress_body(db_session, review, review.message)
 
-    assert _LETTER_LINE not in sent
-    assert WITHHELD_MARK * len(_LETTER_LINE) in sent
+    assert LETTER_LINE not in sent
+    assert WITHHELD_MARK * len(LETTER_LINE) in sent
     assert sent.startswith(REVIEW_PROSE)
 
 
@@ -511,25 +466,6 @@ def test_each_kind_of_fold_reads_the_tier_it_inherits(
     assert fold_source_admits_egress(kind, entry_tier, letter_tier) is expected
 
 
-async def _course_quote(
-    session: AsyncSession, user_id: int, target_id: int | None, text: str = _LETTER_LINE
-) -> PromotedQuote:
-    """A quote of a Course chapter, carrying only its snapshotted title (no chapter row)."""
-    quote = PromotedQuote(
-        user_id=user_id,
-        source_kind=PromotedQuoteSourceKind.COURSE,
-        source_title="A published chapter",
-        anchor_start=0,
-        anchor_end=len(text),
-        anchor_text=text,
-        included_in_entry_id=target_id,
-    )
-    session.add(quote)
-    await session.commit()
-    await session.refresh(quote)
-    return quote
-
-
 @pytest.mark.asyncio
 async def test_a_folded_course_quote_always_egresses(
     async_client: AsyncClient, db_session: AsyncSession
@@ -537,9 +473,9 @@ async def test_a_folded_course_quote_always_egresses(
     """Course text is the program's published text, identical for every reader."""
     _, user_id = await _signup(async_client, "course_egress")
     review = await _entry(
-        db_session, user_id, f"{REVIEW_PROSE}\n\n{folded_blockquote(_LETTER_LINE)}"
+        db_session, user_id, f"{REVIEW_PROSE}\n\n{folded_blockquote(LETTER_LINE)}"
     )
-    await _course_quote(db_session, user_id, int(review.id or 0))
+    await seed_course_quote(db_session, user_id=user_id, included_in_entry_id=int(review.id or 0))
 
     found = await restricted_folded_passages(
         db_session, user_id=user_id, entry_ids=[int(review.id or 0)]
@@ -558,16 +494,18 @@ async def test_a_letter_quote_of_a_deleted_intimate_entry_stays_withheld(
     answered = await _entry(
         db_session, user_id, "A page made private, then deleted.", JournalClassification.INTIMATE
     )
-    note = await _letter_note(db_session, user_id, answered)
+    note = await seed_letter_note(db_session, user_id=user_id, entry=answered)
     review = await _entry(
-        db_session, user_id, f"{REVIEW_PROSE}\n\n{folded_blockquote(_LETTER_LINE)}"
+        db_session, user_id, f"{REVIEW_PROSE}\n\n{folded_blockquote(LETTER_LINE)}"
     )
-    await _letter_quote(db_session, user_id, note, int(review.id or 0))
+    await seed_letter_quote(
+        db_session, user_id=user_id, note=note, included_in_entry_id=int(review.id or 0)
+    )
     answered.deleted_at = datetime.now(UTC)
     db_session.add(answered)
     await db_session.commit()
 
-    assert _LETTER_LINE not in await egress_body(db_session, review, review.message)
+    assert LETTER_LINE not in await egress_body(db_session, review, review.message)
 
 
 @pytest.mark.asyncio
@@ -578,13 +516,15 @@ async def test_a_letter_quote_on_another_writers_note_is_withheld(
     _, user_id = await _signup(async_client, "letter_foreign_note")
     _, other_id = await _signup(async_client, "letter_note_owner")
     answered = await _entry(db_session, other_id, "Someone else's Personal page.")
-    note = await _letter_note(db_session, user_id, answered, owner_id=other_id)
+    note = await seed_letter_note(db_session, user_id=user_id, entry=answered, owner_id=other_id)
     review = await _entry(
-        db_session, user_id, f"{REVIEW_PROSE}\n\n{folded_blockquote(_LETTER_LINE)}"
+        db_session, user_id, f"{REVIEW_PROSE}\n\n{folded_blockquote(LETTER_LINE)}"
     )
-    await _letter_quote(db_session, user_id, note, int(review.id or 0))
+    await seed_letter_quote(
+        db_session, user_id=user_id, note=note, included_in_entry_id=int(review.id or 0)
+    )
 
-    assert _LETTER_LINE not in await egress_body(db_session, review, review.message)
+    assert LETTER_LINE not in await egress_body(db_session, review, review.message)
 
 
 @contextmanager
@@ -617,11 +557,11 @@ async def test_the_walk_never_follows_a_course_or_letter_source_upstream(
     """
     _, user_id = await _signup(async_client, "walk_entry_only")
     answered = await _entry(db_session, user_id, "A page the letter answered.")
-    note = await _letter_note(db_session, user_id, answered)
+    note = await seed_letter_note(db_session, user_id=user_id, entry=answered)
     review = await _entry(db_session, user_id, REVIEW_PROSE)
     review_id = int(review.id or 0)
-    await _letter_quote(db_session, user_id, note, review_id)
-    await _course_quote(db_session, user_id, review_id)
+    await seed_letter_quote(db_session, user_id=user_id, note=note, included_in_entry_id=review_id)
+    await seed_course_quote(db_session, user_id=user_id, included_in_entry_id=review_id)
 
     with _quote_reads(db_session) as reading_only:
         await restricted_folded_passages(db_session, user_id=user_id, entry_ids=[review_id])
@@ -861,7 +801,7 @@ async def test_folding_a_course_quote_is_allowed(
 ) -> None:
     """Published text may always be folded: its tier is ``public``."""
     headers, user_id = await _signup(async_client, "fold_course_quote")
-    quote = await _course_quote(db_session, user_id, None)
+    quote = await seed_course_quote(db_session, user_id=user_id)
     target = await _reflection(db_session, user_id)
 
     assert await _fold_patch(async_client, headers, quote, target) == HTTPStatus.OK
@@ -925,8 +865,8 @@ async def test_folding_a_letter_quote_follows_the_entry_it_answered(
     headers, user_id = await _signup(async_client, f"fold_letter{change.__name__}")
     _, other_id = await _signup(async_client, f"letter_other{change.__name__}")
     answered = await _entry(db_session, user_id, "A Personal page the letter answered.")
-    note = await _letter_note(db_session, user_id, answered)
-    quote = await _letter_quote(db_session, user_id, note, None)
+    note = await seed_letter_note(db_session, user_id=user_id, entry=answered)
+    quote = await seed_letter_quote(db_session, user_id=user_id, note=note)
     target = await _reflection(db_session, user_id)
     await change(db_session, answered, other_id)
 
@@ -953,11 +893,11 @@ async def test_folding_a_letter_quote_that_carries_a_restricted_passage_is_refus
     chain = await seed_folded_lineage(db_session, user_id=user_id)
     review = await db_session.get(JournalEntry, chain.review_id)
     assert review is not None
-    note = await _letter_note(db_session, user_id, review)
-    carrying = await _letter_quote(
-        db_session, user_id, note, None, text=f"you wrote {LINEAGE_SENTINEL}"
+    note = await seed_letter_note(db_session, user_id=user_id, entry=review)
+    carrying = await seed_letter_quote(
+        db_session, user_id=user_id, note=note, text=f"you wrote {LINEAGE_SENTINEL}"
     )
-    clean = await _letter_quote(db_session, user_id, note, None)
+    clean = await seed_letter_quote(db_session, user_id=user_id, note=note)
     target = await _reflection(db_session, user_id)
 
     assert await _fold_patch(async_client, headers, carrying, target) == HTTPStatus.CONFLICT
