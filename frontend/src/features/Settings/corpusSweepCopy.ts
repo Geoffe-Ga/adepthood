@@ -11,6 +11,10 @@
  * Sorting is free (#3495): the shipped ``POST /corpus/sweep`` takes no body and
  * quotes no price, and the provider bill is bounded by a per-account ceiling
  * (#3514), not by anything a person is asked to acknowledge here.
+ *
+ * One press sorts everything (``services/corpus_sort_run.py``): the screen
+ * starts a background run and follows it, so the copy speaks of a sort that is
+ * going and then of how it ended -- never of passes or a per-press bound.
  */
 
 import {
@@ -18,15 +22,7 @@ import {
   CORPUS_INVITATION_NOT_NOW_LABEL,
 } from './corpusConsentCopy';
 
-import type { CorpusSweepResult } from '@/api';
-
-/**
- * The most entries one pass sorts: the backend's ``BACKFILL_ENTRY_CEILING``.
- *
- * Quoted on the button, so ``corpusSweepCopy.test.ts`` reads the Python
- * constant back and fails if the two ever disagree.
- */
-export const CORPUS_SWEEP_PASS_ENTRY_LIMIT = 40;
+import type { CorpusSortRun } from '@/api';
 
 /** The hub row's label, and the screen's title. */
 export const CORPUS_SWEEP_ROW_LABEL = 'Sort the rest of your writing';
@@ -35,33 +31,55 @@ export const CORPUS_SWEEP_TITLE = CORPUS_SWEEP_ROW_LABEL;
 /** Heading over the shared lines about what sorting does. */
 export const CORPUS_SWEEP_WHAT_HEADING = 'What sorting does';
 
-/** Why it takes passes, and that each one waits for the person to ask. */
-export const CORPUS_SWEEP_BOUND_LINE =
-  `Each pass sorts up to ${CORPUS_SWEEP_PASS_ENTRY_LIMIT} entries, so a long backlog takes a ` +
-  'few passes. A pass starts only when you ask for one.';
+/** How a sort runs: once, for everything, in the background, and only on a press. */
+export const CORPUS_SWEEP_HOW_LINE =
+  'One press sorts everything that is waiting. It runs in the background, so you can leave ' +
+  'this screen, and pressing again while it runs starts nothing new.';
 
-/** Said when the backlog is empty, on arrival or after a pass. */
+/** Said when the backlog is empty, on arrival or after a sort. */
 export const CORPUS_SWEEP_NOTHING_PENDING = 'Nothing is waiting to be sorted.';
 
 /**
- * Why a pass can sort nothing, said beside a remainder that did not move.
+ * Why a sort that ran to the end can leave writing behind, said beside it.
  *
- * Each cause is one the backend has: no standing consent sweeps nothing, a
- * vault-bound writer's pass hands entries to a vault that may not be reachable
- * right now (``services/corpus_vault_sort.py``), and an entry the classifier
- * places nowhere stays pending on purpose.
+ * Every other cause ends a sort with a reason of its own
+ * (:data:`CORPUS_SORT_STOP_LINES`); what is left after a sort that finished is
+ * writing the classifier could place nowhere, which stays waiting on purpose.
  */
 export const CORPUS_SWEEP_NOTHING_SORTED_REASON =
-  'A pass sorts nothing when sorting is off for what you write here, when your vault cannot ' +
-  'be reached right now, or when the entries left are ones that could not be placed yet.';
+  'Entries that could not be placed yet stay waiting, and a later sort tries them again.';
 
-/** The per-account limit on passes (``429``): a wait, not a fault. */
+/** The per-account limit on presses (``429``): a wait, not a fault. */
 export const CORPUS_SWEEP_RATE_LIMITED =
-  'You have asked for several passes in a short while. Give it a minute, then ask again.';
+  'You have pressed Sort several times in a short while. Give it a minute, then press again.';
 
-/** A pass whose answer never came back: say only what is known. */
+/** A press whose answer never came back: say only what is known. */
 export const CORPUS_SWEEP_FAILURE =
-  'That pass did not come back, so this screen cannot say what it sorted. You can ask again.';
+  'That press did not come back, so this screen cannot say whether sorting started. You can ' +
+  'press again; it will not start twice.';
+
+/** A sort that ended on a fault of ours: what it sorted is kept. */
+export const CORPUS_SORT_FAILED =
+  'Sorting stopped partway because of a problem on our side. What it sorted is kept, and you ' +
+  'can start it again.';
+
+/** Why a sort ended before offering everything, one line per backend reason. */
+export const CORPUS_SORT_STOP_LINES: Readonly<
+  Record<NonNullable<CorpusSortRun['stop_reason']>, string>
+> = {
+  no_consent: 'Nothing was sorted, because sorting is off for what you write here.',
+  consent_withdrawn: 'Sorting stopped because sorting was turned off for what you write here.',
+  boundary_changed:
+    'Sorting stopped because your vault connection changed. Starting again sorts into the ' +
+    'right place.',
+  suspended: 'Sorting is paused on our side for now. You can try again later.',
+  provider_refused:
+    'Sorting stopped because the service that sorts writing is not answering right now. You ' +
+    'can try again later.',
+  vault_unavailable:
+    'Sorting stopped because your vault could not be reached. You can start again once it ' +
+    'is back.',
+};
 
 /** The count itself did not load. */
 export const CORPUS_SWEEP_READ_FAILURE =
@@ -78,9 +96,9 @@ export const CORPUS_SWEEP_RETRY_LABEL = 'Try again';
  */
 export const CORPUS_SWEEP_OFFER_LABEL = 'Your earlier writing';
 
-/** The note navigates; the pass, and its confirm, live on the next screen. */
+/** The note navigates; the sort, and its confirm, live on the next screen. */
 export const CORPUS_SWEEP_OFFER_NEXT_STEP =
-  'Nothing is sorted from here. The next screen says how a pass works and waits for you to ask.';
+  'Nothing is sorted from here. The next screen says how sorting works and waits for you to ask.';
 
 export const CORPUS_SWEEP_OFFER_OPEN_LABEL = CORPUS_SWEEP_ROW_LABEL;
 export const CORPUS_SWEEP_OFFER_OPEN_A11Y = 'Open the screen for sorting the rest of your writing';
@@ -111,39 +129,66 @@ export function corpusSweepPendingLine(pending: number): string {
     : `${pending} of your entries haven't been sorted yet.`;
 }
 
-/** The confirm: the next pass, never more than one pass sorts. */
+/** The confirm: one press for everything waiting. */
 export function corpusSweepActionLabel(pending: number): string {
-  return `Sort the next ${Math.min(pending, CORPUS_SWEEP_PASS_ENTRY_LIMIT)}`;
+  return pending === 1 ? 'Sort 1 entry' : `Sort all ${pending} entries`;
 }
 
 /**
- * What one pass did, and what it left.
+ * How far a running sort has got.
  *
- * A pass that sorted nothing leads with that, so a remainder that did not move
- * can never read as success.
+ * Never a bare zero (the screen-wide rule the price test holds): before the
+ * first entry is looked at it names what it is sorting instead.
  */
-export function corpusSweepOutcomeLine(result: CorpusSweepResult): string {
-  const left =
-    result.entries_remaining === 0
-      ? 'Nothing is left unsorted.'
-      : `${entries(result.entries_remaining)} still unsorted.`;
-  if (result.entries_sorted === 0) {
-    return result.entries_remaining === 0
-      ? CORPUS_SWEEP_NOTHING_PENDING
-      : `Nothing was sorted this pass. ${left}`;
+export function corpusSortProgressLine(run: CorpusSortRun): string {
+  const total = Math.max(run.entries_total, run.entries_offered);
+  if (run.entries_offered > 0) {
+    return `Sorting in the background: ${run.entries_offered} of ${total} looked at so far.`;
   }
-  return `Sorted ${entries(result.entries_sorted)} this pass. ${left}`;
+  return total > 0 ? `Sorting ${entries(total)} in the background.` : 'Sorting in the background.';
+}
+
+/** What is still waiting, as the tail of an outcome line. */
+function leftLine(pending: number): string {
+  return pending === 0 ? 'Nothing is left unsorted.' : `${entries(pending)} still unsorted.`;
+}
+
+/** What a sort sorted before it stopped, if anything, as a middle clause. */
+function sortedFirst(run: CorpusSortRun): string {
+  return run.entries_sorted > 0 ? ` It sorted ${entries(run.entries_sorted)} first.` : '';
+}
+
+/** How a sort that ran to the end turned out. */
+function completedLine(run: CorpusSortRun, pending: number): string {
+  if (run.entries_sorted > 0) return `Sorted ${entries(run.entries_sorted)}. ${leftLine(pending)}`;
+  return pending === 0 ? CORPUS_SWEEP_NOTHING_PENDING : `Nothing was sorted. ${leftLine(pending)}`;
+}
+
+/**
+ * How a finished sort ended, and what it left.
+ *
+ * A sort that sorted nothing leads with that, so a remainder that did not move
+ * can never read as success; a stopped one leads with why.
+ */
+export function corpusSortOutcomeLine(run: CorpusSortRun, pending: number): string {
+  if (run.state === 'failed') return `${CORPUS_SORT_FAILED} ${leftLine(pending)}`;
+  if (run.stop_reason !== null) {
+    return `${CORPUS_SORT_STOP_LINES[run.stop_reason]}${sortedFirst(run)} ${leftLine(pending)}`;
+  }
+  return completedLine(run, pending);
 }
 
 /** Every fixed line, so a copy sweep can read them all. */
 export const CORPUS_SWEEP_COPY_ENTRIES: readonly string[] = [
   CORPUS_SWEEP_ROW_LABEL,
   CORPUS_SWEEP_WHAT_HEADING,
-  CORPUS_SWEEP_BOUND_LINE,
+  CORPUS_SWEEP_HOW_LINE,
   CORPUS_SWEEP_NOTHING_PENDING,
   CORPUS_SWEEP_NOTHING_SORTED_REASON,
   CORPUS_SWEEP_RATE_LIMITED,
   CORPUS_SWEEP_FAILURE,
+  CORPUS_SORT_FAILED,
+  ...Object.values(CORPUS_SORT_STOP_LINES),
   CORPUS_SWEEP_READ_FAILURE,
   CORPUS_SWEEP_RETRY_LABEL,
   CORPUS_SWEEP_OFFER_LABEL,

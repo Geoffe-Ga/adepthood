@@ -1528,25 +1528,67 @@ export const voiceReadinessSchema = z.object({
 
 export type VoiceReadinessT = z.infer<typeof voiceReadinessSchema>;
 
+/** Which side sorts an account's writing (``SortLane``, ``models/corpus_sort_run.py``). */
+export const SORT_RUN_LANES = ['app_provider', 'vault_bound'] as const;
+
+/** Where a background sort is; only ``running`` changes (``SortRunState``). */
+export const SORT_RUN_STATES = ['running', 'completed', 'stopped', 'failed'] as const;
+
+/** Why a sort ended before offering everything (``SortStopReason``). */
+export const SORT_STOP_REASONS = [
+  'no_consent',
+  'consent_withdrawn',
+  'boundary_changed',
+  'suspended',
+  'provider_refused',
+  'vault_unavailable',
+] as const;
+
 /**
- * How much of this account's own writing is still unsorted (``GET /corpus/sweep``).
+ * One background sort, as the screen follows it (#3499 follow-up).
  *
- * A count and nothing else: no entry, and no price, because sorting has none.
+ * ``entries_total`` is what was pending when it started -- what progress is
+ * counted against -- and ``entries_offered`` / ``entries_sorted`` how far it
+ * has got. Counts, a closed vocabulary and instants; never the writing. The
+ * three vocabularies are pinned to the backend's enums by
+ * ``corpusSweepCopy.test.ts``.
+ */
+export const corpusSortRunSchema = z.object({
+  id: z.number().int().positive(),
+  lane: z.enum(SORT_RUN_LANES),
+  state: z.enum(SORT_RUN_STATES),
+  stop_reason: z.enum(SORT_STOP_REASONS).nullable(),
+  entries_total: z.number().int().nonnegative(),
+  entries_offered: z.number().int().nonnegative(),
+  entries_sorted: z.number().int().nonnegative(),
+  started_at: isoDateTime,
+  finished_at: isoDateTime.nullable(),
+});
+
+export type CorpusSortRunT = z.infer<typeof corpusSortRunSchema>;
+
+/**
+ * How much of this account's own writing is still unsorted, and its latest sort
+ * (``GET /corpus/sweep``).
+ *
+ * A count, and the newest run or ``null`` when it never pressed Sort -- no
+ * entry and no price, because sorting has none. ``run`` is also optional: a
+ * server from before background sorting answers without it, and that reads as
+ * no run rather than as a malformed response while a deploy rolls through.
  */
 export const corpusSweepEstimateSchema = z.object({
   entries_pending: z.number().int().nonnegative(),
+  run: corpusSortRunSchema.nullable().optional(),
 });
 
 export type CorpusSweepEstimateT = z.infer<typeof corpusSweepEstimateSchema>;
 
 /**
- * What one bounded ``POST /corpus/sweep`` pass did, on top of what still waits.
+ * What pressing Sort answered (``POST /corpus/sweep``): the run it started or
+ * joined, on top of the count.
  *
- * A strict superset of the estimate, so a screen renders the backlog the same
- * way whichever verb it last called. ``entries_remaining`` equals
- * ``entries_pending`` by construction and can stay above zero after a pass that
- * sorted nothing -- a remainder is a reason to offer another pass, not proof
- * the last one worked.
+ * ``entries_sorted`` and ``entries_remaining`` keep the shape the bounded pass
+ * answered with: what the run has sorted so far, and what is pending now.
  */
 export const corpusSweepSchema = corpusSweepEstimateSchema.extend({
   entries_sorted: z.number().int().nonnegative(),

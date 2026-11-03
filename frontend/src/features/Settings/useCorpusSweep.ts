@@ -1,6 +1,6 @@
 import { create } from 'zustand';
 
-import { corpus, type CorpusSweepResult } from '@/api';
+import { corpus, type CorpusSortRun, type CorpusSweepResult } from '@/api';
 import { captureAuthScope, isAuthScopeCurrent } from '@/api/sessionToken';
 import { registerStoreReset } from '@/store/registry';
 
@@ -17,6 +17,11 @@ import { registerStoreReset } from '@/store/registry';
  * hub treats unknown as nothing to offer -- a control that may do nothing is not
  * shown -- and the screen says the count did not load.
  *
+ * Beside the count sits the account's latest background sort, ``run``: what the
+ * screen follows while a sort is going and reports once it ends. Every read
+ * replaces both together, so a count is never shown against another moment's
+ * run.
+ *
  * Every answer is bound to the account and session it was asked under, and the
  * store is cleared on every account boundary, so one account's backlog never
  * renders on another's hub.
@@ -27,6 +32,8 @@ export const CORPUS_SWEEP_SOURCE = 'journal';
 
 interface SweepState {
   pending: number | null;
+  /** The latest sort, or ``null`` when there is none or it is not known. */
+  run: CorpusSortRun | null;
   /**
    * The journal page's offer (#3500) was set aside -- "Not now", or opened --
    * this session. Session-scoped on purpose: the offer is not asked again on
@@ -36,12 +43,16 @@ interface SweepState {
   offerSetAside: boolean;
 }
 
-const useSweepState = create<SweepState>(() => ({ pending: null, offerSetAside: false }));
+const useSweepState = create<SweepState>(() => ({
+  pending: null,
+  run: null,
+  offerSetAside: false,
+}));
 let generation = 0;
 
 registerStoreReset(() => {
   generation += 1;
-  useSweepState.setState({ pending: null, offerSetAside: false });
+  useSweepState.setState({ pending: null, run: null, offerSetAside: false });
 });
 
 /** Whether work begun now may still land when it finishes. */
@@ -63,7 +74,7 @@ export async function refreshSweepEstimate(): Promise<boolean> {
   try {
     const estimate = await corpus.sweepEstimate();
     if (!current()) return false;
-    useSweepState.setState({ pending: estimate.entries_pending });
+    useSweepState.setState({ pending: estimate.entries_pending, run: estimate.run ?? null });
     return true;
   } catch {
     if (current()) useSweepState.setState({ pending: null });
@@ -72,21 +83,29 @@ export async function refreshSweepEstimate(): Promise<boolean> {
 }
 
 /**
- * Run one bounded pass and publish what it left. Rejects with whatever the
- * request rejected with (a ``429`` included), so the screen can say which.
- * Resolves ``null`` when the answer arrived for an account no longer here.
+ * Start sorting everything, or join the sort already going, and publish the run.
+ *
+ * The run goes on in the background; the screen follows it with
+ * :func:`refreshSweepEstimate`. Rejects with whatever the request rejected with
+ * (a ``429`` included), so the screen can say which. Resolves ``null`` when the
+ * answer arrived for an account no longer here.
  */
-export async function runSweepPass(): Promise<CorpusSweepResult | null> {
+export async function startSort(): Promise<CorpusSweepResult | null> {
   const current = captureWrite();
   const result = await corpus.sweep();
   if (!current()) return null;
-  useSweepState.setState({ pending: result.entries_remaining });
+  useSweepState.setState({ pending: result.entries_pending, run: result.run ?? null });
   return result;
 }
 
 /** The unsorted count as last known, or ``null`` when it is not known. */
 export function useCorpusSweepPending(): number | null {
   return useSweepState((state) => state.pending);
+}
+
+/** The latest background sort as last read, or ``null``. */
+export function useCorpusSortRun(): CorpusSortRun | null {
+  return useSweepState((state) => state.run);
 }
 
 /** Set the journal page's sweep offer aside for the rest of this session. */
