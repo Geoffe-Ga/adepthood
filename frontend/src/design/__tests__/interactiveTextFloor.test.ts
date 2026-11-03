@@ -189,6 +189,9 @@ const AUDITED_NON_INTERACTIVE_CAPTIONS = [
   // row's attribution, not this date.
   'features/Journal/ReflectionSourcesPanel.tsx::rowDate',
   'features/Journal/ReflectionSourcesPanel.tsx::rowExcerpt',
+  // The "From your reading" sub-label over the Course and letter quotes
+  // (#3659): it names a group of rows and is never itself pressed.
+  'features/Journal/ReflectionSourcesPanel.tsx::subgroupLabel',
   'features/Journal/ResonanceEssayModal.tsx::kind',
   // Audited (#3062): the letter's recorded-source line under the letter text.
   // Static metadata, never pressed.

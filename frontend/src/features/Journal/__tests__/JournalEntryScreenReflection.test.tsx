@@ -10,7 +10,7 @@
 // 409 wiring, not the panel's own rendering (covered by
 // `ReflectionSourcesPanel.test.tsx`).
 import { jest, describe, it, expect, beforeEach } from '@jest/globals';
-import { act, fireEvent, render, within } from '@testing-library/react-native';
+import { act, fireEvent, render, waitFor, within } from '@testing-library/react-native';
 import { BookOpen } from 'lucide-react-native';
 import React from 'react';
 import { StyleSheet } from 'react-native';
@@ -141,6 +141,8 @@ jest.mock('../ReflectionSourcesPanel', () => {
   const { Text, TouchableOpacity } = require('react-native');
   const Stub = ({
     items,
+    readingQuotes,
+    onInsertReadingQuote,
     onInsertQuote,
     onInsertQuotes,
     foldedIds,
@@ -150,6 +152,8 @@ jest.mock('../ReflectionSourcesPanel', () => {
     feedStatus,
   }: {
     items: ReflectionSourceItem[];
+    readingQuotes?: ReadonlyArray<{ id: number }>;
+    onInsertReadingQuote?: (_q: { id: number }) => Promise<boolean> | undefined;
     window?: { start: string; end: string };
     anchorStatus?: string;
     feedStatus?: string;
@@ -203,6 +207,20 @@ jest.mock('../ReflectionSourcesPanel', () => {
         )}
         <Text testID="stub-pending-ids">{pendingIds.join(',')}</Text>
         <Text testID="stub-source-ids">{items.map((source) => source.id).join(',')}</Text>
+        <Text testID="stub-reading-ids">
+          {(readingQuotes ?? []).map((quote) => quote.id).join(',')}
+        </Text>
+        {(readingQuotes ?? []).map((quote) => (
+          <TouchableOpacity
+            key={quote.id}
+            testID={`stub-insert-reading-${quote.id}`}
+            onPress={() => {
+              void onInsertReadingQuote?.(quote);
+            }}
+          >
+            <Text>{`Insert reading ${quote.id}`}</Text>
+          </TouchableOpacity>
+        ))}
         <Text testID="stub-window">
           {reviewWindow == null ? '' : `${reviewWindow.start}..${reviewWindow.end}`}
         </Text>
@@ -964,6 +982,36 @@ describe('JournalEntryScreen -- the scope the panel is showing', () => {
     });
 
     expect(screen.getByTestId('stub-source-ids').props.children).toBe('');
+  });
+
+  it('hands the panel the reading quotes and folds one into the review (#3659)', async () => {
+    mockReflectionsSources.mockResolvedValueOnce({
+      items: [],
+      reading_quotes: [
+        {
+          id: 71,
+          source_kind: 'course',
+          source_title: 'Beige 1',
+          anchor_start: 3,
+          anchor_end: 14,
+          anchor_text: 'warm hearth',
+          pending: true,
+          created_at: '2026-06-02T08:00:00Z',
+        },
+      ],
+    });
+    const screen = renderScreen(REFLECTION_PARAMS);
+    await act(async () => {
+      fireEvent.press(await screen.findByTestId('reflection-sources-toggle'));
+    });
+    expect(screen.getByTestId('stub-reading-ids').props.children).toBe('71');
+
+    await act(async () => {
+      fireEvent.press(screen.getByTestId('stub-insert-reading-71'));
+    });
+
+    await waitFor(() => expect(mockSetIncluded).toHaveBeenCalledWith(71, expect.any(Number)));
+    expect(screen.getByTestId('stub-folded-ids').props.children).toBe('71');
   });
 
   it('keeps the reflection period the server declared for the scope on screen', async () => {

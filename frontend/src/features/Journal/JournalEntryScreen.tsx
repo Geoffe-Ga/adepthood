@@ -4706,11 +4706,13 @@ function ReflectionSourcesDock({
   return (
     <ReflectionSourcesPanel
       items={reflection.sources}
+      readingQuotes={reflection.readingQuotes}
       window={reflection.window}
       anchorStatus={reflection.anchorStatus}
       feedStatus={reflection.feedStatus}
       timeZone={userTimezone}
       onInsertQuote={reflection.onInsertQuote}
+      onInsertReadingQuote={reflection.onInsertReadingQuote}
       onInsertQuotes={reflection.onInsertQuotes}
       foldedIds={reflection.foldedIds}
       onPromoteSpan={reflection.onPromoteSpan}
