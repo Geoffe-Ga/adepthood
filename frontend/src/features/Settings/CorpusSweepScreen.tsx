@@ -50,8 +50,15 @@ import { ink, rhythm, type as typeRamp } from '@/design/tokens';
  * acknowledgement and the screen no money language; the route takes no body.
  */
 
-/** How often a running sort is re-read: often enough to feel live, cheap enough to ignore. */
-export const SORT_POLL_INTERVAL_MS = 2000;
+/**
+ * How often a running sort is re-read: often enough to feel live, cheap enough to ignore.
+ *
+ * Every request counts against the server's ambient per-client floor
+ * (``FALLBACK_RATE_LIMIT``, 60 a minute, ``backend/src/rate_limit.py``). Three
+ * seconds is twenty reads a minute -- a third of that floor for as long as a
+ * sort runs, leaving the rest of the app room to work beside it.
+ */
+export const SORT_POLL_INTERVAL_MS = 3000;
 
 /** The per-account limit on presses answers with this; it is a wait, not a fault. */
 const HTTP_TOO_MANY_REQUESTS = 429;
