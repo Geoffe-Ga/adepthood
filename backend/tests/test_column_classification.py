@@ -92,6 +92,8 @@ _PLAINTEXT_COLUMNS: dict[str, frozenset[str]] = {
             "vaultactivation.creek_job_id",
             "vaultpipelinerun.job_id",
             "vaultpipelinerun.resume_claim_id",
+            # A background sort's lease token: an opaque UUID, never user text.
+            "corpussortrun.owner_id",
             "journalwithdrawalnote.destination",
             "journalwithdrawalobligation.destination",
             "vaultteardownreceipt.creek_job_id",
@@ -161,6 +163,10 @@ _PLAINTEXT_COLUMNS: dict[str, frozenset[str]] = {
             "vaultpipelinerun.outcome",
             "vaultpipelinerun.stage",
             "vaultpipelinerun.trigger",
+            # A background sort's CHECK-constrained vocabularies (models.corpus_sort_run).
+            "corpussortrun.lane",
+            "corpussortrun.state",
+            "corpussortrun.stop_reason",
             "restoremarker.state",
             "journalwithdrawalobligation.state",
             "vaultteardownreceipt.state",
