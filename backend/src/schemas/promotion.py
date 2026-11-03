@@ -19,17 +19,29 @@ from bounds import RowIdField
 from models.promoted_quote import PromotedQuoteSourceKind
 from schemas.journal import JOURNAL_MESSAGE_MAX_LENGTH
 
+#: Upper bound, in code points, on a Course chapter body and so on the offsets
+#: of a quote promoted from one. Chapters run longer than any journal entry
+#: (the longest vendored chapter is roughly two and a half times
+#: ``JOURNAL_MESSAGE_MAX_LENGTH``), so the journal's own bound would leave the
+#: end of a long chapter unquotable. Generous headroom over the longest chapter
+#: shipped; ``tests/test_promotions_reading_api.py`` fails a content pin that
+#: ships a longer one. The real limit is the served body's length (422
+#: ``anchor_out_of_range``); this only keeps absurd integers out (#3658).
+COURSE_CHAPTER_MAX_LENGTH = 100_000
 
-class PromoteQuoteCreate(BaseModel):
-    """Payload for promoting a span of a source entry into a pending quote.
 
-    Only offsets are accepted; the server slices ``anchor_text`` from the
-    persisted body. ``anchor_end`` must lie strictly past ``anchor_start`` so an
-    empty or inverted span is rejected before it reaches the database.
+class QuoteSpan(BaseModel):
+    """A half-open ``[anchor_start, anchor_end)`` span of code points into a source body.
+
+    The base of every promote payload. Only offsets are accepted; the server
+    slices ``anchor_text`` from the body it holds. ``anchor_end`` must lie
+    strictly past ``anchor_start`` so an empty or inverted span is rejected
+    before it reaches the database. Each subclass bounds the offsets by the
+    longest body its kind of source can have.
     """
 
-    anchor_start: int = Field(ge=0, le=JOURNAL_MESSAGE_MAX_LENGTH)
-    anchor_end: int = Field(ge=1, le=JOURNAL_MESSAGE_MAX_LENGTH)
+    anchor_start: int
+    anchor_end: int
 
     @model_validator(mode="after")
     def _validate_span(self) -> Self:
@@ -38,6 +50,29 @@ class PromoteQuoteCreate(BaseModel):
             msg = "anchor_end must be greater than anchor_start"
             raise ValueError(msg)
         return self
+
+
+class PromoteQuoteCreate(QuoteSpan):
+    """Payload for promoting a span of a journal entry or a Resonance Letter.
+
+    Both bodies are bounded by ``JOURNAL_MESSAGE_MAX_LENGTH`` (a letter by the
+    essay cap, which is no larger), and so are the offsets.
+    """
+
+    anchor_start: int = Field(ge=0, le=JOURNAL_MESSAGE_MAX_LENGTH)
+    anchor_end: int = Field(ge=1, le=JOURNAL_MESSAGE_MAX_LENGTH)
+
+
+class PromoteChapterQuoteCreate(QuoteSpan):
+    """Payload for promoting a span of a Course chapter (#3658).
+
+    Offsets index the chapter's Markdown exactly as
+    ``GET /course/content/{content_id}/body`` serves it (frontmatter already
+    stripped), bounded by :data:`COURSE_CHAPTER_MAX_LENGTH`.
+    """
+
+    anchor_start: int = Field(ge=0, le=COURSE_CHAPTER_MAX_LENGTH)
+    anchor_end: int = Field(ge=1, le=COURSE_CHAPTER_MAX_LENGTH)
 
 
 class PromotionUpdate(BaseModel):

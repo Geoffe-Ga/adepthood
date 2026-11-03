@@ -423,6 +423,27 @@ async def refuse_unquotable_span(
         raise _refused(entry.user_id, entry.id, None)
 
 
+async def refuse_unquotable_letter_text(
+    session: AsyncSession, answered: JournalEntry, text: str
+) -> None:
+    """Raise 409 unless ``text``, lifted from a letter answering ``answered``, may become a quote.
+
+    A letter has no tier of its own: it answers to the entry its note sits on,
+    so this is :func:`refuse_unquotable_span` for a letter (#3658). Refused when
+    that entry may not egress, or when the text carries a passage the entry
+    holds from a restricted fold -- the very test the fold door applies later
+    (:func:`quote_is_foldable`), so a quote that could never be folded is never
+    stored.
+    """
+    if not admits_egress(answered.classification) or answered.id is None:
+        raise _refused(answered.user_id, answered.id, None)
+    passages = await restricted_folded_passages(
+        session, user_id=answered.user_id, entry_ids=(answered.id,)
+    )
+    if not quote_is_foldable(answered, text, passages.get(answered.id, ())):
+        raise _refused(answered.user_id, answered.id, None)
+
+
 async def _vouched_entry_source(session: AsyncSession, quote: PromotedQuote) -> JournalEntry | None:
     """An entry quote's source entry if it is the quote owner's own, else ``None``."""
     if quote.source_entry_id is None:

@@ -1,12 +1,13 @@
-"""Quote-promotion API — lift a span from one entry, optionally fold it into another.
+"""Quote-promotion API — lift a span from a source, optionally fold it into a review.
 
-Promoting a quote anchors a character span of a source journal entry; the server
-slices and snapshots the text (the client sends only offsets) so the quote
-survives later edits. A promotion can then be folded into a hierarchical
-reflection or returned to pending. ``GET /promotions`` lists every quote the
-caller has promoted -- from entries, Course chapters and Resonance Letters alike
-(#3656) -- for the Promoted quotes screen (#2865). Only entry quotes are created
-here so far. ``user_id`` is never returned.
+Promoting a quote anchors a character span of its source -- a journal entry, a
+Course chapter, or a Resonance Letter -- and the server slices and snapshots the
+text (the client sends only offsets) so the quote survives later edits. All
+three write routes share one slicer, :func:`_slice_anchor_text` (#3658). A
+promotion can then be folded into a hierarchical reflection or returned to
+pending. ``GET /promotions`` lists every quote the caller has promoted, of every
+kind (#3656), for the Promoted quotes screen (#2865). ``user_id`` is never
+returned.
 """
 
 from __future__ import annotations
@@ -27,13 +28,19 @@ from sqlmodel import col, select
 
 from bounds import MAX_PAGE_OFFSET, RowIdPath
 from database import get_session
-from dependencies.ownership import require_owned_journal_entry
-from error_responses import build_router
+from dependencies.ownership import (
+    require_owned_journal_entry,
+    require_owned_marginalia,
+    resolve_owned_live_entry,
+)
+from dependencies.timezone import current_user_timezone
+from error_responses import build_router, refusal_responses
 from errors import not_found, unprocessable
 from models.course_stage import CourseStage
 from models.journal_entry import JournalEntry, JournalTag
 from models.marginalia import Marginalia
 from models.promoted_quote import (
+    PROMOTED_QUOTE_SOURCE_TITLE_MAX,
     PROMOTED_QUOTE_TEXT_MAX,
     PromotedQuote,
     PromotedQuoteSourceKind,
@@ -42,17 +49,25 @@ from models.stage_content import StageContent
 from observability import route_template
 from rate_limit import limiter
 from routers.auth import get_current_user
+from routers.course import read_released_body, resolve_released_chapter
 from schemas.pagination import DEFAULT_PAGE_SIZE, MAX_PAGE_SIZE, count_query_total, page_has_more
 from schemas.promotion import (
+    PromoteChapterQuoteCreate,
     PromotedQuoteListItemResponse,
     PromotedQuoteListResponse,
     PromotedQuoteResponse,
     PromoteQuoteCreate,
     PromotionStatusFilter,
     PromotionUpdate,
+    QuoteSpan,
 )
 from security import TextTooLongError, sanitize_user_text
-from services.folded_quote_privacy import refuse_unfoldable_quote, refuse_unquotable_span
+from services import demo_visibility
+from services.folded_quote_privacy import (
+    refuse_unfoldable_quote,
+    refuse_unquotable_letter_text,
+    refuse_unquotable_span,
+)
 from services.journal_withdrawal_obligation import refuse_if_deletion_pending
 
 logger = logging.getLogger(__name__)
@@ -79,18 +94,19 @@ def _quote_response(quote: PromotedQuote) -> PromotedQuoteResponse:
     )
 
 
-def _slice_anchor_text(entry: JournalEntry, payload: PromoteQuoteCreate) -> str:
-    """Slice + sanitize the anchored span from the persisted body.
+def _slice_anchor_text(body: str, payload: QuoteSpan) -> str:
+    """Slice + sanitize the anchored span from a server-held source body.
 
+    ``body`` is an entry's message, a chapter's served Markdown, or a letter.
     Offsets are Unicode code points (Python string indexing is code-point-based),
     which is the anchor API's contract. The span is validated against the
     *server-held* body (never client text): an end past the body length is 422
     ``anchor_out_of_range``, and a normalized span longer than the plaintext cap
     is 422 ``quote_too_long``.
     """
-    if payload.anchor_end > len(entry.message):
+    if payload.anchor_end > len(body):
         raise unprocessable("anchor_out_of_range")
-    span = entry.message[payload.anchor_start : payload.anchor_end]
+    span = body[payload.anchor_start : payload.anchor_end]
     try:
         return sanitize_user_text(span, max_len=PROMOTED_QUOTE_TEXT_MAX)
     except TextTooLongError as exc:
@@ -119,7 +135,7 @@ async def promote_quote(
     ``quote_source_restricted`` and stores nothing (#3059, owner decision R5-2).
     """
     await refuse_if_deletion_pending(session, entry)
-    anchor_text = _slice_anchor_text(entry, payload)
+    anchor_text = _slice_anchor_text(entry.message, payload)
     await refuse_unquotable_span(session, entry, payload.anchor_start, payload.anchor_end)
     quote = PromotedQuote(
         user_id=current_user,
@@ -130,11 +146,7 @@ async def promote_quote(
         anchor_text=anchor_text,
         included_in_entry_id=None,
     )
-    session.add(quote)
-    await session.commit()
-    await session.refresh(quote)
-    logger.info("quote_promoted", extra={"user_id": current_user, "quote_id": quote.id})
-    return _quote_response(quote)
+    return await _persist_quote(session, quote)
 
 
 @router.get("/journal/{entry_id}/promotions", response_model=list[PromotedQuoteResponse])
@@ -160,6 +172,204 @@ async def list_promotions(
         .order_by(col(PromotedQuote.anchor_start), col(PromotedQuote.id))
     )
     return [_quote_response(quote) for quote in result.scalars().all()]
+
+
+async def _source_quotes(
+    request: Request, session: AsyncSession, user_id: int, source: ColumnElement[bool]
+) -> list[PromotedQuoteResponse]:
+    """The caller's quotes matching ``source``, every status, ordered by ``(anchor_start, id)``.
+
+    ``request`` is what ``@limiter.limit`` keys on; naming the path it served
+    keeps the read observable beside the write events.
+    """
+    result = await session.execute(
+        select(PromotedQuote)
+        .where(source, PromotedQuote.user_id == user_id)
+        .order_by(col(PromotedQuote.anchor_start), col(PromotedQuote.id))
+    )
+    quotes = [_quote_response(quote) for quote in result.scalars().all()]
+    logger.info(
+        "source_promotions_listed",
+        extra={"user_id": user_id, "count": len(quotes), "path": route_template(request)},
+    )
+    return quotes
+
+
+async def _persist_quote(session: AsyncSession, quote: PromotedQuote) -> PromotedQuoteResponse:
+    """Store a freshly sliced quote and log it, as every promote route does."""
+    session.add(quote)
+    await session.commit()
+    await session.refresh(quote)
+    logger.info(
+        "quote_promoted",
+        extra={"user_id": quote.user_id, "quote_id": quote.id, "source_kind": quote.source_kind},
+    )
+    return _quote_response(quote)
+
+
+# ── Course chapters (#3658) ──────────────────────────────────────────────
+
+
+def _course_source(content_id: int) -> ColumnElement[bool]:
+    """Quotes lifted from the chapter row ``content_id``."""
+    return and_(
+        col(PromotedQuote.source_kind) == PromotedQuoteSourceKind.COURSE.value,
+        col(PromotedQuote.source_content_id) == content_id,
+    )
+
+
+@router.post(
+    "/course/content/{content_id}/promote",
+    response_model=PromotedQuoteResponse,
+    status_code=status.HTTP_201_CREATED,
+    responses=refusal_responses((status.HTTP_502_BAD_GATEWAY,)),
+)
+async def promote_course_quote(
+    content_id: RowIdPath,
+    payload: PromoteChapterQuoteCreate,
+    current_user: Annotated[int, Depends(get_current_user)],
+    session: Annotated[AsyncSession, Depends(get_session)],
+    user_tz: Annotated[str, Depends(current_user_timezone)],
+) -> PromotedQuoteResponse:
+    """Promote a span of a released Course chapter into a pending quote.
+
+    The chapter answers through the gate ``GET /course/content/{content_id}/body``
+    uses: a locked, unreleased, reference-less or missing chapter is 404
+    ``content_not_found``, masked identically (BUG-COURSE-004), and stores
+    nothing. Offsets are code points into ``body_markdown`` exactly as that
+    endpoint serves it (frontmatter stripped); an end past it is 422
+    ``anchor_out_of_range`` and an overlong span 422 ``quote_too_long``. The
+    chapter title is snapshotted into ``source_title``, so the quote keeps its
+    name if the chapter is later pruned. A broken vendored file is 502
+    ``content_unavailable``. Course text is published, so there is no tier to
+    refuse on.
+    """
+    chapter = await resolve_released_chapter(session, current_user, content_id, user_tz)
+    anchor_text = _slice_anchor_text(read_released_body(chapter).body_markdown, payload)
+    quote = PromotedQuote(
+        user_id=current_user,
+        source_kind=PromotedQuoteSourceKind.COURSE,
+        source_content_id=content_id,
+        source_title=chapter.content.title[:PROMOTED_QUOTE_SOURCE_TITLE_MAX],
+        anchor_start=payload.anchor_start,
+        anchor_end=payload.anchor_end,
+        anchor_text=anchor_text,
+        included_in_entry_id=None,
+    )
+    return await _persist_quote(session, quote)
+
+
+@router.get("/course/content/{content_id}/promotions", response_model=list[PromotedQuoteResponse])
+@limiter.limit(LIST_PROMOTIONS_RATE_LIMIT)
+async def list_course_promotions(
+    request: Request,
+    content_id: RowIdPath,
+    current_user: Annotated[int, Depends(get_current_user)],
+    session: Annotated[AsyncSession, Depends(get_session)],
+    user_tz: Annotated[str, Depends(current_user_timezone)],
+) -> list[PromotedQuoteResponse]:
+    """List the caller's quotes of one released Course chapter, so a reopened chapter rehydrates.
+
+    Through the same gate as the promote route: a chapter the caller may not
+    read is 404 ``content_not_found``. Every status -- pending, folded, stale --
+    ordered by ``(anchor_start, id)``.
+    """
+    await resolve_released_chapter(session, current_user, content_id, user_tz)
+    return await _source_quotes(request, session, current_user, _course_source(content_id))
+
+
+# ── Resonance Letters (#3658) ────────────────────────────────────────────
+
+
+async def _letter_of(
+    session: AsyncSession, note: Marginalia, user_id: int
+) -> tuple[JournalEntry, str]:
+    """The live entry ``note`` sits on and the letter it carries, or 404.
+
+    The entry is resolved under the caller's scope too, so a note that names
+    the caller but sits on another account's entry is a 404 like any foreign
+    row. A note with no letter -- or with a stored demo letter that is
+    withheld (#3096) -- is 404 ``letter_not_found``: there is nothing served
+    to quote.
+    """
+    entry = await resolve_owned_live_entry(session, note.journal_entry_id, user_id)
+    letter = demo_visibility.served_letter(note)
+    if letter is None:
+        raise not_found("letter")
+    return entry, letter
+
+
+def _letter_source(marginalia_id: int) -> ColumnElement[bool]:
+    """Quotes lifted from the letter on margin note ``marginalia_id``."""
+    return and_(
+        col(PromotedQuote.source_kind) == PromotedQuoteSourceKind.LETTER.value,
+        col(PromotedQuote.source_marginalia_id) == marginalia_id,
+    )
+
+
+@router.post(
+    "/journal/marginalia/{marginalia_id}/letter/promote",
+    response_model=PromotedQuoteResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+async def promote_letter_quote(
+    payload: PromoteQuoteCreate,
+    current_user: Annotated[int, Depends(get_current_user)],
+    session: Annotated[AsyncSession, Depends(get_session)],
+    note: Annotated[Marginalia, Depends(require_owned_marginalia)],
+) -> PromotedQuoteResponse:
+    """Promote a span of the Resonance Letter on the caller's margin note into a pending quote.
+
+    The letter is a facet of its note, so the path names the note. A missing,
+    hidden or foreign note is 404 ``marginalia_not_found``; a note on a deleted
+    (or foreign) entry is 404 ``journal_entry_not_found``; a note with no letter
+    served is 404 ``letter_not_found``. An entry whose deletion is in progress is
+    409 ``journal_entry_deletion_pending``. Offsets are code points into the
+    letter (letters are write-once, so they never need re-anchoring): an end
+    past it is 422 ``anchor_out_of_range``, an overlong span 422
+    ``quote_too_long``. A letter inherits its entry's tier: when that entry may
+    not egress, or the span carries a passage it holds from a restricted fold,
+    the promotion is 409 ``quote_source_restricted``. Nothing is stored on any
+    refusal.
+    """
+    entry, letter = await _letter_of(session, note, current_user)
+    await refuse_if_deletion_pending(session, entry)
+    anchor_text = _slice_anchor_text(letter, payload)
+    await refuse_unquotable_letter_text(session, entry, anchor_text)
+    quote = PromotedQuote(
+        user_id=current_user,
+        source_kind=PromotedQuoteSourceKind.LETTER,
+        source_marginalia_id=cast("int", note.id),
+        anchor_start=payload.anchor_start,
+        anchor_end=payload.anchor_end,
+        anchor_text=anchor_text,
+        included_in_entry_id=None,
+    )
+    return await _persist_quote(session, quote)
+
+
+@router.get(
+    "/journal/marginalia/{marginalia_id}/letter/promotions",
+    response_model=list[PromotedQuoteResponse],
+)
+@limiter.limit(LIST_PROMOTIONS_RATE_LIMIT)
+async def list_letter_promotions(
+    request: Request,
+    current_user: Annotated[int, Depends(get_current_user)],
+    session: Annotated[AsyncSession, Depends(get_session)],
+    note: Annotated[Marginalia, Depends(require_owned_marginalia)],
+) -> list[PromotedQuoteResponse]:
+    """List the caller's quotes of the letter on one margin note, so a reopened letter rehydrates.
+
+    Through the same gates as the promote route: 404 ``marginalia_not_found``,
+    ``journal_entry_not_found`` or ``letter_not_found`` as there. Like
+    ``GET /journal/{entry_id}/promotions`` it is a read of the caller's own
+    quotes, so the tier and deletion-pending refusals do not apply. Every
+    status -- pending, folded, stale -- ordered by ``(anchor_start, id)``.
+    """
+    await _letter_of(session, note, current_user)
+    letter_quotes = _letter_source(cast("int", note.id))
+    return await _source_quotes(request, session, current_user, letter_quotes)
 
 
 async def _load_owned_quote(

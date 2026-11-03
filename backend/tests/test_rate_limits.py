@@ -806,7 +806,7 @@ async def test_a_decorated_route_still_refuses_at_its_own_tighter_limit(
     assert responses[_LIMIT_5].status_code == HTTPStatus.TOO_MANY_REQUESTS
 
 
-# The 39 limits declared with ``@limiter.limit``, frozen. This table is the
+# The 42 limits declared with ``@limiter.limit``, frozen. This table is the
 # ratchet for #2909: the ambient floor was added *underneath* these, and the
 # one way that change could do harm is by disturbing one of them. Reading it
 # back from the limiter proves the decorators registered what the source says,
@@ -854,6 +854,9 @@ _DECLARED_ROUTE_LIMITS: dict[str, tuple[str, ...]] = {
     "routers.practices.submit_practice": ("5 per 1 minute",),
     # The cross-entry quote list (#2865), limited like the journal list.
     "routers.promotions.list_all_promotions": ("30 per 1 minute",),
+    # A chapter's and a letter's own quote lists share that budget (#3658).
+    "routers.promotions.list_course_promotions": ("30 per 1 minute",),
+    "routers.promotions.list_letter_promotions": ("30 per 1 minute",),
     # Per address and per account: an uncharged unusable read (#2851) must not
     # be buyable by rotating addresses.
     "routers.transcription.transcribe_page": ("20 per 1 minute", "20 per 1 minute"),
@@ -888,7 +891,7 @@ def _expected_mounted_paths() -> set[str]:
 
 
 def test_every_declared_route_limit_matches_the_frozen_table() -> None:
-    """The 39 declared limits, including the audited admin wallet correction.
+    """The 42 declared limits, including the audited admin wallet correction.
 
     Also a tripwire for the one regression the new layer could hide: slowapi's
     ``@limiter.exempt`` and ``request_filter`` escape hatches govern the

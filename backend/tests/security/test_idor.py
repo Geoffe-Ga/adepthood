@@ -2487,6 +2487,113 @@ async def test_idor_list_all_promotions_never_lists_a_letter_quote_across_tenant
     assert (await db_session.execute(count_query)).scalar_one() == before
 
 
+# A span every seeded letter ("An expanded letter.") is long enough to hold.
+_LETTER_SPAN: dict[str, int] = {"anchor_start": 0, "anchor_end": 2}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("suffix", ["promote", "promotions"])
+async def test_idor_letter_promotion_routes_refuse_another_tenants_note(
+    async_client: AsyncClient,
+    db_session: AsyncSession,
+    caplog: pytest.LogCaptureFixture,
+    suffix: str,
+) -> None:
+    """Bob's note -- or a note naming Alice on Bob's entry -- is a 404, audited, storing nothing.
+
+    Both letter routes (#3658) take a ``marginalia_id`` path parameter. Bob's
+    own note answers exactly as an id that never existed, and so does a
+    drifted note whose denormalized ``user_id`` names Alice but which sits on
+    Bob's entry: the parent entry is resolved under Alice's scope too. Each
+    cross-tenant probe writes one ``resource_access_denied`` audit row, and no
+    ``promotedquote`` row is persisted.
+    """
+    alice_headers, alice_id = await _signup(async_client, f"alice_letter_{suffix}")
+    _bob_headers, bob_id = await _signup(async_client, f"bob_letter_{suffix}")
+    bobs_note = await _seed_expanded_marginalia(db_session, owner_id=bob_id)
+    drifted_note = await _seed_expanded_marginalia(
+        db_session, owner_id=bob_id, column_user_id=alice_id
+    )
+
+    async def probe(note_id: int) -> Response:
+        url = f"/journal/marginalia/{note_id}/letter/{suffix}"
+        if suffix == "promote":
+            return await async_client.post(url, json=_LETTER_SPAN, headers=alice_headers)
+        return await async_client.get(url, headers=alice_headers)
+
+    absent = await probe(_DEFINITELY_MISSING_ID)
+    with caplog.at_level(logging.WARNING):
+        foreign = await probe(bobs_note)
+    foreign_denials = len(_denial_records(caplog))
+    with caplog.at_level(logging.WARNING):
+        drifted = await probe(drifted_note)
+
+    assert foreign.status_code == absent.status_code == HTTPStatus.NOT_FOUND
+    assert foreign.content == absent.content
+    assert drifted.status_code == HTTPStatus.NOT_FOUND
+    assert foreign_denials == 1
+    assert len(_denial_records(caplog)) == foreign_denials + 1
+    stored = (
+        await db_session.execute(select(func.count()).select_from(PromotedQuote))
+    ).scalar_one()
+    assert stored == 0
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("suffix", ["promote", "promotions"])
+async def test_idor_course_promotion_routes_refuse_a_locked_chapter(
+    async_client: AsyncClient, db_session: AsyncSession, suffix: str
+) -> None:
+    """A chapter locked for the caller is ``content_not_found`` on both Course routes.
+
+    Masked exactly as a chapter that never existed (BUG-COURSE-004), and the
+    write persists no ``promotedquote`` row.
+    """
+    headers, _ = await _signup(async_client, f"locked_chapter_{suffix}")
+    stage = CourseStage(
+        title="S2",
+        subtitle="x",
+        stage_number=2,
+        overview_url="https://example.com/s2",
+        category="x",
+        aspect="x",
+        spiral_dynamics_color="x",
+        growing_up_stage="x",
+        divine_gender_polarity="x",
+        relationship_to_free_will="active",
+        free_will_description="x",
+    )
+    db_session.add(stage)
+    await db_session.flush()
+    item = StageContent(
+        course_stage_id=stage.id,
+        title="locked",
+        content_type="chapter",
+        release_day=0,
+        url="content://purple-1",
+    )
+    db_session.add(item)
+    await db_session.commit()
+    await db_session.refresh(item)
+
+    async def probe(content_id: int | None) -> Response:
+        url = f"/course/content/{content_id}/{suffix}"
+        if suffix == "promote":
+            return await async_client.post(url, json=_LETTER_SPAN, headers=headers)
+        return await async_client.get(url, headers=headers)
+
+    locked = await probe(item.id)
+    absent = await probe(_DEFINITELY_MISSING_ID)
+
+    assert locked.status_code == absent.status_code == HTTPStatus.NOT_FOUND
+    assert locked.content == absent.content
+    assert locked.json()["detail"] == "content_not_found"
+    stored = (
+        await db_session.execute(select(func.count()).select_from(PromotedQuote))
+    ).scalar_one()
+    assert stored == 0
+
+
 async def _ui_flags_row(db_session: AsyncSession, user_id: int) -> UserUiFlags:
     """Read ``user_id``'s stored ui-flags row from storage, not the identity map."""
     return (

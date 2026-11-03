@@ -17,6 +17,7 @@ from http import HTTPStatus
 
 import pytest
 from httpx import AsyncClient
+from sqlalchemy import func
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import col, select
 
@@ -32,6 +33,7 @@ from models.corpus_fragment import CorpusFragment, CorpusSource
 from models.journal_entry import JournalClassification
 from models.journal_withdrawal_obligation import JournalWithdrawalState
 from models.marginalia import Marginalia, MarginaliaKind
+from models.promoted_quote import PromotedQuote
 from models.user import User
 from models.voice_draft_retraction import VoiceDraftRetraction, VoiceDraftRetractionState
 from services import marginalia as marginalia_service
@@ -351,6 +353,43 @@ async def test_a_page_awaiting_deletion_refuses_a_new_promoted_quote(
 
     assert response.status_code == HTTPStatus.CONFLICT
     assert response.json() == _DELETION_PENDING
+
+
+@pytest.mark.asyncio
+async def test_a_page_awaiting_deletion_refuses_a_new_letter_quote(
+    async_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """A quote of a letter on a page being deleted is a new copy too: refused, nothing stored."""
+    headers, user_id, entry_id, _destination = await _mirrored_entry(
+        async_client, db_session, "in_progress_letter_promote", JournalClassification.PERSONAL
+    )
+    note = Marginalia(
+        journal_entry_id=entry_id,
+        user_id=user_id,
+        kind=MarginaliaKind.THEME,
+        anchor_start=0,
+        anchor_end=8,
+        anchor_text="SENTINEL",
+        note="It holds.",
+        essay=_ESSAY,
+        essay_generated_at=_T0,
+    )
+    db_session.add(note)
+    await db_session.commit()
+    await _failed_delete(async_client, headers, entry_id)
+
+    response = await async_client.post(
+        f"/journal/marginalia/{note.id}/letter/promote",
+        json={"anchor_start": 0, "anchor_end": 8},
+        headers=headers,
+    )
+
+    assert response.status_code == HTTPStatus.CONFLICT
+    assert response.json() == _DELETION_PENDING
+    stored = (
+        await db_session.execute(select(func.count()).select_from(PromotedQuote))
+    ).scalar_one()
+    assert stored == 0
 
 
 @pytest.mark.asyncio

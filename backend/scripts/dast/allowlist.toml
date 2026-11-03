@@ -132,6 +132,18 @@ path     = "/course/content/{content_id}/mark-read"
 category = "shared_catalog"
 reason   = "global course catalog; the call mutates only the caller's own read state"
 
+[[route]]
+method   = "POST"
+path     = "/course/content/{content_id}/promote"
+category = "shared_catalog"
+reason   = "global course catalog; the call writes only a quote owned by the caller, and a chapter locked for the caller is the body route's content_not_found (tests/security/test_idor.py)"
+
+[[route]]
+method   = "GET"
+path     = "/course/content/{content_id}/promotions"
+category = "shared_catalog"
+reason   = "global course catalog; the list is filtered to the caller's own quotes, and a chapter locked for the caller is the body route's content_not_found (tests/security/test_idor.py)"
+
 # These three are excused because the application deliberately grants every
 # authenticated user access to a preset: ``require_visible_practice`` returns any
 # approved practice to anybody, and the share-link resolver admits a practice
@@ -241,6 +253,18 @@ method   = "POST"
 path     = "/journal/marginalia/{marginalia_id}/essay"
 category = "no_seed_strategy"
 reason   = "marginalia are model-generated; a fresh entry's marginalia list comes back empty"
+
+[[route]]
+method   = "POST"
+path     = "/journal/marginalia/{marginalia_id}/letter/promote"
+category = "no_seed_strategy"
+reason   = "a letter needs a resonance pass and an essay per seed, two generations each, and the 5-per-minute-per-account generation guardrail cannot fund one per matrix cell; cross-tenant refusal is pinned in tests/security/test_idor.py"
+
+[[route]]
+method   = "GET"
+path     = "/journal/marginalia/{marginalia_id}/letter/promotions"
+category = "no_seed_strategy"
+reason   = "a letter needs a resonance pass and an essay per seed, two generations each, and the 5-per-minute-per-account generation guardrail cannot fund one per matrix cell; cross-tenant refusal is pinned in tests/security/test_idor.py"
 
 [[route]]
 method   = "POST"

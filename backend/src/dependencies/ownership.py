@@ -20,11 +20,13 @@ from models.goal import Goal
 from models.goal_group import GoalGroup
 from models.habit import Habit
 from models.journal_entry import JournalEntry
+from models.marginalia import Marginalia
 from models.practice import Practice
 from models.practice_session import PracticeSession
 from models.user import User
 from models.user_practice import UserPractice
 from routers.auth import get_current_user
+from services import demo_visibility
 
 logger = logging.getLogger(__name__)
 
@@ -213,6 +215,52 @@ async def require_owned_journal_entry(
         raise not_found("journal_entry")
     if entry.user_id != current_user:
         log_ownership_denied("journal_entry", entry_id, current_user)
+        raise not_found("journal_entry")
+    return entry
+
+
+async def require_owned_marginalia(
+    marginalia_id: RowIdPath,
+    current_user: Annotated[int, Depends(get_current_user)],
+    session: Annotated[AsyncSession, Depends(get_session)],
+) -> Marginalia:
+    """Resolve ``marginalia_id`` to the caller's own visible margin note.
+
+    Shares the note listing's visibility filter (a stored demo note hidden
+    there is absent here too, #3096), so a hidden note and a missing one are
+    the same 404. Another user's note also collapses to 404 rather than 403,
+    matching :func:`require_owned_journal_entry`; the cross-user probe is
+    still audited.
+    """
+    result = await session.execute(
+        select(Marginalia).where(
+            Marginalia.id == marginalia_id,
+            *demo_visibility.visible_note_clauses(),
+        )
+    )
+    note = result.scalars().first()
+    if note is None:
+        raise not_found("marginalia")
+    if note.user_id != current_user:
+        log_ownership_denied("marginalia", marginalia_id, current_user)
+        raise not_found("marginalia")
+    return note
+
+
+async def resolve_owned_live_entry(
+    session: AsyncSession, entry_id: int, user_id: int
+) -> JournalEntry:
+    """Resolve ``entry_id`` -- named by another row, not the path -- to the caller's live entry.
+
+    The body-and-row counterpart of :func:`require_owned_journal_entry`, with
+    its 404 convention: a missing or soft-deleted entry and another user's
+    entry are all ``journal_entry_not_found``, the cross-user case audited.
+    """
+    entry = await session.get(JournalEntry, entry_id)
+    if entry is None or entry.deleted_at is not None:
+        raise not_found("journal_entry")
+    if entry.user_id != user_id:
+        log_ownership_denied("journal_entry", entry_id, user_id)
         raise not_found("journal_entry")
     return entry
 
