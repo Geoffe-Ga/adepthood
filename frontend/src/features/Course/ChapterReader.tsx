@@ -18,6 +18,7 @@ import { colors, rhythm, surface } from '../../design/tokens';
 import ConfirmDialog from '../Habits/components/ConfirmDialog';
 import QuoteSelectionSurface, { type CodePointSpan } from '../Journal/QuoteSelectionSurface';
 
+import { resolveChapterHighlight, type ChapterHighlightSpan } from './chapterHighlight';
 import styles, { markdownStyles } from './Course.styles';
 import RetryButton from './RetryButton';
 import { stripLeadingTitleHeading } from './stripLeadingTitleHeading';
@@ -83,6 +84,12 @@ interface ChapterReaderProps {
   onWriteNote?: (_passage: WriteNotePassage) => void;
   /** Restores the reading ScrollView to this offset on a warm return. */
   initialScrollOffset?: number;
+  /**
+   * A promoted quote's passage to open with chosen (#3659), in code points into
+   * the SERVED body. The reader opens on its selection surface with that
+   * passage selected; a span that no longer matches opens the chapter normally.
+   */
+  initialHighlight?: ChapterHighlightSpan;
 }
 
 /**
@@ -268,6 +275,8 @@ function useContentBody(source: ChapterReaderSource): {
 
 interface PassageSelection {
   selecting: boolean;
+  /** The passage the surface mounts with chosen: a deep link's, until it is left. */
+  seed: CodePointSpan | undefined;
   dialogVisible: boolean;
   onScroll: (_event: NativeSyntheticEvent<NativeScrollEvent>) => void;
   beginSelection: () => void;
@@ -282,15 +291,21 @@ interface PassageSelection {
  * Own the write-note gesture: track the latest scroll offset, snapshot it at the
  * moment the affordance is pressed, hold the emitted code-point span, and slice
  * the passage by code points when the reader confirms.
+ *
+ * Given a ``seed`` (a promoted quote's passage, #3659) the reader starts in
+ * selection mode with it chosen. Leaving selection mode spends the seed, so a
+ * note begun later starts from nothing chosen, as it always has.
  */
 function usePassageSelection(
   markdown: string,
   sourceTitle: string,
   onWriteNote?: (_passage: WriteNotePassage) => void,
+  initialSeed?: CodePointSpan,
 ): PassageSelection {
-  const [selecting, setSelecting] = useState(false);
+  const [seed, setSeed] = useState<CodePointSpan | undefined>(initialSeed);
+  const [selecting, setSelecting] = useState(initialSeed != null);
   const [dialogVisible, setDialogVisible] = useState(false);
-  const [span, setSpan] = useState<CodePointSpan | null>(null);
+  const [span, setSpan] = useState<CodePointSpan | null>(initialSeed ?? null);
   const [capturedOffset, setCapturedOffset] = useState(0);
   const scrollOffsetRef = useRef(0);
 
@@ -303,7 +318,11 @@ function usePassageSelection(
     setSelecting(true);
   }, []);
 
-  const cancelSelection = useCallback(() => setSelecting(false), []);
+  const cancelSelection = useCallback(() => {
+    setSeed(undefined);
+    setSpan(null);
+    setSelecting(false);
+  }, []);
   const handleSelectionChange = useCallback((next: CodePointSpan) => setSpan(next), []);
   const openDialog = useCallback(async () => setDialogVisible(true), []);
   const closeDialog = useCallback(() => setDialogVisible(false), []);
@@ -314,11 +333,13 @@ function usePassageSelection(
       onWriteNote({ text, sourceTitle, scrollOffset: capturedOffset });
     }
     setDialogVisible(false);
+    setSeed(undefined);
     setSelecting(false);
   }, [onWriteNote, span, markdown, sourceTitle, capturedOffset]);
 
   return {
     selecting,
+    seed,
     dialogVisible,
     onScroll,
     beginSelection,
@@ -501,6 +522,7 @@ const SelectingSheet = ({
           onSelectionChange={selection.handleSelectionChange}
           onCancel={selection.cancelSelection}
           onConfirm={selection.openDialog}
+          initialSelection={selection.seed}
         />
       </View>
     </ScrollView>
@@ -523,6 +545,7 @@ interface ReaderBodyProps {
   body: ContentBody;
   onWriteNote?: (_passage: WriteNotePassage) => void;
   initialScrollOffset?: number;
+  initialHighlight?: ChapterHighlightSpan;
   /** Told whether the essay's end is in view, so the reader can offer its
    *  chapter controls only once there is nothing left to read. */
   onEndReachedChange: (_reached: boolean) => void;
@@ -533,13 +556,15 @@ const ReaderBody = ({
   body,
   onWriteNote,
   initialScrollOffset,
+  initialHighlight,
   onEndReachedChange,
 }: ReaderBodyProps): React.JSX.Element => {
   const markdown = useMemo(
     () => stripLeadingTitleHeading(body.body_markdown, body.title),
     [body.body_markdown, body.title],
   );
-  const selection = usePassageSelection(markdown, body.title, onWriteNote);
+  const seed = resolveChapterHighlight(body.body_markdown, body.title, initialHighlight);
+  const selection = usePassageSelection(markdown, body.title, onWriteNote, seed);
   const eyebrow = READER_EYEBROWS[body.content_type];
   const isEmpty = markdown.trim() === '';
   const essayEnd = useEssayEndSignal(onEndReachedChange, isEmpty);
@@ -614,6 +639,7 @@ interface ReaderContentProps {
   retry: () => void;
   onWriteNote?: (_passage: WriteNotePassage) => void;
   initialScrollOffset?: number;
+  initialHighlight?: ChapterHighlightSpan;
   onEndReachedChange: (_reached: boolean) => void;
 }
 
@@ -625,6 +651,7 @@ const ReaderContent = ({
   retry,
   onWriteNote,
   initialScrollOffset,
+  initialHighlight,
   onEndReachedChange,
 }: ReaderContentProps): React.JSX.Element | null => {
   if (loading) {
@@ -645,6 +672,7 @@ const ReaderContent = ({
       body={body}
       onWriteNote={onWriteNote}
       initialScrollOffset={initialScrollOffset}
+      initialHighlight={initialHighlight}
       onEndReachedChange={onEndReachedChange}
     />
   );
@@ -657,6 +685,7 @@ const ChapterReader = ({
   onBack,
   onWriteNote,
   initialScrollOffset,
+  initialHighlight,
 }: ChapterReaderProps): React.JSX.Element => {
   const { body, loading, error, retry } = useContentBody(source);
   const controls = useChapterControls(sourceKey(source), loading, error);
@@ -671,6 +700,7 @@ const ChapterReader = ({
         retry={retry}
         onWriteNote={onWriteNote}
         initialScrollOffset={initialScrollOffset}
+        initialHighlight={initialHighlight}
         onEndReachedChange={controls.onEndReachedChange}
       />
       {renderFooter !== undefined && (

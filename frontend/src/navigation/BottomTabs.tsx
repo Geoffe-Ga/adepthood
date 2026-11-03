@@ -9,6 +9,7 @@ import { StyleSheet, TouchableOpacity, View } from 'react-native';
 
 import { FeatureErrorBoundary } from '../components/FeatureErrorBoundary';
 import { accent, SPACING, touchTarget } from '../design/tokens';
+import type { ChapterHighlightSpan } from '../features/Course/chapterHighlight';
 import CourseScreen from '../features/Course/CourseScreen';
 import { FEEDBACK_CONTROL_TOKENS } from '../features/Feedback/feedbackControlTokens';
 import { openFeedbackComposer } from '../features/Feedback/navigation';
@@ -51,6 +52,12 @@ export type RootTabParamList = {
         /** Optional restore hints from a Back-to-reading return. */
         contentId?: number;
         scrollOffset?: number;
+        /**
+         * One-shot: a promoted quote's passage to open ``contentId`` with
+         * chosen (#3659), from the Promoted quotes screen's Open. A span that
+         * no longer matches the chapter opens it normally.
+         */
+        highlightSpan?: ChapterHighlightSpan;
       }
     | undefined;
   Journal: undefined;

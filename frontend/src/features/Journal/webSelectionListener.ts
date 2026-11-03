@@ -54,3 +54,32 @@ export function useWebSelectionListener(
     return () => doc.removeEventListener('selectionchange', read);
   }, [emitSpan, nodeRef]);
 }
+
+/** The DOM textarea method a react-native-web TextInput host node carries. */
+interface RangeSelectableNode {
+  setSelectionRange?: (start: number, end: number) => void;
+}
+
+/**
+ * Put the field's own selection on ``span`` (UTF-16) once, as it mounts, so a
+ * passage chosen before the surface opened (a Course deep link, #3659, or the
+ * sources panel remounting mid-selection) is drawn selected rather than only
+ * echoed in the preview -- and, on the web, so the document's next
+ * 'selectionchange' reads that passage back instead of collapsing it to the
+ * caret. Imperative and one-shot: a ``selection`` prop would make the field
+ * controlled and snap every later drag back to this span.
+ */
+export function useInitialFieldSelection(
+  nodeRef: RefObject<TextInput | null>,
+  span: { start: number; end: number } | null,
+): void {
+  useEffect(() => {
+    const node = nodeRef.current;
+    if (node === null || span === null || span.end <= span.start) return;
+    if (Platform.OS === 'web') {
+      (node as unknown as RangeSelectableNode).setSelectionRange?.(span.start, span.end);
+    } else if (typeof node.setSelection === 'function') {
+      node.setSelection(span.start, span.end);
+    }
+  }, [nodeRef, span]);
+}

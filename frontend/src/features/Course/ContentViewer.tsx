@@ -8,6 +8,7 @@ import { NAV_ICON_SIZE, NAV_ICON_STROKE } from '../../components/drawer/navIcon'
 import { accent, colors, ink } from '../../design/tokens';
 import { useReducedMotion } from '../../hooks/useReducedMotion';
 
+import type { ChapterHighlightSpan } from './chapterHighlight';
 import type { ChapterNav } from './chapterNav';
 import ChapterReader, { type WriteNotePassage } from './ChapterReader';
 import styles from './Course.styles';
@@ -335,6 +336,8 @@ interface ContentViewerProps {
   nav: ChapterNav;
   onWriteNote?: (_passage: WriteNotePassage) => void;
   initialScrollOffset?: number;
+  /** A promoted quote's passage to open the chapter with chosen (#3659). */
+  initialHighlight?: ChapterHighlightSpan;
 }
 
 function useMarkReadHandler(
@@ -404,6 +407,7 @@ const ContentViewer = ({
   nav,
   onWriteNote,
   initialScrollOffset,
+  initialHighlight,
 }: ContentViewerProps): React.JSX.Element => {
   const toast = useReadToast(item.id);
   const { marking, isRead, handleMarkRead } = useMarkReadHandler(item, onMarkRead, toast.trigger);
@@ -415,6 +419,7 @@ const ContentViewer = ({
       onBack={onBack}
       onWriteNote={onWriteNote}
       initialScrollOffset={initialScrollOffset}
+      initialHighlight={initialHighlight}
       renderFooter={(atEssayEnd) => (
         <ViewerFooter
           isRead={isRead}

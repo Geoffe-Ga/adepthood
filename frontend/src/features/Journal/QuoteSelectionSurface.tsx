@@ -45,7 +45,7 @@ import styles from './JournalEntry.styles';
 import { floatingDockStyle, pinnedFooterStyle } from './readingSurfaceStyles';
 import { buildSelectionSurfaceCopy } from './selectionSurfaceCopy';
 import { useGrowingFieldHeight } from './useGrowingFieldHeight';
-import { useWebSelectionListener } from './webSelectionListener';
+import { useInitialFieldSelection, useWebSelectionListener } from './webSelectionListener';
 
 import { Button } from '@/components/Button';
 import { editorialType, writingFieldFocus } from '@/design/tokens';
@@ -121,6 +121,8 @@ export interface QuoteSelectionSurfaceProps {
 
 /** The derived view state the surface chrome renders from. */
 interface SelectionSurfaceState {
+  /** The UTF-16 passage chosen before the surface mounted, drawn selected once; null if none. */
+  initialSpan: Utf16Span | null;
   isEmpty: boolean;
   previewSlice: string;
   /** The raw selection's UTF-16 end: where clearing the selection collapses it to. */
@@ -141,14 +143,17 @@ function useSelectionSurfaceState(
   onSelectionChange: (_span: CodePointSpan) => void,
   initialSelection?: CodePointSpan,
 ): SelectionSurfaceState {
-  const [span, setSpan] = useState<Utf16Span>(() =>
+  // Held once, so the field is seeded from the span it MOUNTED with and never
+  // re-seeded as the writer moves on to another passage.
+  const [initialSpan] = useState<Utf16Span | null>(() =>
     initialSelection == null
-      ? { start: 0, end: 0 }
+      ? null
       : {
           start: codePointToUtf16(body, initialSelection.start),
           end: codePointToUtf16(body, initialSelection.end),
         },
   );
+  const [span, setSpan] = useState<Utf16Span>(() => initialSpan ?? { start: 0, end: 0 });
   const [hintVisible, setHintVisible] = useState(false);
 
   const emitSpan = useCallback(
@@ -179,6 +184,7 @@ function useSelectionSurfaceState(
   const anchor = selectionToAnchorSpan(body, span);
   const isEmpty = anchor.end <= anchor.start;
   return {
+    initialSpan,
     isEmpty,
     selectionEnd: span.end,
     previewSlice: isEmpty
@@ -582,6 +588,7 @@ function QuoteSelectionSurface({
   const state = useSelectionSurfaceState(body, onSelectionChange, initialSelection);
   const inputRef = useRef<TextInput>(null);
   useWebSelectionListener(inputRef, state.emitSpan);
+  useInitialFieldSelection(inputRef, state.initialSpan);
   const { growth, onContentSizeChange } = useSelectionFieldGrowth();
 
   return (

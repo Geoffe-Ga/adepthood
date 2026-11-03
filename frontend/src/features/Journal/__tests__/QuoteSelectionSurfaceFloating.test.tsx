@@ -15,7 +15,10 @@ import { useWebSelectionListener } from '../webSelectionListener';
 
 import { SPACING, touchTarget } from '@/design/tokens';
 
-jest.mock('../webSelectionListener', () => ({ useWebSelectionListener: jest.fn() }));
+jest.mock('../webSelectionListener', () => ({
+  useWebSelectionListener: jest.fn(),
+  useInitialFieldSelection: jest.fn(),
+}));
 
 const mockedListener = useWebSelectionListener as jest.MockedFunction<
   typeof useWebSelectionListener

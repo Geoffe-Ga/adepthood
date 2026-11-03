@@ -687,6 +687,53 @@ describe('CourseScreen', () => {
     }
   });
 
+  it('opens a promoted quote’s chapter with its passage chosen, and spends the link (#3659)', async () => {
+    // "# Welcome Essay\n\n" is the 17 code points the reader strips ahead of the words.
+    mockContentBody.mockResolvedValueOnce({
+      title: 'Welcome Essay',
+      content_type: 'essay',
+      body_markdown: '# Welcome Essay\n\nwarm hearth, steady breath\n',
+    });
+    mockRouteParams = { stageNumber: 1 };
+    const { getByTestId, findByTestId, rerender } = render(<CourseScreen />);
+    await settle();
+
+    mockRouteParams = {
+      stageNumber: 1,
+      contentId: 1,
+      openReading: true,
+      highlightSpan: { start: 17, end: 28, text: 'warm hearth' },
+    };
+    rerender(<CourseScreen />);
+    await settle();
+    rerender(<CourseScreen />);
+    await settle();
+
+    expect((await findByTestId('passage-select-preview')).props.children).toBe('warm hearth');
+    expect(mockRouteParams.highlightSpan).toBeUndefined();
+    fireEvent.press(getByTestId('passage-select-cancel'));
+    expect(await findByTestId('reader-markdown')).toBeTruthy();
+  });
+
+  it('opens a chapter chosen by hand with nothing selected, after a quote link', async () => {
+    mockRouteParams = {
+      stageNumber: 1,
+      contentId: 1,
+      highlightSpan: { start: 0, end: 1, text: 'x' },
+    };
+    const { getByTestId, findByTestId, queryByTestId } = render(<CourseScreen />);
+    await settle();
+    expect(await findByTestId('passage-select-input')).toBeTruthy();
+
+    fireEvent.press(getByTestId('reader-back-button'));
+    await settle();
+    fireEvent.press(getByTestId('content-card-1'));
+    await settle();
+
+    expect(await findByTestId('reader-markdown')).toBeTruthy();
+    expect(queryByTestId('passage-select-input')).toBeNull();
+  });
+
   it('keeps an open reader on an ordinary return to Course', async () => {
     mockRouteParams = { stageNumber: 1 };
     const { getByTestId, rerender } = render(<CourseScreen />);

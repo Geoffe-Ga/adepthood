@@ -34,6 +34,7 @@ import { useAppRoute } from '../../navigation/hooks';
 import type { RootStackParamList } from '../../navigation/RootStack';
 import { useProgramStore } from '../../store/useProgramStore';
 
+import type { ChapterHighlightSpan } from './chapterHighlight';
 import { deriveChapterNeighbors, type ChapterNav } from './chapterNav';
 import ChapterReader, { type WriteNotePassage } from './ChapterReader';
 import ContentCard from './ContentCard';
@@ -531,25 +532,35 @@ function useJournalHandoff(
   return { handleReflect, handleWriteNote };
 }
 
+/** Where a reopened chapter lands: its scroll offset, and a promoted quote's passage. */
+interface RestoreTarget {
+  offset?: number;
+  highlight?: ChapterHighlightSpan;
+}
+
 function useCourseViewer(selectedStage: number, setSelectedStage: (_stageNumber: number) => void) {
   const [viewingItem, setViewingItem] = useState<ContentItem | null>(null);
   const [viewingResource, setViewingResource] = useState<ResourceTarget | null>(null);
   const [viewingIntro, setViewingIntro] = useState<number | null>(null);
-  // Only set on a warm return; a manual open clears it so no stale scroll leaks.
-  const [restoreOffset, setRestoreOffset] = useState<number | undefined>(undefined);
+  // Only set on a warm return (or a promoted quote's Open, #3659); a manual open
+  // clears it so no stale scroll or passage leaks into the next chapter.
+  const [restore, setRestore] = useState<RestoreTarget>({});
 
   const clearViewingItem = useCallback(() => setViewingItem(null), []);
 
   const handleContentPress = useCallback((item: ContentItem) => {
     if (item.is_locked) return;
-    setRestoreOffset(undefined);
+    setRestore({});
     setViewingItem(item);
   }, []);
 
-  const openForRestore = useCallback((item: ContentItem, offset: number) => {
-    setRestoreOffset(offset);
-    setViewingItem(item);
-  }, []);
+  const openForRestore = useCallback(
+    (item: ContentItem, offset: number, highlight?: ChapterHighlightSpan) => {
+      setRestore({ offset, highlight });
+      setViewingItem(item);
+    },
+    [],
+  );
 
   const handleResourcePress = useCallback((resource: ResourceTarget) => {
     setViewingResource(resource);
@@ -563,7 +574,7 @@ function useCourseViewer(selectedStage: number, setSelectedStage: (_stageNumber:
     setViewingItem(null);
     setViewingResource(null);
     setViewingIntro(null);
-    setRestoreOffset(undefined);
+    setRestore({});
   }, []);
 
   const { handleReflect, handleWriteNote } = useJournalHandoff(
@@ -577,7 +588,7 @@ function useCourseViewer(selectedStage: number, setSelectedStage: (_stageNumber:
     viewingItem,
     viewingResource,
     viewingIntro,
-    restoreOffset,
+    restore,
     openForRestore,
     handleContentPress,
     handleResourcePress,
@@ -634,15 +645,21 @@ function useOpenCourseSection(
  *  ``rearm`` is the one deliberate exception: "Read next" asks for the routed
  *  chapter to open again even when the route already names it (the reader backed
  *  out without finishing it), so it forgets the restored id and re-runs the
- *  effect once. */
+ *  effect once.
+ *
+ *  A ``highlightSpan`` (a promoted quote's Open, #3659) rides into that one
+ *  opening and is then spent: cleared from the route, so a later return to the
+ *  tab -- or a web URL that kept it -- never re-selects the passage. */
 function useReaderRestore(
   content: ContentItem[],
   currentViewingId: number | null,
-  openForRestore: (_item: ContentItem, _offset: number) => void,
+  openForRestore: (_item: ContentItem, _offset: number, _highlight?: ChapterHighlightSpan) => void,
 ): { rearm: () => void } {
   const route = useAppRoute<'Course'>();
+  const navigation = useNavigation<BottomTabNavigationProp<RootTabParamList, 'Course'>>();
   const contentId = route.params?.contentId ?? null;
   const scrollOffset = route.params?.scrollOffset ?? 0;
+  const highlightSpan = route.params?.highlightSpan;
   const openingSection = route.params?.openSection === true || route.params?.openReading === true;
   const restoredIdRef = useRef<number | null>(null);
   const [armSeq, setArmSeq] = useState(0);
@@ -662,8 +679,19 @@ function useReaderRestore(
     const item = content.find((c) => c.id === contentId);
     if (!item || item.is_locked) return;
     restoredIdRef.current = contentId;
-    openForRestore(item, scrollOffset);
-  }, [openingSection, contentId, scrollOffset, currentViewingId, content, openForRestore, armSeq]);
+    openForRestore(item, scrollOffset, highlightSpan);
+    if (highlightSpan !== undefined) navigation.setParams({ highlightSpan: undefined });
+  }, [
+    openingSection,
+    contentId,
+    scrollOffset,
+    highlightSpan,
+    currentViewingId,
+    content,
+    openForRestore,
+    navigation,
+    armSeq,
+  ]);
 
   return { rearm };
 }
@@ -788,7 +816,8 @@ function renderOverlay(
         onReflect={viewer.handleReflect}
         nav={nav}
         onWriteNote={viewer.handleWriteNote}
-        initialScrollOffset={viewer.restoreOffset}
+        initialScrollOffset={viewer.restore.offset}
+        initialHighlight={viewer.restore.highlight}
       />
     );
   }
