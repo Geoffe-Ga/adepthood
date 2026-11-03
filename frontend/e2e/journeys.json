@@ -1685,7 +1685,7 @@
   },
   {
     "id": "corpus.sort-the-rest-of-your-writing",
-    "description": "Someone who journalled before turning sorting on opens Settings and, under Your writing, finds a 'Sort the rest of your writing' row saying how much is still unsorted (#3499). The row is there only while it can do something: it is absent without a standing yes for what is written here, absent while nothing is unsorted, and absent while the count is unknown. It opens a screen with the count, what sorting does in the consent screen's own words, and a 'Sort the next N' confirm that runs one bounded pass and then reports what it did -- offering the next pass on request and never looping on its own, because a pass can sort nothing and leave the remainder where it was. Sorting is free (#3495), so the screen carries no price and no credit language, and the shipped POST takes no body. The spec drives both verbs through the production client: a fresh account's count is zero; the count is the account's own writing apart from Intimate entries and nobody else's; a pass without consent is a 200 that sorts nothing and leaves the remainder unchanged (the case the screen must not read as success); and under a standing yes the pass's entries_pending and entries_remaining agree with each other and with the next GET. The lane has no classification provider, so how many entries a granted pass sorts is not observed here, and its server runs with rate limiting off, so the per-account 429 the screen meets with a retry-later line is pinned by backend/tests and CorpusSweepScreen.test.tsx instead.",
+    "description": "Someone who journalled before turning sorting on opens Settings and, under Your writing, finds a 'Sort the rest of your writing' row saying how much is still unsorted (#3499). The row is there only while it can do something: it is absent without a standing yes for what is written here, absent while nothing is unsorted, and absent while the count is unknown. It opens a screen with the count, what sorting does in the consent screen's own words, and one 'Sort all N entries' confirm: a single press starts a background run that offers every waiting entry once (services/corpus_sort_run.py), the screen shows how far it has got while it runs and how it ended once it does, and pressing again while it runs joins the same run. Sorting is free (#3495), so the screen carries no price and no credit language, and the shipped POST takes no body. The spec drives both verbs through the production client against the live server: a fresh account's count is zero and it has no run; the count is the account's own writing apart from Intimate entries and nobody else's; a press without consent is answered at once with a run stopped for no_consent that sorts nothing and leaves the remainder unchanged; and under a standing yes the press returns before the sort is done, naming a run that the next reads follow until it completes. The lane has no classification provider, so how many entries a granted run sorts is not observed here, and its server runs with rate limiting off, so the per-account 429 the screen meets with a retry-later line is pinned by backend/tests and CorpusSweepScreen.test.tsx instead.",
     "crosses": {
       "screen": "frontend/src/features/Settings/CorpusSweepScreen.tsx",
       "client": ["auth", "setTokenGetter", "journal", "corpusConsent", "corpus"],
@@ -1695,19 +1695,19 @@
         "POST /journal/",
         "PUT /corpus/consent/{source}"
       ],
-      "tables": ["journalentry", "corpusconsentevent", "corpusfragment"]
+      "tables": ["journalentry", "corpusconsentevent", "corpusfragment", "corpussortrun"]
     },
     "status": "covered",
     "coveredBy": "frontend/e2e/corpus-sweep.e2e.test.ts"
   },
   {
     "id": "corpus.vault-bound-sort-hands-the-vault-what-it-lacks",
-    "description": "Someone who connected a Creek vault and has a standing yes for sorting what they write here opens Settings, finds 'Sort the rest of your writing' counting the entries their vault does not have yet (saved before the vault was connected, or whose save could not reach it; never anything marked Intimate), and presses Sort. The pass hands those entries to their vault down the journal save's own path, so the vault classifies them, and the screen reports them sorted with nothing left. The app provider's classifier is never dialled for them (#3156). Before this, the pass stopped at the vault boundary every time and the screen said nothing was sorted against a remainder that never moved. Uncovered across the seam until #3663; pinned meanwhile over HTTP against a vault double by backend/tests/test_corpus_sweep_vault_bound.py.",
+    "description": "Someone who connected a Creek vault and has a standing yes for sorting what they write here opens Settings, finds 'Sort the rest of your writing' counting the entries their vault does not have yet (saved before the vault was connected, or whose save could not reach it; never anything marked Intimate), and presses Sort once. A background run hands every one of those entries to their vault down the journal save's own path, so the vault classifies them, and the screen follows it until it reports them sorted with nothing left -- or stops, saying the vault could not be reached. The app provider's classifier is never dialled for them (#3156), even if the vault is connected while the run is going. Before #3665, the pass stopped at the vault boundary every time and the screen said nothing was sorted against a remainder that never moved. Uncovered across the seam until #3663; pinned meanwhile over HTTP against a vault double by backend/tests/test_corpus_sweep_vault_bound.py and backend/tests/test_corpus_sort_run_api.py.",
     "crosses": {
       "screen": "frontend/src/features/Settings/CorpusSweepScreen.tsx",
       "client": ["corpus"],
       "routes": ["GET /corpus/sweep", "POST /corpus/sweep"],
-      "tables": ["journalentry", "corpusconsentevent", "uservaultconfig"]
+      "tables": ["journalentry", "corpusconsentevent", "uservaultconfig", "corpussortrun"]
     },
     "status": "uncovered",
     "issue": 3663
