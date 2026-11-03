@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Callable
-from typing import Annotated
+from typing import Annotated, NamedTuple
 
 from fastapi import Depends, Path, Request, status
 from sqlalchemy import func, or_
@@ -665,10 +665,17 @@ async def _load_content_with_stage(
     return item, stage
 
 
-async def _resolve_released_content_ref(
+class ReleasedChapter(NamedTuple):
+    """A chapter row the caller may read now, and the vendored chapter id it points at."""
+
+    content: StageContent
+    chapter_id: str
+
+
+async def resolve_released_chapter(
     session: AsyncSession, user_id: int, content_id: int, tz: str
-) -> str:
-    """Gate on stage-unlock + proportional drip, return the local chapter id.
+) -> ReleasedChapter:
+    """Gate on stage-unlock + proportional drip, return the row and its local chapter id.
 
     Mirrors the 404-mask used by sibling endpoints (BUG-COURSE-004):
     locked-stage, drip-locked, missing-reference, and nonexistent rows all
@@ -677,7 +684,9 @@ async def _resolve_released_content_ref(
     as the metadata endpoint), so a chapter cannot be read ahead of its
     proportional release.  Rows without a ``content://`` reference
     (legacy/placeholder rows) have no local body and fall under the same
-    mask.
+    mask.  Every route that reads or quotes a chapter body answers through
+    this one gate (the body endpoint here, the promote routes in
+    :mod:`routers.promotions`, #3658).
     """
     item, stage = await _load_content_with_stage(session, content_id)
     if not await _is_stage_unlocked_for_user(session, user_id, stage.stage_number, tz):
@@ -687,7 +696,19 @@ async def _resolve_released_content_ref(
     reference = item.url or ""
     if not reference.startswith(_CONTENT_REF_PREFIX):
         raise not_found("content")
-    return reference.removeprefix(_CONTENT_REF_PREFIX)
+    return ReleasedChapter(item, reference.removeprefix(_CONTENT_REF_PREFIX))
+
+
+def read_released_body(chapter: ReleasedChapter) -> ContentBodyResponse:
+    """The Markdown of a chapter that passed :func:`resolve_released_chapter`, as served.
+
+    Frontmatter is already stripped, so offsets into ``body_markdown`` are
+    offsets into exactly what the reader sees.  A broken vendored file is 502
+    ``content_unavailable`` (see :func:`_read_local_body`).
+    """
+    return _read_local_body(
+        lambda: get_content_repository().read_body(chapter.chapter_id), chapter.chapter_id
+    )
 
 
 @router.get("/content/{content_id}/body", response_model=ContentBodyResponse)
@@ -706,8 +727,8 @@ async def get_content_body(
     URL cannot be used as an enumeration oracle.  The drip-feed unlock
     check is applied here too: locked-day content never escapes.
     """
-    chapter_id = await _resolve_released_content_ref(session, current_user, content_id, user_tz)
-    return _read_local_body(lambda: get_content_repository().read_body(chapter_id), chapter_id)
+    chapter = await resolve_released_chapter(session, current_user, content_id, user_tz)
+    return read_released_body(chapter)
 
 
 def _manifest_resources() -> list[SiteResourceMeta]:
