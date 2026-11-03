@@ -38,7 +38,10 @@ function sourceItem(overrides: Partial<ReflectionSourceItem> = {}): ReflectionSo
 function listItem(overrides: Partial<PromotedQuoteListItem> = {}): PromotedQuoteListItem {
   return {
     id: 11,
+    source_kind: 'entry',
     source_entry_id: 7,
+    source_content_id: null,
+    source_marginalia_id: null,
     anchor_start: 0,
     anchor_end: 4,
     anchor_text: 'went',
@@ -47,6 +50,8 @@ function listItem(overrides: Partial<PromotedQuoteListItem> = {}): PromotedQuote
     created_at: '2026-06-20T00:00:00Z',
     source_title: 'Runs',
     source_timestamp: '2026-06-15T12:00:00Z',
+    source_stage_number: null,
+    letter_entry_id: null,
     included_in_entry_id: null,
     included_in_title: null,
     ...overrides,

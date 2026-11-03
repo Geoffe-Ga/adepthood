@@ -51,7 +51,10 @@ function quote(overrides: Partial<PromotedQuote> = {}): PromotedQuote {
   const start = BODY.indexOf('the willow');
   return {
     id: 90,
+    source_kind: 'entry',
     source_entry_id: 1,
+    source_content_id: null,
+    source_marginalia_id: null,
     anchor_start: start,
     anchor_end: start + 'the willow'.length,
     anchor_text: 'the willow',

@@ -310,3 +310,46 @@ describe('reflections.sources -- the declared window', () => {
     expect(result.window_start ?? null).toBeNull();
   });
 });
+
+describe('reflections.sources -- quotes from the reading (#3659)', () => {
+  const READING_QUOTE = {
+    id: 71,
+    source_kind: 'course',
+    source_title: 'Beige 1',
+    anchor_start: 3,
+    anchor_end: 14,
+    anchor_text: 'warm hearth',
+    pending: true,
+    created_at: '2026-06-03T08:00:00Z',
+  };
+
+  it('parses the Course and letter quotes promoted inside the window', async () => {
+    const letter = { ...READING_QUOTE, id: 72, source_kind: 'letter', source_title: null };
+    mockFetch.mockReturnValueOnce(
+      jsonResponse({ items: [], reading_quotes: [READING_QUOTE, letter] }, 200),
+    );
+
+    const result = await reflections.sources('week', 'c1:w1', 'tok');
+
+    expect(result.reading_quotes).toEqual([READING_QUOTE, letter]);
+  });
+
+  it('reads an older server with no reading_quotes as an empty list', async () => {
+    mockFetch.mockReturnValueOnce(jsonResponse({ items: [] }, 200));
+
+    const result = await reflections.sources('week', 'c1:w1', 'tok');
+
+    expect(result.reading_quotes).toEqual([]);
+  });
+
+  it('rejects an entry-kind reading quote, which rides inside its own source item', async () => {
+    mockFetch.mockReturnValueOnce(
+      jsonResponse(
+        { items: [], reading_quotes: [{ ...READING_QUOTE, source_kind: 'entry' }] },
+        200,
+      ),
+    );
+
+    await expect(reflections.sources('week', 'c1:w1', 'tok')).rejects.toThrow();
+  });
+});

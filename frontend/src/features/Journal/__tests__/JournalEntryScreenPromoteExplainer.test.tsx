@@ -200,7 +200,10 @@ describe('JournalEntryScreen — the Promoted notice names where the quote went'
     await AsyncStorage.setItem(DISMISSED_KEY, 'true');
     mockPromote.mockResolvedValue({
       id: 90,
+      source_kind: 'entry',
       source_entry_id: 7,
+      source_content_id: null,
+      source_marginalia_id: null,
       anchor_start: 2,
       anchor_end: 19,
       anchor_text: Array.from(BODY).slice(2, 19).join(''),

@@ -108,6 +108,7 @@ import {
   type StagePromptsResponseT,
   type PromotedQuoteListItemT,
   type PromotedQuoteListResponseT,
+  type PromotedQuoteSourceKindT,
   type PromotedQuoteT,
   type PromotionStatusFilterT,
   type PromotedQuoteSummaryT,
@@ -116,6 +117,7 @@ import {
   type ReflectionDueT,
   type ReflectionLevelT,
   type ReflectionSourceItemT,
+  type ReadingQuoteItemT,
   type RelatedEddyT,
   type RelatedPraxisKindT,
   type RelatedPraxisStatusT,
@@ -1948,17 +1950,20 @@ export interface Marginalia {
   receipt_version?: number | null;
 }
 
+/** Where a promoted quote was lifted from: an entry, a Course chapter, or a letter. */
+export type PromotedQuoteSourceKind = PromotedQuoteSourceKindT;
 /**
- * A promoted quote — a reader-chosen span of an entry raised into the corpus
- * (mirrors the backend ``PromotedQuoteResponse``). ``pending`` is true until the
- * quote is folded into another entry.
+ * A promoted quote — a reader-chosen span of an entry, a Course chapter or a
+ * Resonance Letter raised into the corpus (mirrors the backend
+ * ``PromotedQuoteResponse``). ``pending`` is true until the quote is folded
+ * into a review.
  */
 export type PromotedQuote = PromotedQuoteT;
 /** A promoted quote in the cross-entry sources feed (no ``source_entry_id``). */
 export type PromotedQuoteSummary = PromotedQuoteSummaryT;
 /** Which quotes ``promotions.listAll`` asks for: waiting, used, or both. */
 export type PromotionStatusFilter = PromotionStatusFilterT;
-/** A promoted quote listed across entries, with its source and review titles. */
+/** A promoted quote listed across sources, with where it came from and its review. */
 export type PromotedQuoteListItem = PromotedQuoteListItemT;
 /** One offset page of ``GET /promotions``. */
 export type PromotedQuoteListResponse = PromotedQuoteListResponseT;
@@ -2644,6 +2649,8 @@ export type ReflectionLevel = ReflectionLevelT;
 export type ReflectionDue = ReflectionDueT;
 export type ReflectionCurrentScope = ReflectionCurrentScopeT;
 export type ReflectionSourceItem = ReflectionSourceItemT;
+/** A Course or letter quote promoted inside a review's window (#3657). */
+export type ReadingQuoteItem = ReadingQuoteItemT;
 export type ReflectionAnchorStatus = ReflectionAnchorStatusT;
 
 /** ``GET /reflections/due`` result: the due window, or ``null`` when nothing is due. */
@@ -2674,6 +2681,9 @@ export interface ReflectionCurrentResponse {
  * destroyed by beginning again before the server retained them, and cannot be
  * reconstructed), ``unstarted`` (the reader has not reached that cycle), or
  * ``no_program``. It is undefined against a server that predates it.
+ *
+ * ``reading_quotes`` are the quotes of what the writer read -- Course chapters
+ * and Resonance Letters -- which have no item in the feed to ride inside.
  */
 export interface ReflectionSourcesResponse {
   level?: ReflectionLevel;
@@ -2682,6 +2692,11 @@ export interface ReflectionSourcesResponse {
   window_end?: string | null;
   anchor_status?: ReflectionAnchorStatus;
   items: ReflectionSourceItem[];
+  /**
+   * The Course and letter quotes promoted inside the window, oldest first, and
+   * only those that may be folded. Empty against a server that predates them.
+   */
+  reading_quotes: ReadingQuoteItem[];
 }
 
 /**

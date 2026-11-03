@@ -129,7 +129,10 @@ function promotedQuote(overrides: Partial<PromotedQuote> = {}): PromotedQuote {
   const end = overrides.anchor_end ?? 19;
   return {
     id: 55,
+    source_kind: 'entry',
     source_entry_id: 7,
+    source_content_id: null,
+    source_marginalia_id: null,
     anchor_start: start,
     anchor_end: end,
     anchor_text: Array.from(BODY).slice(start, end).join('').trim(),

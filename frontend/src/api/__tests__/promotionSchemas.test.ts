@@ -11,6 +11,7 @@
  */
 import {
   promotedQuoteListItemSchema,
+  promotedQuoteSourceKindSchema,
   promotedQuoteListResponseSchema,
   promotedQuoteSchema,
   promotedQuoteSummarySchema,
@@ -26,7 +27,10 @@ function omitKey<T extends Record<string, unknown>>(obj: T, key: string): Record
 
 const FULL_QUOTE = {
   id: 55,
+  source_kind: 'entry',
   source_entry_id: 7,
+  source_content_id: null,
+  source_marginalia_id: null,
   anchor_start: 2,
   anchor_end: 19,
   anchor_text: 'went for a run to',
@@ -114,6 +118,8 @@ describe('promotedQuoteListItemSchema', () => {
     ...FULL_QUOTE,
     source_title: null,
     source_timestamp: '2026-03-01T09:00:00Z',
+    source_stage_number: null,
+    letter_entry_id: null,
     included_in_entry_id: null,
     included_in_title: null,
     created_at: '2026-03-02T09:00:00Z',
@@ -138,5 +144,68 @@ describe('promotedQuoteListItemSchema', () => {
 
   it('knows exactly the three status filters', () => {
     expect(promotionStatusFilterSchema.options).toEqual(['pending', 'included', 'all']);
+  });
+});
+
+describe('a quote lifted from the reading (#3659)', () => {
+  const COURSE_ITEM = {
+    ...FULL_QUOTE,
+    source_kind: 'course',
+    source_entry_id: null,
+    source_content_id: 31,
+    source_title: 'Beige 1',
+    source_timestamp: '2026-03-01T09:00:00Z',
+    source_stage_number: 1,
+    letter_entry_id: null,
+    included_in_entry_id: null,
+    included_in_title: null,
+    created_at: '2026-03-02T09:00:00Z',
+  };
+
+  it('knows exactly the three places a quote can come from', () => {
+    expect(promotedQuoteSourceKindSchema.options).toEqual(['entry', 'course', 'letter']);
+  });
+
+  it('round-trips a Course quote with its chapter and stage', () => {
+    expect(promotedQuoteListItemSchema.parse(COURSE_ITEM)).toEqual(COURSE_ITEM);
+  });
+
+  it('round-trips a letter quote with the entry its note sits on', () => {
+    const letter = {
+      ...COURSE_ITEM,
+      source_kind: 'letter',
+      source_content_id: null,
+      source_marginalia_id: 9,
+      source_stage_number: null,
+      letter_entry_id: 44,
+    };
+    expect(promotedQuoteListItemSchema.parse(letter)).toEqual(letter);
+  });
+
+  it('keeps a pruned chapter quote, whose content id the server nulled', () => {
+    const pruned = { ...COURSE_ITEM, source_content_id: null, source_stage_number: null };
+    expect(promotedQuoteListItemSchema.parse(pruned).source_content_id).toBeNull();
+  });
+
+  it.each(['source_kind', 'source_content_id', 'source_marginalia_id'])(
+    'rejects a quote missing %s',
+    (key) => {
+      expect(promotedQuoteSchema.safeParse(omitKey(FULL_QUOTE, key)).success).toBe(false);
+    },
+  );
+
+  it.each(['source_stage_number', 'letter_entry_id'])('rejects a list item missing %s', (key) => {
+    expect(promotedQuoteListItemSchema.safeParse(omitKey(COURSE_ITEM, key)).success).toBe(false);
+  });
+
+  it('rejects a kind the client has never heard of', () => {
+    expect(promotedQuoteSchema.safeParse({ ...FULL_QUOTE, source_kind: 'video' }).success).toBe(
+      false,
+    );
+  });
+
+  it('keeps the provenance fields off the sources-feed summary, which the server never sends', () => {
+    const parsed = promotedQuoteSummarySchema.parse({ ...SUMMARY_QUOTE, source_kind: 'entry' });
+    expect('source_kind' in parsed).toBe(false);
   });
 });

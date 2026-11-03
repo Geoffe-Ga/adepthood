@@ -73,7 +73,10 @@ jest.mock('../ReviewScopePicker', () => {
 function item(overrides: Partial<PromotedQuoteListItem> = {}): PromotedQuoteListItem {
   return {
     id: 1,
+    source_kind: 'entry',
     source_entry_id: 7,
+    source_content_id: null,
+    source_marginalia_id: null,
     anchor_start: 4,
     anchor_end: 21,
     anchor_text: 'the anger was grief',
@@ -81,6 +84,8 @@ function item(overrides: Partial<PromotedQuoteListItem> = {}): PromotedQuoteList
     stale: false,
     source_title: 'Rain',
     source_timestamp: '2026-03-01T12:00:00Z',
+    source_stage_number: null,
+    letter_entry_id: null,
     included_in_entry_id: null,
     included_in_title: null,
     created_at: '2026-03-02T09:00:00Z',

@@ -1118,12 +1118,23 @@ export type VoiceDraftListT = z.infer<typeof voiceDraftListSchema>;
 // Promoted quotes (select-a-span -> promote-quote)
 // ---------------------------------------------------------------------------
 
+/**
+ * Where a promoted quote was lifted from (mirrors ``PromotedQuoteSourceKind``):
+ * one of the writer's ``entry`` pages, a published ``course`` chapter, or the
+ * Resonance ``letter`` on one of their margin notes (#3655).
+ */
+export const promotedQuoteSourceKindSchema = z.enum(['entry', 'course', 'letter']);
+
 /** A promoted quote (mirrors the backend ``PromotedQuoteResponse``). */
 export const promotedQuoteSchema = z.object({
   id: z.number().int(),
-  // Null for a quote lifted from a Course chapter or a Resonance Letter rather
-  // than a journal entry (#3655); the server creates none of those yet (#3658).
+  source_kind: promotedQuoteSourceKindSchema,
+  // Exactly the id matching ``source_kind`` is set: the entry for an entry
+  // quote, the chapter for a Course quote (null again once that chapter was
+  // pruned), the margin note for a letter quote.
   source_entry_id: z.number().int().nullable(),
+  source_content_id: z.number().int().nullable(),
+  source_marginalia_id: z.number().int().nullable(),
   anchor_start: z.number().int(),
   anchor_end: z.number().int(),
   anchor_text: z.string(),
@@ -1136,16 +1147,21 @@ export const promotedQuoteSchema = z.object({
 
 /**
  * A promoted quote as it appears in the cross-entry sources feed (mirrors the
- * backend ``PromotedQuoteSummary``): the same shape minus ``source_entry_id``,
- * which the feed groups by rather than repeating on every row, and minus
- * ``stale``, which the feed does not compute for quotes drawn from other
- * entries.
+ * backend ``PromotedQuoteSummary``): the same shape minus its provenance
+ * (``source_kind`` and the three source ids) -- every summary rides inside the
+ * entry it was lifted from, which the feed groups by rather than repeating on
+ * every row -- and minus ``stale``, which the feed does not compute for quotes
+ * drawn from other entries.
  */
 export const promotedQuoteSummarySchema = promotedQuoteSchema.omit({
+  source_kind: true,
   source_entry_id: true,
+  source_content_id: true,
+  source_marginalia_id: true,
   stale: true,
 });
 
+export type PromotedQuoteSourceKindT = z.infer<typeof promotedQuoteSourceKindSchema>;
 export type PromotedQuoteT = z.infer<typeof promotedQuoteSchema>;
 export type PromotedQuoteSummaryT = z.infer<typeof promotedQuoteSummarySchema>;
 
@@ -1153,15 +1169,24 @@ export type PromotedQuoteSummaryT = z.infer<typeof promotedQuoteSummarySchema>;
 export const promotionStatusFilterSchema = z.enum(['pending', 'included', 'all']);
 
 /**
- * A promoted quote as listed across every entry (mirrors the backend
+ * A promoted quote as listed across every source (mirrors the backend
  * ``PromotedQuoteListItemResponse``, which extends ``PromotedQuoteResponse``, so
  * this extends ``promotedQuoteSchema`` and the two cannot drift). The server
  * nulls ``included_in_title`` when the review it was folded into was deleted,
  * while ``included_in_entry_id`` still says the quote was used.
+ *
+ * ``source_title`` / ``source_timestamp`` describe the source per kind: an
+ * entry's own title and time; a chapter's title and when the quote was made; a
+ * letter's parent-entry title and when the letter was written.
+ * ``source_stage_number`` (a live chapter's stage) and ``letter_entry_id`` (the
+ * entry a letter's note sits on) are what Open needs to find a Course or
+ * letter quote again; both are null for every other kind.
  */
 export const promotedQuoteListItemSchema = promotedQuoteSchema.extend({
   source_title: z.string().nullable(),
   source_timestamp: z.string(),
+  source_stage_number: z.number().int().nullable(),
+  letter_entry_id: z.number().int().nullable(),
   included_in_entry_id: z.number().int().nullable(),
   included_in_title: z.string().nullable(),
   created_at: z.string(),
@@ -1795,6 +1820,32 @@ export const reflectionSourceItemSchema = z.object({
   promoted_quotes: z.array(promotedQuoteSummarySchema),
 });
 
+/**
+ * The two kinds of promoted quote that wait beside a sources feed rather than
+ * inside one of its items (mirrors ``ReadingQuoteSourceKind``): an entry quote
+ * rides with its own entry instead.
+ */
+export const readingQuoteSourceKindSchema = z.enum(['course', 'letter']);
+
+/**
+ * A quote of something the writer READ -- a Course chapter or a Resonance
+ * Letter -- promoted inside a review's window (mirrors ``ReadingQuoteItem``,
+ * #3657). It has no source item in the feed to nest under, so the panel lists
+ * these in a group of their own. ``source_title`` is the chapter's title, or the
+ * title of the entry a letter answered; ``created_at`` is when it was promoted,
+ * which is what placed it in this window.
+ */
+export const readingQuoteItemSchema = z.object({
+  id: z.number().int(),
+  source_kind: readingQuoteSourceKindSchema,
+  source_title: z.string().nullable(),
+  anchor_start: z.number().int(),
+  anchor_end: z.number().int(),
+  anchor_text: z.string(),
+  pending: z.boolean(),
+  created_at: isoDateTime,
+});
+
 /** ``GET /reflections/due`` envelope: the due window, or ``null`` when nothing is due. */
 export const reflectionDueResponseSchema = z.object({ due: reflectionDueSchema.nullable() });
 
@@ -1852,12 +1903,16 @@ export const reflectionSourcesResponseSchema = z.object({
   window_end: isoDateTime.nullish().catch(null),
   anchor_status: anchorStatusSchema.optional().catch(undefined),
   items: z.array(reflectionSourceItemSchema),
+  // Defaulted, not required: a server that predates #3657 sends none, and the
+  // feed it does send is still the thing the writer came for.
+  reading_quotes: z.array(readingQuoteItemSchema).default([]),
 });
 
 export type ReflectionLevelT = z.infer<typeof reflectionLevelSchema>;
 export type ReflectionDueT = z.infer<typeof reflectionDueSchema>;
 export type ReflectionCurrentScopeT = z.infer<typeof reflectionCurrentScopeSchema>;
 export type ReflectionSourceItemT = z.infer<typeof reflectionSourceItemSchema>;
+export type ReadingQuoteItemT = z.infer<typeof readingQuoteItemSchema>;
 export type ReflectionAnchorStatusT = z.infer<typeof anchorStatusSchema>;
 
 // ---------------------------------------------------------------------------
