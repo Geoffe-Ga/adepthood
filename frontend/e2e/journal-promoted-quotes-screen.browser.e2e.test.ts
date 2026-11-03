@@ -80,7 +80,7 @@ test('a writer finds a promoted quote from the drawer, opens it at the passage, 
   await page.getByRole('dialog').getByRole('button', { name: 'Promoted quotes' }).click();
   await expect(
     page.getByText(
-      'Nothing promoted yet. While reading an entry, tap Promote a quote to carry a passage forward.',
+      'Nothing promoted yet. While reading a page, a chapter or a letter, tap Promote a quote to carry a passage forward.',
     ),
   ).toBeVisible();
   const after = await page.request.get(`${backendUrl()}/promotions`, { headers });

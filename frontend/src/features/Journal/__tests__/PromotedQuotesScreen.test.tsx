@@ -219,7 +219,7 @@ describe('PromotedQuotesScreen sections', () => {
 
     expect(await findByText(EMPTY_COPY)).toBeTruthy();
     expect(EMPTY_COPY).toBe(
-      'Nothing promoted yet. While reading an entry, tap Promote a quote to carry a passage forward.',
+      'Nothing promoted yet. While reading a page, a chapter or a letter, tap Promote a quote to carry a passage forward.',
     );
     expect(queryByText(/^Not yet in a review/)).toBeNull();
     expect(queryByText(/^Used in a review/)).toBeNull();
@@ -389,5 +389,123 @@ describe('PromotedQuotesScreen — navigation owns the title (#2962)', () => {
     expectNavigationOwnsTitle(screen, 'Promoted quotes');
     expect(screen.getByText('CARRIED FORWARD')).toBeTruthy();
     focus.expectNone();
+  });
+});
+
+describe('PromotedQuotesScreen — quotes from the reading (#3659)', () => {
+  const COURSE = item({
+    id: 41,
+    source_kind: 'course',
+    source_entry_id: null,
+    source_content_id: 31,
+    source_stage_number: 2,
+    source_title: 'Beige 1',
+    anchor_start: 8,
+    anchor_end: 19,
+    anchor_text: 'warm hearth',
+  });
+  const LETTER = item({
+    id: 42,
+    source_kind: 'letter',
+    source_entry_id: null,
+    source_marginalia_id: 9,
+    letter_entry_id: 77,
+    source_title: 'Rain',
+    anchor_start: 0,
+    anchor_end: 9,
+    anchor_text: 'be gentle',
+  });
+  const PRUNED = item({ ...COURSE, id: 43, source_content_id: null, source_stage_number: null });
+
+  it('names a chapter quote by its chapter and a letter quote by the page it answered', async () => {
+    serve(page([COURSE, LETTER]), page([]));
+    const { findByTestId, getByTestId } = render(<PromotedQuotesScreen />);
+
+    expect((await findByTestId('promoted-quote-41-caption')).props.children).toBe('From “Beige 1”');
+    expect(getByTestId('promoted-quote-42-caption').props.children).toBe('From a letter · Rain');
+    expect(getByTestId('promoted-quote-41').props.accessibilityLabel).toBe(
+      '“warm hearth” from “Beige 1”',
+    );
+    expect(getByTestId('promoted-quote-42').props.accessibilityLabel).toBe(
+      '“be gentle” from a letter, Rain',
+    );
+  });
+
+  it('dates a letter whose page has no title by when the letter was written', async () => {
+    serve(page([item({ ...LETTER, source_title: null })]), page([]));
+    const { findByTestId } = render(<PromotedQuotesScreen />);
+
+    expect((await findByTestId('promoted-quote-42-caption')).props.children).toBe(
+      'From a letter · Mar 1, 2026',
+    );
+  });
+
+  it('opens a chapter quote in the Course, at its chapter, with the passage to select', async () => {
+    serve(page([COURSE]), page([]));
+    const { findByTestId } = render(<PromotedQuotesScreen />);
+
+    fireEvent.press(await findByTestId('promoted-quote-41'));
+
+    expect(mockNavigate).toHaveBeenCalledWith('Tabs', {
+      screen: 'Course',
+      params: {
+        stageNumber: 2,
+        contentId: 31,
+        openReading: true,
+        highlightSpan: { start: 8, end: 19, text: 'warm hearth' },
+      },
+    });
+  });
+
+  it('opens a letter quote on the page it answered, with that letter open', async () => {
+    serve(page([LETTER]), page([]));
+    const { findByTestId } = render(<PromotedQuotesScreen />);
+
+    fireEvent.press(await findByTestId('promoted-quote-42'));
+
+    expect(mockNavigate).toHaveBeenCalledWith('JournalEntry', { entryId: 77, openLetterFor: 9 });
+  });
+
+  it('captions a quote of a pruned chapter but offers no Open', async () => {
+    serve(page([PRUNED]), page([]));
+    const { findByTestId } = render(<PromotedQuotesScreen />);
+
+    const row = await findByTestId('promoted-quote-43');
+    expect(row.props.accessibilityRole).toBeUndefined();
+    expect(row.props.onPress).toBeUndefined();
+    fireEvent.press(row);
+    expect(mockNavigate).not.toHaveBeenCalled();
+    expect((await findByTestId('promoted-quote-43-caption')).props.children).toBe('From “Beige 1”');
+  });
+
+  it('opens nothing for a letter quote whose page is gone', async () => {
+    serve(page([item({ ...LETTER, letter_entry_id: null })]), page([]));
+    const { findByTestId } = render(<PromotedQuotesScreen />);
+
+    fireEvent.press(await findByTestId('promoted-quote-42'));
+
+    expect(mockNavigate).not.toHaveBeenCalled();
+  });
+
+  it('still lets a pruned chapter quote be checked for a fold', async () => {
+    serve(page([PRUNED]), page([]));
+    const { findByTestId, getByTestId } = render(<PromotedQuotesScreen />);
+    await findByTestId('promoted-quote-43');
+
+    fireEvent.press(getByTestId('promoted-quotes-pending-select-toggle'));
+    fireEvent.press(getByTestId('promoted-quote-43'));
+
+    expect(getByTestId('promoted-quote-43').props.accessibilityState.checked).toBe(true);
+  });
+
+  it('says the lead in words that cover chapters and letters too', async () => {
+    serve(page([WAITING]), page([]));
+    const { findByText } = render(<PromotedQuotesScreen />);
+
+    expect(
+      await findByText(
+        'Passages you lifted from your pages, the Course and your letters, waiting for a review or woven into one.',
+      ),
+    ).toBeTruthy();
   });
 });
