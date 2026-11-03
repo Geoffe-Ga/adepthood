@@ -54,7 +54,7 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from functools import partial
-from typing import Final, Protocol
+from typing import Final
 
 from fastapi import HTTPException
 from sqlalchemy import or_, update
@@ -142,80 +142,68 @@ _VAULT_STEPS: Final = {
 }
 
 
-class _Lane(Protocol):
-    """One side that sorts writing: where its pending ids come from, how one is offered."""
-
-    async def next_ids(self, session: AsyncSession, below_id: int | None) -> list[int]:
-        """The next batch of pending ids under the cursor, highest first."""
-        ...
-
-    async def offer(self, session: AsyncSession, entry_id: int) -> _Step:
-        """Offer one entry under that side's own gates."""
-        ...
-
-
-@dataclass(frozen=True, slots=True)
-class _AppLane:
-    """Classify with the app's own model, into the corpus."""
-
-    user_id: int
-
-    async def next_ids(self, session: AsyncSession, below_id: int | None) -> list[int]:
-        """Pending ids from the bounded sweep's own predicate."""
-        return await corpus_backfill.pending_entry_ids(
-            session, self.user_id, below_id=below_id, limit=SORT_BATCH_SIZE
-        )
-
-    async def offer(self, session: AsyncSession, entry_id: int) -> _Step:
-        """Offer through the bounded sweep's own seam; name the reason if it stopped."""
-        offer = await corpus_backfill.offer_entry(
-            session,
-            entry_id=entry_id,
-            user_id=self.user_id,
-            boundary=ReflectionBoundary.APP_PROVIDER,
-        )
-        if offer.stop:
-            return _Step(stop=await _why_the_app_lane_stopped(session, self.user_id))
-        return _Step(offered=offer.offered, sorted=offer.stored)
-
-
-@dataclass(frozen=True, slots=True)
-class _VaultLane:
-    """Hand the writer's vault the writing it does not have yet."""
-
-    user_id: int
-    client: CreekVaultClient
-    destination: str | None
-
-    async def next_ids(self, session: AsyncSession, below_id: int | None) -> list[int]:
-        """Ids the vault lacks, from the vault sort's own predicate."""
-        return await corpus_vault_sort.pending_vault_entry_ids(
-            session, self.user_id, self.destination, below_id=below_id, limit=SORT_BATCH_SIZE
-        )
-
-    async def offer(self, session: AsyncSession, entry_id: int) -> _Step:
-        """Send down the journal save's own path, read through :data:`_VAULT_STEPS`."""
-        status = await corpus_vault_sort.offer_to_vault(
-            session,
-            entry_id=entry_id,
-            user_id=self.user_id,
-            destination=self.destination,
-            client=self.client,
-        )
-        return _NOT_OFFERED if status is None else _VAULT_STEPS[status]
-
-
 @dataclass(slots=True)
 class _Drive:
-    """One driver's hold on one run: who it is, which side sorts, how far it got."""
+    """One driver's hold on one run: who it is, which side sorts, how far it got.
+
+    ``client`` and ``destination`` are read only on the vault-bound lane. The
+    lanes are dispatched by :func:`_next_ids` and :func:`_offer`, plain
+    functions rather than methods on a lane object, so the egress call graph
+    (``tests/support/egress_call_graph.py``), which resolves names and not
+    instances, can follow every path from the route to a dial.
+    """
 
     run_id: int
     user_id: int
     owner: str
     kind: SortLane
-    lane: _Lane
+    client: CreekVaultClient
+    destination: str | None
     offered: int
     sorted: int
+
+
+async def _next_ids(session: AsyncSession, drive: _Drive, below_id: int | None) -> list[int]:
+    """The next batch of pending ids under the cursor, highest first, per the lane's predicate."""
+    if drive.kind is SortLane.VAULT_BOUND:
+        return await corpus_vault_sort.pending_vault_entry_ids(
+            session, drive.user_id, drive.destination, below_id=below_id, limit=SORT_BATCH_SIZE
+        )
+    return await corpus_backfill.pending_entry_ids(
+        session, drive.user_id, below_id=below_id, limit=SORT_BATCH_SIZE
+    )
+
+
+async def _offer_to_corpus(session: AsyncSession, drive: _Drive, entry_id: int) -> _Step:
+    """Classify with the app's model through the bounded sweep's seam; name any stop."""
+    offer = await corpus_backfill.offer_entry(
+        session,
+        entry_id=entry_id,
+        user_id=drive.user_id,
+        boundary=ReflectionBoundary.APP_PROVIDER,
+    )
+    if offer.stop:
+        return _Step(stop=await _why_the_app_lane_stopped(session, drive.user_id))
+    return _Step(offered=offer.offered, sorted=offer.stored)
+
+
+async def _offer_to_vault(session: AsyncSession, drive: _Drive, entry_id: int) -> _Step:
+    """Send down the journal save's own path, read through :data:`_VAULT_STEPS`."""
+    status = await corpus_vault_sort.offer_to_vault(
+        session,
+        entry_id=entry_id,
+        user_id=drive.user_id,
+        destination=drive.destination,
+        client=drive.client,
+    )
+    return _NOT_OFFERED if status is None else _VAULT_STEPS[status]
+
+
+async def _offer(session: AsyncSession, drive: _Drive, entry_id: int) -> _Step:
+    """Offer one entry to whichever side sorts this run's writing."""
+    if drive.kind is SortLane.VAULT_BOUND:
+        return await _offer_to_vault(session, drive, entry_id)
+    return await _offer_to_corpus(session, drive, entry_id)
 
 
 async def _consent_granted(session: AsyncSession, user_id: int) -> bool:
@@ -432,16 +420,16 @@ async def _prepare(
     if run is None or run.state != SortRunState.RUNNING.value or run.owner_id != owner:
         return None
     kind = SortLane(run.lane)
-    lane: _Lane = _AppLane(run.user_id)
+    destination = None
     if kind is SortLane.VAULT_BOUND:
         destination = await resolved_vault_destination(session, run.user_id)
-        lane = _VaultLane(run.user_id, client, destination)
     return _Drive(
         run_id=run_id,
         user_id=run.user_id,
         owner=owner,
         kind=kind,
-        lane=lane,
+        client=client,
+        destination=destination,
         offered=run.entries_offered,
         sorted=run.entries_sorted,
     )
@@ -484,7 +472,7 @@ async def _walk_batch(
     """Offer one batch, entry by entry; the reason the run must stop, if it must."""
     for entry_id in ids:
         stop = await _stop_before_offering(session, drive.user_id, drive.kind)
-        step = _Step(stop=stop) if stop is not None else await drive.lane.offer(session, entry_id)
+        step = _Step(stop=stop) if stop is not None else await _offer(session, drive, entry_id)
         if step.stop is not None:
             return step.stop
         await _record(session, drive, step)
@@ -494,7 +482,7 @@ async def _walk_batch(
 async def _walk(session: AsyncSession, drive: _Drive) -> SortStopReason | None:
     """Offer every pending entry once, highest id first; ``None`` when none is left."""
     cursor: int | None = None
-    while ids := await drive.lane.next_ids(session, cursor):
+    while ids := await _next_ids(session, drive, cursor):
         stop = await _walk_batch(session, drive, ids)
         if stop is not None:
             return stop
