@@ -433,7 +433,7 @@ def _no_classifier_may_be_asked(user_id: int, boundary: ReflectionBoundary) -> b
 
 
 async def _offer_one(
-    session: AsyncSession, *, entry: JournalEntry, user_id: int, boundary: ReflectionBoundary
+    session: AsyncSession, *, entry_id: int, user_id: int, boundary: ReflectionBoundary
 ) -> _Offer:
     """Offer one entry to the corpus writer, inside this account's egress barrier.
 
@@ -462,7 +462,7 @@ async def _offer_one(
         await ensure_account_live(session, user_id)
         if not await _consent_still_stands(session, user_id):
             return _STOPPED
-        current = await _still_a_candidate(session, entry_id=entry.id, user_id=user_id)
+        current = await _still_a_candidate(session, entry_id=entry_id, user_id=user_id)
         if current is None:
             return _SKIPPED
         if _no_classifier_may_be_asked(user_id, boundary):
@@ -529,7 +529,9 @@ async def _offer_batch(
     considered = 0
     added = 0
     for entry in candidates:
-        offer = await _offer_one(session, entry=entry, user_id=user_id, boundary=boundary)
+        if entry.id is None:
+            continue
+        offer = await _offer_one(session, entry_id=entry.id, user_id=user_id, boundary=boundary)
         if offer.stop:
             break
         considered += offer.considered
@@ -537,6 +539,54 @@ async def _offer_batch(
         if time.monotonic() + BACKFILL_ENTRY_SECONDS > deadline:
             break
     return considered, added
+
+
+@dataclass(frozen=True, slots=True)
+class EntryOffer:
+    """What offering one entry did, for a caller walking a backlog itself.
+
+    ``offered`` is whether the classifier was asked at all -- an entry that
+    stopped being a candidate while the caller waited for the barrier was not.
+    ``stop`` is whether the walk must end here, for a reason about the account
+    or the deployment rather than the entry (see :func:`_offer_batch`); the
+    caller decides which reason by reading the account, since this answer is
+    deliberately the same for all of them.
+    """
+
+    offered: bool
+    stored: bool
+    stop: bool
+
+
+async def offer_entry(
+    session: AsyncSession, *, entry_id: int, user_id: int, boundary: ReflectionBoundary
+) -> EntryOffer:
+    """Offer one entry under exactly the bounded sweep's gates.
+
+    The seam :mod:`services.corpus_sort_run` walks a whole backlog through, so a
+    background run takes the per-entry barrier, re-reads consent, the account
+    and the row inside it, and marks and commits the outcome there -- the
+    ordering :func:`_offer_one` argues for -- rather than a copy of it.
+    """
+    offer = await _offer_one(session, entry_id=entry_id, user_id=user_id, boundary=boundary)
+    return EntryOffer(offered=offer.considered > 0, stored=offer.stored > 0, stop=offer.stop)
+
+
+async def pending_entry_ids(
+    session: AsyncSession, user_id: int, *, below_id: int | None, limit: int
+) -> list[int]:
+    """The next ``limit`` pending entry ids under ``below_id``, highest first.
+
+    A cursor rather than the bounded sweep's queue order, because a run offers
+    every entry once: walking ids downward visits each row at most once whatever
+    becomes of it, so an entry the classifier places nowhere -- which stays
+    pending on purpose -- cannot be offered twice in one run, and the walk ends.
+    """
+    statement = select(col(JournalEntry.id)).where(*_pending_conditions(user_id))
+    if below_id is not None:
+        statement = statement.where(col(JournalEntry.id) < below_id)
+    result = await session.execute(statement.order_by(col(JournalEntry.id).desc()).limit(limit))
+    return [entry_id for entry_id in result.scalars().all() if entry_id is not None]
 
 
 async def _sweep_journal(
@@ -711,12 +761,28 @@ async def backfill_after_consent(
     its first offer, every entry unmarked, so the decision is recorded and the
     writing waits rather than being demoted for a refusal it did not cause.
     """
-    consent_event_id = _authorising_event_id(change, user_id)
-    if consent_event_id is None:
+    if _authorising_event_id(change, user_id) is None:
         return _NOTHING_SWEPT
     outcome = await _sweep_journal(session, user_id=user_id, boundary=boundary)
-    if outcome.entries_considered <= _NOTHING_CONSIDERED:
-        return outcome
+    await record_sweep_receipt(session, user_id=user_id, change=change, outcome=outcome)
+    return outcome
+
+
+async def record_sweep_receipt(
+    session: AsyncSession, *, user_id: int, change: ConsentChange, outcome: BackfillOutcome
+) -> None:
+    """Append the receipt for one reach, under the decision that authorised it.
+
+    Adds nothing when ``change`` names no decision of this account's, when the
+    reach offered nothing, or when it says exactly what the newest receipt under
+    the same decision says (:func:`_says_nothing_new`). Adds and does not
+    commit: the caller owns the transaction. Shared by the bounded sweep a grant
+    runs and by a background run (:mod:`services.corpus_sort_run`), so the export
+    carries every reach the same way.
+    """
+    consent_event_id = _authorising_event_id(change, user_id)
+    if consent_event_id is None or outcome.entries_considered <= _NOTHING_CONSIDERED:
+        return
     previous = await _newest_sweep(session, consent_event_id=consent_event_id)
     if not _says_nothing_new(previous, outcome):
         session.add(
@@ -728,7 +794,6 @@ async def backfill_after_consent(
                 entries_remaining=outcome.entries_remaining,
             )
         )
-    return outcome
 
 
 async def count_pending_entries(session: AsyncSession, user_id: int) -> int:

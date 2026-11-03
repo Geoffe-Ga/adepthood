@@ -104,6 +104,7 @@ from services.content_repository import (
     content_version_info,
     get_content_repository,
 )
+from services.corpus_sort_run import close_corpus_sort_tasks, resume_corpus_sort_runs
 from services.creek_provisioning import (
     reconcile_vault_teardowns,
     resume_vault_activations,
@@ -181,6 +182,12 @@ async def _recover_provisioning_until_shutdown() -> None:
         await _recover_step(
             resume_detached_withdrawal_notes(async_session_factory, detached_vaults()),
             "detached withdrawal note recovery could not read its durable state",
+        )
+        # A sort whose driver died (a deploy, a crash) goes stale and is
+        # finished here, without anybody pressing Sort again.
+        await _recover_step(
+            resume_corpus_sort_runs(async_session_factory, resolve_creek_vault_client),
+            "corpus sort recovery could not read its durable state",
         )
         await asyncio.sleep(_PROVISIONING_RECOVERY_INTERVAL_SECONDS)
 
@@ -1200,6 +1207,9 @@ async def lifespan(_application: FastAPI) -> AsyncIterator[None]:
     # the next lifespan resumes it before traffic. Stop those coroutines before
     # closing the shared HTTP pool they use.
     await close_vault_pipeline_tasks()
+    # Sort drivers too: cancelled rather than failed, so their rows stay
+    # running and the next lifespan's recovery loop resumes them.
+    await close_corpus_sort_tasks()
 
     # The pooled Creek Vault connection must not outlive the app: closing it on
     # shutdown releases its sockets deterministically instead of leaving an open

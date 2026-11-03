@@ -36,7 +36,7 @@ from domain.creek_vault import CreekVaultUnavailableError, HandshakeResult
 from main import app
 from models.corpus_fragment import CorpusSource
 from models.journal_entry import JournalClassification, JournalEntry
-from services import corpus_vault_sort
+from services import corpus_sort_run
 from services import frequency_classification as fc
 from services.corpus_consent import set_consent
 from services.user_vault_config import store_vault_config
@@ -49,8 +49,8 @@ _VAULT_KEY = "creek-vault-sort-unit-key"  # pragma: allowlist secret
 
 # More than one, so a count stumbled onto by coincidence cannot pass.
 _BACKLOG = 3
-# Small enough that a backlog of three overruns one pass.
-_SMALL_CEILING = 2
+# Small enough that a backlog of three spans two cursor batches.
+_SMALL_BATCH = 2
 
 
 @pytest.fixture
@@ -137,10 +137,22 @@ async def _pending(client: AsyncClient, headers: dict[str, str]) -> int:
 
 
 async def _sort(client: AsyncClient, headers: dict[str, str]) -> dict[str, int]:
-    """Run one pass and return its body."""
+    """Press Sort, let the background run finish, and report it in the pass's three counts.
+
+    ``entries_sorted`` is what the run sorted; pending and remaining are the
+    count read once it ended -- the numbers the bounded pass used to answer with.
+    """
     resp = await client.post(_SWEEP_PATH, headers=headers)
-    assert resp.status_code == HTTPStatus.OK, resp.text
-    return dict(resp.json())
+    assert resp.status_code == HTTPStatus.ACCEPTED, resp.text
+    await corpus_sort_run.wait_for_corpus_sort_tasks()
+    read = await client.get(_SWEEP_PATH, headers=headers)
+    assert read.status_code == HTTPStatus.OK, read.text
+    pending = int(read.json()["entries_pending"])
+    return {
+        "entries_pending": pending,
+        "entries_sorted": int(read.json()["run"]["entries_sorted"]),
+        "entries_remaining": pending,
+    }
 
 
 @pytest.mark.asyncio
@@ -276,23 +288,21 @@ async def test_one_entry_the_vault_dropped_stays_pending_and_the_rest_go(
 
 
 @pytest.mark.asyncio
-async def test_a_pass_is_bounded_and_the_next_one_finishes(
+async def test_one_press_walks_every_batch_to_the_end(
     async_client: AsyncClient,
     db_session: AsyncSession,
     vault: SequencedVaultClient,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """The pass keeps the app-side sweep's ceiling; asking again picks up the rest."""
-    monkeypatch.setattr(corpus_vault_sort, "VAULT_SORT_ENTRY_CEILING", _SMALL_CEILING)
-    headers, user_id = await _signup(async_client, "vault-sort-bounded")
+    """No ceiling on a press: the run reads batch after batch until nothing is left."""
+    monkeypatch.setattr(corpus_sort_run, "SORT_BATCH_SIZE", _SMALL_BATCH)
+    headers, user_id = await _signup(async_client, "vault-sort-batches")
     await _vault_bound(db_session, user_id)
     await _entries(db_session, user_id=user_id, count=_BACKLOG)
 
-    first = await _sort(async_client, headers)
-    second = await _sort(async_client, headers)
+    body = await _sort(async_client, headers)
 
-    assert (first["entries_sorted"], first["entries_remaining"]) == (_SMALL_CEILING, 1)
-    assert (second["entries_sorted"], second["entries_remaining"]) == (1, 0)
+    assert body == {"entries_pending": 0, "entries_sorted": _BACKLOG, "entries_remaining": 0}
     assert len(vault.ingest_calls) == _BACKLOG
 
 

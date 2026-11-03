@@ -25,6 +25,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from sqlmodel import select
 
 import curriculum.stage_correspondence as stage_correspondence_module
+import main as main_module
 
 # Direct import rather than a fixture: the lifespan patch needs the engine
 # object itself (so it can wire a session factory at it), not a per-test
@@ -32,7 +33,14 @@ import curriculum.stage_correspondence as stage_correspondence_module
 from conftest import test_engine
 from curriculum.stage_correspondence import StageCorrespondenceError, load_stage_correspondence
 from database_schema import DatabaseSchemaMismatchError
-from main import _log_botmason_provider, _log_content_status, _seed_startup_data, app, lifespan
+from main import (
+    _log_botmason_provider,
+    _log_content_status,
+    _recover_provisioning_until_shutdown,
+    _seed_startup_data,
+    app,
+    lifespan,
+)
 from models.course_stage import CourseStage
 from models.practice import Practice
 from models.stage_content import StageContent
@@ -653,3 +661,47 @@ async def test_lifespan_configures_app_logging(
         assert handlers, "lifespan must install the app log handler"
     finally:
         remove_app_log_handlers_for_tests()
+
+
+@pytest.mark.asyncio
+async def test_the_recovery_loop_resumes_abandoned_corpus_sorts() -> None:
+    """A sort a deploy interrupted is finished by the recovery loop, not left running.
+
+    One pass of the loop must offer the stale runs to
+    :func:`services.corpus_sort_run.resume_corpus_sort_runs`, on the same
+    factory and vault resolver the other recovery steps use; the pass is cut
+    short at its sleep so the test sees exactly one iteration.
+    """
+    seen: list[tuple[object, object]] = []
+
+    async def _recorded(factory: object, resolve: object) -> None:
+        seen.append((factory, resolve))
+
+    async def _stop_after_one_pass(_seconds: float) -> None:
+        raise asyncio.CancelledError
+
+    with (
+        patch("main.resume_vault_activations", new=AsyncMock()),
+        patch("main.reconcile_vault_teardowns", new=AsyncMock()),
+        patch("main.resume_voice_draft_retractions", new=AsyncMock()),
+        patch("main.resume_detached_withdrawal_notes", new=AsyncMock()),
+        patch("main.resume_corpus_sort_runs", new=_recorded),
+        patch("main.asyncio.sleep", new=_stop_after_one_pass),
+        pytest.raises(asyncio.CancelledError),
+    ):
+        await _recover_provisioning_until_shutdown()
+
+    assert seen == [(main_module.async_session_factory, main_module.resolve_creek_vault_client)]
+
+
+@pytest.mark.asyncio
+async def test_shutdown_stops_background_corpus_sorts(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A rollover cancels sort drivers so their rows stay running and resumable."""
+    monkeypatch.setenv("SKIP_STARTUP_SEED", "1")
+    closed = AsyncMock()
+
+    with patch("main.close_corpus_sort_tasks", new=closed):
+        async with _isolated_factory_patch(), lifespan(app):
+            closed.assert_not_awaited()
+
+    closed.assert_awaited_once()

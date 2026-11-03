@@ -84,6 +84,7 @@ from models.user_ui_flags import UserUiFlags
 from models.user_vault_config import UserVaultConfig
 from models.vault_activation import VaultActivation, VaultActivationState
 from security.idempotency import hash_idem_key
+from services import corpus_sort_run
 from services import frequency_classification as fc
 from services.creek_vault_agent_connection import reset_agent_discovery_cache
 from services.creek_vault_client import HttpCreekVaultClient
@@ -1703,9 +1704,12 @@ async def test_idor_corpus_sweep_run_cannot_sort_another_accounts_writing(
     await db_session.commit()
 
     bob_pass = await async_client.post("/corpus/sweep", headers=bob_headers)
+    await corpus_sort_run.wait_for_corpus_sort_tasks()
 
-    assert bob_pass.status_code == HTTPStatus.OK, bob_pass.text
-    assert bob_pass.json() == {"entries_pending": 0, "entries_sorted": 0, "entries_remaining": 0}
+    assert bob_pass.status_code == HTTPStatus.ACCEPTED, bob_pass.text
+    bob_body = bob_pass.json()
+    assert (bob_body["entries_pending"], bob_body["entries_sorted"]) == (0, 0)
+    assert bob_body["run"]["entries_total"] == 0
     assert all(_SWEEP_ALICE_WORDS not in prompt for prompt in prompts)
     fragment_owners = (
         (await db_session.execute(select(col(CorpusFragment.user_id)))).scalars().all()

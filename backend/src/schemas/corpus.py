@@ -18,6 +18,7 @@ from datetime import datetime
 from pydantic import BaseModel, Field
 
 from models.corpus_fragment import CorpusSource
+from models.corpus_sort_run import SortLane, SortRunState, SortStopReason
 
 #: How often one caller may record a decision about a source.
 #:
@@ -112,6 +113,27 @@ class CorpusInvitationResponse(BaseModel):
     do_not_ask_again: bool
 
 
+class CorpusSortRunResponse(BaseModel):
+    """One background sort, as the screen follows it (``models.corpus_sort_run``).
+
+    ``entries_total`` is what was pending when the run started, the number
+    progress is counted against; ``entries_offered`` and ``entries_sorted`` are
+    how far it has got. ``stop_reason`` is set only on a ``stopped`` run, and
+    ``finished_at`` on every run that is not ``running``. Counts, a closed
+    vocabulary and instants: nothing the writing could be read back from.
+    """
+
+    id: int
+    lane: SortLane
+    state: SortRunState
+    stop_reason: SortStopReason | None = None
+    entries_total: int = Field(ge=0)
+    entries_offered: int = Field(ge=0)
+    entries_sorted: int = Field(ge=0)
+    started_at: datetime
+    finished_at: datetime | None = None
+
+
 class CorpusSweepEstimateResponse(BaseModel):
     """How much of this account's own writing is still without a fragment.
 
@@ -128,6 +150,7 @@ class CorpusSweepEstimateResponse(BaseModel):
     """
 
     entries_pending: int = Field(ge=0)
+    run: CorpusSortRunResponse | None = None
 
 
 class CorpusSweepResponse(CorpusSweepEstimateResponse):

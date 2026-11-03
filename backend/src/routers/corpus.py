@@ -88,14 +88,18 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from database import get_session
 from dependencies.creek_vault import (
     OnboardingVault,
+    get_creek_vault_client,
     get_onboarding_vault,
     resolve_reflection_boundary,
 )
 from dependencies.document_payload import guard_document_payload
 from domain.corpus_import import ImportDestination
+from domain.creek_vault import CreekVaultPipelineClient
+from domain.dates import ensure_aware
 from error_responses import build_router
 from errors import payload_too_large
 from models.corpus_fragment import CorpusSource
+from models.corpus_sort_run import CorpusSortRun, SortLane, SortRunState, SortStopReason
 from rate_limit import limiter
 from rate_limit_keys import per_user_rate_limit_key
 from routers.auth import get_current_user
@@ -106,20 +110,19 @@ from schemas.corpus import (
     CorpusConsentUpdate,
     CorpusInvitationResponse,
     CorpusInvitationUpdate,
+    CorpusSortRunResponse,
     CorpusSweepEstimateResponse,
     CorpusSweepResponse,
 )
 from schemas.corpus_import import CORPUS_IMPORT_MESSAGES, DocumentImportResponse
 from schemas.journal_upload import UPLOAD_MESSAGES, UPLOAD_RATE_LIMIT, UploadDocumentRequest
 from schemas.voice_readiness import VOICE_READINESS_MESSAGES, VoiceReadinessResponse
-from services import corpus_backfill
 from services.account_egress_barrier import ensure_account_live, hold_account
 from services.corpus_backfill import backfill_after_consent
 from services.corpus_consent import (
     ConsentState,
     load_every_consent,
     set_consent,
-    standing_consent_change,
 )
 from services.corpus_import import (
     CorpusImportResult,
@@ -127,14 +130,12 @@ from services.corpus_import import (
     VaultImportResult,
     import_document,
 )
-from services.corpus_ingest import INGEST_SOURCE
 from services.corpus_invitation import InvitationOffer, dismiss_invitation, load_invitation
-from services.corpus_vault_sort import count_vault_pending, sort_into_vault
+from services.corpus_sort_run import count_unsorted, latest_run, start_or_join
 from services.creek_vault_pipeline import VaultPipelineTrigger, drive_vault_pipeline
 from services.creek_vault_relay import forwarding_provider_key
 from services.creek_vault_upload import FolderSource, UploadedDocument
 from services.creek_vault_upload_limits import ManagedUploadTooLargeError
-from services.reflection_boundary import ReflectionBoundary
 from services.voice_readiness import VoiceReadiness, load_voice_readiness
 
 router = build_router(
@@ -286,108 +287,95 @@ async def get_voice_readiness(
     return _voice_readiness_response(readiness)
 
 
+def _run_response(run: CorpusSortRun | None) -> CorpusSortRunResponse | None:
+    """Project a run row onto its DTO: counts, the closed vocabulary, instants."""
+    if run is None or run.id is None:
+        return None
+    return CorpusSortRunResponse(
+        id=run.id,
+        lane=SortLane(run.lane),
+        state=SortRunState(run.state),
+        stop_reason=None if run.stop_reason is None else SortStopReason(run.stop_reason),
+        entries_total=run.entries_total,
+        entries_offered=run.entries_offered,
+        entries_sorted=run.entries_sorted,
+        started_at=ensure_aware(run.started_at),
+        finished_at=None if run.finished_at is None else ensure_aware(run.finished_at),
+    )
+
+
 @router.get("/sweep", response_model=CorpusSweepEstimateResponse)
 async def get_corpus_sweep_estimate(
     user_id: Annotated[int, Depends(get_current_user)],
     session: Annotated[AsyncSession, Depends(get_session)],
 ) -> CorpusSweepEstimateResponse:
-    """Report how much of this account's writing is still unsorted.
+    """Report how much of this account's writing is still unsorted, and its latest sort.
 
-    A sweep is bounded, so an account with a backlog finishes it by asking
-    again -- and asking again is only a decision somebody can make if they can
-    see what is left. This is the read that makes the remainder visible.
+    The read the Settings row and the sort screen are built on: the row hides
+    at zero, and the screen polls this while a run is going to show how far it
+    has got. ``run`` is the account's newest run in any state, or ``null`` when
+    it has never pressed Sort.
 
     Never a 404 and never an error state, the contract
     :func:`get_voice_readiness` keeps: an account that has written nothing is
     told zero, which is the most common answer rather than a missing resource.
     Consent is deliberately *not* required -- granting it runs a sweep, so this
     number is exactly what a prospective yes would reach, and withholding it
-    until after the yes would put the disclosure after the decision.
+    until after the yes would put the disclosure after the decision. A
+    vault-bound writer's count is what their vault does not have yet
+    (:mod:`services.corpus_vault_sort`), since their vault is what sorts it.
 
     The account comes from the token, so no request can read anyone else's
-    backlog. One indexed count, no commit, and no provider call.
+    backlog or run. Indexed reads, no commit, and no provider call.
     """
-    return CorpusSweepEstimateResponse(entries_pending=await _count_unsorted(session, user_id))
+    return CorpusSweepEstimateResponse(
+        entries_pending=await count_unsorted(session, user_id),
+        run=_run_response(await latest_run(session, user_id)),
+    )
 
 
-async def _count_unsorted(session: AsyncSession, user_id: int) -> int:
-    """What this account's sort would still reach, on the side its boundary allows.
-
-    A vault-bound writer's writing is sorted by their vault, so what is
-    unsorted is what the vault does not have yet (:mod:`services.corpus_vault_sort`);
-    counting app-side fragments for them quoted a backlog no pass could move.
-    """
-    if await resolve_reflection_boundary(session, user_id) is ReflectionBoundary.VAULT_BOUND:
-        return await count_vault_pending(session, user_id)
-    return await corpus_backfill.count_pending_entries(session, user_id)
-
-
-@router.post("/sweep", response_model=CorpusSweepResponse)
+@router.post("/sweep", response_model=CorpusSweepResponse, status_code=status.HTTP_202_ACCEPTED)
 @limiter.limit(CONSENT_RATE_LIMIT, key_func=per_user_rate_limit_key)
 async def run_corpus_sweep(
     request: Request,  # noqa: ARG001 — consumed by @limiter.limit decorator
     user_id: Annotated[int, Depends(get_current_user)],
     session: Annotated[AsyncSession, Depends(get_session)],
-    vault: Annotated[OnboardingVault, Depends(get_onboarding_vault)],
+    vault_client: Annotated[CreekVaultPipelineClient, Depends(get_creek_vault_client)],
 ) -> CorpusSweepResponse:
-    """Sort the next bounded share of this account's backlog, and say what is left.
+    """Sort everything this account has waiting, in the background -- or join the sort going.
 
-    A vault-bound writer is sorted by their vault, never by the app provider
-    (#3156), so for them a pass hands the vault the writing it does not have
-    yet, down the journal save's own path, and the vault classifies what it
-    receives -- see :func:`services.corpus_vault_sort.sort_into_vault`. Before
-    that branch the pass below stopped at the boundary every time, and a
-    vault-connected account was told "nothing sorted" for ever.
+    One press, the whole backlog: the run walks every pending entry once and the
+    request returns as soon as it is recorded, with a 202 and the run to follow
+    (:mod:`services.corpus_sort_run`). Pressing again while it runs joins it --
+    the same run comes back and nothing new starts -- so the press is
+    idempotent, and at most one run per account is ever going, across workers.
 
-    Until this route the remainder of a bounded sweep was reachable only by
-    re-sending a consent decision already given. This is the same pass given a
-    door of its own: it runs
-    :func:`services.corpus_backfill.backfill_after_consent` -- the sweep itself,
-    not a copy of it -- under the decision already standing, so the consent
-    gate, the intimate-tier refusal, the per-entry clock, the deadline and the
-    one-receipt-per-reach rule are the ones the grant path ratified.
+    Every gate the bounded pass kept is kept per entry: the account barrier, a
+    re-read of consent, the account and the row inside it, and the Intimate
+    tier never loaded. The account's boundary is re-resolved before each entry,
+    so a vault-bound writer's writing goes to their vault, never the app's
+    model (#3156), even if the vault is connected mid-run. Without a standing
+    yes nothing is offered: the press records a ``stopped`` run saying so, a
+    202 rather than a refusal, because the request was understood and the
+    answer is a run the screen can render.
 
-    No second consent gate here, deliberately. The standing change of an
-    account that never said yes, or said it and withdrew it, is not a grant,
-    and the sweep's own ``_authorising_event_id`` already answers that with
-    "no sweep". So such an account is told it sorted nothing and how much is
-    still waiting -- a 200 rather than a refusal, because the request was
-    understood and the answer is a count, the contract ``GET /corpus/sweep``
-    keeps.
-
-    Resuming is not deciding: :func:`services.corpus_consent.standing_consent_change`
-    reads the decision and appends nothing, and no account barrier is held for
-    it. The sweep takes that hold per entry, re-reading consent inside each, so
-    a revocation or an erasure arriving mid-pass waits for the dial in flight
-    and nothing more -- the reasoning :func:`put_corpus_consent` gives.
+    Keyless: a relayed provider key never rides into the background run
+    (#3437), so this route reads none.
 
     Free, like every path that ontologizes an entry: nothing here is charged or
-    priced. Rate-limited per account at :data:`schemas.corpus.CONSENT_RATE_LIMIT`
-    because this is the resume that limit was sized for.
+    priced. Rate-limited per account at :data:`schemas.corpus.CONSENT_RATE_LIMIT`.
 
-    The remainder is counted after the commit rather than taken from the pass,
-    so an account the sweep declined to reach is told what is actually waiting
-    instead of the zero a sweep that never started reports.
+    ``entries_sorted`` and ``entries_remaining`` keep the shape the bounded pass
+    answered with, so an older client still renders a count: what the run has
+    sorted so far, and what is pending now.
     """
-    boundary = await resolve_reflection_boundary(session, user_id)
-    if boundary is ReflectionBoundary.VAULT_BOUND:
-        with forwarding_provider_key(vault.relay_key):
-            sorted_into_vault = await sort_into_vault(session, user_id=user_id, client=vault.client)
-        return CorpusSweepResponse(
-            entries_pending=sorted_into_vault.entries_remaining,
-            entries_sorted=sorted_into_vault.entries_sent,
-            entries_remaining=sorted_into_vault.entries_remaining,
-        )
-    change = await standing_consent_change(session, user_id=user_id, source=INGEST_SOURCE)
-    outcome = await backfill_after_consent(
-        session, user_id=user_id, change=change, boundary=boundary
-    )
-    await session.commit()
-    remaining = await corpus_backfill.count_pending_entries(session, user_id)
+    run = await start_or_join(session, user_id=user_id, client=vault_client)
+    pending = await count_unsorted(session, user_id)
     return CorpusSweepResponse(
-        entries_pending=remaining,
-        entries_sorted=outcome.fragments_added,
-        entries_remaining=remaining,
+        entries_pending=pending,
+        entries_sorted=run.entries_sorted,
+        entries_remaining=pending,
+        run=_run_response(run),
     )
 
 
