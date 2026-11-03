@@ -385,6 +385,7 @@ RETENTION: Mapping[str, RetentionRule] = {
         "entry is deleted or made Intimate.",
     ),
     "corpusinvitationstate": until_account_deletion("Corpus invitation state."),
+    "corpussortrun": until_account_deletion("Content-free background sort progress."),
     "corpussweep": until_account_deletion("Content-free counts of corpus grants."),
     "coursestage": shared_catalogue("The shared 36-week curriculum."),
     "energyplan": nightly(

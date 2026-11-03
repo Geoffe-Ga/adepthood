@@ -234,6 +234,13 @@ MANIFEST: Mapping[str, ExportRule] = {
         "pass counters travel with it because they are what the cooldown is "
         "computed from; they count moments, not the writing.",
     ),
+    "corpussortrun": Omitted(
+        "Scheduling state for one press of Sort: whether the background run is "
+        "going, how far it got and why it stopped. It describes this app's "
+        "housekeeping rather than anything the account wrote; what a sort "
+        "actually reached travels as corpus_sweep_history, and the corpus "
+        "itself as the account's fragments.",
+    ),
     "corpussweep": _include(
         "corpus_sweep_history",
         CorpusSweep,
