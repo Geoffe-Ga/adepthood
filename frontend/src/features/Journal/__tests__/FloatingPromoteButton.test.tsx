@@ -11,7 +11,7 @@ import FloatingPromoteButton, { FLOATING_PROMOTE_TEST_ID } from '../FloatingProm
 import { RESONANCE_BUTTON_CLEARANCE } from '../JournalEntry.styles';
 import { CLOSE_PRESSED_COLOR, CLOSE_REST_COLOR } from '../ReflectionDismiss';
 
-import { accent, colors, surface, touchTarget } from '@/design/tokens';
+import { accent, floatingChrome, surface, touchTarget } from '@/design/tokens';
 import { useReducedMotion } from '@/hooks/useReducedMotion';
 
 jest.mock('@/hooks/useReducedMotion', () => ({ useReducedMotion: jest.fn(() => false) }));
@@ -133,7 +133,8 @@ describe('FloatingPromoteButton -- trailing clear', () => {
     const style = StyleSheet.flatten(clear.props.style);
     expect(style.minWidth).toBeGreaterThanOrEqual(touchTarget.minimum);
     expect(style.minHeight).toBeGreaterThanOrEqual(touchTarget.minimum);
-    expect(style.backgroundColor).toBe(colors.mystical.transparentLight);
+    // Over dense prose the glass must hide the words beneath it (#3661).
+    expect(style.backgroundColor).toBe(floatingChrome.glassWash);
     expect(style.borderColor).toBe(surface.hairline);
     fireEvent.press(clear);
     expect(onCancel).toHaveBeenCalledTimes(1);
@@ -175,7 +176,9 @@ describe('FloatingPromoteButton -- secondary action', () => {
     expect(secondary.props.accessibilityRole).toBe('button');
     expect(secondary.props.accessibilityLabel).toBe('Write a note on this passage');
     expect(getByText('Write a note')).toBeTruthy();
-    expect(StyleSheet.flatten(secondary.props.style).backgroundColor).not.toBe(accent.primary);
+    expect(StyleSheet.flatten(secondary.props.style).backgroundColor).toBe(
+      floatingChrome.glassWash,
+    );
     fireEvent.press(secondary);
     expect(onSecondary).toHaveBeenCalledTimes(1);
     expect(onPress).not.toHaveBeenCalled();

@@ -36,9 +36,10 @@ import { CLOSE_ICON_SIZE, CLOSE_PRESSED_COLOR, CLOSE_REST_COLOR } from './Reflec
 import { decorativeHidden } from '@/components/a11yHidden';
 import {
   BORDER_RADIUS,
+  FLOATING_GLASS_BLUR_PX,
   SPACING,
   accent,
-  colors,
+  floatingChrome,
   motion,
   surface,
   surfaceShadow,
@@ -60,9 +61,6 @@ const QUOTE_ICON_SIZE = 18;
 /** The glass edge, in dp: the Course reader footer's hairline. */
 const GLASS_HAIRLINE_WIDTH = 1;
 
-/** CSS backdrop blur behind the glass on web, so prose under the pill frosts rather than shows through. */
-const GLASS_BLUR_PX = 6;
-
 /**
  * One layer above the page flow it floats over: enough to clear the text and
  * any sticky footer drawn before it, without reaching for the app's chrome.
@@ -78,8 +76,8 @@ const FLOATING_LAYER = 1;
 const WEB_GLASS_STYLE: ViewStyle | null =
   Platform.OS === 'web'
     ? ({
-        backdropFilter: `blur(${GLASS_BLUR_PX}px)`,
-        WebkitBackdropFilter: `blur(${GLASS_BLUR_PX}px)`,
+        backdropFilter: `blur(${FLOATING_GLASS_BLUR_PX}px)`,
+        WebkitBackdropFilter: `blur(${FLOATING_GLASS_BLUR_PX}px)`,
       } as unknown as ViewStyle)
     : null;
 
@@ -370,9 +368,10 @@ const styles = StyleSheet.create({
     color: accent.onPrimary,
   },
   /**
-   * The Course footer's glass — a hairline edge and a soft lift — with a denser
-   * wash, because this pill floats over full-strength prose rather than over
-   * the reader's bottom fade.
+   * The Course footer's glass -- a hairline edge and a soft lift -- with the
+   * floating glass wash (``floatingChrome.glassWash``), near-opaque canvas
+   * paper, because this pill floats over full-strength prose rather than over
+   * the reader's bottom fade: the words beneath it must not read through.
    */
   glass: {
     minHeight: touchTarget.minimum,
@@ -381,7 +380,7 @@ const styles = StyleSheet.create({
     borderRadius: BORDER_RADIUS.circle,
     borderWidth: GLASS_HAIRLINE_WIDTH,
     borderColor: surface.hairline,
-    backgroundColor: colors.mystical.transparentLight,
+    backgroundColor: floatingChrome.glassWash,
     ...surfaceShadow.card,
   },
   clear: {

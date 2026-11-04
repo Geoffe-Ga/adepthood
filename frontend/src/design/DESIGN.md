@@ -68,8 +68,9 @@ over the text column, `RESONANCE_BUTTON_CLEARANCE` above the foot of the scroll
 viewport, and leaves the tree when the selection collapses. It wears the Course
 reader footer's vocabulary: one solid `accent.primary` call to action (a quote
 mark and its label) beside quiet glass companions (`surface.hairline` edge,
-`colors.mystical.transparentLight` wash, a backdrop blur on web): an optional
-secondary action and a trailing X that clears the selection. The selection
+`floatingChrome.glassWash` -- the canvas paper near-opaque, so prose beneath
+never reads through -- and a `FLOATING_GLASS_BLUR_PX` backdrop blur on web): an
+optional secondary action and a trailing X that clears the selection. The selection
 surface's footer keeps only the one-line echo and Cancel, so a screen never shows
 two primaries, and it reserves the band the pill floats in once the text's end
 is in view. Every surface that promotes a passage renders this one component:
