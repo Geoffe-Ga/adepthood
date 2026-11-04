@@ -33,7 +33,7 @@ import { Button } from '@/components/Button';
 import { EditorialSection } from '@/components/layout/EditorialSection';
 import { ScreenHeader } from '@/components/layout/ScreenHeader';
 import { ScreenScaffold } from '@/components/layout/ScreenScaffold';
-import { ink, rhythm, type as typeRamp } from '@/design/tokens';
+import { accent, ink, radius, rhythm, surface, type as typeRamp } from '@/design/tokens';
 
 /**
  * "Sort the rest of your writing" (#3499): how much is unsorted, what sorting
@@ -189,6 +189,50 @@ function useSortPress(watch: (id: number) => void): {
   return { pressing, error, press };
 }
 
+/** How tall the progress track is, in points: visible at a glance, quiet beside the text. */
+const SORT_PROGRESS_HEIGHT = 6;
+/** A fraction as a percentage of the track's width. */
+const PERCENT = 100;
+
+/**
+ * How full the bar is: entries looked at over the larger of the starting total
+ * and what has been looked at -- so writing that arrives mid-run, which the walk
+ * also reaches, can never push the fill past the end. Zero before anything is
+ * pending at all.
+ */
+export function sortProgressFraction(run: CorpusSortRun): number {
+  const total = Math.max(run.entries_total, run.entries_offered);
+  return total > 0 ? run.entries_offered / total : 0;
+}
+
+/**
+ * A determinate bar for a running sort (#3677): entries looked at, out of the total.
+ *
+ * Announced as a ``progressbar`` with its numeric value and labelled with the
+ * same sentence shown beneath it. It moves only when a poll lands -- no
+ * animation, so there is nothing for reduced motion to switch off -- and it
+ * prints no number of its own, so it cannot show the bare zero the screen's
+ * price-language test forbids.
+ */
+const SortProgressBar = ({ run }: { run: CorpusSortRun }): React.JSX.Element => (
+  <View
+    style={styles.track}
+    testID="corpus-sweep-progress-bar"
+    accessibilityRole="progressbar"
+    accessibilityLabel={corpusSortProgressLine(run)}
+    accessibilityValue={{
+      min: 0,
+      max: Math.max(run.entries_total, run.entries_offered),
+      now: run.entries_offered,
+    }}
+  >
+    <View
+      style={[styles.fill, { width: `${sortProgressFraction(run) * PERCENT}%` }]}
+      testID="corpus-sweep-progress-fill"
+    />
+  </View>
+);
+
 /** A running sort's progress, or a finished one's outcome and, if it left writing, why. */
 const RunStatus = ({
   run,
@@ -203,6 +247,7 @@ const RunStatus = ({
   const leftBehind = run.state === 'completed' && run.entries_sorted === 0 && pending > 0;
   return (
     <View testID="corpus-sweep-outcome" accessibilityLiveRegion="polite">
+      {running ? <SortProgressBar run={run} /> : null}
       <Text
         style={[t.body, styles.paragraph]}
         testID={running ? 'corpus-sweep-progress' : undefined}
@@ -354,5 +399,16 @@ const styles = StyleSheet.create({
   },
   actions: {
     marginTop: rhythm.sectionGap,
+  },
+  track: {
+    height: SORT_PROGRESS_HEIGHT,
+    borderRadius: radius.sm,
+    backgroundColor: surface.sunken,
+    overflow: 'hidden',
+    marginBottom: rhythm.blockGap,
+  },
+  fill: {
+    height: '100%',
+    backgroundColor: accent.primary,
   },
 });
