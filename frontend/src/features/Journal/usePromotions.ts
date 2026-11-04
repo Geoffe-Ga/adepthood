@@ -1,28 +1,44 @@
 /**
- * ``usePromotions`` — owns the promoted-quote list for one journal entry
- * (select-a-span -> promote-quote).
+ * ``usePromotions`` — owns the promoted-quote list for one source a reader can
+ * promote from: their own entry, a Course chapter or a Resonance Letter
+ * (select-a-span -> promote-quote; the source is a ``PromotionTarget``, #3660).
  *
  * ``promote`` raises a reader-selected span into the corpus and appends the
- * returned quote on success; a failure maps to a warm, non-blocking hint and
- * appends nothing. ``removePromotion`` drops a quote optimistically and reverts
- * it on error via the shared optimistic-remove primitive. One promote runs at a
- * time so a double-tap can't double-post.
+ * returned quote on success; a failure maps to a warm, non-blocking hint --
+ * worded for the source the reader was quoting from -- and appends nothing.
+ * ``removePromotion`` drops a quote optimistically and reverts it on error via
+ * the shared optimistic-remove primitive. One promote runs at a time so a
+ * double-tap can't double-post.
  */
 import type { Dispatch, SetStateAction } from 'react';
 import { useCallback, useEffect, useRef, useState } from 'react';
 
 import { mergeByIdSorted, mergeSnapshotUnder, useHydrateOnOpen } from './entryList';
 import { optimisticRemove } from './optimisticRemove';
+import {
+  LIST_PROMOTIONS,
+  createPromotion,
+  promotionTargetId,
+  type PromotionTarget,
+} from './promotionTarget';
 
 import { promotions } from '@/api';
-import type { PromotedQuote } from '@/api';
-import { formatApiError } from '@/api/errorMessages';
+import type { PromotedQuote, PromotedQuoteSourceKind } from '@/api';
+import { formatApiError, formatPromoteError } from '@/api/errorMessages';
+
+export type { PromotionTarget } from './promotionTarget';
 
 export interface UsePromotionsArgs {
-  /** The entry whose spans are being promoted. */
-  entryId: number;
-  /** Quotes already promoted for this entry (seeds the list). */
+  /** The source whose spans are being promoted (an entry, a chapter, a letter). */
+  target: PromotionTarget;
+  /** Quotes already promoted from this source (seeds the list). */
   initialQuotes?: PromotedQuote[];
+  /**
+   * Read the source's quotes on open (the default), so its highlights can be
+   * drawn. A surface that draws none -- a Course chapter, whose rendered
+   * Markdown carries no offsets -- passes false and spends no request on it.
+   */
+  hydrate?: boolean;
 }
 
 /**
@@ -67,40 +83,38 @@ function insertSorted(quotes: PromotedQuote[], quote: PromotedQuote): PromotedQu
   return mergeByIdSorted(quotes, [quote], byAnchorThenId);
 }
 
-/**
- * Adapt ``promotions.list``'s bare array into the ``{ items }`` shape the shared
- * hydrate hook expects. Named at module scope so its identity is stable and the
- * hydration effect doesn't re-run on every render.
- */
-function listPromotions(entryId: number): Promise<{ items: PromotedQuote[] }> {
-  return promotions.list(entryId).then((items) => ({ items }));
-}
-
 /** The sentinel id for an unsaved entry: there is nothing on the server to re-read. */
 const UNSAVED_ENTRY_ID = 0;
 
+/** One source's identity across kinds: entry 9 and letter 9 are different sources. */
+function sourceKey(kind: PromotedQuoteSourceKind, sourceId: number): string {
+  return `${kind}:${String(sourceId)}`;
+}
+
 /**
- * Re-read one entry's quotes, letting the server copy win every id collision.
- * ``entryIdRef`` is the live id: a response for an entry the screen has since
- * left is dropped rather than unioned into the new entry's list.
+ * Re-read one source's quotes, letting the server copy win every id collision.
+ * ``sourceRef`` is the live source: a response for a source the screen has
+ * since left is dropped rather than unioned into the new source's list.
  */
 function useRefreshPromotions(
-  entryId: number,
+  kind: PromotedQuoteSourceKind,
+  sourceId: number,
   setQuotes: Dispatch<SetStateAction<PromotedQuote[]>>,
   setHint: (_hint: string | null) => void,
 ): () => Promise<void> {
-  const entryIdRef = useRef(entryId);
-  entryIdRef.current = entryId;
+  const key = sourceKey(kind, sourceId);
+  const sourceRef = useRef(key);
+  sourceRef.current = key;
   return useCallback(async (): Promise<void> => {
-    if (entryId <= UNSAVED_ENTRY_ID) return;
+    if (sourceId <= UNSAVED_ENTRY_ID) return;
     try {
-      const { items } = await listPromotions(entryId);
-      if (entryIdRef.current !== entryId) return;
+      const { items } = await LIST_PROMOTIONS[kind](sourceId);
+      if (sourceRef.current !== key) return;
       setQuotes(mergeSnapshotUnder(items, byAnchorThenId, 'snapshot'));
     } catch (err) {
-      if (entryIdRef.current === entryId) setHint(formatApiError(err));
+      if (sourceRef.current === key) setHint(formatApiError(err));
     }
-  }, [entryId, setQuotes, setHint]);
+  }, [kind, sourceId, key, setQuotes, setHint]);
 }
 
 /** The span most recently handed to ``promote`` — held so a retry re-posts it. */
@@ -133,13 +147,15 @@ interface PromoteAction {
 }
 
 /**
- * Own the promote lifecycle for one entry: the single-flight ``create`` (never
- * throws — failures map to ``setHint``), the ``promoting``/``promoted`` render
- * signals, and a ``retryPromote`` that re-posts the last attempted span verbatim
- * so a failure never loses the reader's selection.
+ * Own the promote lifecycle for one source: the single-flight ``create`` (never
+ * throws — failures map to ``setHint``, worded for the source's kind), the
+ * ``promoting``/``promoted`` render signals, and a ``retryPromote`` that
+ * re-posts the last attempted span verbatim so a failure never loses the
+ * reader's selection.
  */
 function usePromoteAction(
-  entryId: number,
+  kind: PromotedQuoteSourceKind,
+  sourceId: number,
   setQuotes: Dispatch<SetStateAction<PromotedQuote[]>>,
   setHint: (_hint: string | null) => void,
 ): PromoteAction {
@@ -163,19 +179,20 @@ function usePromoteAction(
       setPromoting(true);
       setHint(null);
       try {
-        const created = await promotions.create(entryId, { anchor_start: start, anchor_end: end });
+        const span = { anchor_start: start, anchor_end: end };
+        const created = await createPromotion(kind, sourceId, span);
         setQuotes((prev) => insertSorted(prev, created));
         setPromoted(true);
         setPromoteFailed(false);
       } catch (err) {
-        setHint(formatApiError(err));
+        setHint(formatPromoteError(err, kind));
         setPromoteFailed(true);
       } finally {
         promotingRef.current = false;
         setPromoting(false);
       }
     },
-    [entryId, setQuotes, setHint],
+    [kind, sourceId, setQuotes, setHint],
   );
 
   const retryCallback = useCallback((): Promise<void> => {
@@ -194,9 +211,13 @@ function usePromoteAction(
 }
 
 export function usePromotions({
-  entryId,
+  target,
   initialQuotes = [],
+  hydrate = true,
 }: UsePromotionsArgs): UsePromotionsResult {
+  // Read as primitives: callers build ``target`` as a fresh literal each render.
+  const { kind } = target;
+  const sourceId = promotionTargetId(target);
   const [quotes, setQuotes] = useState<PromotedQuote[]>(initialQuotes);
   const [hint, setHint] = useState<string | null>(null);
   // Per-id guard for removals — no double-delete.
@@ -209,13 +230,23 @@ export function usePromotions({
 
   // ``'snapshot'``: on reopen the fetched server copy wins an id collision — the
   // hook's original semantics, preserved so this dedup stays behaviour-neutral.
-  useHydrateOnOpen(entryId, listPromotions, setQuotes, byAnchorThenId, setHint, 'snapshot');
+  // The reader is chosen by kind, so a change of kind under the same id re-reads
+  // (and resets) just as a change of id does.
+  useHydrateOnOpen(
+    hydrate ? sourceId : null,
+    LIST_PROMOTIONS[kind],
+    setQuotes,
+    byAnchorThenId,
+    setHint,
+    'snapshot',
+  );
   const { promote, retryPromote, promoting, promoted, clearRetry } = usePromoteAction(
-    entryId,
+    kind,
+    sourceId,
     setQuotes,
     setHint,
   );
-  const refresh = useRefreshPromotions(entryId, setQuotes, setHint);
+  const refresh = useRefreshPromotions(kind, sourceId, setQuotes, setHint);
 
   const removePromotion = useCallback(
     (id: number): Promise<void> =>
