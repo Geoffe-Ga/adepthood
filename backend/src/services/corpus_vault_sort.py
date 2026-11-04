@@ -35,6 +35,7 @@ idempotent: a sent entry carries a ``vault_ref`` and stops being a candidate.
 from __future__ import annotations
 
 import logging
+from dataclasses import dataclass
 from typing import Final
 
 from sqlalchemy import ColumnElement, func, or_
@@ -48,6 +49,7 @@ from models.journal_entry import JournalEntry
 from services.account_egress_barrier import ensure_account_live, hold_account
 from services.corpus_consent import load_consent
 from services.corpus_ingest import INGEST_SOURCE
+from services.creek_vault_pipeline import VaultPipelineTrigger, drive_vault_pipeline
 from services.creek_vault_write import VaultWriteStatus
 from services.journal_vault_write import record_vault_outcome
 from services.journal_withdrawal_obligation import deletion_in_progress_clause
@@ -125,20 +127,38 @@ async def _still_pending(
     return result.scalars().first()
 
 
+@dataclass(frozen=True, slots=True)
+class VaultTarget:
+    """Where a sort sends: the account, the vault it is bound to, and the client that dials it.
+
+    ``destination`` is the fingerprint :func:`resolved_vault_destination`
+    answered when the run began; an entry owed to any other vault is not sent.
+    """
+
+    user_id: int
+    destination: str | None
+    client: CreekVaultClient
+
+
 async def offer_to_vault(
     session: AsyncSession,
-    *,
+    target: VaultTarget,
     entry_id: int,
-    user_id: int,
-    destination: str | None,
-    client: CreekVaultClient,
+    *,
+    drive_pipeline: bool = True,
 ) -> VaultWriteStatus | None:
     """Offer one entry under the save path's own locks; ``None`` when nothing was offered.
+
+    ``drive_pipeline`` is passed to
+    :func:`services.journal_vault_write.record_vault_outcome`: a caller sending
+    many entries in a row passes ``False`` and calls :func:`nudge_vault_pipeline`
+    once afterwards.
 
     The account barrier outermost and the entry's vault-mutation lock inside
     it -- the nesting every journal write uses -- so a concurrent edit, delete,
     re-tier or revocation is ordered against this send rather than raced.
     """
+    user_id = target.user_id
     await session.commit()
     async with (
         hold_account(session, user_id),
@@ -148,9 +168,31 @@ async def offer_to_vault(
         if not (await load_consent(session, user_id=user_id, source=INGEST_SOURCE)).granted:
             return None
         entry = await _still_pending(
-            session, entry_id=entry_id, user_id=user_id, destination=destination
+            session, entry_id=entry_id, user_id=user_id, destination=target.destination
         )
         if entry is None:
             return None
-        outcome = await record_vault_outcome(session, entry, client)
+        outcome = await record_vault_outcome(
+            session, entry, target.client, drive_pipeline=drive_pipeline
+        )
         return None if outcome is None else outcome.status
+
+
+async def nudge_vault_pipeline(session: AsyncSession, target: VaultTarget) -> None:
+    """Ask the vault to classify what it was sent, once, after a batch of sends.
+
+    The nudge a journal save makes after each write, made once for many:
+    :func:`services.creek_vault_pipeline.drive_vault_pipeline` with the save's
+    own trigger, so it joins a classification already running or starts the
+    one this batch made due, and never raises. Inside the account barrier, as
+    every dial to this account's vault is.
+    """
+    await session.commit()
+    async with hold_account(session, target.user_id):
+        await ensure_account_live(session, target.user_id)
+        await drive_vault_pipeline(
+            session,
+            target.client,
+            user_id=target.user_id,
+            trigger=VaultPipelineTrigger.JOURNAL_WRITE,
+        )

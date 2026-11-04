@@ -87,8 +87,20 @@ SORT_BATCH_SIZE: Final[int] = 50
 #: ``BACKFILL_ENTRY_SECONDS`` (8s), a vault send by the vault adapter's
 #: whole-request deadline (30s) plus the pipeline nudge's own clock (10s), with
 #: the account barrier's wait in front. Three minutes leaves several times that
-#: before a live driver could be mistaken for a dead one.
+#: before a live driver could be mistaken for a dead one. A vault send retried
+#: through :data:`VAULT_RETRY_DELAYS_SECONDS` refreshes the heartbeat before
+#: every wait, so the ladder as a whole never counts against this.
 STALE_AFTER: Final[timedelta] = timedelta(minutes=3)
+
+#: How long to wait before each retry of a vault send that found the vault
+#: unavailable, in seconds. A managed vault sheds with ``503
+#: temporarily_unavailable`` whenever its concurrency limit is reached
+#: (``domain.creek_vault``), and a shed clears in a second or two -- so a single
+#: unavailable handshake is not a vault that is down, and stopping on it ended
+#: whole sorts on a blip. Doubling, five retries, about half a minute in all:
+#: long enough to ride out a shed, short enough that a vault that really is
+#: down is reported as such while somebody may still be looking.
+VAULT_RETRY_DELAYS_SECONDS: Final[tuple[float, ...]] = (1.0, 2.0, 4.0, 8.0, 16.0)
 
 #: The log lines a run writes: ids, counts and the closed vocabulary only.
 FINISHED_EVENT: Final[str] = "corpus_sort_run_finished"
@@ -131,8 +143,9 @@ class _Step:
 _NOT_OFFERED: Final = _Step()
 
 #: The vault lane's answer for each write outcome. A dropped write and an
-#: Intimate skip were offered without being sorted; the vault being unready or
-#: an operator's suspension is a fact about every entry, so the run stops.
+#: Intimate skip were offered without being sorted; an operator's suspension is
+#: a fact about every entry, so the run stops. ``UNAVAILABLE`` stops it too, but
+#: only once :data:`VAULT_RETRY_DELAYS_SECONDS` has been spent on that entry.
 _VAULT_STEPS: Final = {
     VaultWriteStatus.INGESTED: _Step(offered=True, sorted=True),
     VaultWriteStatus.DEGRADED: _Step(offered=True),
@@ -162,6 +175,11 @@ class _Drive:
     offered: int
     sorted: int
 
+    @property
+    def vault(self) -> corpus_vault_sort.VaultTarget:
+        """Where this run's vault lane sends."""
+        return corpus_vault_sort.VaultTarget(self.user_id, self.destination, self.client)
+
 
 async def _next_ids(session: AsyncSession, drive: _Drive, below_id: int | None) -> list[int]:
     """The next batch of pending ids under the cursor, highest first, per the lane's predicate."""
@@ -187,15 +205,36 @@ async def _offer_to_corpus(session: AsyncSession, drive: _Drive, entry_id: int) 
     return _Step(offered=offer.offered, sorted=offer.stored)
 
 
-async def _offer_to_vault(session: AsyncSession, drive: _Drive, entry_id: int) -> _Step:
-    """Send down the journal save's own path, read through :data:`_VAULT_STEPS`."""
-    status = await corpus_vault_sort.offer_to_vault(
-        session,
-        entry_id=entry_id,
-        user_id=drive.user_id,
-        destination=drive.destination,
-        client=drive.client,
+async def _send_once(
+    session: AsyncSession, drive: _Drive, entry_id: int
+) -> VaultWriteStatus | None:
+    """One send down the journal save's own path, without the per-write pipeline nudge.
+
+    The nudge is left to :func:`_nudge_the_vault` at the end: a nudge per entry
+    spawned classification polling on this same client beside the next send,
+    which is what pushed a managed vault into shedding mid-sort.
+    """
+    return await corpus_vault_sort.offer_to_vault(
+        session, drive.vault, entry_id, drive_pipeline=False
     )
+
+
+async def _offer_to_vault(session: AsyncSession, drive: _Drive, entry_id: int) -> _Step:
+    """Send one entry, waiting out a vault that is unavailable for a moment.
+
+    An unavailable answer is retried after each of :data:`VAULT_RETRY_DELAYS_SECONDS`.
+    Before every wait the heartbeat is refreshed -- which also commits, so no
+    pooled connection is held while asleep -- and a lost lease ends the driver
+    there rather than after the wait. Read through :data:`_VAULT_STEPS` once the
+    answer is anything else, or once the ladder is spent.
+    """
+    status = await _send_once(session, drive, entry_id)
+    for delay in VAULT_RETRY_DELAYS_SECONDS:
+        if status is not VaultWriteStatus.UNAVAILABLE:
+            break
+        await _record(session, drive, _NOT_OFFERED)
+        await asyncio.sleep(delay)
+        status = await _send_once(session, drive, entry_id)
     return _NOT_OFFERED if status is None else _VAULT_STEPS[status]
 
 
@@ -490,6 +529,12 @@ async def _walk(session: AsyncSession, drive: _Drive) -> SortStopReason | None:
     return None
 
 
+async def _nudge_the_vault(session: AsyncSession, drive: _Drive) -> None:
+    """Ask the vault to classify what this run sent, once, now that the sends are done."""
+    if drive.kind is SortLane.VAULT_BOUND and drive.sorted > 0:
+        await corpus_vault_sort.nudge_vault_pipeline(session, drive.vault)
+
+
 async def _receipt(session: AsyncSession, drive: _Drive) -> None:
     """File the app-provider reach as the bounded sweep does, so the export carries it."""
     change = await standing_consent_change(session, user_id=drive.user_id, source=INGEST_SOURCE)
@@ -555,6 +600,7 @@ async def _drive(
             return
         try:
             stop = await _walk(session, drive)
+            await _nudge_the_vault(session, drive)
         except (_LeaseLostError, HTTPException):
             return
         except Exception:
