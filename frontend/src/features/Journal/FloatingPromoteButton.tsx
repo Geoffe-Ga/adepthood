@@ -110,9 +110,13 @@ export interface FloatingPromoteButtonProps {
   testID?: string;
 }
 
-/** Whether the pill is in the tree, the 0..1 progress its fade and settle read, and the motion wish. */
+/**
+ * Whether the pill is in the tree, whether it has come to rest, the 0..1
+ * progress its fade and settle read, and the motion wish.
+ */
 interface FloatingPresence {
   mounted: boolean;
+  settled: boolean;
   progress: Animated.Value;
   reducedMotion: boolean;
 }
@@ -122,17 +126,25 @@ interface FloatingPresence {
  * fade has run, so a withdrawn pill is not merely invisible. Arrival settles in
  * over ``motion.base``, departure is quicker (``motion.fast``) because the
  * reader has already moved on. Under reduced motion both are instant.
+ *
+ * ``settled`` turns true once the pill has arrived, and the pill then carries
+ * no animated opacity or transform at all (#3661): a browser that kept the
+ * finished animation's layer cut its glass companions' backdrop blur off,
+ * leaving the page beneath them readable through the wash.
  */
 function useFloatingPresence(visible: boolean): FloatingPresence {
   const reducedMotion = useReducedMotion();
   const progress = useRef(new Animated.Value(visible ? 1 : 0)).current;
   const [mounted, setMounted] = useState(visible);
+  const [settled, setSettled] = useState(visible);
 
   useEffect(() => {
     if (visible) setMounted(true);
+    else setSettled(false);
     if (reducedMotion) {
       progress.setValue(visible ? 1 : 0);
-      if (!visible) setMounted(false);
+      if (visible) setSettled(true);
+      else setMounted(false);
       return undefined;
     }
     const animation = Animated.timing(progress, {
@@ -141,12 +153,14 @@ function useFloatingPresence(visible: boolean): FloatingPresence {
       useNativeDriver: true,
     });
     animation.start(({ finished }) => {
-      if (finished && !visible) setMounted(false);
+      if (!finished) return;
+      if (visible) setSettled(true);
+      else setMounted(false);
     });
     return () => animation.stop();
   }, [visible, reducedMotion, progress]);
 
-  return { mounted: mounted || visible, progress, reducedMotion };
+  return { mounted: mounted || visible, settled: settled && visible, progress, reducedMotion };
 }
 
 /**
@@ -279,6 +293,13 @@ function PrimaryControl({
   );
 }
 
+/** The fade and settle while the pill comes and goes; nothing at all once it rests. */
+function anchorMotion(settled: boolean, progress: Animated.Value) {
+  if (settled) return null;
+  const translateY = progress.interpolate({ inputRange: [0, 1], outputRange: [motion.settleY, 0] });
+  return { opacity: progress, transform: [{ translateY }] };
+}
+
 function FloatingPromoteButton({
   visible,
   onPress,
@@ -290,12 +311,11 @@ function FloatingPromoteButton({
   busy = false,
   testID = FLOATING_PROMOTE_TEST_ID,
 }: FloatingPromoteButtonProps): React.JSX.Element | null {
-  const { mounted, progress, reducedMotion } = useFloatingPresence(visible);
+  const { mounted, settled, progress, reducedMotion } = useFloatingPresence(visible);
   if (!mounted) return null;
-  const translateY = progress.interpolate({ inputRange: [0, 1], outputRange: [motion.settleY, 0] });
   return (
     <Animated.View
-      style={[styles.anchor, { opacity: progress, transform: [{ translateY }] }]}
+      style={[styles.anchor, anchorMotion(settled, progress)]}
       // ``box-none``: the band spans its frame, so only the pills take touches
       // and a tap beside them still lands on the text beneath. Withdrawn but
       // still fading, it is hidden from every reader and inert to touch.

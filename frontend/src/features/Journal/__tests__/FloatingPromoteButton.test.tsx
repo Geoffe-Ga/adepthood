@@ -79,11 +79,31 @@ describe('FloatingPromoteButton -- presence', () => {
     expect(getByTestId(FAB)).toBeTruthy();
   });
 
+  it('settles to rest with no animated transform or opacity, so its glass blurs the page (#3661)', async () => {
+    const { getByTestId, rerender, onPress, onCancel } = renderFab({ visible: false });
+    rerender(<FloatingPromoteButton visible onPress={onPress} onCancel={onCancel} />);
+    // Rising, it fades and settles...
+    expect(StyleSheet.flatten(getByTestId(`${FAB}-anchor`).props.style).transform).toBeDefined();
+    // ...and at rest it carries neither, because a browser that kept the
+    // finished animation's layer would cut the glass's backdrop blur off.
+    await waitFor(() =>
+      expect(
+        StyleSheet.flatten(getByTestId(`${FAB}-anchor`).props.style).transform,
+      ).toBeUndefined(),
+    );
+    expect(StyleSheet.flatten(getByTestId(`${FAB}-anchor`).props.style).opacity).toBeUndefined();
+    // Withdrawn, it fades out again from where it rests.
+    rerender(<FloatingPromoteButton visible={false} onPress={onPress} onCancel={onCancel} />);
+    const fading = getByTestId(`${FAB}-anchor`, { includeHiddenElements: true });
+    expect(StyleSheet.flatten(fading.props.style).transform).toBeDefined();
+  });
+
   it('under reduced motion appears at rest and leaves without a fade', () => {
     mockedReducedMotion.mockReturnValue(true);
     const { getByTestId, queryByTestId, rerender, onPress } = renderFab();
     const anchor = StyleSheet.flatten(getByTestId(`${FAB}-anchor`).props.style);
-    expect(anchor.opacity).toBe(1);
+    expect(anchor.opacity ?? 1).toBe(1);
+    expect(anchor.transform).toBeUndefined();
     rerender(<FloatingPromoteButton visible={false} onPress={onPress} />);
     expect(queryByTestId(`${FAB}-anchor`, { includeHiddenElements: true })).toBeNull();
   });
