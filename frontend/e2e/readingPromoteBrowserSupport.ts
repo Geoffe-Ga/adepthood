@@ -182,3 +182,85 @@ export async function startLetterPromote(
   }
   await expect(page.locator('textarea[data-testid="letter-quote-select-input"]')).toBeVisible();
 }
+
+/**
+ * Highlight ``text`` -- its ``occurrence``-th rendering -- inside the element
+ * with ``testId``, as a reader's drag across the rendered page leaves it: one
+ * DOM Range over the rendered text nodes, made the document's selection
+ * (#3661). The passage may cross text nodes (a bold word, a paragraph). Returns
+ * what the browser now holds selected.
+ */
+export async function selectRenderedText(
+  page: Page,
+  testId: string,
+  text: string,
+  occurrence = 0,
+): Promise<string> {
+  return page.evaluate(
+    ({ id, needle, nth }) => {
+      const root = document.querySelector(`[data-testid="${id}"]`);
+      if (root === null) throw new Error(`nothing is rendered as ${id}`);
+      const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+      const nodes: Text[] = [];
+      for (let node = walker.nextNode(); node !== null; node = walker.nextNode()) {
+        nodes.push(node as Text);
+      }
+      const joined = nodes.map((node) => node.data).join('');
+      let at = -1;
+      for (let seen = 0; seen <= nth; seen += 1) at = joined.indexOf(needle, at + 1);
+      if (at < 0) throw new Error(`"${needle}" is not rendered ${nth + 1} time(s) in ${id}`);
+      // The text node a joined offset falls in: the first that holds it, or
+      // for an end the first that reaches it.
+      const place = (offset: number, isEnd: boolean): [Text, number] => {
+        let start = 0;
+        for (const node of nodes) {
+          const end = start + node.data.length;
+          if (isEnd ? offset <= end : offset < end) return [node, offset - start];
+          start = end;
+        }
+        throw new Error(`offset ${offset} is past the rendered text`);
+      };
+      const range = document.createRange();
+      range.setStart(...place(at, false));
+      range.setEnd(...place(at + needle.length, true));
+      const selection = getSelection();
+      if (selection === null) throw new Error('the document has no selection');
+      selection.removeAllRanges();
+      selection.addRange(range);
+      return selection.toString();
+    },
+    { id: testId, needle: text, nth: occurrence },
+  );
+}
+
+/** The selected passage's box on screen, or null once nothing is selected. */
+export async function selectedBox(
+  page: Page,
+): Promise<{ top: number; bottom: number; left: number; right: number } | null> {
+  return page.evaluate(() => {
+    const selection = getSelection();
+    if (selection === null || selection.rangeCount === 0 || selection.isCollapsed) return null;
+    const { top, bottom, left, right } = selection.getRangeAt(0).getBoundingClientRect();
+    return { top, bottom, left, right };
+  });
+}
+
+/**
+ * Press the rendered-selection pill's Promote at its place on screen, as a
+ * reader's pointer does: a real mouse press, which must not collapse the
+ * passage it is about to act on. ``name`` is its accessible name.
+ */
+export async function pressRenderedPill(page: Page, name: string): Promise<void> {
+  const pill = page.getByRole('button', { name, exact: true });
+  await expect(pill).toBeInViewport();
+  await expect
+    .poll(() =>
+      page
+        .getByTestId('promote-selection-fab-anchor')
+        .evaluate((node) => getComputedStyle(node).opacity),
+    )
+    .toBe('1');
+  const box = await pill.boundingBox();
+  if (box === null) throw new Error('the Promote pill has no layout box');
+  await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
+}

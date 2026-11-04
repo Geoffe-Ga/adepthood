@@ -164,6 +164,7 @@ const EXPECTED_BROWSER_JOURNEYS = [
   'practice-stats.browser.e2e.test.ts',
   'practice-unconfirmed-stage.browser.e2e.test.ts',
   'practice-weekly-count.browser.e2e.test.ts',
+  'promote-by-highlighting.browser.e2e.test.ts',
   'promote-from-reading.browser.e2e.test.ts',
   'reauth-sheet-survives-anonymous-401.browser.e2e.test.ts',
   'resonance-credit-exhausted.browser.e2e.test.ts',

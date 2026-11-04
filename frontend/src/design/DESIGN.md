@@ -81,6 +81,22 @@ quote lands, lifted one pill higher while a passage is still chosen. While a
 chapter is in selection its bottom fade and chapter controls stand down, so
 nothing washes over the footer or the pill.
 
+**Promote by highlighting** (`features/Journal/RenderedSelectionPill.tsx`,
+#3661): on the web a reader need not open a selection field at all. A passage
+highlighted right where it is rendered -- journal read mode, a Resonance Letter
+-- brings the same pill to the same place, and the passage stays selected when
+it is pressed. Each such surface keeps a band the height of the pill's lift
+under its last row, its Promote a quote opener: at the text's end the pill rests
+on that row and the opener steps aside under it (in place, unseen, inert), so
+the pill never sits on the last line. The band is permanent, never conjured
+with the pill, because a band that came and went would move a centred card --
+and the words in it -- under the reader's hand. Wherever else the pill would
+cover the chosen words, the page lifts them a breath clear of it once the reader
+lets go (instantly under reduced motion), never further than keeps the
+passage's top in view. Select a passage and Promote a quote stay, as the
+keyboard's and the screen reader's way in; native, which exposes no selection
+on rendered text, keeps them alone.
+
 ## Palette provenance
 
 The accent is an **original** terracotta/sienna derived from the app's own
