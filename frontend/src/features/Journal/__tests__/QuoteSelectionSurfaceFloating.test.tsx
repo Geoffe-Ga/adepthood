@@ -103,13 +103,6 @@ describe('QuoteSelectionSurface floating confirm -- span producers', () => {
     act(() => webEmitSpan()(WALK_END, WALK_END));
     expect(queryByTestId(FAB)).toBeNull();
   });
-
-  it('draws no dock and no pill under the footer placement, even with a passage chosen', () => {
-    const { getByTestId, queryByTestId } = renderSurface({ confirmPlacement: 'footer' });
-    chooseWalk(getByTestId);
-    expect(queryByTestId('quote-select-dock', { includeHiddenElements: true })).toBeNull();
-    expect(queryByTestId(FAB, { includeHiddenElements: true })).toBeNull();
-  });
 });
 
 describe('QuoteSelectionSurface floating confirm -- promoting', () => {
@@ -216,10 +209,5 @@ describe('QuoteSelectionSurface floating confirm -- the band the pill floats in'
     expect(at('quote-select-input')).toBeLessThan(at('quote-select-pill-reserve'));
     expect(at('quote-select-pill-reserve')).toBeLessThan(at('quote-select-footer'));
     expect(at('quote-select-footer')).toBeLessThan(at('quote-select-dock'));
-  });
-
-  it('reserves nothing under the footer placement, which has no pill', () => {
-    const { queryByTestId } = renderSurface({ confirmPlacement: 'footer' });
-    expect(queryByTestId('quote-select-pill-reserve', { includeHiddenElements: true })).toBeNull();
   });
 });

@@ -414,13 +414,6 @@ const styles = StyleSheet.create({
     minHeight: touchTarget.minimum,
     justifyContent: 'center',
   },
-  /** Row holding the Promote / Cancel actions under the span-selection field. */
-  quoteSelectActions: {
-    flexDirection: 'row',
-    gap: SPACING.md,
-    paddingTop: spacing(1),
-    alignItems: 'center',
-  },
   /**
    * The read-only mirror of the body the reader selects a passage from. Same
    * face and inset as ``bodyInput`` but no blank-page floor or ``flexGrow``:
@@ -504,12 +497,6 @@ const styles = StyleSheet.create({
   quoteSelectCancelInline: {
     ...editorialType.action,
     color: accent.primary,
-  },
-  /** Warm (not alarming) nudge shown when confirm is tapped with no selection. */
-  quoteSelectHint: {
-    ...editorialType.note,
-    color: colors.paper.inkSoft,
-    paddingTop: spacing(1),
   },
   /** Quiet in-flight line shown under the body while a promote POST is pending. */
   promotionInflight: {

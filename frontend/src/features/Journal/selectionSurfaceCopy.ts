@@ -16,25 +16,26 @@ import type { Platform } from 'react-native';
 
 type SelectionSurfacePlatform = typeof Platform.OS;
 
-/** The two lines the surface speaks: the standing instruction and the empty-tap hint. */
+/**
+ * What the surface says: the standing instruction. (The empty-tap hint went
+ * with the footer confirm it answered for; the pill only appears once a
+ * passage is chosen, so there is no empty tap left to answer.)
+ */
 export interface SelectionSurfaceCopy {
   instruction: string;
-  emptyHint: string;
 }
 
 const NATIVE_COPY: SelectionSurfaceCopy = {
   instruction: 'Touch and hold a passage, then drag to choose it.',
-  emptyHint: 'Choose a passage first — touch and hold the text.',
 };
 
 const WEB_COPY: SelectionSurfaceCopy = {
   instruction:
     'Select a passage — drag across it with the mouse, double-click a word, ' +
     'or hold Shift and use the arrow keys.',
-  emptyHint: 'Choose a passage first — select some of the text above.',
 };
 
-/** The instruction and empty hint for ``platform``; web speaks to a pointer and keyboard. */
+/** The instruction for ``platform``; web speaks to a pointer and keyboard. */
 export const buildSelectionSurfaceCopy = (
   platform: SelectionSurfacePlatform,
 ): SelectionSurfaceCopy => (platform === 'web' ? WEB_COPY : NATIVE_COPY);

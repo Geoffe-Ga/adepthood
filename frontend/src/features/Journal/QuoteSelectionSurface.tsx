@@ -13,10 +13,9 @@
  * the passage lies, and withdraws when the selection collapses; its X clears
  * the selection. The footer under the field keeps the one-line echo and Cancel
  * (which leaves selection mode) and, on web, stays pinned to the foot of the
- * viewport (#2952), so there is never a second primary on screen. A surface
- * that passes ``confirmPlacement="footer"`` keeps the older footer confirm: an
- * honestly disabled Button that lights once a passage is chosen, an empty tap
- * surfacing a gentle hint instead.
+ * viewport (#2952), so there is never a second primary on screen. Every
+ * surface that promotes a passage confirms on the pill; the older footer
+ * confirm, which no surface used any longer, is retired (#3661).
  *
  * A host can add to the pill (#3660): a Course chapter offers Write a note
  * beside Promote, shows the pill busy while a promote it holds behind a
@@ -35,7 +34,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Platform,
-  Pressable,
   Text,
   TextInput,
   TouchableOpacity,
@@ -58,7 +56,6 @@ import { useGrowingFieldHeight } from './useGrowingFieldHeight';
 import { useInitialFieldSelection, useWebSelectionListener } from './webSelectionListener';
 import { revealWebOffset } from './webSelectionReveal';
 
-import { Button } from '@/components/Button';
 import { editorialType, writingFieldFocus } from '@/design/tokens';
 
 type SelectionChangeEvent = NativeSyntheticEvent<TextInputSelectionChangeEventData>;
@@ -108,12 +105,6 @@ interface PillOptions {
   busy: boolean;
 }
 
-/**
- * Where the surface puts its confirm: on the floating pill that comes to the
- * selection (the default, #3134), or in the footer under the field.
- */
-export type ConfirmPlacement = 'floating' | 'footer';
-
 export interface QuoteSelectionSurfaceProps {
   body: string;
   /** Emits the selection as a code-point span (already converted from UTF-16). */
@@ -128,16 +119,11 @@ export interface QuoteSelectionSurfaceProps {
   testID?: string;
   /** Label on the confirm; defaults to the promote-flow wording. */
   confirmLabel?: string;
-  /**
-   * The floating pill by default; ``'footer'`` keeps the older confirm under
-   * the field for a host that still wants it.
-   */
-  confirmPlacement?: ConfirmPlacement;
   /** The pill's accessible name, when it should say more than its label ("Promote this passage"). */
   confirmAccessibilityLabel?: string;
   /**
    * A quieter second action on the floating pill, beside the confirm: a Course
-   * chapter's Write a note (#3660). Floating placement only.
+   * chapter's Write a note (#3660).
    */
   secondaryAction?: FloatingSecondaryAction;
   /**
@@ -179,16 +165,13 @@ interface SelectionSurfaceState {
   previewSlice: string;
   /** The raw selection's UTF-16 end: where clearing the selection collapses it to. */
   selectionEnd: number;
-  hintVisible: boolean;
   emitSpan: (_startUtf16: number, _endUtf16: number) => void;
   handleSelectionChange: (_event: SelectionChangeEvent) => void;
-  showHint: () => void;
 }
 
 /**
- * Own the surface's selection and hint state in one place: hold the raw UTF-16
- * span, emit the trimmed code-point span at the single conversion boundary, and
- * clear the empty-tap hint the moment a real passage is chosen.
+ * Own the surface's selection state in one place: hold the raw UTF-16 span and
+ * emit the trimmed code-point span at the single conversion boundary.
  */
 function useSelectionSurfaceState(
   body: string,
@@ -206,18 +189,13 @@ function useSelectionSurfaceState(
         },
   );
   const [span, setSpan] = useState<Utf16Span>(() => initialSpan ?? { start: 0, end: 0 });
-  const [hintVisible, setHintVisible] = useState(false);
 
   const emitSpan = useCallback(
     (startUtf16: number, endUtf16: number) => {
       setSpan({ start: startUtf16, end: endUtf16 });
-      const anchor = selectionToAnchorSpan(body, { start: startUtf16, end: endUtf16 });
-      onSelectionChange(anchor);
-      if (anchor.end > anchor.start) {
-        setHintVisible(false);
-      }
+      onSelectionChange(selectionToAnchorSpan(body, { start: startUtf16, end: endUtf16 }));
     },
-    [body, onSelectionChange, setSpan, setHintVisible],
+    [body, onSelectionChange, setSpan],
   );
 
   const handleSelectionChange = useCallback(
@@ -228,11 +206,9 @@ function useSelectionSurfaceState(
     [emitSpan],
   );
 
-  const showHint = useCallback(() => setHintVisible(true), [setHintVisible]);
-
   // Gate emptiness on the span the API actually receives (trimmed, in code
-  // points), so the disabled confirm and the posted anchors agree at the same
-  // boundary. The preview echoes that same span: exactly what will be stored.
+  // points), so the pill and the posted anchors agree at the same boundary. The
+  // preview echoes that same span: exactly what will be stored.
   const anchor = selectionToAnchorSpan(body, span);
   const isEmpty = anchor.end <= anchor.start;
   return {
@@ -242,10 +218,8 @@ function useSelectionSurfaceState(
     previewSlice: isEmpty
       ? ''
       : body.slice(codePointToUtf16(body, anchor.start), codePointToUtf16(body, anchor.end)),
-    hintVisible,
     emitSpan,
     handleSelectionChange,
-    showHint,
   };
 }
 
@@ -329,17 +303,14 @@ function useSelectionFieldGrowth(): {
   return { growth, onContentSizeChange: measured.onContentSizeChange };
 }
 
-/** Leave selection mode: the one decline, in the footer in both placements. */
+/** Leave selection mode: the one decline, in the footer beside the echo. */
 function CancelControl({
   onCancel,
   testID,
-  inline,
   naming,
 }: {
   onCancel: () => void;
   testID: string;
-  /** True in the floating footer's row, where the label centres on the row's line. */
-  inline: boolean;
   naming: CancelNaming;
 }): React.JSX.Element {
   return (
@@ -350,77 +321,25 @@ function CancelControl({
       style={styles.quoteActionButton}
       testID={`${testID}-cancel`}
     >
-      <Text style={inline ? styles.quoteSelectCancelInline : styles.controlLink}>
-        {naming.label}
-      </Text>
+      <Text style={styles.quoteSelectCancelInline}>{naming.label}</Text>
     </TouchableOpacity>
   );
 }
 
-interface SelectionActionsProps {
-  isEmpty: boolean;
-  onConfirm: () => Promise<void>;
-  onCancel: () => void;
-  showHint: () => void;
-  testID: string;
-  confirmLabel: string;
-  cancelNaming: CancelNaming;
-}
-
 /**
- * The footer placement's confirm/cancel row. An empty tap lands on the guard (a
- * hint) and ``onConfirm`` never fires on an empty span. The guard loses its
- * handler once the Button enables; it must not become a disabled ancestor,
- * because web accessibility semantics would then disable the enabled
- * descendant too.
+ * The highlighted card echoing the chosen passage back before it is promoted:
+ * one line, sharing the footer's row with Cancel.
  */
-function SelectionActions({
-  isEmpty,
-  onConfirm,
-  onCancel,
-  showHint,
-  testID,
-  confirmLabel,
-  cancelNaming,
-}: SelectionActionsProps): React.JSX.Element {
-  return (
-    <View style={styles.quoteSelectActions}>
-      <Pressable
-        accessible={false}
-        onPress={isEmpty ? showHint : undefined}
-        testID={`${testID}-confirm-guard`}
-      >
-        <Button
-          variant="primary"
-          label={confirmLabel}
-          disabled={isEmpty}
-          onPress={() => void onConfirm()}
-          testID={`${testID}-confirm`}
-        />
-      </Pressable>
-      <CancelControl onCancel={onCancel} testID={testID} inline={false} naming={cancelNaming} />
-    </View>
-  );
-}
-
-/** The highlighted card echoing the chosen passage back before it is promoted. */
 function PreviewCard({
   previewSlice,
   testID,
-  inline,
 }: {
   previewSlice: string;
   testID: string;
-  /** True in the floating footer's row: one line, sharing the row with Cancel. */
-  inline: boolean;
 }): React.JSX.Element {
   return (
-    <View style={[styles.quoteSelectPreview, inline && styles.quoteSelectPreviewInline]}>
-      <Text
-        style={styles.quoteSelectPreviewText}
-        numberOfLines={inline ? 1 : undefined}
-        testID={`${testID}-preview`}
-      >
+    <View style={[styles.quoteSelectPreview, styles.quoteSelectPreviewInline]}>
+      <Text style={styles.quoteSelectPreviewText} numberOfLines={1} testID={`${testID}-preview`}>
         {previewSlice}
       </Text>
     </View>
@@ -446,8 +365,8 @@ function SelectionFooter({
 }
 
 /**
- * The floating placement's footer: the echo and Cancel on one row, the echo
- * held to a single line so the plate stays under the floating pill's lift.
+ * The footer's row: the echo and Cancel, the echo held to a single line so the
+ * plate stays under the floating pill's lift.
  * Before a passage is chosen a spacer holds Cancel on the same trailing edge.
  */
 function FloatingFooterRow({
@@ -466,9 +385,9 @@ function FloatingFooterRow({
       {previewSlice === '' ? (
         <View style={styles.quoteSelectFooterSpacer} />
       ) : (
-        <PreviewCard previewSlice={previewSlice} testID={testID} inline />
+        <PreviewCard previewSlice={previewSlice} testID={testID} />
       )}
-      <CancelControl onCancel={onCancel} testID={testID} inline naming={cancelNaming} />
+      <CancelControl onCancel={onCancel} testID={testID} naming={cancelNaming} />
     </View>
   );
 }
@@ -619,7 +538,6 @@ function FloatingConfirm({
 
 interface SelectionActionsAreaProps {
   state: SelectionSurfaceState;
-  floating: boolean;
   collapse: () => void;
   onConfirm: () => Promise<void>;
   onCancel: () => void;
@@ -630,13 +548,12 @@ interface SelectionActionsAreaProps {
 }
 
 /**
- * Everything after the field: the pinned footer, and -- in the floating
- * placement -- the band the pill rests in at the text's end, before the
- * footer, and the dock it rides in, last so it paints over the rest.
+ * Everything after the field: the band the pill rests in at the text's end,
+ * the pinned footer, and the dock the pill rides in, last so it paints over
+ * the rest.
  */
 function SelectionActionsArea({
   state,
-  floating,
   collapse,
   onConfirm,
   onCancel,
@@ -647,39 +564,23 @@ function SelectionActionsArea({
 }: SelectionActionsAreaProps): React.JSX.Element {
   return (
     <>
-      {floating ? (
-        <View style={styles.quoteSelectPillReserve} testID={`${testID}-pill-reserve`} />
-      ) : null}
+      <View style={styles.quoteSelectPillReserve} testID={`${testID}-pill-reserve`} />
       <SelectionFooter testID={testID}>
-        {floating ? (
-          <FloatingFooterRow
-            previewSlice={state.previewSlice}
-            onCancel={onCancel}
-            testID={testID}
-            cancelNaming={cancelNaming}
-          />
-        ) : (
-          <FooterConfirm
-            state={state}
-            emptyHint={buildSelectionSurfaceCopy(Platform.OS).emptyHint}
-            onConfirm={onConfirm}
-            onCancel={onCancel}
-            testID={testID}
-            confirmLabel={confirmLabel}
-            cancelNaming={cancelNaming}
-          />
-        )}
-      </SelectionFooter>
-      {floating ? (
-        <FloatingConfirm
-          isEmpty={state.isEmpty}
-          collapse={collapse}
-          onConfirm={onConfirm}
-          confirmLabel={confirmLabel}
-          pill={pill}
+        <FloatingFooterRow
+          previewSlice={state.previewSlice}
+          onCancel={onCancel}
           testID={testID}
+          cancelNaming={cancelNaming}
         />
-      ) : null}
+      </SelectionFooter>
+      <FloatingConfirm
+        isEmpty={state.isEmpty}
+        collapse={collapse}
+        onConfirm={onConfirm}
+        confirmLabel={confirmLabel}
+        pill={pill}
+        testID={testID}
+      />
     </>
   );
 }
@@ -688,7 +589,7 @@ function SelectionActionsArea({
  * The warm guiding line above the field. Its wording is resolved per render
  * rather than at module load so it follows the platform the surface is
  * actually mounted on (and so a test that sets ``Platform.OS`` after import
- * sees the copy change); the footer's empty-tap hint is resolved the same way.
+ * sees the copy change).
  */
 function SelectionInstruction({ testID }: { testID: string }): React.JSX.Element {
   return (
@@ -731,7 +632,6 @@ function QuoteSelectionSurface({
   onCancel,
   testID = DEFAULT_TEST_ID,
   confirmLabel = DEFAULT_PROMOTE_LABEL,
-  confirmPlacement = 'floating',
   clearSelectionKey,
   maxFieldHeight,
   initialSelection,
@@ -761,7 +661,6 @@ function QuoteSelectionSurface({
       />
       <SelectionActionsArea
         state={state}
-        floating={confirmPlacement === 'floating'}
         collapse={collapse}
         onConfirm={onConfirm}
         onCancel={onCancel}
@@ -771,47 +670,6 @@ function QuoteSelectionSurface({
         cancelNaming={cancelNaming}
       />
     </View>
-  );
-}
-
-/** The footer placement's contents: the preview card, the action row and the empty-tap hint. */
-function FooterConfirm({
-  state,
-  emptyHint,
-  onConfirm,
-  onCancel,
-  testID,
-  confirmLabel,
-  cancelNaming,
-}: {
-  state: SelectionSurfaceState;
-  emptyHint: string;
-  onConfirm: () => Promise<void>;
-  onCancel: () => void;
-  testID: string;
-  confirmLabel: string;
-  cancelNaming: CancelNaming;
-}): React.JSX.Element {
-  return (
-    <>
-      {state.previewSlice === '' ? null : (
-        <PreviewCard previewSlice={state.previewSlice} testID={testID} inline={false} />
-      )}
-      <SelectionActions
-        isEmpty={state.isEmpty}
-        onConfirm={onConfirm}
-        onCancel={onCancel}
-        showHint={state.showHint}
-        testID={testID}
-        confirmLabel={confirmLabel}
-        cancelNaming={cancelNaming}
-      />
-      {state.hintVisible ? (
-        <Text style={styles.quoteSelectHint} testID={`${testID}-hint`}>
-          {emptyHint}
-        </Text>
-      ) : null}
-    </>
   );
 }
 
