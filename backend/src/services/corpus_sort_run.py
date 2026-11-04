@@ -56,7 +56,7 @@ from datetime import UTC, datetime, timedelta
 from functools import partial
 from typing import Final
 
-from fastapi import HTTPException
+from fastapi import HTTPException, status
 from sqlalchemy import or_, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
@@ -105,6 +105,9 @@ VAULT_RETRY_DELAYS_SECONDS: Final[tuple[float, ...]] = (1.0, 2.0, 4.0, 8.0, 16.0
 #: The log lines a run writes: ids, counts and the closed vocabulary only.
 FINISHED_EVENT: Final[str] = "corpus_sort_run_finished"
 FAULT_EVENT: Final[str] = "corpus_sort_run_fault"
+#: Written when the account barrier refused to order a run's egress (its lock
+#: connection would not open), naming the run it ended (#3675).
+ORDERING_REFUSED_EVENT: Final[str] = "corpus_sort_run_ordering_refused"
 
 #: Builds a vault client for an account, for a run resumed off any request.
 VaultClientResolver = Callable[[AsyncSession, int], Awaitable[CreekVaultClient]]
@@ -582,15 +585,40 @@ async def _finish(
     )
 
 
+async def _settle(session: AsyncSession, drive: _Drive, stop: SortStopReason | None) -> None:
+    """Close a run whose walk ended: completed if nothing stopped it, stopped if something did."""
+    state = SortRunState.COMPLETED if stop is None else SortRunState.STOPPED
+    await _finish(session, drive, state, stop)
+
+
+async def _on_refusal(session: AsyncSession, drive: _Drive, refusal: HTTPException) -> None:
+    """Answer the account barrier refusing this driver's egress.
+
+    The barrier refuses for one of two reasons, and they leave different things
+    behind. A 401 is the account erased mid-run: its run row went with it, so
+    there is nothing to close and nothing to say. Anything else is the barrier
+    unable to order egress at all (a 503 when its lock connection will not open,
+    ``voice_draft_privacy.EGRESS_ORDERING_UNAVAILABLE``). Left running, that row
+    went stale, was reclaimed by :func:`resume_corpus_sort_runs` and refused
+    again, every few minutes and without a trace naming it (#3675). So the run
+    fails -- the screen stops waiting and offers a fresh press, and recovery has
+    nothing to retry -- after one line naming it.
+    """
+    if refusal.status_code == status.HTTP_401_UNAUTHORIZED:
+        return
+    await session.rollback()
+    logger.warning(ORDERING_REFUSED_EVENT, extra={"user_id": drive.user_id, "run_id": drive.run_id})
+    await _finish(session, drive, SortRunState.FAILED, None)
+
+
 async def _drive(
     factory: async_sessionmaker[AsyncSession], *, run_id: int, owner: str, client: CreekVaultClient
 ) -> None:
     """Carry one run to its end, in a session of its own.
 
     Cancellation (a shutdown) is not caught, so the row stays running and is
-    resumed. A lost lease, or the account barrier refusing because the account
-    is gone or the barrier is unavailable, ends this driver quietly: the row
-    went with its account, or stays for :func:`resume_corpus_sort_runs`. Any
+    resumed. A lost lease ends this driver quietly: another one holds the run.
+    A refusal from the account barrier is answered by :func:`_on_refusal`. Any
     other fault marks the run failed, so the screen stops waiting, and is
     re-raised for :func:`_forget` to note in ids only.
     """
@@ -601,14 +629,16 @@ async def _drive(
         try:
             stop = await _walk(session, drive)
             await _nudge_the_vault(session, drive)
-        except (_LeaseLostError, HTTPException):
+        except _LeaseLostError:
+            return
+        except HTTPException as refusal:
+            await _on_refusal(session, drive, refusal)
             return
         except Exception:
             await session.rollback()
             await _finish(session, drive, SortRunState.FAILED, None)
             raise
-        state = SortRunState.COMPLETED if stop is None else SortRunState.STOPPED
-        await _finish(session, drive, state, stop)
+        await _settle(session, drive, stop)
 
 
 async def resume_corpus_sort_runs(

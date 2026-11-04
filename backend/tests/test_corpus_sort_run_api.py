@@ -30,12 +30,14 @@ from types import SimpleNamespace
 
 import pytest
 import pytest_asyncio
+from fastapi import HTTPException
 from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from sqlmodel import col, func, select
 
 from dependencies.creek_vault import get_creek_vault_client
 from domain.frequencies import Frequency
+from errors import service_unavailable
 from main import app
 from models.corpus_fragment import CorpusFragment, CorpusSource
 from models.corpus_sort_run import CorpusSortRun, SortLane, SortRunState, SortStopReason
@@ -47,6 +49,7 @@ from services.corpus_consent import set_consent
 from services.creek_vault_client import LocalFallbackCreekVaultClient
 from services.creek_vault_telemetry import VaultTelemetryOutcome
 from services.user_vault_config import store_vault_config
+from services.voice_draft_privacy import EGRESS_ORDERING_UNAVAILABLE
 from tests.test_corpus_sweep_vault_bound import _DownVault
 from tests.test_journal_vault_write import SequencedVaultClient
 
@@ -598,3 +601,74 @@ async def test_one_account_never_sees_or_joins_anothers_run(
     assert theirs_before == {"entries_pending": 0, "run": None}
     assert theirs["id"] != mine["id"]
     assert theirs["stop_reason"] == SortStopReason.NO_CONSENT.value
+
+
+@pytest.mark.asyncio
+async def test_a_barrier_that_cannot_order_ends_the_run_with_a_trace(
+    async_client: AsyncClient,
+    db_session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """#3675: a 503 from the account barrier ends the run, logged against it.
+
+    The barrier refuses to egress unordered when its lock connection will not
+    open. The driver used to swallow that alongside the account-gone 401 and
+    leave the row running, to be reclaimed and refused again every few minutes
+    for ever, with nothing naming the run. Now the run fails, so the screen
+    stops waiting and recovery has nothing to retry, and one ids-only line says
+    which run met the refusal.
+    """
+
+    async def unordered(*_args: object, **_kwargs: object) -> None:
+        raise service_unavailable(EGRESS_ORDERING_UNAVAILABLE)
+
+    monkeypatch.setattr(corpus_backfill, "offer_entry", unordered)
+    caplog.set_level(logging.INFO)
+    headers, user_id = await _signup(async_client, "sort-run-unordered")
+    await _consent(db_session, user_id)
+    await _entries(db_session, user_id, _SMALL_BACKLOG)
+
+    await _press(async_client, headers)
+    run = _run_of(await _settled(async_client, headers))
+
+    assert run["state"] == SortRunState.FAILED.value
+    refusals = [
+        record
+        for record in caplog.records
+        if record.getMessage() == corpus_sort_run.ORDERING_REFUSED_EVENT
+    ]
+    assert [(r.__dict__["run_id"], r.__dict__["user_id"]) for r in refusals] == [
+        (run["id"], user_id)
+    ]
+    assert all(_SENTINEL not in str(record.__dict__) for record in caplog.records)
+
+
+@pytest.mark.asyncio
+async def test_an_account_erased_mid_run_ends_the_driver_quietly(
+    async_client: AsyncClient,
+    db_session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """The barrier's 401 means the account is gone, and its run row with it: no trace to leave.
+
+    Told apart from the 503 above so only a refusal that leaves a live run
+    behind fails it; an erased account's driver simply stops.
+    """
+
+    async def erased(*_args: object, **_kwargs: object) -> None:
+        raise HTTPException(status_code=HTTPStatus.UNAUTHORIZED, detail="unauthorized")
+
+    monkeypatch.setattr(corpus_backfill, "offer_entry", erased)
+    caplog.set_level(logging.INFO)
+    headers, user_id = await _signup(async_client, "sort-run-erased")
+    await _consent(db_session, user_id)
+    await _entries(db_session, user_id, _SMALL_BACKLOG)
+
+    await _press(async_client, headers)
+    run = _run_of(await _settled(async_client, headers))
+
+    assert run["state"] == SortRunState.RUNNING.value
+    quiet = {corpus_sort_run.ORDERING_REFUSED_EVENT, corpus_sort_run.FAULT_EVENT}
+    assert not [record for record in caplog.records if record.getMessage() in quiet]
