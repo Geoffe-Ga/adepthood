@@ -42,7 +42,10 @@ import {
   CORPUS_SWEEP_READ_FAILURE,
   CORPUS_SWEEP_TITLE,
 } from '../corpusSweepCopy';
-import CorpusSweepScreen, { SORT_POLL_INTERVAL_MS } from '../CorpusSweepScreen';
+import CorpusSweepScreen, {
+  SORT_POLL_INTERVAL_MS,
+  sortProgressFraction,
+} from '../CorpusSweepScreen';
 
 import { ApiError } from '@/api';
 import { setActiveUser } from '@/storage/userScope';
@@ -148,6 +151,50 @@ describe('CorpusSweepScreen', () => {
     expect(await screen.findByText('Sorted 412 entries. Nothing is left unsorted.')).toBeTruthy();
     expect(screen.queryByTestId('corpus-sweep-confirm')).toBeNull();
     expect(mockSweep).toHaveBeenCalledTimes(1);
+  });
+
+  test('a running sort shows a progress bar of entries looked at, and drops it when done', async () => {
+    jest.useFakeTimers();
+    mockSweep.mockResolvedValueOnce(pressed(run()));
+    const screen = render(<CorpusSweepScreen />);
+
+    fireEvent.press(await screen.findByText('Sort all 412 entries'));
+    const atStart = await screen.findByTestId('corpus-sweep-progress-bar');
+    expect(atStart.props.accessibilityRole).toBe('progressbar');
+    expect(atStart.props.accessibilityValue).toEqual({ min: 0, max: BACKLOG, now: 0 });
+    expect(screen.getByTestId('corpus-sweep-progress-fill')).toHaveStyle({ width: '0%' });
+    expect(screen.queryAllByText(/\b0\b/)).toHaveLength(0);
+
+    mockSweepEstimate.mockResolvedValueOnce({
+      entries_pending: 309,
+      run: run({ entries_offered: 103, entries_sorted: 103 }),
+    });
+    await nextPoll();
+    await waitFor(() =>
+      expect(screen.getByTestId('corpus-sweep-progress-bar').props.accessibilityValue).toEqual({
+        min: 0,
+        max: BACKLOG,
+        now: 103,
+      }),
+    );
+    expect(screen.getByTestId('corpus-sweep-progress-bar').props.accessibilityLabel).toBe(
+      'Sorting in the background: 103 of 412 looked at so far.',
+    );
+    expect(screen.getByTestId('corpus-sweep-progress-fill')).toHaveStyle({ width: '25%' });
+
+    mockSweepEstimate.mockResolvedValueOnce({
+      entries_pending: 0,
+      run: finished({ entries_offered: BACKLOG, entries_sorted: BACKLOG }),
+    });
+    await nextPoll();
+    await screen.findByText('Sorted 412 entries. Nothing is left unsorted.');
+    expect(screen.queryByTestId('corpus-sweep-progress-bar')).toBeNull();
+  });
+
+  test('the bar counts against whichever is larger, so it never overfills', () => {
+    const offered = 450;
+    expect(sortProgressFraction(run({ entries_total: BACKLOG, entries_offered: offered }))).toBe(1);
+    expect(sortProgressFraction(run({ entries_total: 0, entries_offered: 0 }))).toBe(0);
   });
 
   test('stops polling once the sort ends, and when the screen goes', async () => {
