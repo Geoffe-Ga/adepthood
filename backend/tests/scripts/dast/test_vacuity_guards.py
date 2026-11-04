@@ -34,7 +34,6 @@ from scripts.dast.references import (
 from scripts.dast.report import EXIT_CLEAN, EXIT_HARNESS_ERROR
 from scripts.dast.runner import (
     DEFAULT_BUDGET_SECONDS,
-    DEFAULT_MAX_ALLOWLIST_FRACTION,
     DEFAULT_MIN_REFERENCES,
     DEFAULT_MIN_ROUTES,
     run_matrix,
@@ -44,7 +43,6 @@ from scripts.dast.verdict import (
     CellResult,
     ReferenceCellResult,
     Verdict,
-    require_allowlist_bounded,
     require_allowlist_is_live,
     require_auth_established,
     require_declared_references_classified,
@@ -52,17 +50,19 @@ from scripts.dast.verdict import (
     require_minimum_reference_coverage,
     require_no_throttling,
     require_positive_controls,
-    require_reference_allowlist_bounded,
     require_reference_positive_controls,
     require_seeded_resources,
     require_within_budget,
 )
 from tests.scripts.dast.conftest import (
+    LEAKY_WIDGET_DELETE,
+    LEAKY_WIDGET_GET,
     REFERENCE_GUARDED_NOTE_POST,
     REFERENCE_LEAKY_ATTACHMENT_POST,
     REFERENCE_LEAKY_FOLD_POST,
     REFERENCE_LEAKY_NOTE_POST,
     REFERENCE_STUB_REFERENCES,
+    SAFE_ITEM_GET,
     STUB_OBJECT_SCOPED_ROUTES,
     STUB_REFERENCE_REGISTRY,
     StubDeployment,
@@ -75,9 +75,6 @@ from tests.scripts.dast.conftest import (
 BLIND_STUB_MIN_ROUTES = 1
 
 PROBED_TOO_FEW = 5
-ALLOWLISTED_MAJORITY = 3
-ALLOWLISTED_MINORITY = 2
-DISCOVERED_ROUTES = 4
 OVER_BUDGET_SECONDS = 130.0
 WITHIN_BUDGET_SECONDS = 42.0
 
@@ -305,30 +302,6 @@ def test_allowlist_liveness_trips_on_an_entry_scoped_to_a_field_nobody_publishes
 def test_allowlist_liveness_is_silent_when_a_field_scoped_entry_names_a_live_field() -> None:
     """A narrow excuse for a property the route still publishes is doing its job."""
     assert require_allowlist_is_live((LIVE_FIELD_ENTRY,), (NOTE_ROUTE,)) is None
-
-
-def test_allowlist_bounded_trips_when_most_of_the_app_is_excused() -> None:
-    """Excusing the majority of routes turns the gate into decoration."""
-    failure = require_allowlist_bounded(
-        ALLOWLISTED_MAJORITY,
-        DISCOVERED_ROUTES,
-        max_fraction=DEFAULT_MAX_ALLOWLIST_FRACTION,
-    )
-
-    assert failure is not None
-    assert failure.guard == "require_allowlist_bounded"
-
-
-def test_allowlist_bounded_is_silent_at_the_permitted_fraction() -> None:
-    """Half is the documented ceiling, so exactly half still passes."""
-    assert (
-        require_allowlist_bounded(
-            ALLOWLISTED_MINORITY,
-            DISCOVERED_ROUTES,
-            max_fraction=DEFAULT_MAX_ALLOWLIST_FRACTION,
-        )
-        is None
-    )
 
 
 def test_within_budget_trips_when_the_matrix_outran_its_time_box() -> None:
@@ -615,9 +588,6 @@ def test_the_cli_never_reports_clean_against_a_server_that_401s_every_reference(
 # stops being counted -- a matrix that shrinks down to its floor without one
 # line of output saying so.
 
-ALLOWLISTED_REFERENCE_MAJORITY = 3
-ALLOWLISTED_REFERENCE_MINORITY = 2
-DISCOVERED_REFERENCES = 4
 
 EXCUSED_STUB_REFERENCE_ROUTES = (
     REFERENCE_LEAKY_NOTE_POST,
@@ -660,40 +630,6 @@ def test_the_path_allowlist_ceiling_cannot_see_a_field_scoped_excuse() -> None:
     assert classification.allowlisted == ()
 
 
-def test_reference_allowlist_bounded_trips_when_most_body_ids_are_excused() -> None:
-    """Excusing the majority of the ids an application accepts is the same decoration."""
-    failure = require_reference_allowlist_bounded(
-        ALLOWLISTED_REFERENCE_MAJORITY,
-        DISCOVERED_REFERENCES,
-        max_fraction=DEFAULT_MAX_ALLOWLIST_FRACTION,
-    )
-
-    assert failure is not None
-    assert failure.guard == "require_reference_allowlist_bounded"
-    assert str(ALLOWLISTED_REFERENCE_MAJORITY) in failure.detail
-    assert str(DISCOVERED_REFERENCES) in failure.detail
-
-
-def test_reference_allowlist_bounded_is_silent_at_the_permitted_fraction() -> None:
-    """Half is the same documented ceiling the path dimension uses."""
-    assert (
-        require_reference_allowlist_bounded(
-            ALLOWLISTED_REFERENCE_MINORITY,
-            DISCOVERED_REFERENCES,
-            max_fraction=DEFAULT_MAX_ALLOWLIST_FRACTION,
-        )
-        is None
-    )
-
-
-def test_reference_allowlist_bounded_reports_rather_than_raises_on_an_empty_document() -> None:
-    """Zero excused out of zero discovered is a report, not a division by zero."""
-    assert (
-        require_reference_allowlist_bounded(0, 0, max_fraction=DEFAULT_MAX_ALLOWLIST_FRACTION)
-        is None
-    )
-
-
 def test_declared_references_classified_trips_when_a_declaration_vanished() -> None:
     """A registry entry naming a route the document no longer has must be said out loud.
 
@@ -720,12 +656,26 @@ def test_declared_references_classified_is_silent_when_every_declaration_landed(
     )
 
 
+def excused_stub_references(category: str) -> tuple[AllowlistEntry, ...]:
+    """Excuse the gadget field on four of the reference stub's six references."""
+    return tuple(
+        AllowlistEntry(
+            method=method,
+            path=path,
+            category=category,
+            reason=f"excused as {category} for this fixture",
+            field=GADGET_REFERENCE.field,
+        )
+        for method, path in EXCUSED_STUB_REFERENCE_ROUTES
+    )
+
+
 @pytest.mark.asyncio
-async def test_a_run_that_excuses_most_of_its_references_is_a_harness_error(
+async def test_a_run_that_leaves_most_of_its_references_unprobed_is_a_harness_error(
     reference_deployment: StubDeployment,
     reference_client: AsyncClient,
 ) -> None:
-    """Four field-scoped excuses over six references must fail the run by name.
+    """Four coverage gaps over six references must fail the run by name.
 
     This is the wiring, not the arithmetic: the same four entries leave every
     path count untouched, so before the reference ceiling the run reported a
@@ -736,16 +686,7 @@ async def test_a_run_that_excuses_most_of_its_references_is_a_harness_error(
         bootstrap=make_stub_bootstrap(reference_deployment),
         config=reference_stub_config(
             min_references=REFERENCE_STUB_MIN_REFERENCES,
-            allowlist=tuple(
-                AllowlistEntry(
-                    method=method,
-                    path=path,
-                    category="shared_catalog",
-                    reason="any authenticated caller may name any approved gadget",
-                    field=GADGET_REFERENCE.field,
-                )
-                for method, path in EXCUSED_STUB_REFERENCE_ROUTES
-            ),
+            allowlist=excused_stub_references("no_seed_strategy"),
         ),
     )
 
@@ -754,6 +695,90 @@ async def test_a_run_that_excuses_most_of_its_references_is_a_harness_error(
     assert "require_allowlist_bounded" not in tripped, tripped
     assert report.references_probed == STUB_REFERENCES_LEFT_PROBED
     assert report.exit_code == EXIT_HARNESS_ERROR
+
+
+@pytest.mark.asyncio
+async def test_a_run_whose_excused_references_are_by_design_passes_the_ceiling(
+    reference_deployment: StubDeployment,
+    reference_client: AsyncClient,
+) -> None:
+    """The same four entries, excused as a shared catalog, are no gap at all.
+
+    A probe of an id every caller may name by design proves nothing, so the
+    ceiling must not count it -- the run is judged on the two references it
+    did probe.
+    """
+    report = await run_matrix(
+        reference_client,
+        bootstrap=make_stub_bootstrap(reference_deployment),
+        config=reference_stub_config(
+            min_references=REFERENCE_STUB_MIN_REFERENCES,
+            allowlist=excused_stub_references("shared_catalog"),
+        ),
+    )
+
+    tripped = [failure.guard for failure in report.guard_failures]
+    assert "require_reference_allowlist_bounded" not in tripped, tripped
+    assert report.references_probed == STUB_REFERENCES_LEFT_PROBED
+
+
+# The path dimension's ceiling, wired end to end: three of the widget stub's
+# five templated routes excused, which is a majority only when they are gaps.
+EXCUSED_STUB_ROUTES = (LEAKY_WIDGET_GET, LEAKY_WIDGET_DELETE, SAFE_ITEM_GET)
+STUB_ROUTES_LEFT_PROBED = STUB_OBJECT_SCOPED_ROUTES - len(EXCUSED_STUB_ROUTES)
+
+
+def excused_stub_routes(category: str) -> tuple[AllowlistEntry, ...]:
+    """Excuse three of the widget stub's five templated routes under ``category``."""
+    return tuple(
+        AllowlistEntry(
+            method=method,
+            path=path,
+            category=category,
+            reason=f"excused as {category} for this fixture",
+        )
+        for method, path in EXCUSED_STUB_ROUTES
+    )
+
+
+@pytest.mark.asyncio
+async def test_a_run_that_leaves_most_of_its_routes_unprobed_is_a_harness_error(
+    leaky_deployment: StubDeployment,
+    leaky_client: AsyncClient,
+) -> None:
+    """Three coverage gaps over five probe-worthy routes must fail the run by name."""
+    report = await run_matrix(
+        leaky_client,
+        bootstrap=make_stub_bootstrap(leaky_deployment),
+        config=stub_config(
+            min_routes=STUB_ROUTES_LEFT_PROBED,
+            allowlist=excused_stub_routes("no_seed_strategy"),
+        ),
+    )
+
+    tripped = [failure.guard for failure in report.guard_failures]
+    assert "require_allowlist_bounded" in tripped, tripped
+    assert report.exit_code == EXIT_HARNESS_ERROR
+
+
+@pytest.mark.asyncio
+async def test_a_run_whose_excused_routes_are_by_design_passes_the_ceiling(
+    leaky_deployment: StubDeployment,
+    leaky_client: AsyncClient,
+) -> None:
+    """The same three routes, excused as admin-gated, leave the ceiling silent."""
+    report = await run_matrix(
+        leaky_client,
+        bootstrap=make_stub_bootstrap(leaky_deployment),
+        config=stub_config(
+            min_routes=STUB_ROUTES_LEFT_PROBED,
+            allowlist=excused_stub_routes("admin_only"),
+        ),
+    )
+
+    tripped = [failure.guard for failure in report.guard_failures]
+    assert "require_allowlist_bounded" not in tripped, tripped
+    assert report.guard_failures == (), tripped
 
 
 @pytest.mark.asyncio

@@ -45,18 +45,37 @@ DEFAULT_ALLOWLIST_PATH = Path(__file__).resolve().parent / "allowlist.toml"
 
 KNOWN_LEAK_CATEGORY = "known_leak"
 
-# A closed vocabulary: free text would let every awkward route acquire its own
-# bespoke excuse, and the set of excuses is exactly what a reviewer scans.
-ALLOWLIST_CATEGORIES = frozenset(
+# The closed vocabulary is split in two, and the split is what the allow-list
+# ceiling measures. A coverage gap is a route that needs an ownership probe and
+# does not get one: the harness cannot seed it, or it is a finding somebody
+# accepted rather than fixed. Those are the entries that shrink what a green
+# matrix proves, so they -- and only they -- count against the ceiling.
+COVERAGE_GAP_CATEGORIES = frozenset(
+    {
+        "no_seed_strategy",
+        KNOWN_LEAK_CATEGORY,
+    },
+)
+
+# By design, a probe would be meaningless: there is no owner to cross. A shared
+# catalog answers every caller 200 on purpose, a non-object path parameter names
+# a curriculum position or an enum member, an admin-gated route refuses both
+# probe identities alike, and a capability token makes the bearer the owner.
+# Excusing these hides nothing the matrix could have proven.
+BY_DESIGN_CATEGORIES = frozenset(
     {
         "shared_catalog",
         "not_object_scoped",
         "admin_only",
         "capability_token",
-        "no_seed_strategy",
-        KNOWN_LEAK_CATEGORY,
     },
 )
+
+# A closed vocabulary: free text would let every awkward route acquire its own
+# bespoke excuse, and the set of excuses is exactly what a reviewer scans. It is
+# the union of the two halves above rather than a list of its own, so a new
+# category cannot be loaded until somebody decides which half it belongs to.
+ALLOWLIST_CATEGORIES = COVERAGE_GAP_CATEGORIES | BY_DESIGN_CATEGORIES
 
 _ROUTE_TABLE = "route"
 _REQUIRED_KEYS = ("method", "path", "category", "reason")
@@ -323,6 +342,62 @@ def classify_routes(
 
 
 @dataclass(frozen=True)
+class GapShare:
+    """What the allow-list ceiling measures, in either dimension.
+
+    Attributes:
+        gaps: Excused by at least one entry in :data:`COVERAGE_GAP_CATEGORIES`.
+        probe_worthy: Everything an ownership probe means something for: the
+            covered, the uncovered, and the gaps. By-design excuses are left out
+            of this denominator on purpose -- were they in it, declaring more
+            catalog routes would make room for more unprobed ones, and the
+            ceiling would loosen exactly as the application grew more honest
+            about its shape. Measured this way a by-design entry is on neither
+            side of the fraction and cannot move it.
+        by_design: Excused only by entries in :data:`BY_DESIGN_CATEGORIES`.
+            Reported so a failure can say what it did not count.
+    """
+
+    gaps: int
+    probe_worthy: int
+    by_design: int
+
+
+def is_coverage_gap(entry: AllowlistEntry) -> bool:
+    """Report whether this entry records a route the matrix needed to probe and cannot."""
+    return entry.category in COVERAGE_GAP_CATEGORIES
+
+
+def route_gap_share(
+    classification: Classification,
+    allowlist: Sequence[AllowlistEntry],
+) -> GapShare:
+    """Measure how much of the probe-worthy path surface the allow-list leaves unprobed.
+
+    Args:
+        classification: The routes as :func:`classify_routes` placed them.
+        allowlist: The entries that classification was made with.
+
+    Returns:
+        The share. A route excused by both a by-design entry and a gap entry is
+        a gap: a softer excuse sitting beside it must not launder it.
+    """
+    gaps = sum(
+        1
+        for spec in classification.allowlisted
+        if any(
+            _names_route(entry, spec) and entry.field is None and is_coverage_gap(entry)
+            for entry in allowlist
+        )
+    )
+    return GapShare(
+        gaps=gaps,
+        probe_worthy=len(classification.covered) + len(classification.uncovered) + gaps,
+        by_design=len(classification.allowlisted) - gaps,
+    )
+
+
+@dataclass(frozen=True)
 class ReferenceTarget:
     """One id a route accepts, paired with what the harness knows about it.
 
@@ -498,4 +573,37 @@ def classify_references(
         covered=tuple(buckets[Coverage.COVERED]),
         allowlisted=tuple(buckets[Coverage.ALLOWLISTED]),
         uncovered=tuple(buckets[Coverage.UNCOVERED]),
+    )
+
+
+def reference_gap_share(
+    references: ReferenceClassification,
+    allowlist: Sequence[AllowlistEntry],
+) -> GapShare:
+    """Measure how much of the probe-worthy reference surface the allow-list leaves unprobed.
+
+    The reference dimension shares the path dimension's vocabulary -- a
+    field-scoped entry and a route-scoped one carry the same categories -- so it
+    shares the rule too, unit for unit: a ``(route, field)`` pair is a gap when
+    any entry excusing it, broad or narrow, is a gap entry.
+
+    Args:
+        references: The references as :func:`classify_references` placed them.
+        allowlist: The entries that classification was made with.
+
+    Returns:
+        The share, measured exactly as :func:`route_gap_share` measures routes.
+    """
+    gaps = sum(
+        1
+        for target in references.allowlisted
+        if any(
+            _excuses_field(entry, target.route, target.field) and is_coverage_gap(entry)
+            for entry in allowlist
+        )
+    )
+    return GapShare(
+        gaps=gaps,
+        probe_worthy=len(references.covered) + len(references.uncovered) + gaps,
+        by_design=len(references.allowlisted) - gaps,
     )

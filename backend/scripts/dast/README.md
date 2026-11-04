@@ -151,9 +151,11 @@ grading.
 
 Two guards bound the dimension from the outside, and both run against the
 document the *target* published rather than the one in this repository.
-`require_reference_allowlist_bounded` caps the share of discovered references an
-allow-list may excuse: the path ceiling cannot see a field-scoped entry, because
-such an entry excuses no route and so enters neither side of that fraction.
+`require_reference_allowlist_bounded` caps the share of probe-worthy references
+the allow-list leaves unprobed, by the same coverage-gap rule as the path ceiling
+(see [Adding an allow-list entry](#adding-an-allow-list-entry)): the path
+ceiling cannot see a field-scoped entry, because such an entry excuses no route
+and so enters neither side of that fraction.
 `require_declared_references_classified` fails the run when a reference this
 registry declares was neither probed nor classified — the shape a stale
 deployment produces, where a route or a property has gone and the declaration
@@ -246,9 +248,8 @@ check ever runs, and the positive control turns the route inconclusive.
 
 ## Adding an allow-list entry
 
-Only when no seed strategy can work. Prefer a seed strategy every time — the
-allow-list may never excuse more than half the routes that carry a path
-parameter, and every entry has to keep matching a live route or the build fails.
+Only when no seed strategy can work. Prefer a seed strategy every time, and
+every entry has to keep matching a live route or the build fails.
 
 ```toml
 [[route]]
@@ -261,6 +262,31 @@ reason   = "global course catalog; no per-user owner to cross"
 Categories: `shared_catalog`, `not_object_scoped`, `admin_only`,
 `capability_token`, `no_seed_strategy`, `known_leak`. Only `known_leak` may carry
 `tracking_issue`, so nothing else can be made to look tracked.
+
+The categories split in two, and the split is what the allow-list ceiling
+measures (`COVERAGE_GAP_CATEGORIES` and `BY_DESIGN_CATEGORIES` in `policy.py`;
+the vocabulary is their union, so a new category cannot load until somebody
+decides which half it joins):
+
+| Half | Categories | Why |
+| --- | --- | --- |
+| Coverage gap | `no_seed_strategy`, `known_leak` | The route needs an ownership probe and does not get one — the harness cannot seed it, or a finding was accepted rather than fixed. |
+| By design | `shared_catalog`, `not_object_scoped`, `admin_only`, `capability_token` | A probe would be meaningless: every caller is answered 200 on purpose, the parameter names no row, both probe identities are refused alike, or the bearer of the token *is* the owner. |
+
+`require_allowlist_bounded` fails the run when coverage-gap entries excuse more
+than half (`--max-allowlist-fraction 0.5`, inclusive) of the routes that need an
+ownership probe: the covered routes, the uncovered ones, and the gaps.
+By-design entries are on neither side of that fraction. Leaving them out of the
+numerator stops a shared catalog from being penalised for being shared; leaving
+them out of the denominator stops a pile of honest catalog entries from buying
+room for more unprobed routes. The failure says `N of M route(s) that need an
+ownership probe are excused as coverage gaps`, and how many by-design entries it
+did not count. `require_reference_allowlist_bounded` applies the identical rule
+to body- and query-carried ids, which share the vocabulary.
+
+So a by-design category is not a softer place to park a hard route: it changes
+what the ceiling counts, and a reviewer should read its `reason` with that in
+mind.
 
 An optional `field = "practice_id"` narrows the entry to a single body property
 or query parameter of that route. It excuses that field alone: not the route's

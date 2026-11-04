@@ -1130,17 +1130,20 @@ def stub_config(
     *,
     min_routes: int = STUB_OBJECT_SCOPED_ROUTES,
     min_references: int = 0,
+    allowlist: tuple[AllowlistEntry, ...] = (),
 ) -> MatrixConfig:
     """Return the matrix configuration that points the harness at a stub app.
 
     The widget stubs carry no body or query references at all, so the reference
     registry is empty and the reference floor is zero unless a caller raises it
-    on purpose.
+    on purpose. The allow-list is a parameter so the path ceiling can be driven
+    over and under its limit against a real run.
     """
     return MatrixConfig(
         seed_registry=STUB_SEED_REGISTRY,
         replay_bodies=STUB_REPLAY_BODIES,
         reference_registry={},
+        allowlist=allowlist,
         auth_probe_path=STUB_AUTH_PROBE_PATH,
         min_routes=min_routes,
         min_references=min_references,

@@ -43,7 +43,13 @@ from enum import Enum, auto
 from http import HTTPStatus
 
 from scripts.dast.discovery import RouteSpec
-from scripts.dast.policy import AllowlistEntry, ReferenceTarget, publishes_field
+from scripts.dast.policy import (
+    COVERAGE_GAP_CATEGORIES,
+    AllowlistEntry,
+    GapShare,
+    ReferenceTarget,
+    publishes_field,
+)
 from scripts.dast.references import ObjectReference, ReferenceRegistry
 
 _SUCCESS_FLOOR = 200
@@ -572,32 +578,38 @@ def require_allowlist_is_live(
     )
 
 
-def require_allowlist_bounded(
-    allowlisted: int,
-    considered: int,
-    *,
-    max_fraction: float,
-) -> GuardFailure | None:
-    """Prove the opt-out list still excuses a minority of the application.
+def _gap_ceiling_detail(share: GapShare, unit: str, max_fraction: float) -> str:
+    """Say how many gaps out of what, and what was deliberately left uncounted."""
+    return (
+        f"{share.gaps} of {share.probe_worthy} {unit} that need an ownership probe are "
+        f"excused as coverage gaps ({', '.join(sorted(COVERAGE_GAP_CATEGORIES))}), above the "
+        f"permitted {max_fraction:.0%}; {share.by_design} more excused by design are not counted"
+    )
+
+
+def require_allowlist_bounded(share: GapShare, *, max_fraction: float) -> GuardFailure | None:
+    """Prove the allow-list leaves only a minority of the probe-worthy routes unprobed.
 
     Args:
-        allowlisted: How many routes carry an allow-list entry.
-        considered: How many routes were classified at all.
+        share: The path dimension's gaps, measured by
+            :func:`~scripts.dast.policy.route_gap_share`.
         max_fraction: The permitted share, inclusive.
 
     Returns:
-        ``None`` while the share is within bounds. Multiplication rather than
-        division keeps an empty document -- zero considered, zero allow-listed
-        -- from raising instead of reporting.
+        ``None`` while the share is within bounds. Only entries in a coverage-gap
+        category count, and only against the routes an ownership probe means
+        something for, so an entry excused by design sits on neither side: it
+        can neither trip the ceiling nor buy room under it. That keeps the guard
+        strict about the routes the harness genuinely cannot probe while no
+        longer penalising a shared catalog for being shared. Multiplication
+        rather than division keeps an empty document -- nothing probe-worthy,
+        no gaps -- from raising instead of reporting.
     """
-    if allowlisted <= considered * max_fraction:
+    if share.gaps <= share.probe_worthy * max_fraction:
         return None
     return GuardFailure(
         guard="require_allowlist_bounded",
-        detail=(
-            f"{allowlisted} of {considered} route(s) are allow-listed, "
-            f"above the permitted {max_fraction:.0%}"
-        ),
+        detail=_gap_ceiling_detail(share, "route(s)", max_fraction),
     )
 
 
@@ -689,36 +701,33 @@ def require_minimum_reference_coverage(probed: int, *, minimum: int) -> GuardFai
 
 
 def require_reference_allowlist_bounded(
-    allowlisted: int,
-    considered: int,
+    share: GapShare,
     *,
     max_fraction: float,
 ) -> GuardFailure | None:
-    """Prove the opt-out list still excuses a minority of the ids the application accepts.
+    """Prove the allow-list leaves only a minority of the probe-worthy ids unprobed.
 
     Args:
-        allowlisted: How many ``(route, field)`` references carry an entry.
-        considered: How many references were classified at all.
+        share: The reference dimension's gaps, measured by
+            :func:`~scripts.dast.policy.reference_gap_share`.
         max_fraction: The permitted share, inclusive.
 
     Returns:
-        ``None`` while the share is within bounds. This is the ceiling the
-        reference dimension was missing: :func:`require_allowlist_bounded`
-        measures routes, and a field-scoped entry excuses no route, so it enters
-        neither side of that fraction. Without this guard a file could excuse
-        every body- and query-carried id in the application and the only thing
-        left standing between it and a clean sweep would be the absolute
-        coverage floor -- which holds today by the accident of how many
-        references this application happens to publish.
+        ``None`` while the share is within bounds, counted by the same rule as
+        :func:`require_allowlist_bounded` because both dimensions share one
+        category vocabulary. This is the ceiling the reference dimension was
+        missing: the path ceiling measures routes, and a field-scoped entry
+        excuses no route, so it enters neither side of that fraction. Without
+        this guard a file could leave every body- and query-carried id in the
+        application unprobed and the only thing left standing between it and a
+        clean sweep would be the absolute coverage floor -- which holds today by
+        the accident of how many references this application happens to publish.
     """
-    if allowlisted <= considered * max_fraction:
+    if share.gaps <= share.probe_worthy * max_fraction:
         return None
     return GuardFailure(
         guard="require_reference_allowlist_bounded",
-        detail=(
-            f"{allowlisted} of {considered} body/query reference(s) are allow-listed, "
-            f"above the permitted {max_fraction:.0%}"
-        ),
+        detail=_gap_ceiling_detail(share, "body/query reference(s)", max_fraction),
     )
 
 

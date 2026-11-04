@@ -26,9 +26,12 @@ from main import app
 from scripts.dast.discovery import carries_reference, discover_routes, is_object_scoped
 from scripts.dast.policy import (
     DEFAULT_ALLOWLIST_PATH,
+    AllowlistEntry,
     classify_references,
     classify_routes,
     load_allowlist,
+    reference_gap_share,
+    route_gap_share,
 )
 from scripts.dast.references import REFERENCE_REGISTRY, EvidenceStrategy
 from scripts.dast.runner import (
@@ -37,7 +40,11 @@ from scripts.dast.runner import (
     DEFAULT_MIN_ROUTES,
 )
 from scripts.dast.seeds import REPLAY_BODIES, SEED_REGISTRY, seed_order
-from scripts.dast.verdict import require_allowlist_bounded, require_allowlist_is_live
+from scripts.dast.verdict import (
+    require_allowlist_bounded,
+    require_allowlist_is_live,
+    require_reference_allowlist_bounded,
+)
 
 MUTATING_METHODS = frozenset({"POST", "PUT", "PATCH", "DELETE"})
 
@@ -97,22 +104,74 @@ def test_no_allowlist_entry_has_outlived_the_route_it_excuses() -> None:
     assert failure is None, failure
 
 
-def test_the_allowlist_covers_a_minority_of_the_application() -> None:
-    """Excusing most of the app would leave a green check over an unchecked surface."""
+def test_coverage_gaps_stay_a_minority_of_the_routes_that_need_a_probe() -> None:
+    """Leaving most of the probe-worthy app unprobed would leave a green check over nothing.
+
+    Only ``no_seed_strategy`` and ``known_leak`` entries count, measured against
+    the routes an ownership probe means something for. A route excused by design
+    -- a shared catalog, an admin gate -- is on neither side of the fraction.
+    """
+    allowlist = load_allowlist(DEFAULT_ALLOWLIST_PATH)
     classification = classify_routes(
         discover_routes(app.openapi()),
         seed_registry=SEED_REGISTRY,
-        allowlist=load_allowlist(DEFAULT_ALLOWLIST_PATH),
-    )
-    considered = (
-        len(classification.covered)
-        + len(classification.allowlisted)
-        + len(classification.uncovered)
+        allowlist=allowlist,
     )
 
     failure = require_allowlist_bounded(
-        len(classification.allowlisted),
-        considered,
+        route_gap_share(classification, allowlist),
+        max_fraction=DEFAULT_MAX_ALLOWLIST_FRACTION,
+    )
+
+    assert failure is None, failure
+
+
+def test_the_gap_ceiling_fails_the_real_document_when_its_probes_become_gaps() -> None:
+    """The violating fixture, against the real app: the guard must still be able to fire.
+
+    Re-excusing every route the harness can probe as ``no_seed_strategy`` leaves
+    nearly the whole probe-worthy surface unprobed, and the ceiling has to say
+    so. Without this, a vocabulary split that classified everything as by
+    design would pass the test above for the wrong reason.
+    """
+    shipped = load_allowlist(DEFAULT_ALLOWLIST_PATH)
+    routes = discover_routes(app.openapi())
+    probed = classify_routes(routes, seed_registry=SEED_REGISTRY, allowlist=shipped).covered
+    violating = (
+        *shipped,
+        *(
+            AllowlistEntry(
+                method=spec.method,
+                path=spec.path,
+                category="no_seed_strategy",
+                reason="deliberately violating fixture",
+            )
+            for spec in probed
+        ),
+    )
+    classification = classify_routes(routes, seed_registry=SEED_REGISTRY, allowlist=violating)
+
+    failure = require_allowlist_bounded(
+        route_gap_share(classification, violating),
+        max_fraction=DEFAULT_MAX_ALLOWLIST_FRACTION,
+    )
+
+    assert failure is not None
+    assert failure.guard == "require_allowlist_bounded"
+
+
+def test_reference_coverage_gaps_stay_a_minority_of_the_references_that_need_a_probe() -> None:
+    """The same ceiling over body- and query-carried ids, which share the vocabulary."""
+    allowlist = load_allowlist(DEFAULT_ALLOWLIST_PATH)
+    references = classify_references(
+        discover_routes(app.openapi()),
+        reference_registry=REFERENCE_REGISTRY,
+        seed_registry=SEED_REGISTRY,
+        allowlist=allowlist,
+    )
+
+    failure = require_reference_allowlist_bounded(
+        reference_gap_share(references, allowlist),
         max_fraction=DEFAULT_MAX_ALLOWLIST_FRACTION,
     )
 

@@ -64,6 +64,8 @@ from scripts.dast.policy import (
     ReferenceTarget,
     classify_references,
     classify_routes,
+    reference_gap_share,
+    route_gap_share,
 )
 from scripts.dast.references import (
     REFERENCE_REGISTRY,
@@ -220,7 +222,8 @@ class MatrixConfig:
         min_routes: The floor the coverage guard enforces.
         min_references: The floor the reference-coverage guard enforces.
         budget_seconds: The ceiling the time-box guard enforces.
-        max_allowlist_fraction: The share of routes the allow-list may excuse.
+        max_allowlist_fraction: The share of probe-worthy routes, and of
+            probe-worthy references, that coverage-gap entries may excuse.
     """
 
     # Both constants are ``MappingProxyType``, which Python 3.11 rejects as a
@@ -888,20 +891,6 @@ def _probed_references(outcome: _Outcome) -> int:
     )
 
 
-def _classified_total(classification: Classification | ReferenceClassification) -> int:
-    """Count everything one classifier placed, whichever dimension it classified.
-
-    Both classifications carry the same three buckets, so both allow-list
-    ceilings measure their share the same way rather than each spelling the sum
-    out in its own call.
-    """
-    return (
-        len(classification.covered)
-        + len(classification.allowlisted)
-        + len(classification.uncovered)
-    )
-
-
 def _reference_targets(references: ReferenceClassification) -> tuple[ReferenceTarget, ...]:
     """Return every classified reference, whichever bucket it landed in.
 
@@ -958,13 +947,11 @@ def _collect_guards(outcome: _Outcome, config: MatrixConfig) -> tuple[GuardFailu
         require_seeded_resources(outcome.seeded),
         require_no_throttling(outcome.statuses),
         require_allowlist_bounded(
-            len(classification.allowlisted),
-            _classified_total(classification),
+            route_gap_share(classification, config.allowlist),
             max_fraction=config.max_allowlist_fraction,
         ),
         require_reference_allowlist_bounded(
-            len(references.allowlisted),
-            _classified_total(references),
+            reference_gap_share(references, config.allowlist),
             max_fraction=config.max_allowlist_fraction,
         ),
         require_declared_references_classified(

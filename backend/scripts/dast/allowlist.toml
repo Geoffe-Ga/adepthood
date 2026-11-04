@@ -3,8 +3,12 @@
 # Every entry needs a method, a path exactly as the OpenAPI document spells it,
 # a category from the closed vocabulary in policy.py, and a reason a reviewer
 # can disagree with. An entry that no longer matches a live route fails the
-# build, so this file cannot become a graveyard, and the allow-list may never
-# excuse more than half the routes that carry a path parameter.
+# build, so this file cannot become a graveyard. Entries in a coverage-gap
+# category (no_seed_strategy, known_leak) may never excuse more than half the
+# routes that need an ownership probe -- covered, uncovered, and gaps alike.
+# By-design categories (shared_catalog, not_object_scoped, admin_only,
+# capability_token) count on neither side of that fraction, because a probe of
+# them would prove nothing. See "Adding an allow-list entry" in README.md.
 #
 # Prefer a working seed strategy to an entry here every time.
 

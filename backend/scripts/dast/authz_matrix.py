@@ -190,7 +190,10 @@ def _parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
         "--max-allowlist-fraction",
         type=float,
         default=DEFAULT_MAX_ALLOWLIST_FRACTION,
-        help="Fail if the allow-list excuses more than this share of routes.",
+        help=(
+            "Fail if coverage-gap allow-list entries excuse more than this share "
+            "of the routes, or the references, that need an ownership probe."
+        ),
     )
     return parser.parse_args(argv)
 
