@@ -6,13 +6,19 @@ import { describe, it, expect } from '@jest/globals';
 import {
   byPassageOrder,
   candidateFromListItem,
+  candidateFromReadingQuote,
   candidateFromSource,
   planQuoteBatch,
   type FoldCandidate,
 } from '../quoteBatch';
 import { formatSourceDate, quoteAttribution, sourceAttribution } from '../reflectionCopy';
 
-import type { PromotedQuoteListItem, PromotedQuoteSummary, ReflectionSourceItem } from '@/api';
+import type {
+  PromotedQuoteListItem,
+  PromotedQuoteSummary,
+  ReadingQuoteItem,
+  ReflectionSourceItem,
+} from '@/api';
 
 const A: FoldCandidate = { id: 1, anchorText: 'first', attribution: 'Runs' };
 const B: FoldCandidate = { id: 2, anchorText: 'second', attribution: 'Runs' };
@@ -38,7 +44,10 @@ function sourceItem(overrides: Partial<ReflectionSourceItem> = {}): ReflectionSo
 function listItem(overrides: Partial<PromotedQuoteListItem> = {}): PromotedQuoteListItem {
   return {
     id: 11,
+    source_kind: 'entry',
     source_entry_id: 7,
+    source_content_id: null,
+    source_marginalia_id: null,
     anchor_start: 0,
     anchor_end: 4,
     anchor_text: 'went',
@@ -47,6 +56,8 @@ function listItem(overrides: Partial<PromotedQuoteListItem> = {}): PromotedQuote
     created_at: '2026-06-20T00:00:00Z',
     source_title: 'Runs',
     source_timestamp: '2026-06-15T12:00:00Z',
+    source_stage_number: null,
+    letter_entry_id: null,
     included_in_entry_id: null,
     included_in_title: null,
     ...overrides,
@@ -156,5 +167,75 @@ describe('byPassageOrder -- the screen folds in the order the panel would (#2885
     const twinHigh = listItem({ id: 5, anchor_start: 40 });
     const sorted = [later, twinHigh, tail, twinLow, head].sort(byPassageOrder);
     expect(sorted.map((row) => row.id)).toEqual([3, 2, 4, 5, 1]);
+  });
+});
+
+describe('a Course or letter quote folds in with its own attribution (#3659)', () => {
+  const COURSE = listItem({
+    id: 21,
+    source_kind: 'course',
+    source_entry_id: null,
+    source_content_id: 31,
+    source_stage_number: 1,
+    source_title: 'Beige 1',
+    anchor_text: 'warm hearth',
+  });
+  const LETTER = listItem({
+    id: 22,
+    source_kind: 'letter',
+    source_entry_id: null,
+    source_marginalia_id: 9,
+    letter_entry_id: 7,
+    source_title: 'Runs',
+    anchor_text: 'be gentle',
+  });
+
+  function readingQuote(overrides: Partial<ReadingQuoteItem> = {}): ReadingQuoteItem {
+    return {
+      id: 21,
+      source_kind: 'course',
+      source_title: 'Beige 1',
+      anchor_start: 0,
+      anchor_end: 11,
+      anchor_text: 'warm hearth',
+      pending: true,
+      created_at: '2026-06-20T00:00:00Z',
+      ...overrides,
+    };
+  }
+
+  it('attributes a listed Course quote to its chapter and a letter quote to a letter', () => {
+    expect(candidateFromListItem(COURSE)).toEqual({
+      id: 21,
+      anchorText: 'warm hearth',
+      attribution: 'From “Beige 1”',
+    });
+    expect(candidateFromListItem(LETTER).attribution).toBe('From a letter');
+  });
+
+  it('writes the same block from the Sources pane as from the Promoted quotes screen', () => {
+    expect(candidateFromReadingQuote(readingQuote())).toEqual(candidateFromListItem(COURSE));
+    const letter = readingQuote({ id: 22, source_kind: 'letter', anchor_text: 'be gentle' });
+    expect(candidateFromReadingQuote(letter).attribution).toBe(
+      candidateFromListItem(LETTER).attribution,
+    );
+  });
+
+  it('splices the issue’s exact blocks for a chapter and a letter', () => {
+    const plan = planQuoteBatch(
+      '',
+      [candidateFromListItem(COURSE), candidateFromListItem(LETTER)],
+      null,
+    );
+    expect(plan.text).toBe(
+      '> warm hearth\n> — From “Beige 1”\n\n> be gentle\n> — From a letter\n\n',
+    );
+  });
+
+  it('orders reading quotes by the per-kind time the server sends, beside entry quotes', () => {
+    const entry = listItem({ id: 1, source_timestamp: '2026-06-15T12:00:00Z' });
+    const chapter = { ...COURSE, source_timestamp: '2026-06-14T09:00:00Z' };
+    const letter = { ...LETTER, source_timestamp: '2026-06-16T09:00:00Z' };
+    expect([letter, entry, chapter].sort(byPassageOrder).map((q) => q.id)).toEqual([21, 1, 22]);
   });
 });

@@ -21,7 +21,10 @@ function deferred<T>(): {
 function quote(overrides: Partial<PromotedQuote> = {}): PromotedQuote {
   return {
     id: 1,
+    source_kind: 'entry',
     source_entry_id: 7,
+    source_content_id: null,
+    source_marginalia_id: null,
     anchor_start: 2,
     anchor_end: 19,
     anchor_text: 'went for a run to',

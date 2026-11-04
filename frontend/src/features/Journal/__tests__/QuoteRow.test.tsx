@@ -36,6 +36,27 @@ describe('QuoteRow', () => {
     expect(onPress).toHaveBeenCalledTimes(1);
   });
 
+  it('is read, not pressed, when it has nowhere to go (#3659)', () => {
+    const { getByTestId } = render(
+      <QuoteRow
+        text="warm hearth"
+        caption="From “Beige 1”"
+        accessibilityLabel="“warm hearth” from “Beige 1”"
+        testID="row"
+      />,
+    );
+
+    const row = getByTestId('row');
+    expect(row.props.accessibilityRole).toBeUndefined();
+    expect(row.props.accessible).toBe(true);
+    expect(row.props.accessibilityLabel).toBe('“warm hearth” from “Beige 1”');
+    expect(getByTestId('row-caption').props.children).toBe('From “Beige 1”');
+    // The same look as a pressable row: the stripe and wash are the quote's, not the control's.
+    const style = StyleSheet.flatten(row.props.style);
+    expect(style.borderLeftWidth).toBe(QUOTE_STRIPE_WIDTH);
+    expect(style.backgroundColor).toBe(colors.paper.quoteHighlight);
+  });
+
   it('omits the caption line when there is none, and dims a used quote', () => {
     const { getByTestId, queryByTestId } = render(
       <QuoteRow text="q" dimmed onPress={jest.fn()} accessibilityLabel="q" testID="row" />,

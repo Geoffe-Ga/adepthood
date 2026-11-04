@@ -36,7 +36,10 @@ function quote(overrides: Partial<PromotedQuote>, body: string = BODY): Promoted
   const end = overrides.anchor_end ?? 1;
   return {
     id: 100,
+    source_kind: 'entry',
     source_entry_id: 1,
+    source_content_id: null,
+    source_marginalia_id: null,
     anchor_start: start,
     anchor_end: end,
     anchor_text: Array.from(body).slice(start, end).join(''),

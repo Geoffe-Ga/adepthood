@@ -21,6 +21,7 @@
  * | Course.stageNumber        | string     | parsed ({@link parseStageNumberParam}) |
  * | Course.contentId          | string     | parsed ({@link parseContentIdParam})   |
  * | Course.scrollOffset       | string     | parsed ({@link parseScrollOffsetParam}) |
+ * | Course.highlightSpan      | string     | not parsed: in-app only and spent on open; a URL copy fails ``resolveChapterHighlight``'s shape check and opens the chapter plainly |
  * | SharePreview.token        | string     | string by design                 |
  * | ResetPassword.token       | string     | string by design                 |
  * | CancelReset.token         | string     | string by design                 |

@@ -3546,6 +3546,33 @@ function useEssayModal(updateNote: (_note: Marginalia) => void) {
   return { openNote, onOpenNote, onCloseNote, onEssayLoaded };
 }
 
+/**
+ * Open the letter a reader arrived to read (a letter quote's Open, #3659): the
+ * note named by ``openLetterFor`` opens in the essay modal as soon as the
+ * page's notes have loaded it -- once per note, so closing the letter leaves it
+ * closed. A note that is gone (deleted, or never this page's) never appears in
+ * the loaded notes, so nothing opens and the page reads as an ordinary open.
+ */
+function useOpenLetterOnArrival(
+  params: { openLetterFor?: number } | undefined,
+  ctl: {
+    resonance: { marginalia: readonly Marginalia[] };
+    modal: { onOpenNote: (_note: Marginalia) => void };
+  },
+): void {
+  const openLetterFor = params?.openLetterFor;
+  const notes = ctl.resonance.marginalia;
+  const { onOpenNote } = ctl.modal;
+  const openedFor = useRef<number | null>(null);
+  useEffect(() => {
+    if (openLetterFor === undefined || openedFor.current === openLetterFor) return;
+    const note = notes.find((candidate) => candidate.id === openLetterFor);
+    if (note === undefined) return;
+    openedFor.current = openLetterFor;
+    onOpenNote(note);
+  }, [openLetterFor, notes, onOpenNote]);
+}
+
 interface EditGateArgs {
   status: EntryStatus;
   setStatus: (_status: EntryStatus) => void;
@@ -4679,11 +4706,13 @@ function ReflectionSourcesDock({
   return (
     <ReflectionSourcesPanel
       items={reflection.sources}
+      readingQuotes={reflection.readingQuotes}
       window={reflection.window}
       anchorStatus={reflection.anchorStatus}
       feedStatus={reflection.feedStatus}
       timeZone={userTimezone}
       onInsertQuote={reflection.onInsertQuote}
+      onInsertReadingQuote={reflection.onInsertReadingQuote}
       onInsertQuotes={reflection.onInsertQuotes}
       foldedIds={reflection.foldedIds}
       onPromoteSpan={reflection.onPromoteSpan}
@@ -5229,6 +5258,7 @@ function JournalEntryScreen({
     initialClassification,
   );
   const entryDrawer = useEntryDrawerWithHandoff(navigation, ctl, route.params?.injectQuotes);
+  useOpenLetterOnArrival(route.params, ctl);
   const openApiKey = useOpenApiKey(navigation, ctl.explainer.cancelPending);
   return (
     <SafeAreaView style={styles.safeArea} testID="journal-screen">

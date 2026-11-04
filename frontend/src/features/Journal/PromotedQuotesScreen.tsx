@@ -27,7 +27,7 @@ import { ScreenFoldFooter, useScreenFold } from './PromotedQuotesFold';
 import { SELECT_ALL_LOADED_NOTE } from './quoteFoldCopy';
 import { QuoteRow } from './QuoteRow';
 import { SelectionHeader } from './QuoteSelectionControls';
-import { quoteAttribution } from './reflectionCopy';
+import { quoteSourceCaption, type AttributionSource } from './reflectionCopy';
 import ReviewScopePicker from './ReviewScopePicker';
 import type { ReviewEntryParams } from './reviewScopes';
 import {
@@ -44,15 +44,17 @@ import { Button } from '@/components/Button';
 import { ScreenHeader } from '@/components/layout/ScreenHeader';
 import { ScreenScaffold } from '@/components/layout/ScreenScaffold';
 import { accent } from '@/design/tokens';
+import type { RootTabParamList } from '@/navigation/BottomTabs';
 import type { RootStackParamList } from '@/navigation/RootStack';
 
 export { PROMOTED_QUOTES_PAGE_SIZE, reinsertByCreatedDesc };
 
 export const EMPTY_COPY =
-  'Nothing promoted yet. While reading an entry, tap Promote a quote to carry a passage forward.';
+  'Nothing promoted yet. While reading a page, a chapter or a letter, tap Promote a quote to carry a passage forward.';
 const SCREEN_TITLE = 'Promoted quotes';
 const SCREEN_EYEBROW = 'Carried forward';
-const SCREEN_LEAD = 'Passages you lifted from your pages, waiting for a review or woven into one.';
+const SCREEN_LEAD =
+  'Passages you lifted from your pages, the Course and your letters, waiting for a review or woven into one.';
 const WRITE_REVIEW_LABEL = 'Write a review';
 const LOAD_ERROR_COPY = 'We could not reach your promoted quotes.';
 const RETRY_LABEL = 'Try again';
@@ -65,6 +67,11 @@ const STALE_NOTE = 'Passage since edited';
 const CAPTION_SEPARATOR = ' · ';
 
 type ScreenNavigation = NativeStackNavigationProp<RootStackParamList>;
+
+/** Where Open goes: the Course tab at a chapter, or a journal page. */
+export type OpenTarget =
+  | { kind: 'course'; params: NonNullable<RootTabParamList['Course']> }
+  | { kind: 'journal'; params: NonNullable<RootStackParamList['JournalEntry']> };
 
 /**
  * Each section's header, by status, carrying the server's total.
@@ -83,13 +90,31 @@ const SECTION_EMPTY: Record<SectionStatus, string> = {
   included: 'None has gone into a review yet.',
 };
 
+/** The facts a quote's source is named from, per kind (#3659). */
+function attributionSource(quote: PromotedQuoteListItem): AttributionSource {
+  return { kind: quote.source_kind, title: quote.source_title, timestamp: quote.source_timestamp };
+}
+
 /**
- * The source a quote came from: its title, else the day it was written. The
- * SAME composer as the attribution a fold writes into a review (#2885), so the
- * caption names the source exactly as the folded block will.
+ * The source a quote came from. An entry quote: its title, else the day it was
+ * written -- the SAME composer as the attribution a fold writes into a review
+ * (#2885), so the caption names the source exactly as the folded block will. A
+ * Course quote: ``From “Beige 1”``. A letter quote: ``From a letter · Rain``,
+ * the page the letter answered (else the day it was written).
  */
 function sourceLabel(quote: PromotedQuoteListItem): string {
-  return quoteAttribution({ title: quote.source_title, timestamp: quote.source_timestamp });
+  return quoteSourceCaption(attributionSource(quote));
+}
+
+/**
+ * The source as the row's accessible name says it, after the quote: "from
+ * Rain", "from “Beige 1”", "from a letter, Rain" -- the caption's own words, so
+ * what the row visibly says stays part of what it is called.
+ */
+function sourcePhrase(quote: PromotedQuoteListItem): string {
+  if (quote.source_kind === 'entry') return `from ${sourceLabel(quote)}`;
+  const caption = sourceLabel(quote).replace(CAPTION_SEPARATOR, ', ');
+  return `${caption.charAt(0).toLowerCase()}${caption.slice(1)}`;
 }
 
 /** Where a used quote went; a review since deleted is named only as "a review". */
@@ -106,7 +131,7 @@ export function quoteCaption(quote: PromotedQuoteListItem): string {
 
 /** The row's accessible name: the quote and its source, and its review if used. */
 export function quoteA11yLabel(quote: PromotedQuoteListItem): string {
-  const from = `“${quote.anchor_text}” from ${sourceLabel(quote)}`;
+  const from = `“${quote.anchor_text}” ${sourcePhrase(quote)}`;
   const used =
     quote.included_in_entry_id == null
       ? from
@@ -164,6 +189,51 @@ function RemoveConfirm({
   );
 }
 
+/**
+ * Where Open takes a quote, per kind (#3659), or null when its source is gone:
+ *
+ * - an entry quote opens its page at the passage;
+ * - a Course quote opens its chapter in the Course tab with the passage chosen
+ *   (``openReading`` closes any reader already open there); its text rides
+ *   along so a chapter since re-pinned opens plainly rather than choosing the
+ *   wrong words. A pruned chapter (no content id) has nowhere to open;
+ * - a letter quote opens the page the letter answered, with that letter open.
+ *   No ``highlightSpan``: the span indexes the letter, not the page.
+ */
+export function openTarget(quote: PromotedQuoteListItem): OpenTarget | null {
+  const { anchor_start: start, anchor_end: end } = quote;
+  if (quote.source_kind === 'course') {
+    const contentId = quote.source_content_id;
+    const stageNumber = quote.source_stage_number;
+    if (contentId === null || stageNumber === null) return null;
+    const highlightSpan = { start, end, text: quote.anchor_text };
+    return {
+      kind: 'course',
+      params: { stageNumber, contentId, openReading: true, highlightSpan },
+    };
+  }
+  if (quote.source_kind === 'letter') {
+    const entryId = quote.letter_entry_id;
+    const noteId = quote.source_marginalia_id;
+    if (entryId === null || noteId === null) return null;
+    return { kind: 'journal', params: { entryId, openLetterFor: noteId } };
+  }
+  const entryId = quote.source_entry_id;
+  if (entryId === null) return null;
+  return { kind: 'journal', params: { entryId, highlightSpan: { start, end } } };
+}
+
+/** A row's press: check it while selecting, else Open -- or nothing to press at all. */
+function rowPress(
+  quote: PromotedQuoteListItem,
+  checkable: boolean,
+  onOpen: (_quote: PromotedQuoteListItem) => void,
+  selection: QuoteSelection,
+): (() => void) | undefined {
+  if (checkable) return () => selection.toggle(quote.id);
+  return openTarget(quote) === null ? undefined : () => onOpen(quote);
+}
+
 interface RowActions {
   /** The checked quotes; a pending row is a checkbox while it is selecting. */
   selection: QuoteSelection;
@@ -204,7 +274,7 @@ function PromotedQuoteRow({
         caption={quoteCaption(quote)}
         dimmed={section.status === 'included'}
         checked={checkable ? selection.selected.has(quote.id) : undefined}
-        onPress={() => (checkable ? selection.toggle(quote.id) : actions.onOpen(quote))}
+        onPress={rowPress(quote, checkable, actions.onOpen, selection)}
         accessibilityLabel={quoteA11yLabel(quote)}
         testID={`promoted-quote-${quote.id}`}
         trailing={removeLink}
@@ -383,13 +453,14 @@ function useRowActions(
 
   const onOpen = useCallback(
     (quote: PromotedQuoteListItem) => {
-      // A Course or letter quote has no journal entry to open (#3655). Without
-      // this, JournalEntry would get no entryId -- the route to a blank new page.
-      if (quote.source_entry_id === null) return;
-      navigation.navigate('JournalEntry', {
-        entryId: quote.source_entry_id,
-        highlightSpan: { start: quote.anchor_start, end: quote.anchor_end },
-      });
+      // Never JournalEntry with no entryId -- that is the route to a blank page.
+      const target = openTarget(quote);
+      if (target === null) return;
+      if (target.kind === 'course') {
+        navigation.navigate('Tabs', { screen: 'Course', params: target.params });
+      } else {
+        navigation.navigate('JournalEntry', target.params);
+      }
     },
     [navigation],
   );

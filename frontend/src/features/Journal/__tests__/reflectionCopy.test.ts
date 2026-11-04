@@ -4,6 +4,9 @@ import {
   reflectionTitle,
   formatBlockquote,
   formatQuotePrefill,
+  formatSourceDate,
+  quoteAttribution,
+  quoteSourceCaption,
   sourceAttribution,
   spliceQuoteBlock,
 } from '../reflectionCopy';
@@ -177,5 +180,68 @@ describe('sourceAttribution', () => {
     const attribution = sourceAttribution(sourceItem({ title: '   ' }));
     expect(attribution).toContain('Jun');
     expect(attribution).toContain('2026');
+  });
+});
+
+describe('a quote from the reading names where it came from (#3659)', () => {
+  const WHEN = '2026-06-15T12:00:00Z';
+
+  it('attributes a Course quote to its chapter, in quotation marks', () => {
+    expect(quoteAttribution({ kind: 'course', title: ' Beige 1 ', timestamp: WHEN })).toBe(
+      'From “Beige 1”',
+    );
+  });
+
+  it('attributes a Course quote with no chapter title to the Course itself', () => {
+    expect(quoteAttribution({ kind: 'course', title: null, timestamp: WHEN })).toBe(
+      'From the Course',
+    );
+  });
+
+  it('attributes a letter quote to a letter, never to the page it answered', () => {
+    expect(quoteAttribution({ kind: 'letter', title: 'Rain', timestamp: WHEN })).toBe(
+      'From a letter',
+    );
+  });
+
+  it('writes the folded block exactly as the issue pins it', () => {
+    expect(
+      formatBlockquote(
+        'warm hearth',
+        quoteAttribution({ kind: 'course', title: 'Beige 1', timestamp: WHEN }),
+      ),
+    ).toBe('> warm hearth\n> — From “Beige 1”');
+    expect(
+      formatBlockquote(
+        'be gentle',
+        quoteAttribution({ kind: 'letter', title: null, timestamp: WHEN }),
+      ),
+    ).toBe('> be gentle\n> — From a letter');
+  });
+
+  it('leaves an entry quote attributed by its title, else its date, as before', () => {
+    expect(quoteAttribution({ kind: 'entry', title: 'Rain', timestamp: WHEN })).toBe('Rain');
+    expect(quoteAttribution({ kind: 'entry', title: null, timestamp: WHEN })).toBe(
+      formatSourceDate(WHEN),
+    );
+  });
+
+  it('captions a letter quote with the page it answered, else that day', () => {
+    expect(quoteSourceCaption({ kind: 'letter', title: 'Rain', timestamp: WHEN })).toBe(
+      'From a letter · Rain',
+    );
+    expect(quoteSourceCaption({ kind: 'letter', title: '  ', timestamp: WHEN })).toBe(
+      `From a letter · ${formatSourceDate(WHEN)}`,
+    );
+    expect(quoteSourceCaption({ kind: 'letter', title: null, timestamp: 'not a date' })).toBe(
+      'From a letter',
+    );
+  });
+
+  it('captions an entry or Course quote exactly as it is attributed', () => {
+    expect(quoteSourceCaption({ kind: 'course', title: 'Beige 1', timestamp: WHEN })).toBe(
+      'From “Beige 1”',
+    );
+    expect(quoteSourceCaption({ kind: 'entry', title: 'Rain', timestamp: WHEN })).toBe('Rain');
   });
 });

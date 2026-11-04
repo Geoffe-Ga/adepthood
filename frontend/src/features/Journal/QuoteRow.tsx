@@ -80,7 +80,12 @@ export interface QuoteRowProps {
    * state, and draws a box beside the words. Absent, it stays a button.
    */
   checked?: boolean;
-  onPress: () => void;
+  /**
+   * The row's one press. Absent (and not a checkbox), the row is not a control
+   * at all -- a quote with nowhere to open, such as one from a pruned Course
+   * chapter, is read but never offered as a button that does nothing.
+   */
+  onPress?: () => void;
   accessibilityLabel: string;
   accessibilityState?: AccessibilityState;
   testID: string;
@@ -156,6 +161,81 @@ function QuoteLine({
   );
 }
 
+/** The quote's line and, when present, the caption naming its source. */
+function RowContent({
+  text,
+  caption,
+  checked,
+  marked,
+  numberOfLines,
+  testID,
+}: {
+  text: string;
+  caption: string | undefined;
+  checked: boolean | undefined;
+  marked: boolean;
+  numberOfLines: number;
+  testID: string;
+}): React.JSX.Element {
+  return (
+    <>
+      <QuoteLine
+        text={text}
+        checked={checked}
+        marked={marked}
+        numberOfLines={numberOfLines}
+        testID={testID}
+      />
+      {caption ? (
+        <Text style={styles.caption} numberOfLines={1} testID={`${testID}-caption`}>
+          {caption}
+        </Text>
+      ) : null}
+    </>
+  );
+}
+
+/**
+ * The row's own element: a button (or checkbox) when it has a press, else a
+ * plain element that is read, not pressed, under the same accessible name.
+ */
+function RowSurface({
+  style,
+  onPress,
+  checked,
+  accessibilityState,
+  accessibilityLabel,
+  testID,
+  children,
+}: {
+  style: StyleProp<ViewStyle>;
+  onPress: (() => void) | undefined;
+  checked: boolean | undefined;
+  accessibilityState: AccessibilityState | undefined;
+  accessibilityLabel: string;
+  testID: string;
+  children: React.ReactNode;
+}): React.JSX.Element {
+  if (onPress == null) {
+    return (
+      <View style={style} accessible accessibilityLabel={accessibilityLabel} testID={testID}>
+        {children}
+      </View>
+    );
+  }
+  return (
+    <TouchableOpacity
+      style={style}
+      onPress={onPress}
+      {...roleProps(checked, accessibilityState)}
+      accessibilityLabel={accessibilityLabel}
+      testID={testID}
+    >
+      {children}
+    </TouchableOpacity>
+  );
+}
+
 /** A promoted quote as a tappable, stripe-marked row. */
 export function QuoteRow({
   text,
@@ -171,27 +251,32 @@ export function QuoteRow({
   trailing,
   style,
 }: QuoteRowProps): React.JSX.Element {
+  const rowStyle = [
+    styles.row,
+    dimmed && styles.dimmed,
+    trailing != null && styles.rowWithTrailing,
+  ];
+  const content = (
+    <RowContent
+      text={text}
+      caption={caption}
+      checked={checked}
+      marked={marked}
+      numberOfLines={numberOfLines}
+      testID={testID}
+    />
+  );
   const row = (
-    <TouchableOpacity
-      style={[styles.row, dimmed && styles.dimmed, trailing != null && styles.rowWithTrailing]}
+    <RowSurface
+      style={rowStyle}
       onPress={onPress}
-      {...roleProps(checked, accessibilityState)}
+      checked={checked}
+      accessibilityState={accessibilityState}
       accessibilityLabel={accessibilityLabel}
       testID={testID}
     >
-      <QuoteLine
-        text={text}
-        checked={checked}
-        marked={marked}
-        numberOfLines={numberOfLines}
-        testID={testID}
-      />
-      {caption ? (
-        <Text style={styles.caption} numberOfLines={1} testID={`${testID}-caption`}>
-          {caption}
-        </Text>
-      ) : null}
-    </TouchableOpacity>
+      {content}
+    </RowSurface>
   );
   if (trailing == null) return style == null ? row : <View style={style}>{row}</View>;
   return (

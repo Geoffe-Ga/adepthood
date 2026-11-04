@@ -8,7 +8,7 @@
  * course). A section is spelled ``x`` because ``s`` already names a stage and
  * ``c`` already prefixes the cycle.
  */
-import type { ReflectionLevel, ReflectionSourceItem } from '@/api';
+import type { PromotedQuoteSourceKind, ReflectionLevel, ReflectionSourceItem } from '@/api';
 import { STAGES_PER_SECTION } from '@/constants/program';
 import { STAGE_ORDER } from '@/design/tokens';
 
@@ -155,30 +155,62 @@ export function formatSourceDate(timestamp: string, timeZone?: string): string {
   });
 }
 
-/** The two facts an attribution is built from, whichever feed carried them. */
+/** The facts an attribution is built from, whichever feed carried them. */
 export interface AttributionSource {
   title: string | null | undefined;
   timestamp: string;
+  /**
+   * Where the quote was lifted from (#3659). Absent reads as an entry, which is
+   * what every quote was before Course chapters and letters could be quoted.
+   */
+  kind?: PromotedQuoteSourceKind;
 }
 
+/** A Course quote whose chapter carries no title is still from the Course. */
+const COURSE_FALLBACK_ATTRIBUTION = 'From the Course';
+
+/** A letter quote's attribution: it names the letter, never the page it answered. */
+const LETTER_ATTRIBUTION = 'From a letter';
+
+/** Between a letter's attribution and the page it answered, on a caption. */
+const CAPTION_SEPARATOR = ' · ';
+
 /**
- * The attribution line written beneath a folded quote: the source's trimmed
- * title, else the day it was written (in the device zone).
+ * The attribution line written beneath a folded quote. An entry quote names its
+ * source's trimmed title, else the day it was written (in the device zone); a
+ * Course quote names its chapter -- ``From “Beige 1”`` -- and a letter quote
+ * says only ``From a letter``, since the letter, not the page it answered, is
+ * what the words came from.
  *
  * The ONE composer of that line. The sources panel and the Promoted quotes
- * screen read the same entry through two different feeds, and the batch
+ * screen read the same quote through two different feeds, and the batch
  * fold-in decides "already in the body" by looking for the exact rendered
  * block -- so a second, drifting copy of this rule would make the same quote,
  * folded from the other surface, land twice.
  */
 export function quoteAttribution(source: AttributionSource): string {
   const title = source.title?.trim();
+  if (source.kind === 'course') return title ? `From “${title}”` : COURSE_FALLBACK_ATTRIBUTION;
+  if (source.kind === 'letter') return LETTER_ATTRIBUTION;
   return title ? title : formatSourceDate(source.timestamp);
+}
+
+/**
+ * The caption naming a quote's source wherever it is LISTED: its attribution,
+ * and for a letter quote the page the letter answered too (its title, else the
+ * day), because that page is what the writer will recognise. Distinct from
+ * {@link quoteAttribution}, which is written into a review's body.
+ */
+export function quoteSourceCaption(source: AttributionSource): string {
+  if (source.kind !== 'letter') return quoteAttribution(source);
+  const page = source.title?.trim() || formatSourceDate(source.timestamp);
+  return page ? `${LETTER_ATTRIBUTION}${CAPTION_SEPARATOR}${page}` : LETTER_ATTRIBUTION;
 }
 
 /** The attribution shown beneath a folded quote: the source's title, else its date. */
 export function sourceAttribution(item: ReflectionSourceItem): string {
-  return quoteAttribution(item);
+  // An entry or a reflection: the feed's ``kind`` names the item, not a quote's source.
+  return quoteAttribution({ title: item.title, timestamp: item.timestamp });
 }
 
 /**

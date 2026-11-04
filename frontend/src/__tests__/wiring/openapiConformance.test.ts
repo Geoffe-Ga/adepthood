@@ -203,36 +203,6 @@ const SCHEMA_VERDICTS: Readonly<Record<string, SchemaVerdict>> = {
       'GET /stages declares no response_model, so the document types the whole body as an empty schema; this schema is the only description of that payload anywhere.',
   },
 
-  // --- Fields the wire sends ahead of the client reading them -------------
-  // #3656 taught a promoted quote to come from a Course chapter or a Resonance
-  // Letter as well as an entry. No such quote can exist outside tests until the
-  // write paths land (#3658), and the screen that opens them is the epic's own
-  // frontend work (#3655), which reads these fields and deletes these waivers.
-  promotedQuoteSchema: {
-    omits: {
-      source_kind:
-        'Every quote the client can meet is an entry quote until #3658 creates the other kinds, so the discriminator carries no information for it yet.',
-      source_content_id:
-        'The Course chapter a quote came from; null on every entry quote, and read by the Course deep link the #3655 frontend work adds.',
-      source_marginalia_id:
-        'The margin note a letter quote came from; null on every entry quote, and read only once letter quotes exist (#3658).',
-    },
-  },
-  promotedQuoteListItemSchema: {
-    omits: {
-      source_kind:
-        'Same as promotedQuoteSchema.source_kind: the list item extends that shape, and every listed quote is an entry quote until #3658.',
-      source_content_id:
-        'Same as promotedQuoteSchema.source_content_id, inherited by the list item; Open for a Course quote is the #3655 frontend work.',
-      source_marginalia_id:
-        'Same as promotedQuoteSchema.source_marginalia_id, inherited by the list item; null on every quote the client can meet today.',
-      source_stage_number:
-        'The stage a Course quote deep-links into (with source_content_id); null on every entry quote, read by the #3655 frontend work.',
-      letter_entry_id:
-        "The entry a letter quote's note sits on, so Open can find it; null on every entry quote, read once letter quotes exist (#3658).",
-    },
-  },
-
   // --- Declared laxity on auto-matched pairs ------------------------------
   journalMessageSchema: {
     lax: {
@@ -252,13 +222,6 @@ const SCHEMA_VERDICTS: Readonly<Record<string, SchemaVerdict>> = {
     },
   },
   reflectionSourcesResponseSchema: {
-    // #3657 offers Course and letter quotes beside the feed; the composer's
-    // panel that reads them is the epic's own frontend work (#3659), which
-    // parses the field and deletes this waiver.
-    omits: {
-      reading_quotes:
-        'The Course and letter quotes promoted inside the review window; none can exist outside tests until #3658 creates them, and the Sources panel that offers them is #3659.',
-    },
     lax: {
       level:
         'Optional so a feed captured before the sources response echoed its scope still validates; the composer already knows which level it asked for and only uses the echo to confirm it.',

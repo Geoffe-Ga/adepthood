@@ -255,3 +255,70 @@ describe('ChapterReader -- initialScrollOffset', () => {
     expect(scrollView.props.contentOffset).toEqual({ x: 0, y: 125 });
   });
 });
+
+describe('ChapterReader -- opened at a promoted quote (#3659)', () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+    mockContentBody.mockResolvedValue(NOTE_CHAPTER);
+  });
+
+  // "riff" in the SERVED body: the 15 code points of "# Chapter One\n\n" ahead
+  // of the {7, 11} the reader shows it at.
+  const SERVED_RIFF = { start: 22, end: 26, text: 'riff' };
+
+  async function renderAtQuote(
+    initialHighlight: React.ComponentProps<typeof ChapterReader>['initialHighlight'],
+  ): Promise<RenderResult & { onWriteNote: jest.Mock }> {
+    const onWriteNote = jest.fn();
+    const utils = render(
+      <ChapterReader
+        source={{ kind: 'content', id: 1 }}
+        fallbackTitle="x"
+        onBack={jest.fn()}
+        onWriteNote={onWriteNote}
+        initialHighlight={initialHighlight}
+      />,
+    );
+    await utils.findByTestId('chapter-reader');
+    await act(async () => {});
+    return { ...utils, onWriteNote };
+  }
+
+  it('opens on the selection surface with the passage already chosen', async () => {
+    const { getByTestId, queryByTestId } = await renderAtQuote(SERVED_RIFF);
+
+    expect(queryByTestId('reader-markdown')).toBeNull();
+    expect(getByTestId('passage-select-input')).toBeTruthy();
+    expect(getByTestId('passage-select-preview').props.children).toBe('riff');
+  });
+
+  it('writes a note on that passage without choosing it again', async () => {
+    const { getByTestId, onWriteNote } = await renderAtQuote(SERVED_RIFF);
+    await act(async () => {
+      fireEvent.press(getByTestId('passage-select-confirm'));
+    });
+    await act(async () => {
+      fireEvent.press(getByTestId('write-note-dialog-confirm'));
+    });
+
+    expect(onWriteNote).toHaveBeenCalledWith(expect.objectContaining({ text: 'riff' }));
+  });
+
+  it('Cancel returns to the rendered chapter, and a later note starts unchosen', async () => {
+    const { getByTestId, findByTestId, queryByTestId } = await renderAtQuote(SERVED_RIFF);
+    fireEvent.press(getByTestId('passage-select-cancel'));
+
+    await findByTestId('reader-markdown');
+    expect(queryByTestId('passage-select-input')).toBeNull();
+
+    fireEvent.press(getByTestId('reader-write-note-affordance'));
+    expect(queryByTestId('passage-select-preview')).toBeNull();
+  });
+
+  it('opens the chapter normally when the span no longer matches its text', async () => {
+    const { findByTestId, queryByTestId } = await renderAtQuote({ ...SERVED_RIFF, text: 'solo' });
+
+    await findByTestId('reader-markdown');
+    expect(queryByTestId('passage-select-input')).toBeNull();
+  });
+});

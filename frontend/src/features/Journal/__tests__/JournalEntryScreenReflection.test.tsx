@@ -10,7 +10,7 @@
 // 409 wiring, not the panel's own rendering (covered by
 // `ReflectionSourcesPanel.test.tsx`).
 import { jest, describe, it, expect, beforeEach } from '@jest/globals';
-import { act, fireEvent, render, within } from '@testing-library/react-native';
+import { act, fireEvent, render, waitFor, within } from '@testing-library/react-native';
 import { BookOpen } from 'lucide-react-native';
 import React from 'react';
 import { StyleSheet } from 'react-native';
@@ -141,6 +141,8 @@ jest.mock('../ReflectionSourcesPanel', () => {
   const { Text, TouchableOpacity } = require('react-native');
   const Stub = ({
     items,
+    readingQuotes,
+    onInsertReadingQuote,
     onInsertQuote,
     onInsertQuotes,
     foldedIds,
@@ -150,6 +152,8 @@ jest.mock('../ReflectionSourcesPanel', () => {
     feedStatus,
   }: {
     items: ReflectionSourceItem[];
+    readingQuotes?: ReadonlyArray<{ id: number }>;
+    onInsertReadingQuote?: (_q: { id: number }) => Promise<boolean> | undefined;
     window?: { start: string; end: string };
     anchorStatus?: string;
     feedStatus?: string;
@@ -203,6 +207,20 @@ jest.mock('../ReflectionSourcesPanel', () => {
         )}
         <Text testID="stub-pending-ids">{pendingIds.join(',')}</Text>
         <Text testID="stub-source-ids">{items.map((source) => source.id).join(',')}</Text>
+        <Text testID="stub-reading-ids">
+          {(readingQuotes ?? []).map((quote) => quote.id).join(',')}
+        </Text>
+        {(readingQuotes ?? []).map((quote) => (
+          <TouchableOpacity
+            key={quote.id}
+            testID={`stub-insert-reading-${quote.id}`}
+            onPress={() => {
+              void onInsertReadingQuote?.(quote);
+            }}
+          >
+            <Text>{`Insert reading ${quote.id}`}</Text>
+          </TouchableOpacity>
+        ))}
         <Text testID="stub-window">
           {reviewWindow == null ? '' : `${reviewWindow.start}..${reviewWindow.end}`}
         </Text>
@@ -287,7 +305,7 @@ beforeEach(() => {
   mockReflectionsCurrent.mockReset();
   mockReflectionsCurrent.mockResolvedValue({ scopes: [] });
   mockReflectionsSources.mockReset();
-  mockReflectionsSources.mockResolvedValue({ items: [] });
+  mockReflectionsSources.mockResolvedValue({ reading_quotes: [], items: [] });
   mockPromotionsCreate.mockReset();
 });
 
@@ -530,7 +548,7 @@ describe('JournalEntryScreen -- reflection mode', () => {
   // and the page says "Saved" with B still pending -- the very defect this fix
   // exists to remove, moved behind a second tap.
   it('keeps the hint at Saving until every overlapping fold-in has settled', async () => {
-    mockReflectionsSources.mockResolvedValue({ items: [mockTwoQuoteSource] });
+    mockReflectionsSources.mockResolvedValue({ reading_quotes: [], items: [mockTwoQuoteSource] });
     const release = new Map<number, () => void>();
     mockSetIncluded.mockImplementation(
       (id: number) =>
@@ -759,10 +777,13 @@ describe('JournalEntryScreen -- a review begun early that collides with one alre
 // RED: the screen does not yet pass `onPromoteSpan` to the sources panel.
 describe('JournalEntryScreen -- in-panel re-promotion (reflection mode)', () => {
   it('promotes a selected span from a source and folds the created quote into the pending set', async () => {
-    mockReflectionsSources.mockResolvedValue({ items: [mockStubSourceItem] });
+    mockReflectionsSources.mockResolvedValue({ reading_quotes: [], items: [mockStubSourceItem] });
     mockPromotionsCreate.mockResolvedValue({
       id: 501,
+      source_kind: 'entry',
       source_entry_id: mockStubSourceItem.id,
+      source_content_id: null,
+      source_marginalia_id: null,
       anchor_start: mockStubPromoteSpan.anchor_start,
       anchor_end: mockStubPromoteSpan.anchor_end,
       anchor_text: 'went for a daily walk',
@@ -782,7 +803,7 @@ describe('JournalEntryScreen -- in-panel re-promotion (reflection mode)', () => 
   });
 
   it('leaves the pending set unchanged when promotions.create rejects, without crashing', async () => {
-    mockReflectionsSources.mockResolvedValue({ items: [mockStubSourceItem] });
+    mockReflectionsSources.mockResolvedValue({ reading_quotes: [], items: [mockStubSourceItem] });
     mockPromotionsCreate.mockRejectedValue({ status: 500, detail: 'boom' });
     const { findByTestId } = renderScreen(REFLECTION_PARAMS);
     await act(async () => {
@@ -796,7 +817,7 @@ describe('JournalEntryScreen -- in-panel re-promotion (reflection mode)', () => 
   });
 
   it('single-flights a hanging promote so a double press calls create once', async () => {
-    mockReflectionsSources.mockResolvedValue({ items: [mockStubSourceItem] });
+    mockReflectionsSources.mockResolvedValue({ reading_quotes: [], items: [mockStubSourceItem] });
     let resolveCreate: (_value: PromotedQuote) => void = () => undefined;
     mockPromotionsCreate.mockReturnValue(
       new Promise((resolve) => {
@@ -814,7 +835,10 @@ describe('JournalEntryScreen -- in-panel re-promotion (reflection mode)', () => 
     });
     resolveCreate({
       id: 501,
+      source_kind: 'entry',
       source_entry_id: mockStubSourceItem.id,
+      source_content_id: null,
+      source_marginalia_id: null,
       anchor_start: mockStubPromoteSpan.anchor_start,
       anchor_end: mockStubPromoteSpan.anchor_end,
       anchor_text: 'went for a daily walk',
@@ -919,7 +943,10 @@ describe('JournalEntryScreen -- the scope the panel is showing', () => {
   });
 
   it("clears the previous review's sources when the next scope's fetch fails", async () => {
-    mockReflectionsSources.mockResolvedValueOnce({ items: [mockStubSourceItem] });
+    mockReflectionsSources.mockResolvedValueOnce({
+      reading_quotes: [],
+      items: [mockStubSourceItem],
+    });
     const screen = renderScreen(REFLECTION_PARAMS);
     await act(async () => {
       fireEvent.press(await screen.findByTestId('reflection-sources-toggle'));
@@ -936,13 +963,13 @@ describe('JournalEntryScreen -- the scope the panel is showing', () => {
   });
 
   it('lets a late response for the previous scope never populate the new one', async () => {
-    let settleFirst: (_value: { items: ReflectionSourceItem[] }) => void = () => {};
+    let settleFirst: (_value: ReflectionSourcesResponse) => void = () => {};
     mockReflectionsSources.mockReturnValueOnce(
       new Promise((resolve) => {
         settleFirst = resolve;
       }),
     );
-    mockReflectionsSources.mockResolvedValueOnce({ items: [] });
+    mockReflectionsSources.mockResolvedValueOnce({ reading_quotes: [], items: [] });
     const screen = renderScreen(REFLECTION_PARAMS);
     await act(async () => {
       fireEvent.press(await screen.findByTestId('reflection-sources-toggle'));
@@ -950,16 +977,47 @@ describe('JournalEntryScreen -- the scope the panel is showing', () => {
 
     rerenderWithParams(screen, { reflectionLevel: 'week', reflectionScopeKey: 'c1:w1' });
     await act(async () => {
-      settleFirst({ items: [mockStubSourceItem] });
+      settleFirst({ reading_quotes: [], items: [mockStubSourceItem] });
       await Promise.resolve();
     });
 
     expect(screen.getByTestId('stub-source-ids').props.children).toBe('');
   });
 
+  it('hands the panel the reading quotes and folds one into the review (#3659)', async () => {
+    mockReflectionsSources.mockResolvedValueOnce({
+      items: [],
+      reading_quotes: [
+        {
+          id: 71,
+          source_kind: 'course',
+          source_title: 'Beige 1',
+          anchor_start: 3,
+          anchor_end: 14,
+          anchor_text: 'warm hearth',
+          pending: true,
+          created_at: '2026-06-02T08:00:00Z',
+        },
+      ],
+    });
+    const screen = renderScreen(REFLECTION_PARAMS);
+    await act(async () => {
+      fireEvent.press(await screen.findByTestId('reflection-sources-toggle'));
+    });
+    expect(screen.getByTestId('stub-reading-ids').props.children).toBe('71');
+
+    await act(async () => {
+      fireEvent.press(screen.getByTestId('stub-insert-reading-71'));
+    });
+
+    await waitFor(() => expect(mockSetIncluded).toHaveBeenCalledWith(71, expect.any(Number)));
+    expect(screen.getByTestId('stub-folded-ids').props.children).toBe('71');
+  });
+
   it('keeps the reflection period the server declared for the scope on screen', async () => {
     mockReflectionsSources.mockResolvedValueOnce({
       items: [],
+      reading_quotes: [],
       level: 'stage',
       scope_key: 'c1:s1',
       window_start: '2026-06-01T04:00:00Z',
@@ -978,6 +1036,7 @@ describe('JournalEntryScreen -- the scope the panel is showing', () => {
   it("hands the panel the server's anchor_status, so an unreconstructable period can say so", async () => {
     mockReflectionsSources.mockResolvedValueOnce({
       items: [],
+      reading_quotes: [],
       level: 'stage',
       scope_key: 'c1:s1',
       window_start: null,
@@ -996,6 +1055,7 @@ describe('JournalEntryScreen -- the scope the panel is showing', () => {
   it('tells the panel a settled feed is settled, so an empty one reads as genuinely empty', async () => {
     mockReflectionsSources.mockResolvedValueOnce({
       items: [],
+      reading_quotes: [],
       level: 'stage',
       scope_key: 'c1:s1',
       window_start: '2026-06-01T04:00:00Z',
@@ -1039,7 +1099,13 @@ describe('JournalEntryScreen -- the scope the panel is showing', () => {
     expect(screen.getByTestId('stub-feed-status').props.children).toBe('loading');
 
     await act(async () => {
-      settle?.({ items: [], anchor_status: 'recorded', window_start: null, window_end: null });
+      settle?.({
+        reading_quotes: [],
+        items: [],
+        anchor_status: 'recorded',
+        window_start: null,
+        window_end: null,
+      });
       await Promise.resolve();
     });
     expect(screen.getByTestId('stub-feed-status').props.children).toBe('ready');
@@ -1066,7 +1132,7 @@ describe('JournalEntryScreen -- batch fold-in and its retry (#2885)', () => {
   }
 
   it('folds a batch as one entry write and one mark per quote, then shows both folded', async () => {
-    mockReflectionsSources.mockResolvedValue({ items: [mockTwoQuoteSource] });
+    mockReflectionsSources.mockResolvedValue({ reading_quotes: [], items: [mockTwoQuoteSource] });
     jest.useFakeTimers();
     try {
       const { findByTestId, getByTestId } = renderScreen(REFLECTION_PARAMS, {
@@ -1085,7 +1151,7 @@ describe('JournalEntryScreen -- batch fold-in and its retry (#2885)', () => {
   });
 
   it('names how many marks failed, and Try again re-marks only those', async () => {
-    mockReflectionsSources.mockResolvedValue({ items: [mockTwoQuoteSource] });
+    mockReflectionsSources.mockResolvedValue({ reading_quotes: [], items: [mockTwoQuoteSource] });
     mockSetIncluded.mockImplementation((id) =>
       id === 91 ? Promise.reject({ status: 500 }) : Promise.resolve(mockStubQuote),
     );
@@ -1178,7 +1244,7 @@ describe('JournalEntryScreen -- a per-quote inclusion warning (#2754)', () => {
   ])(
     "keeps A's warning through B's overlapping success (%s), and Try again PATCHes only A",
     async (_order, order) => {
-      mockReflectionsSources.mockResolvedValue({ items: [mockTwoQuoteSource] });
+      mockReflectionsSources.mockResolvedValue({ reading_quotes: [], items: [mockTwoQuoteSource] });
       jest.useFakeTimers();
       try {
         const screen = renderScreen(REFLECTION_PARAMS, { autosaveDelayMs: 100 });
@@ -1201,7 +1267,7 @@ describe('JournalEntryScreen -- a per-quote inclusion warning (#2754)', () => {
   );
 
   it('retires the warning and the pending row when the retry finds the quote removed', async () => {
-    mockReflectionsSources.mockResolvedValue({ items: [mockTwoQuoteSource] });
+    mockReflectionsSources.mockResolvedValue({ reading_quotes: [], items: [mockTwoQuoteSource] });
     jest.useFakeTimers();
     try {
       const screen = renderScreen(REFLECTION_PARAMS, { autosaveDelayMs: 100 });
@@ -1349,7 +1415,7 @@ describe('JournalEntryScreen -- no inclusion mark over a failed review write (#2
         reflection_scope_key: 'c1:w1',
       }),
     );
-    mockReflectionsSources.mockResolvedValue({ items: [mockTwoQuoteSource] });
+    mockReflectionsSources.mockResolvedValue({ reading_quotes: [], items: [mockTwoQuoteSource] });
     return renderScreen({ entryId: 42 }, { autosaveDelayMs: 100 });
   }
 
