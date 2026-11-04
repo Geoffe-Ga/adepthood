@@ -693,7 +693,6 @@ interface ReaderBodyProps {
   onEndReachedChange: (_reached: boolean) => void;
 }
 
-/** Renders the loaded body: empty notice, reading sheet, or selection surface. */
 /**
  * The rendered chapter under its bottom fade. The veil covers the reading sheet
  * for all but the last inch of the scroll, so the sheet's own ground is the
@@ -727,6 +726,7 @@ function usePromoteSource(contentId: number | null, served: string): PromoteSour
   return useMemo(() => (contentId === null ? null : { contentId, served }), [contentId, served]);
 }
 
+/** Renders the loaded body: empty notice, reading sheet, or selection surface. */
 const ReaderBody = ({
   body,
   contentId,
