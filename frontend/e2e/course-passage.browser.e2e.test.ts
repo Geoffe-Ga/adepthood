@@ -28,25 +28,30 @@ async function signUpAndOpenChapter(page: Page): Promise<void> {
   await page.getByRole('dialog').getByRole('button', { name: 'Course', exact: true }).click();
   await page.getByTestId('stage-pill-1').click();
   await page.getByRole('button', { name: 'What is Beige?', exact: true }).click();
-  await expect(page.getByRole('button', { name: 'Write a note on a passage' })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Select a passage' })).toBeVisible();
 }
 
+// Write a note rides the floating pill beside Promote (#3660): nothing is
+// offered until a passage is chosen, and Done (named "Back to the chapter")
+// leaves the selection.
+const WRITE_NOTE = { name: 'Write a note on this passage' } as const;
+
 async function enterSelectionMode(page: Page): Promise<void> {
-  await page.getByRole('button', { name: 'Write a note on a passage' }).click();
+  await page.getByRole('button', { name: 'Select a passage' }).click();
   await expect(page.locator(PASSAGE_INPUT)).toBeVisible();
-  await expect(page.getByRole('button', { name: 'Write a note', exact: true })).toBeDisabled();
+  await expect(page.getByRole('button', WRITE_NOTE)).toHaveCount(0);
 }
 
 async function cancelSelectionMode(page: Page): Promise<void> {
-  await page.getByRole('button', { name: 'Cancel promoting' }).click();
-  await expect(page.getByRole('button', { name: 'Write a note on a passage' })).toBeVisible();
+  await page.getByRole('button', { name: 'Back to the chapter' }).click();
+  await expect(page.getByRole('button', { name: 'Select a passage' })).toBeVisible();
 }
 
 async function expectSelectionEnabled(page: Page): Promise<void> {
   const preview = page.locator('[data-testid="passage-select-preview"]');
   await expect(preview).toBeVisible();
   await expect(preview).toContainText(/\S/u);
-  await expect(page.getByRole('button', { name: 'Write a note', exact: true })).toBeEnabled();
+  await expect(page.getByRole('button', WRITE_NOTE)).toBeEnabled();
 }
 
 test('a course passage can become a saved journal note with every desktop selection gesture', async ({
@@ -79,7 +84,7 @@ test('a course passage can become a saved journal note with every desktop select
   await page.mouse.up();
   await expectSelectionEnabled(page);
 
-  await page.getByRole('button', { name: 'Write a note', exact: true }).click();
+  await page.getByRole('button', WRITE_NOTE).click();
   await expect(page.getByText('Write a note on this passage?')).toBeVisible();
   await page.getByTestId('write-note-dialog-confirm').click();
 

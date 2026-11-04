@@ -527,7 +527,7 @@
   },
   {
     "id": "journal.intimate-passage-is-never-a-folded-quote",
-    "description": "Owner decision R5-2 (#3059): Intimate text is excluded from folded quotes. A writer who tries to promote a passage of a page marked Intimate, or a span of a review over a passage it holds from such a fold, is refused with 409 quote_source_restricted and sees the hint that passages from a page marked Intimate stay on that page and nothing was changed; no quote row is stored. A quote whose source page was made Intimate after it was promoted is no longer offered under Quotes to fold in on a review's sources panel (GET /reflections/sources), and folding it over PATCH /promotions/{promotion_id} is refused the same way, while returning it to pending still works. Where a review already holds such a passage -- spliced in before the fold PATCH, or before its source became Intimate -- the passage is masked, length for length, in everything the review sends: the reflection and detection prompts, letters, the recency window and corpus grounding, corpus ingest, the Creek vault write and reading recommendations, while the writer's own page still reads as written. Backend suites pin the refusals, the feed filter and each sink with a Personal twin (tests/test_folded_quote_privacy.py, tests/test_privacy_lineage.py, tests/test_reflections_api.py, tests/services/test_reading_recommendations.py), and Jest pins the hint copy. Browser coverage of the refusal hint and the filtered fold list is an explicit gap tracked by #3059.",
+    "description": "Owner decision R5-2 (#3059): Intimate text is excluded from folded quotes. A writer who tries to promote a passage of a page marked Intimate, or a span of a review over a passage it holds from such a fold, is refused with 409 quote_source_restricted and sees the hint that passages from a page marked Intimate stay on that page and nothing was changed; no quote row is stored. The reading sources follow the same line (#3658, #3660): a Course chapter is published text, so its quotes carry no tier and are always offered under From your reading; a Resonance Letter has no tier of its own and inherits the tier of the entry it answered, so a letter on a page marked Intimate is refused on promote with the same 409 (the hint names the page the letter answered) and a letter quote whose page became Intimate afterwards is never offered from that page. A quote whose source page was made Intimate after it was promoted is no longer offered under Quotes to fold in on a review's sources panel (GET /reflections/sources), and folding it over PATCH /promotions/{promotion_id} is refused the same way, while returning it to pending still works. Where a review already holds such a passage -- spliced in before the fold PATCH, or before its source became Intimate -- the passage is masked, length for length, in everything the review sends: the reflection and detection prompts, letters, the recency window and corpus grounding, corpus ingest, the Creek vault write and reading recommendations, while the writer's own page still reads as written. Backend suites pin the refusals, the feed filter and each sink with a Personal twin (tests/test_folded_quote_privacy.py, tests/test_privacy_lineage.py, tests/test_reflections_api.py, tests/services/test_reading_recommendations.py, tests/test_promote_reading_sources_api.py), and Jest pins the hint copy, the letter's included. Browser coverage of the refusal hint and the filtered fold list is an explicit gap tracked by #3059.",
     "crosses": {
       "screen": "frontend/src/features/Journal/ReflectionSourcesPanel.tsx",
       "client": ["promotions", "reflections"],
@@ -613,15 +613,41 @@
   },
   {
     "id": "journal.fold-a-reading-quote-into-a-review",
-    "description": "A writer composing a due weekly review opens Sources, and the Course and Resonance Letter quotes they promoted that week (GET /reflections/sources reading_quotes) wait beneath the entries' own quotes under a 'From your reading' label, each captioned with where it came from -- 'From “Beige 1”' for a chapter, 'From a letter · <the page it answered>' for a letter. A tap (or a selection, after the entries' quotes) splices the quote as a Markdown blockquote attributed '— From “Beige 1”' or '— From a letter', autosaves the review, and marks it included with one PATCH /promotions/{promotion_id}. On the Promoted quotes screen the same quotes carry the same captions; Open on a chapter quote lands in the Course tab on that chapter with the passage already chosen on its selection surface (Cancel returns to the rendered chapter, and a chapter since re-pinned opens plainly), Open on a letter quote lands on the page the letter answered with that letter open, and a quote of a pruned chapter is captioned but offers no Open. Uncovered because no Course or letter quote can be created end to end until the promote routes and their UI land in #3660, which covers this journey; pinned meanwhile by ReflectionSourcesPanelReading.test.tsx, useReflectionModeReading.test.tsx, PromotedQuotesScreen.test.tsx, quoteBatch.test.ts, reflectionCopy.test.ts, chapterHighlight.test.ts, ChapterReaderPassageSelection.test.tsx, CourseScreen.test.tsx and JournalEntryScreenOpenLetter.test.tsx.",
+    "description": "A writer composing a due weekly review opens Sources, and the Course and Resonance Letter quotes they promoted that week (GET /reflections/sources reading_quotes) wait beneath the entries' own quotes under a 'From your reading' label, each captioned with where it came from -- 'From “Beige 1”' for a chapter, 'From a letter · <the page it answered>' for a letter. A tap (or a selection, after the entries' quotes) splices the quote as a Markdown blockquote attributed '— From “Beige 1”' or '— From a letter', autosaves the review, and marks it included with one PATCH /promotions/{promotion_id}. On the Promoted quotes screen the same quotes carry the same captions; Open on a chapter quote lands in the Course tab on that chapter with the passage already chosen on its selection surface (Cancel returns to the rendered chapter, and a chapter since re-pinned opens plainly), Open on a letter quote lands on the page the letter answered with that letter open, and a quote of a pruned chapter is captioned but offers no Open. The covering browser spec (#3660) creates both quotes end to end: on day six of week one it opens What is Beige?, selects a line with the keyboard on Select a passage's field, presses the floating Promote pill and goes ahead on the one-time reading note (ticking Don’t show this again), and finds the stored anchor_text equal to the echo over GET /course/content/{content_id}/promotions; Promoted quotes captions it From “What is Beige?”; the week's review, opened from Prompts, offers it under From your reading, and a tap splices '> <line>\\n> — From “What is Beige?”', saves, and lists it as included in that review. It then opens a seeded letter's essay modal, promotes its first line through Promote a quote and the pill with the card left open, and finds it on Promoted quotes as From a letter · The heron. Selection mode's fold, Open's landing per kind and the pruned-chapter caption stay pinned by ReflectionSourcesPanelReading.test.tsx, useReflectionModeReading.test.tsx, PromotedQuotesScreen.test.tsx, quoteBatch.test.ts, reflectionCopy.test.ts, chapterHighlight.test.ts, ChapterReaderPassageSelection.test.tsx, CourseScreen.test.tsx and JournalEntryScreenOpenLetter.test.tsx.",
     "crosses": {
       "screen": "frontend/src/features/Journal/ReflectionSourcesPanel.tsx",
-      "client": ["journal", "promotions", "reflections"],
-      "routes": ["GET /reflections/sources", "PATCH /promotions/{promotion_id}", "GET /promotions"],
+      "client": ["course", "journal", "promotions", "reflections"],
+      "routes": [
+        "POST /course/content/{content_id}/promote",
+        "POST /journal/marginalia/{marginalia_id}/letter/promote",
+        "GET /reflections/sources",
+        "PATCH /promotions/{promotion_id}",
+        "GET /promotions"
+      ],
       "tables": ["journalentry", "promotedquote"]
     },
-    "status": "uncovered",
-    "issue": 3660
+    "status": "covered",
+    "coveredBy": "frontend/e2e/promote-from-reading.browser.e2e.test.ts"
+  },
+  {
+    "id": "journal.promote-from-a-letter",
+    "description": "A reader on a phone (390x844) opens a margin note's Resonance Letter -- seeded over the real resonance and essay routes, which the lane's demo provider writes for free -- and finds a quiet Promote a quote beneath it, offered only under a real letter (never the priced offer, a letter being written, an error or the care a vault can send, pinned by LetterModalsPromote.test.tsx). The first press sets the one-time note in the card in place of the letter, never a dialog over the dialog; Choose the passage swaps the letter for the selection field over the same words (#3660). The spec selects a line with the keyboard and presses the floating Promote pill; the card stays open, the letter returns with Promoted — find it any time under Promoted quotes beneath it, and GET /journal/marginalia/{marginalia_id}/letter/promotions lists exactly the echoed words. The same letter on the Voice drafts shelf offers the same gesture, and Promoted quotes captions the quote From a letter · The heron. The Intimate refusal's copy and the in-card note's Not now are pinned by LetterPassage.test.tsx; no highlights are drawn on a letter, because the shelf opens a letter with no request at all.",
+    "crosses": {
+      "screen": "frontend/src/features/Journal/ResonanceEssayModal.tsx",
+      "client": ["journal", "resonance", "voiceDrafts", "promotions"],
+      "routes": [
+        "POST /journal/",
+        "POST /journal/{entry_id}/resonance",
+        "POST /journal/marginalia/{marginalia_id}/essay",
+        "POST /journal/marginalia/{marginalia_id}/letter/promote",
+        "GET /journal/marginalia/{marginalia_id}/letter/promotions",
+        "GET /journal/voice-drafts",
+        "GET /promotions"
+      ],
+      "tables": ["journalentry", "marginalia", "promotedquote"]
+    },
+    "status": "covered",
+    "coveredBy": "frontend/e2e/journal-promote-from-letter.browser.e2e.test.ts"
   },
   {
     "id": "journal.sources-panel-navigation",
@@ -1376,7 +1402,7 @@
   },
   {
     "id": "course.write-note-on-passage",
-    "description": "A reader in a desktop browser opens a chapter, chooses Write a note on a passage, selects a passage by keyboard, double-click, and pointer drag, confirms Write a note, lands in JournalEntry with the passage prefilled as a blockquote, and waits for the entry to save. The covering Playwright spec boots the real Expo web app and FastAPI app over loopback against an alembic-built throwaway Postgres database; it exists because the Node API lane cannot exercise native textarea selection or browser accessibility semantics.",
+    "description": "A reader in a desktop browser opens a chapter, chooses Select a passage, selects a passage by keyboard, double-click, and pointer drag, presses Write a note on the floating pill beside Promote (#3660), confirms it, lands in JournalEntry with the passage prefilled as a blockquote, and waits for the entry to save. The covering Playwright spec boots the real Expo web app and FastAPI app over loopback against an alembic-built throwaway Postgres database; it exists because the Node API lane cannot exercise native textarea selection or browser accessibility semantics.",
     "crosses": {
       "screen": "frontend/src/features/Course/CourseScreen.tsx",
       "client": ["auth", "stages", "course", "journal"],
@@ -1391,6 +1417,25 @@
     },
     "status": "covered",
     "coveredBy": "frontend/e2e/course-passage.browser.e2e.test.ts"
+  },
+  {
+    "id": "course.promote-a-passage",
+    "description": "A reader on a phone (390x844) opens What is Beige? and taps Select a passage -- the one gesture that used to read Write a note on a passage (#3660). The reader's bottom fade stands down while the selection field is open, and nothing is offered until a passage is chosen; then the floating pill from #3134 rises centred over the column, lifted at least RESONANCE_BUTTON_CLEARANCE above the foot of the viewport, with Promote (accessible name Promote this passage) as its primary beside a glass Write a note (Write a note on this passage). The spec selects a line with the keyboard, presses Promote, goes ahead on the one-time note in its reading wording (Promote the passage), and sees the notice Promoted — find it any time under Promoted quotes. POST /course/content/{content_id}/promote stored exactly the echoed words, and its offsets index body_markdown as served (the reader shows it with the title heading stripped, so the client adds that prefix back). The passage is let go, selection stays open, and Done (Back to the chapter) returns to the rendered chapter. A second test promotes a sentence about seven tenths down the long “INHABIT (Do)” chapter over the route, opens it from Promoted quotes, and finds the Course reader's field selected on exactly those words, more than three screens tall, with the passage scrolled into the viewport rather than left selected off-screen (web only; native is pinned by QuoteSelectionSurfaceReading.test.tsx). The explainer's Not now, the busy pill, the content_not_found copy, an introduction offering Write a note alone and the served-offset shift past an astral emoji are pinned by ChapterReaderPromote.test.tsx.",
+    "crosses": {
+      "screen": "frontend/src/features/Course/CourseScreen.tsx",
+      "client": ["auth", "course", "promotions"],
+      "routes": [
+        "POST /auth/signup",
+        "GET /course/stages/{stage_number}/content",
+        "GET /course/content/{content_id}/body",
+        "POST /course/content/{content_id}/promote",
+        "GET /course/content/{content_id}/promotions",
+        "GET /promotions"
+      ],
+      "tables": ["user", "stagecontent", "promotedquote"]
+    },
+    "status": "covered",
+    "coveredBy": "frontend/e2e/course-promote-passage.browser.e2e.test.ts"
   },
   {
     "id": "course.reflect-and-return-to-the-reading",
