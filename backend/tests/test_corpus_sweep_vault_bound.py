@@ -63,6 +63,13 @@ def vault() -> Iterator[SequencedVaultClient]:
 
 
 @pytest.fixture(autouse=True)
+def _no_retry_waits(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Keep the vault lane's retry ladder, without its real waits."""
+    retries = len(corpus_sort_run.VAULT_RETRY_DELAYS_SECONDS)
+    monkeypatch.setattr(corpus_sort_run, "VAULT_RETRY_DELAYS_SECONDS", (0.0,) * retries)
+
+
+@pytest.fixture(autouse=True)
 def _no_app_classifier(monkeypatch: pytest.MonkeyPatch) -> None:
     """Fail loudly if anything dials the app provider's classifier."""
 
@@ -224,28 +231,39 @@ async def test_intimate_writing_is_neither_counted_nor_sent(
 
 
 class _DownVault(SequencedVaultClient):
-    """A vault that answers its handshake as unavailable, as the real client degrades one."""
+    """A vault whose handshake answers unavailable, as the real client degrades one.
 
-    def __init__(self) -> None:
+    ``outage`` is how many probes fail before it answers again; ``None`` (the
+    default) is a vault that never comes back. A managed vault shedding load
+    (Creek's concurrency limit, ``503 temporarily_unavailable``) looks like the
+    first: unavailable for a moment, then fine.
+    """
+
+    def __init__(self, outage: int | None = None) -> None:
         """Start with no probes counted."""
         super().__init__()
         self.handshakes = 0
+        self._outage = outage
+        self._available = False
 
     async def handshake(self) -> HandshakeResult:
-        """Count the probe and report no usable vault, never raising."""
+        """Count the probe; fail it while the outage lasts, never raising."""
         self.handshakes += 1
-        return HandshakeResult.unavailable()
+        self._available = self._outage is not None and self.handshakes > self._outage
+        if not self._available:
+            return HandshakeResult.unavailable()
+        return await super().handshake()
 
     def is_available(self) -> bool:
-        """Report the vault unavailable, as the cached handshake would."""
-        return False
+        """Report what the last handshake found, as the cached handshake would."""
+        return self._available
 
 
 @pytest.mark.asyncio
 async def test_a_vault_that_cannot_take_writing_stops_the_pass(
     async_client: AsyncClient, db_session: AsyncSession
 ) -> None:
-    """A down vault is a fact about the vault, not the entry: one probe, then stop."""
+    """A vault that stays down through every retry is a fact about the vault: stop."""
     down = _DownVault()
     app.dependency_overrides[get_creek_vault_client] = lambda: down
     try:
@@ -260,7 +278,7 @@ async def test_a_vault_that_cannot_take_writing_stops_the_pass(
     assert body["entries_sorted"] == 0
     assert body["entries_remaining"] == _BACKLOG
     assert down.ingest_calls == []
-    assert down.handshakes == 1
+    assert down.handshakes == 1 + len(corpus_sort_run.VAULT_RETRY_DELAYS_SECONDS)
 
 
 @pytest.mark.asyncio

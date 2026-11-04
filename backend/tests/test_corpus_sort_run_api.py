@@ -41,7 +41,7 @@ from models.corpus_fragment import CorpusFragment, CorpusSource
 from models.corpus_sort_run import CorpusSortRun, SortLane, SortRunState, SortStopReason
 from models.corpus_sweep import CorpusSweep
 from models.journal_entry import JournalEntry
-from services import corpus_backfill, corpus_sort_run
+from services import corpus_backfill, corpus_sort_run, corpus_vault_sort, journal_vault_write
 from services import frequency_classification as fc
 from services.corpus_consent import set_consent
 from services.creek_vault_client import LocalFallbackCreekVaultClient
@@ -112,6 +112,13 @@ def _no_vault() -> Iterator[None]:
     )
     yield
     app.dependency_overrides.pop(get_creek_vault_client, None)
+
+
+@pytest.fixture(autouse=True)
+def _no_retry_waits(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Keep the vault lane's retry ladder, without its real waits."""
+    retries = len(corpus_sort_run.VAULT_RETRY_DELAYS_SECONDS)
+    monkeypatch.setattr(corpus_sort_run, "VAULT_RETRY_DELAYS_SECONDS", (0.0,) * retries)
 
 
 @pytest_asyncio.fixture(autouse=True)
@@ -379,7 +386,7 @@ async def test_a_vault_bound_press_hands_the_vault_everything_it_lacks(
 async def test_a_vault_that_cannot_take_writing_stops_the_run(
     async_client: AsyncClient, db_session: AsyncSession
 ) -> None:
-    """A down vault is a fact about the vault: the run says so and ends."""
+    """A vault down through every retry is a fact about the vault: the run says so and ends."""
     down = _DownVault()
     app.dependency_overrides[get_creek_vault_client] = lambda: down
     headers, user_id = await _signup(async_client, "sort-run-vault-down")
@@ -395,7 +402,75 @@ async def test_a_vault_that_cannot_take_writing_stops_the_run(
     assert run["state"] == SortRunState.STOPPED.value
     assert run["stop_reason"] == SortStopReason.VAULT_UNAVAILABLE.value
     assert down.ingest_calls == []
-    assert down.handshakes == 1
+    assert down.handshakes == 1 + len(corpus_sort_run.VAULT_RETRY_DELAYS_SECONDS)
+
+
+@pytest.mark.asyncio
+async def test_a_vault_that_sheds_for_a_moment_is_waited_out(
+    async_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """The reported failure: a managed vault shedding load must not end the whole sort.
+
+    Creek sheds with ``503 temporarily_unavailable`` while its concurrency limit
+    is reached, so a handshake can fail for a moment and succeed a second later.
+    The run backs off and tries the same entry again rather than stopping.
+    """
+    shedding = _DownVault(outage=2)
+    app.dependency_overrides[get_creek_vault_client] = lambda: shedding
+    headers, user_id = await _signup(async_client, "sort-run-vault-shed")
+    await store_vault_config(
+        db_session, user_id, vault_url=_VAULT_URL, api_key=_VAULT_KEY, provisioned=True
+    )
+    await _consent(db_session, user_id)
+    await _entries(db_session, user_id, _SMALL_BACKLOG)
+
+    await _press(async_client, headers)
+    settled = await _settled(async_client, headers)
+
+    run = _run_of(settled)
+    assert run["state"] == SortRunState.COMPLETED.value
+    assert run["entries_sorted"] == _SMALL_BACKLOG
+    assert settled["entries_pending"] == 0
+    assert len(shedding.ingest_calls) == _SMALL_BACKLOG
+
+
+@pytest.mark.asyncio
+async def test_a_vault_sort_nudges_the_pipeline_once_after_sending_everything(
+    async_client: AsyncClient, db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """No classification polling races the sends; one nudge classifies all of them.
+
+    Each journal save nudges the vault pipeline, and that nudge spawns a
+    background classification task on the same client. During a sort that task
+    ran beside the next send and pushed the vault over its concurrency limit, so
+    a sort sends without the per-write nudge and nudges once when it is done.
+    """
+    per_write: list[int] = []
+    at_the_end: list[int] = []
+
+    async def counting_write(*_args: object, user_id: int, **_kwargs: object) -> None:
+        per_write.append(user_id)
+
+    async def counting_end(*_args: object, user_id: int, **_kwargs: object) -> None:
+        at_the_end.append(user_id)
+
+    monkeypatch.setattr(journal_vault_write, "drive_vault_pipeline", counting_write)
+    monkeypatch.setattr(corpus_vault_sort, "drive_vault_pipeline", counting_end)
+    vault = SequencedVaultClient()
+    app.dependency_overrides[get_creek_vault_client] = lambda: vault
+    headers, user_id = await _signup(async_client, "sort-run-vault-nudge")
+    await store_vault_config(
+        db_session, user_id, vault_url=_VAULT_URL, api_key=_VAULT_KEY, provisioned=True
+    )
+    await _consent(db_session, user_id)
+    await _entries(db_session, user_id, _SMALL_BACKLOG)
+
+    await _press(async_client, headers)
+    run = _run_of(await _settled(async_client, headers))
+
+    assert run["entries_sorted"] == _SMALL_BACKLOG
+    assert per_write == []
+    assert at_the_end == [user_id]
 
 
 @pytest.mark.asyncio
