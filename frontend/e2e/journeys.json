@@ -1714,15 +1714,15 @@
   },
   {
     "id": "corpus.vault-bound-sort-hands-the-vault-what-it-lacks",
-    "description": "Someone who connected a Creek vault and has a standing yes for sorting what they write here opens Settings, finds 'Sort the rest of your writing' counting the entries their vault does not have yet (saved before the vault was connected, or whose save could not reach it; never anything marked Intimate), and presses Sort once. A background run hands every one of those entries to their vault down the journal save's own path, so the vault classifies them, and the screen follows it until it reports them sorted with nothing left -- or stops, saying the vault could not be reached. The app provider's classifier is never dialled for them (#3156), even if the vault is connected while the run is going. Before #3665, the pass stopped at the vault boundary every time and the screen said nothing was sorted against a remainder that never moved. Uncovered across the seam until #3663; pinned meanwhile over HTTP against a vault double by backend/tests/test_corpus_sweep_vault_bound.py and backend/tests/test_corpus_sort_run_api.py.",
+    "description": "Someone who connected a Creek vault and has a standing yes for sorting what they write here opens Settings, finds 'Sort the rest of your writing' counting the entries their vault does not have yet (saved while the vault could not take writing, or before it was connected; never anything marked Intimate), and presses Sort once. A background run hands every one of those entries to their vault down the journal save's own path and the screen follows it until nothing is left; pressing again sends nothing new. The app provider's classifier is never dialled for them (#3156). The spec drives this as the lane's vault-bound owner through the production client: with the lane vault refusing journal ingests (__lane/refuse-journal-ingest), two Personal pages and one Intimate page are saved and none reaches the vault; one press starts a vault_bound run that the next reads follow to completed with nothing pending, the lane vault's ledger records a stored PUT for each Personal page and none for the Intimate one, and a second press completes having sorted nothing and stored nothing new.",
     "crosses": {
       "screen": "frontend/src/features/Settings/CorpusSweepScreen.tsx",
       "client": ["corpus"],
       "routes": ["GET /corpus/sweep", "POST /corpus/sweep"],
       "tables": ["journalentry", "corpusconsentevent", "uservaultconfig", "corpussortrun"]
     },
-    "status": "uncovered",
-    "issue": 3663
+    "status": "covered",
+    "coveredBy": "frontend/e2e/corpus-sweep-vault.e2e.test.ts"
   },
   {
     "id": "corpus.settings-share-confirmed-decisions",

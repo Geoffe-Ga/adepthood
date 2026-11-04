@@ -99,6 +99,11 @@ import { fileURLToPath } from 'node:url';
  * those same two pages, so it can prove the saved file is exactly what the
  * vault held without reading backend files.
  *
+ * `POST /__lane/refuse-journal-ingest` makes every journal PUT answer `503
+ * temporarily_unavailable` and store nothing (the ledger records it with action
+ * `refused`) until `POST /__lane/accept-journal-ingest`; the vault-bound sort
+ * journey uses it to leave writing the vault does not have (#3663).
+ *
  * `GET /__lane/uploads` reports what actually arrived: every `/v1` request in
  * order, and the fragments the ledger holds. Requests are recorded by shape and
  * by a digest of the bytes, never by the bytes -- which is what lets a spec
@@ -388,6 +393,13 @@ const UNREADABLE_REPLY = '<html>proxy error page</html>';
 let voiceDraftDeleteFailuresRemaining = 0;
 /** Held until a journey releases it, so retained copies can be observed directly. */
 let journalWithdrawalsHeld = false;
+/**
+ * While set, every journal PUT is answered 503 ``temporarily_unavailable`` and
+ * stores nothing -- a vault shedding writes, seen from adepthood as a dropped
+ * (DEGRADED) save. It is how a journey makes writing the vault does not have
+ * through the public API, for the vault-bound sort to hand over (#3663).
+ */
+let journalIngestsRefused = false;
 /** An authenticated journey can model a vault that lacks letters. */
 let lettersHeld = false;
 /** One letter request a journey armed to meet the vault's care guard instead. */
@@ -609,6 +621,18 @@ async function journalUpsert(request, response, externalId) {
     body.content.trim() === ''
   ) {
     refuse(response, HTTP_BAD_REQUEST, 'invalid_request');
+    return;
+  }
+  if (journalIngestsRefused) {
+    received.push({
+      method: 'PUT',
+      path: `/v1/journal-entries/${externalId}`,
+      externalId,
+      tier: body.tier,
+      ceiling: request.headers[CEILING_HEADER] ?? null,
+      action: 'refused',
+    });
+    refuse(response, HTTP_SERVICE_UNAVAILABLE, 'temporarily_unavailable');
     return;
   }
   const digest = createHash('sha256').update(body.content, 'utf8').digest('hex');
@@ -1311,6 +1335,15 @@ const server = createServer((request, response) => {
     if (request.method === 'POST' && pathname === '/__lane/release-journal-withdrawals') {
       request.resume();
       journalWithdrawalsHeld = false;
+      send(response, HTTP_OK, { status: 'ok' });
+      return;
+    }
+    if (
+      request.method === 'POST' &&
+      (pathname === '/__lane/refuse-journal-ingest' || pathname === '/__lane/accept-journal-ingest')
+    ) {
+      request.resume();
+      journalIngestsRefused = pathname === '/__lane/refuse-journal-ingest';
       send(response, HTTP_OK, { status: 'ok' });
       return;
     }
