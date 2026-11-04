@@ -59,9 +59,18 @@ export async function selectFirstLine(page: Page, prefix: string): Promise<strin
   return (await echo.innerText()).trim();
 }
 
-/** Press the floating pill's Promote. */
+/**
+ * Press the floating pill's Promote at its place on screen, as a reader's
+ * pointer does. Not a locator click: that first scrolls its target into view,
+ * and for a pill pinned to the foot of a scroll viewport that scroll moves the
+ * page under the reader, which no real press does.
+ */
 export async function pressPromote(page: Page): Promise<void> {
-  await page.getByRole('button', { name: 'Promote this passage' }).click();
+  const pill = page.getByRole('button', { name: 'Promote this passage' });
+  await expect(pill).toBeInViewport();
+  const box = await pill.boundingBox();
+  if (box === null) throw new Error('the Promote pill has no layout box');
+  await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
 }
 
 /**
