@@ -2,19 +2,24 @@
 // #3660: a Course chapter and a letter put the selection surface's floating
 // pill to work -- Promote beside Write a note on a chapter, a busy mark that
 // follows the promote rather than the press, a selection the host can clear
-// once its promote settles, and a footer Cancel the host can name.
-import { jest, describe, it, expect, afterEach } from '@jest/globals';
+// once its promote settles, a footer Cancel the host can name, and (on web) a
+// passage chosen before the surface opened scrolled into view.
+import { jest, describe, it, expect, afterEach, beforeEach } from '@jest/globals';
 import { act, fireEvent, render, within } from '@testing-library/react-native';
 import React from 'react';
 import { TextInput } from 'react-native';
 
 import { FLOATING_PROMOTE_TEST_ID } from '../FloatingPromoteButton';
-import QuoteSelectionSurface from '../QuoteSelectionSurface';
+import QuoteSelectionSurface, { SELECTION_FIELD_MIN_HEIGHT } from '../QuoteSelectionSurface';
+import { revealWebOffset } from '../webSelectionReveal';
 
 jest.mock('../webSelectionListener', () => ({
   useWebSelectionListener: jest.fn(),
   useInitialFieldSelection: jest.fn(),
 }));
+jest.mock('../webSelectionReveal', () => ({ revealWebOffset: jest.fn(() => true) }));
+
+const mockReveal = revealWebOffset as jest.MockedFunction<typeof revealWebOffset>;
 
 const FAB = FLOATING_PROMOTE_TEST_ID;
 const BODY = 'A steady daily walk to the river.';
@@ -151,5 +156,74 @@ describe('QuoteSelectionSurface -- the footer Cancel, named by the host', () => 
     const cancel = getByTestId('quote-select-cancel');
     within(cancel).getByText('Done');
     expect(cancel.props.accessibilityLabel).toBe('Done choosing passages');
+  });
+});
+
+/**
+ * A Course quote's Open lands on a chapter screens long with its passage
+ * chosen. The field grows to its text and never scrolls inside, so once it has
+ * grown the surface asks the page to bring the passage into view -- once, so a
+ * reader who scrolls away is never pulled back.
+ */
+describe('QuoteSelectionSurface -- a passage chosen before it opened is brought into view', () => {
+  const EMOJI_BODY = '\u{1F3B8} '.concat(BODY);
+  // "walk" past one astral emoji: code points {N, N+4} are UTF-16 {N+1, N+5}.
+  const WALK_POINTS = { start: Array.from(EMOJI_BODY).indexOf('w'), end: 0 };
+  WALK_POINTS.end = WALK_POINTS.start + 'walk'.length;
+  const GROWN = SELECTION_FIELD_MIN_HEIGHT * 10;
+
+  function grow(getByTestId: ReturnType<typeof render>['getByTestId'], height: number): void {
+    fireEvent(getByTestId('quote-select-input'), 'contentSizeChange', {
+      nativeEvent: { contentSize: { width: 300, height } },
+    });
+  }
+
+  beforeEach(() => {
+    jest.useFakeTimers();
+    mockReveal.mockClear();
+  });
+  afterEach(() => {
+    jest.useRealTimers();
+  });
+
+  it('reveals the passage once the field has grown to hold it, at its UTF-16 start', () => {
+    const { getByTestId } = renderSurface({ body: EMOJI_BODY, initialSelection: WALK_POINTS });
+    act(() => {
+      jest.runOnlyPendingTimers();
+    });
+    expect(mockReveal).not.toHaveBeenCalled();
+
+    grow(getByTestId, GROWN);
+    act(() => {
+      jest.runOnlyPendingTimers();
+    });
+
+    expect(mockReveal).toHaveBeenCalledTimes(1);
+    const [, offset] = mockReveal.mock.calls[0] ?? [];
+    expect(offset).toBe(EMOJI_BODY.indexOf('walk'));
+  });
+
+  it('reveals only once, however the field grows after', () => {
+    const { getByTestId } = renderSurface({ body: EMOJI_BODY, initialSelection: WALK_POINTS });
+    grow(getByTestId, GROWN);
+    act(() => {
+      jest.runOnlyPendingTimers();
+    });
+    grow(getByTestId, GROWN * 2);
+    act(() => {
+      jest.runOnlyPendingTimers();
+    });
+
+    expect(mockReveal).toHaveBeenCalledTimes(1);
+  });
+
+  it('reveals nothing when the surface opened with nothing chosen', () => {
+    const { getByTestId } = renderSurface();
+    grow(getByTestId, GROWN);
+    act(() => {
+      jest.runOnlyPendingTimers();
+    });
+
+    expect(mockReveal).not.toHaveBeenCalled();
   });
 });

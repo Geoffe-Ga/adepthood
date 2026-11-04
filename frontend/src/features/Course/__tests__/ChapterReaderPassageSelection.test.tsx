@@ -1,8 +1,8 @@
 /* eslint-env jest */
-// RED: ChapterReader does not yet accept onWriteNote / initialScrollOffset,
-// so every testID below (reader-write-note-affordance, passage-select-*,
-// write-note-dialog-*) is missing until the implementation-specialist wires
-// the selection mode + confirm dialog through.
+// The write-note half of the chapter's one selection gesture: Select a passage
+// opens the passage-select surface, and the pill's Write a note (testID
+// passage-select-confirm) opens the write-note-dialog-* confirm. Promote, the
+// pill's primary, is ChapterReaderPromote.test.tsx (#3660).
 import { describe, expect, it, jest, beforeEach } from '@jest/globals';
 import { act, fireEvent, render, within } from '@testing-library/react-native';
 import React from 'react';
@@ -116,6 +116,10 @@ describe('ChapterReader -- entering and leaving selection mode', () => {
 
     expect(queryByTestId('reader-markdown')).toBeNull();
     expect(getByTestId('passage-select-input')).toBeTruthy();
+    // Write a note rides the floating pill (#3660), which comes to a passage
+    // once one is chosen and not before.
+    expect(queryByTestId('passage-select-confirm')).toBeNull();
+    selectRiff(getByTestId);
     within(getByTestId('passage-select-confirm')).getByText('Write a note');
   });
 

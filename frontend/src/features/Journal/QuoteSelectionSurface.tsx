@@ -56,6 +56,7 @@ import { floatingDockStyle, pinnedFooterStyle } from './readingSurfaceStyles';
 import { buildSelectionSurfaceCopy } from './selectionSurfaceCopy';
 import { useGrowingFieldHeight } from './useGrowingFieldHeight';
 import { useInitialFieldSelection, useWebSelectionListener } from './webSelectionListener';
+import { revealWebOffset } from './webSelectionReveal';
 
 import { Button } from '@/components/Button';
 import { editorialType, writingFieldFocus } from '@/design/tokens';
@@ -491,6 +492,37 @@ function collapseFieldSelection(node: TextInput | null, at: number): void {
 }
 
 /**
+ * Bring a passage chosen before the surface opened into view, once (#3660).
+ *
+ * The field grows to its text and never scrolls inside, so a Course quote's
+ * Open, landing on a chapter screens long, would show the passage selected but
+ * out of sight. So once the field has grown past its floor -- before that, the
+ * page is not yet tall enough to scroll there -- the page is scrolled to it,
+ * on the web (``revealWebOffset``; native's reader scroll is the field's own).
+ * Once: a reader who scrolls away from it is never pulled back.
+ */
+function useRevealInitialSelection(
+  inputRef: React.RefObject<TextInput | null>,
+  initialSpan: Utf16Span | null,
+  fieldHeight: number | undefined,
+): void {
+  const revealed = useRef(false);
+  const grown = fieldHeight !== undefined && fieldHeight > SELECTION_FIELD_MIN_HEIGHT;
+  useEffect(() => {
+    if (revealed.current || initialSpan === null || initialSpan.end <= initialSpan.start) {
+      return undefined;
+    }
+    if (!grown) return undefined;
+    // A frame later, so the grown height has been laid out before it is scrolled.
+    const frame = requestAnimationFrame(() => {
+      revealed.current = true;
+      revealWebOffset(inputRef.current, initialSpan.start);
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [inputRef, initialSpan, grown]);
+}
+
+/**
  * Collapse the field's own selection too, so the highlight and the pill leave
  * together, then hand focus back to the text -- the control that asked (the
  * pill's X, or its primary once a host's promote settles) is about to leave.
@@ -710,6 +742,7 @@ function QuoteSelectionSurface({
   useWebSelectionListener(inputRef, state.emitSpan);
   useInitialFieldSelection(inputRef, state.initialSpan);
   const { growth, onContentSizeChange } = useSelectionFieldGrowth();
+  useRevealInitialSelection(inputRef, state.initialSpan, growth.height);
   const collapse = useCollapseSelection(inputRef, state.selectionEnd, state.emitSpan);
   useClearOnKey(clearSelectionKey, collapse);
   const { pill, cancelNaming } = useHostChrome(host);
