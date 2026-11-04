@@ -53,6 +53,7 @@ from rate_limit import (  # noqa: E402
 )
 from schemas.gumroad import GumroadPurchase  # noqa: E402
 from services.botmason import STUB_SEAM_ENV_VAR  # noqa: E402
+from services.corpus_sort_run import close_corpus_sort_tasks  # noqa: E402
 
 # The default signup license gate stubbed into every test that does not opt into
 # the real gate (via the ``real_license_gate`` marker). Feature-specific tests in
@@ -221,6 +222,9 @@ async def db_session() -> AsyncGenerator[AsyncSession, None]:
         async with test_session_factory() as session:
             yield session
     finally:
+        # A background sort a test started (``POST /corpus/sweep``) must not
+        # outlive the schema it writes to, nor run into the next test's tables.
+        await close_corpus_sort_tasks()
         async with test_engine.begin() as conn:
             await conn.run_sync(SQLModel.metadata.drop_all)
 

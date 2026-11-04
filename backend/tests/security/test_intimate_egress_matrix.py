@@ -87,6 +87,7 @@ from models.journal_entry import JournalEntry
 from models.marginalia import Marginalia, MarginaliaKind
 from models.stage_content import StageContent
 from models.vault_pipeline_run import VaultPipelineOutcome, VaultPipelineRun
+from services import corpus_sort_run
 from services import creek_vault_pipeline as pipeline
 from services.content_repository import get_content_repository
 from services.creek_vault_pipeline import VaultPipelineTrigger
@@ -484,7 +485,7 @@ async def _act_consent(h: Harness, _entry_id: int) -> None:
 
 
 async def _act_sweep(h: Harness, _entry_id: int) -> None:
-    """Resume the backfill under a grant already standing, as ``POST /corpus/sweep`` does.
+    """Sort under a grant already standing, as ``POST /corpus/sweep``'s background run does.
 
     The grant is recorded directly rather than through ``PUT /corpus/consent``,
     whose own sweep would reach the entry first and leave this door nothing to
@@ -500,6 +501,10 @@ async def _act_sweep(h: Harness, _entry_id: int) -> None:
         )
         await session.commit()
     _ok(await h.client.post("/corpus/sweep", headers=h.headers))
+    # The press answers before the sort is done: wait for the background run, so
+    # both the Intimate canary's absence and the Personal twin's arrival are read
+    # after the run has actually offered everything it was going to.
+    await corpus_sort_run.wait_for_corpus_sort_tasks()
 
 
 async def _act_ladder(h: Harness, _entry_id: int) -> None:

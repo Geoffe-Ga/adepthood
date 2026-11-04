@@ -490,7 +490,7 @@ async def test_corpus_sweep_budget_is_the_accounts_own(async_client: AsyncClient
     await _assert_limit_pinned(send, _LIMIT_5)
     admitted = await _post_corpus_sweep(async_client, second)
 
-    assert admitted.status_code == HTTPStatus.OK, admitted.text
+    assert admitted.status_code == HTTPStatus.ACCEPTED, admitted.text
 
 
 # ── Auth rate limits unchanged ───────────────────────────────────────────

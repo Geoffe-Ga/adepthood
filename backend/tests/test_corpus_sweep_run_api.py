@@ -1,18 +1,21 @@
-"""``POST /corpus/sweep``: sort the next bounded share of an account's backlog.
+"""``POST /corpus/sweep``: sort an account's whole backlog from one press.
 
 ``GET /corpus/sweep`` (#3497) says how much of an account's writing is still
-unsorted. This is the verb that acts on it: one bounded pass, the same pass a
-consent grant runs, resumable by asking again until the remainder is zero.
+unsorted. This is the verb that acts on it. It used to run one bounded pass
+per press; it now starts a background run (:mod:`services.corpus_sort_run`,
+pinned in ``test_corpus_sort_run_api.py``) that offers every pending entry
+once. The helpers here press, let the run finish and read the outcome, so the
+properties below are asserted in the same terms the bounded pass answered in.
 
-It states no rules of its own, and the properties pinned here are the ones it
-inherits from :func:`services.corpus_backfill.backfill_after_consent` rather
-than re-implements:
+The run states no rules of its own: each entry goes through the bounded
+sweep's own seam (:func:`services.corpus_backfill.offer_entry`), so these are
+the properties it inherits rather than re-implements:
 
 *No consent, no sweep.* The pass runs under the decision already standing, so
 an account that never said yes -- or said yes and then withdrew it -- reaches
 no provider and writes nothing, and is told plainly how much is still waiting.
 
-*Each pass leaves its own receipt, and only a pass that moved a number does.*
+*Each run leaves its own receipt, and only a run that moved a number does.*
 The row is filed under the standing consent event, which is how the reach of a
 resumed sweep survives as something an export can carry rather than as a log
 line.
@@ -41,11 +44,9 @@ from models.corpus_consent import CorpusConsentEvent
 from models.corpus_fragment import CorpusFragment, CorpusSource
 from models.corpus_sweep import CorpusSweep
 from models.journal_entry import JournalClassification, JournalEntry
-from routers import corpus as corpus_router
 from services import corpus_backfill as cb
+from services import corpus_sort_run
 from services import frequency_classification as fc
-from services.corpus_backfill import BackfillOutcome
-from services.corpus_consent import ConsentChange
 from services.reflection_boundary import ReflectionBoundary
 
 _SWEEP_PATH = "/corpus/sweep"
@@ -143,10 +144,23 @@ async def _entries(
 
 
 async def _sweep(client: AsyncClient, headers: dict[str, str]) -> dict[str, int]:
-    """Run one pass and return its body."""
+    """Press Sort, let the background run finish, and report it in the pass's three counts.
+
+    ``entries_sorted`` is what the run sorted; pending and remaining are the
+    count read once it ended -- the numbers the bounded pass used to answer
+    with, so every property below is still asserted in the same terms.
+    """
     resp = await client.post(_SWEEP_PATH, headers=headers)
-    assert resp.status_code == HTTPStatus.OK, resp.text
-    return dict(resp.json())
+    assert resp.status_code == HTTPStatus.ACCEPTED, resp.text
+    await corpus_sort_run.wait_for_corpus_sort_tasks()
+    read = await client.get(_SWEEP_PATH, headers=headers)
+    assert read.status_code == HTTPStatus.OK, read.text
+    pending = int(read.json()["entries_pending"])
+    return {
+        "entries_pending": pending,
+        "entries_sorted": int(read.json()["run"]["entries_sorted"]),
+        "entries_remaining": pending,
+    }
 
 
 async def _sweep_rows(session: AsyncSession, user_id: int) -> list[CorpusSweep]:
@@ -204,37 +218,38 @@ async def test_a_granted_account_has_its_backlog_sorted(
     estimate = (await async_client.get(_SWEEP_PATH, headers=headers)).json()
 
     assert body == {"entries_pending": 0, "entries_sorted": _BACKLOG, "entries_remaining": 0}
-    assert estimate == {"entries_pending": 0}
+    assert estimate["entries_pending"] == 0
     assert await _fragment_count(db_session, user_id) == _BACKLOG
 
 
 @pytest.mark.asyncio
 @pytest.mark.usefixtures("_classifier")
-async def test_a_backlog_past_the_bound_is_finished_by_asking_again(
+async def test_one_press_finishes_a_backlog_past_the_old_bound(
     async_client: AsyncClient, db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Resumable is the whole design: each pass takes the next share, down to zero.
+    """The bounded pass needed a press per ceiling's worth; a run needs one press.
 
-    Each pass that moved a number files its own receipt under the one standing
-    decision, so the reach of a resumed sweep is recorded rather than only
-    logged.
+    With the bounded sweep's ceiling shrunk and the run's cursor batch shrunk
+    below the backlog, a single press still sorts everything -- the ceiling no
+    longer bounds a press, and the walk crosses batch boundaries -- and the reach
+    is filed as one receipt under the one standing decision.
     """
     monkeypatch.setattr(cb, "BACKFILL_ENTRY_CEILING", _SMALL_CEILING)
+    monkeypatch.setattr(corpus_sort_run, "SORT_BATCH_SIZE", _SMALL_CEILING)
     headers, user_id = await _signup(async_client, "sweep-run-resume")
     await _decide(async_client, headers, granted=True)
     await _entries(db_session, user_id=user_id, count=_RESUMABLE_BACKLOG)
 
-    passes = [await _sweep(async_client, headers) for _ in range(3)]
+    body = await _sweep(async_client, headers)
 
-    assert [(p["entries_sorted"], p["entries_remaining"]) for p in passes] == [
-        (2, 3),
-        (2, 1),
-        (1, 0),
-    ]
-    assert [p["entries_pending"] for p in passes] == [p["entries_remaining"] for p in passes]
+    assert body == {
+        "entries_pending": 0,
+        "entries_sorted": _RESUMABLE_BACKLOG,
+        "entries_remaining": 0,
+    }
     grant_id = await _standing_grant_id(db_session, user_id)
     rows = await _sweep_rows(db_session, user_id)
-    assert [(r.fragments_added, r.entries_remaining) for r in rows] == [(2, 3), (2, 1), (1, 0)]
+    assert [(r.fragments_added, r.entries_remaining) for r in rows] == [(_RESUMABLE_BACKLOG, 0)]
     assert {r.consent_event_id for r in rows} == {grant_id}
 
 
@@ -359,42 +374,43 @@ async def test_the_response_never_quotes_the_writing(
     await _entries(db_session, user_id=user_id, count=_BACKLOG, body=_SENTINEL)
 
     resp = await async_client.post(_SWEEP_PATH, headers=headers)
+    await corpus_sort_run.wait_for_corpus_sort_tasks()
+    read = await async_client.get(_SWEEP_PATH, headers=headers)
 
-    assert resp.status_code == HTTPStatus.OK, resp.text
+    assert resp.status_code == HTTPStatus.ACCEPTED, resp.text
     assert _SENTINEL not in resp.text
-    assert set(resp.json()) == {"entries_pending", "entries_sorted", "entries_remaining"}
+    assert _SENTINEL not in read.text
+    assert set(resp.json()) == {"entries_pending", "entries_sorted", "entries_remaining", "run"}
 
 
 @pytest.mark.asyncio
 @pytest.mark.usefixtures("_classifier")
-async def test_the_pass_is_the_existing_sweep_run_under_the_standing_grant(
+async def test_every_entry_goes_through_the_bounded_sweeps_own_seam(
     async_client: AsyncClient, db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Delegation, not a copy: the route hands the standing decision to the sweep.
+    """Delegation, not a copy: the run offers each entry through ``offer_entry``.
 
-    The consent gate, the intimate-tier refusal, the per-entry clock and the
-    deadline are the ones ``backfill_after_consent`` already carries, so the
-    route is pinned to calling it with the account's own standing grant.
+    The consent gate, the intimate-tier refusal, the per-entry barrier and clock
+    are the ones the bounded sweep's seam already carries, so the run is pinned
+    to handing it each entry under the app-provider boundary -- and the reach is
+    receipted under the account's own standing grant.
     """
-    seen: list[int | None] = []
-    original = corpus_router.backfill_after_consent
+    seen: list[tuple[int, ReflectionBoundary]] = []
+    original = cb.offer_entry
 
     async def spy(
-        session: AsyncSession,
-        *,
-        user_id: int,
-        change: ConsentChange,
-        boundary: ReflectionBoundary,
-    ) -> BackfillOutcome:
-        seen.append(None if change.event is None else change.event.id)
-        return await original(session, user_id=user_id, change=change, boundary=boundary)
+        session: AsyncSession, *, entry_id: int, user_id: int, boundary: ReflectionBoundary
+    ) -> cb.EntryOffer:
+        seen.append((entry_id, boundary))
+        return await original(session, entry_id=entry_id, user_id=user_id, boundary=boundary)
 
-    monkeypatch.setattr(corpus_router, "backfill_after_consent", spy)
+    monkeypatch.setattr(cb, "offer_entry", spy)
     headers, user_id = await _signup(async_client, "sweep-run-delegates")
     await _decide(async_client, headers, granted=True)
-    seen.clear()
     await _entries(db_session, user_id=user_id, count=1)
 
     await _sweep(async_client, headers)
 
-    assert seen == [await _standing_grant_id(db_session, user_id)]
+    assert [boundary for _, boundary in seen] == [ReflectionBoundary.APP_PROVIDER]
+    rows = await _sweep_rows(db_session, user_id)
+    assert {r.consent_event_id for r in rows} == {await _standing_grant_id(db_session, user_id)}

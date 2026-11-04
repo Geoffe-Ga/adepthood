@@ -85,6 +85,7 @@ import {
   type CorpusConsentListT,
   type CorpusConsentT,
   type CorpusInvitationT,
+  type CorpusSortRunT,
   type CorpusSweepEstimateT,
   type CorpusSweepT,
   type VoiceDraftT,
@@ -2333,8 +2334,10 @@ function importSourceFields(
  */
 /** How much of an account's writing is still unsorted (``GET /corpus/sweep``). */
 export type CorpusSweepEstimate = CorpusSweepEstimateT;
-/** What one bounded sweep pass did, and what it left (``POST /corpus/sweep``). */
+/** The run a press started or joined, on top of the count (``POST /corpus/sweep``). */
 export type CorpusSweepResult = CorpusSweepT;
+/** One background sort, as ``/corpus/sweep`` reports it. */
+export type CorpusSortRun = CorpusSortRunT;
 
 const corpusSweepEstimateResponseSchema =
   corpusSweepEstimateSchema as unknown as z.ZodType<CorpusSweepEstimate>;
@@ -2408,11 +2411,12 @@ export const corpus = {
   },
 
   /**
-   * How much of this account's own writing is still unsorted.
+   * How much of this account's own writing is still unsorted, and its latest sort.
    *
    * Asked whether or not the account has agreed to sorting -- the server
-   * answers the count either way, so a surface can decide what to offer. No
-   * trailing slash: the router mounts ``/corpus/sweep`` directly.
+   * answers the count either way, so a surface can decide what to offer. The
+   * sort screen polls this while a run is going. No trailing slash: the router
+   * mounts ``/corpus/sweep`` directly.
    */
   sweepEstimate(token?: string): Promise<CorpusSweepEstimate> {
     return request<CorpusSweepEstimate>('/corpus/sweep', {
@@ -2422,17 +2426,15 @@ export const corpus = {
   },
 
   /**
-   * Sort the next bounded share of this account's backlog, and say what is left.
+   * Start sorting everything this account has waiting, or join the sort going.
    *
-   * No body: the shipped route takes none, and it is free, so there is no price
-   * to acknowledge. Deliberately not retried, like ``corpusConsent.set`` -- a
-   * pass spends a provider call per entry it reaches, and a lost response is one
-   * a person should be told about rather than one the client sends again. A
+   * Answers ``202`` as soon as the run is recorded; the run itself goes on in
+   * the background, and the caller follows it through ``sweepEstimate``. A
+   * second press while it runs answers the same run, so pressing twice is the
+   * same as pressing once. No body: the route takes none, and it is free, so
+   * there is no price to acknowledge. Not retried: a lost response costs
+   * nothing, because the next ``sweepEstimate`` reads the run either way. A
    * ``429`` (the per-account limit) reaches the caller as an ``ApiError``.
-   *
-   * A pass can sort nothing and leave a remainder (no standing consent, or
-   * entries the classifier places nowhere), so callers offer another pass on a
-   * person's request and never loop waiting for zero.
    */
   sweep(token?: string): Promise<CorpusSweepResult> {
     return request<CorpusSweepResult>('/corpus/sweep', {

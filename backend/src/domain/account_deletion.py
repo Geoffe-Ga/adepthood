@@ -152,6 +152,13 @@ POLICY: Mapping[str, TablePolicy] = {
         "separately, so erasing the journal while leaving this would keep a "
         "readable copy of exactly what the deletion was asked to remove.",
     ),
+    "corpussortrun": _erase(
+        "user_id",
+        "How far each of the account's background sorts got and why it "
+        "stopped. The writing it sorted goes with the account, so a record of "
+        "the sort is a record about nobody once the account is gone -- and it "
+        "names the account directly.",
+    ),
     "corpussweep": _erase(
         "user_id",
         "The counts of how much of its own writing each of the account's "

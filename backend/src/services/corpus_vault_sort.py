@@ -26,17 +26,15 @@ corpus grant, re-read per entry inside the account barrier, so a revocation or
 an erasure arriving mid-pass stops it at the next entry -- the ordering
 :func:`services.corpus_backfill._offer_one` argues for.
 
-**Bounded like it too, for now.** :data:`VAULT_SORT_ENTRY_CEILING` and
-:data:`VAULT_SORT_DEADLINE_SECONDS` keep a pass inside the client's request
-timeout; the remainder is reached by asking again, and a pass is idempotent
-because a sent entry carries a ``vault_ref`` and stops being a candidate.
+**Walked by a background run.** :mod:`services.corpus_sort_run` walks the
+pending ids with :func:`pending_vault_entry_ids` and offers each through
+:func:`offer_to_vault`, so one press reaches the whole backlog. Offering is
+idempotent: a sent entry carries a ``vault_ref`` and stops being a candidate.
 """
 
 from __future__ import annotations
 
 import logging
-import time
-from dataclasses import dataclass
 from typing import Final
 
 from sqlalchemy import ColumnElement, func, or_
@@ -48,7 +46,6 @@ from domain.creek_vault import CreekVaultClient
 from models.corpus_fragment import RETRIEVABLE_TIERS
 from models.journal_entry import JournalEntry
 from services.account_egress_barrier import ensure_account_live, hold_account
-from services.corpus_backfill import BACKFILL_DEADLINE_SECONDS, BACKFILL_ENTRY_CEILING
 from services.corpus_consent import load_consent
 from services.corpus_ingest import INGEST_SOURCE
 from services.creek_vault_write import VaultWriteStatus
@@ -58,32 +55,8 @@ from services.voice_draft_privacy import journal_vault_mutations
 
 logger = logging.getLogger(__name__)
 
-#: The most entries one pass offers the vault. The app-side sweep's ceiling, so
-#: both kinds of writer see the same "Sort the next N" on the same screen.
-VAULT_SORT_ENTRY_CEILING: Final[int] = BACKFILL_ENTRY_CEILING
-
-#: How long one pass may go on starting entries, in seconds: the app-side
-#: sweep's deadline, for the same reason -- inside the client's request timeout.
-VAULT_SORT_DEADLINE_SECONDS: Final[float] = BACKFILL_DEADLINE_SECONDS
-
-#: The log line a pass writes, in ids and counts only.
-VAULT_SORT_EVENT: Final[str] = "corpus_vault_sort"
-
 _HUMAN_SENDER: Final[str] = "user"
 _SENDABLE_TIER_VALUES: Final = tuple(tier.value for tier in RETRIEVABLE_TIERS)
-
-#: Write outcomes that are facts about the vault rather than the entry: it was
-#: not ready, or an operator suspended vault sends. The next entry would be
-#: refused the same way, so the pass stops instead of walking the batch.
-_VAULT_WIDE_REFUSALS: Final = frozenset({VaultWriteStatus.UNAVAILABLE, VaultWriteStatus.SUSPENDED})
-
-
-@dataclass(frozen=True, slots=True)
-class VaultSortOutcome:
-    """What one pass handed the vault, and what it left without a vault copy."""
-
-    entries_sent: int
-    entries_remaining: int
 
 
 def _pending_conditions(user_id: int, destination: str | None) -> list[ColumnElement[bool]]:
@@ -119,14 +92,24 @@ async def count_vault_pending(session: AsyncSession, user_id: int) -> int:
     return int(result.scalar_one())
 
 
-async def _pending_ids(session: AsyncSession, user_id: int, destination: str | None) -> list[int]:
-    """The ids one pass will offer, newest first, up to the ceiling."""
-    result = await session.execute(
-        select(col(JournalEntry.id))
-        .where(*_pending_conditions(user_id, destination))
-        .order_by(col(JournalEntry.timestamp).desc(), col(JournalEntry.id).desc())
-        .limit(VAULT_SORT_ENTRY_CEILING)
-    )
+async def pending_vault_entry_ids(
+    session: AsyncSession,
+    user_id: int,
+    destination: str | None,
+    *,
+    below_id: int | None,
+    limit: int,
+) -> list[int]:
+    """The next ``limit`` ids the vault lacks under ``below_id``, highest first.
+
+    The cursor :mod:`services.corpus_sort_run` walks a whole backlog by: each row
+    is visited at most once, so a write the vault dropped -- which leaves the
+    entry pending -- is not retried within one run, and the walk ends.
+    """
+    statement = select(col(JournalEntry.id)).where(*_pending_conditions(user_id, destination))
+    if below_id is not None:
+        statement = statement.where(col(JournalEntry.id) < below_id)
+    result = await session.execute(statement.order_by(col(JournalEntry.id).desc()).limit(limit))
     return [entry_id for entry_id in result.scalars().all() if entry_id is not None]
 
 
@@ -142,7 +125,7 @@ async def _still_pending(
     return result.scalars().first()
 
 
-async def _offer_one(
+async def offer_to_vault(
     session: AsyncSession,
     *,
     entry_id: int,
@@ -171,49 +154,3 @@ async def _offer_one(
             return None
         outcome = await record_vault_outcome(session, entry, client)
         return None if outcome is None else outcome.status
-
-
-async def _send_batch(session: AsyncSession, *, user_id: int, client: CreekVaultClient) -> int:
-    """Offer the next batch, one entry at a time; return how many the vault stored.
-
-    Stops before the ceiling's end when the deadline has passed, and at the
-    first refusal that is about the vault rather than the entry.
-    """
-    destination = await resolved_vault_destination(session, user_id)
-    deadline = time.monotonic() + VAULT_SORT_DEADLINE_SECONDS
-    sent = 0
-    for entry_id in await _pending_ids(session, user_id, destination):
-        status = await _offer_one(
-            session, entry_id=entry_id, user_id=user_id, destination=destination, client=client
-        )
-        if status is VaultWriteStatus.INGESTED:
-            sent += 1
-        if status in _VAULT_WIDE_REFUSALS or time.monotonic() > deadline:
-            break
-    return sent
-
-
-async def sort_into_vault(
-    session: AsyncSession, *, user_id: int, client: CreekVaultClient
-) -> VaultSortOutcome:
-    """Hand this account's vault the next bounded share of writing it lacks.
-
-    Nothing is sent without a standing journal corpus grant. The pass stops at
-    the ceiling, before starting an entry the deadline could not cover, and at
-    the first refusal that is about the vault rather than the entry. Every
-    failure short of that leaves the entry pending for the next pass.
-    """
-    granted = (await load_consent(session, user_id=user_id, source=INGEST_SOURCE)).granted
-    sent = await _send_batch(session, user_id=user_id, client=client) if granted else 0
-    outcome = VaultSortOutcome(
-        entries_sent=sent, entries_remaining=await count_vault_pending(session, user_id)
-    )
-    logger.info(
-        VAULT_SORT_EVENT,
-        extra={
-            "user_id": user_id,
-            "entries_sent": outcome.entries_sent,
-            "entries_remaining": outcome.entries_remaining,
-        },
-    )
-    return outcome

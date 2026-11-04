@@ -10,6 +10,7 @@ from .corpus_classification_attempt import CorpusClassificationAttempt
 from .corpus_consent import CorpusConsentEvent
 from .corpus_fragment import CorpusFragment
 from .corpus_invitation_state import CorpusInvitationState
+from .corpus_sort_run import CorpusSortRun
 from .corpus_sweep import CorpusSweep
 from .course_stage import CourseStage
 from .energy_plan import EnergyPlan
@@ -81,6 +82,7 @@ __all__ = [
     "CorpusConsentEvent",
     "CorpusFragment",
     "CorpusInvitationState",
+    "CorpusSortRun",
     "CorpusSweep",
     "CourseStage",
     "EnergyPlan",
