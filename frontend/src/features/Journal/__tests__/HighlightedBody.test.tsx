@@ -2,7 +2,7 @@
 import { jest, describe, it, expect } from '@jest/globals';
 import { fireEvent, render } from '@testing-library/react-native';
 import React from 'react';
-import { StyleSheet } from 'react-native';
+import { StyleSheet, type View } from 'react-native';
 
 import HighlightedBody from '../HighlightedBody';
 import { JOURNAL_ORDINAL_PAD, JOURNAL_TASK_GLYPHS } from '../ReadOnlyMarkdownText';
@@ -606,5 +606,85 @@ describe('HighlightedBody -- stale promoted quotes (#2891)', () => {
     );
     expect(queryByTestId('quote-highlight-5')).toBeNull();
     expect(getByTestId('stale-quote-5').props.accessibilityLabel).toContain('the willow');
+  });
+});
+
+describe('HighlightedBody -- source starts for a rendered selection on web (#3661)', () => {
+  type TestNode = ReturnType<typeof render>['UNSAFE_root'];
+
+  /** Every host text node carrying a source start, as [srcStart, text] in render order. */
+  function taggedRuns(view: ReturnType<typeof render>): [number, string][] {
+    return view.UNSAFE_root.findAll(
+      (node: TestNode) => typeof node.type === 'string' && node.props.dataSet != null,
+    ).map((node: TestNode) => [
+      (node.props.dataSet as { srcStart: number }).srcStart,
+      renderedText(node as unknown as RenderedNode),
+    ]);
+  }
+
+  /** The source a tagged run claims to draw: its text, read back at its start. */
+  function sourceAt(body: string, start: number, text: string): string {
+    return Array.from(body)
+      .slice(start, start + Array.from(text).length)
+      .join('');
+  }
+
+  it('wraps every visible run in a host carrying its source start, decoration untagged', () => {
+    const body = '# Day 🌊\nso **bold** here\n- one item';
+    const view = onWeb(() => render(<HighlightedBody body={body} notes={[]} onOpen={jest.fn()} />));
+    const runs = taggedRuns(view);
+    expect(runs).toEqual([
+      // The emoji is one code point, so every later start counts it once.
+      [2, 'Day 🌊'],
+      [8, 'so '],
+      [13, 'bold'],
+      [19, ' here'],
+      [27, 'one item'],
+    ]);
+    for (const [start, text] of runs) expect(sourceAt(body, start, text)).toBe(text);
+  });
+
+  it('tags the runs inside a note or a quote at their own starts', () => {
+    const view = onWeb(() =>
+      render(
+        <HighlightedBody
+          body={BODY}
+          notes={[note({ id: 9, anchor_start: 2, anchor_end: 8, anchor_text: 'walked' })]}
+          onOpen={jest.fn()}
+          quotes={[quote({ id: 3, anchor_start: 16, anchor_end: 21, anchor_text: 'river' })]}
+        />,
+      ),
+    );
+    const runs = taggedRuns(view);
+    expect(runs).toContainEqual([2, 'walked']);
+    expect(runs).toContainEqual([16, 'river']);
+    for (const [start, text] of runs) expect(sourceAt(BODY, start, text)).toBe(text);
+  });
+
+  it('tags the literal of an anchor that owns only hidden markers', () => {
+    const body = 'a **b** c';
+    const view = onWeb(() =>
+      render(
+        <HighlightedBody
+          body={body}
+          notes={[note({ id: 2, anchor_start: 2, anchor_end: 4, anchor_text: '**' })]}
+          onOpen={jest.fn()}
+        />,
+      ),
+    );
+    expect(taggedRuns(view)).toContainEqual([2, '**']);
+  });
+
+  it('draws native exactly as before: no source hosts at all', () => {
+    const view = render(
+      <HighlightedBody body={'so **bold** here'} notes={[]} onOpen={jest.fn()} />,
+    );
+    expect(taggedRuns(view)).toEqual([]);
+  });
+
+  it('hands its body container to bodyRef, so a selection can be read inside it', () => {
+    const bodyRef = React.createRef<View>();
+    render(<HighlightedBody body={BODY} notes={[]} onOpen={jest.fn()} bodyRef={bodyRef} />);
+    expect(bodyRef.current).not.toBeNull();
   });
 });

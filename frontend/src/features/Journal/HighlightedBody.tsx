@@ -5,7 +5,7 @@
  * reader-promoted quote spans share the same body, resolved to one anchor stream.
  */
 import React from 'react';
-import { StyleSheet, Text, View } from 'react-native';
+import { Platform, StyleSheet, Text, View, type TextProps } from 'react-native';
 
 import { useFocusScroll, type FocusScrollValue } from './focusSpanScroll';
 import {
@@ -22,6 +22,7 @@ import {
   type JournalMarkdownBlock,
   type JournalMarkdownDocument,
   type JournalMarkdownLine,
+  type JournalMarkdownRun,
 } from './journalMarkdown';
 import { useMarginNavigation } from './marginNavigation';
 import {
@@ -51,8 +52,33 @@ const JOURNAL_QUOTE_RULE_WIDTH = 3;
 // React Native's public ViewProps omit the click callback that both the native
 // host view and React Native Web support. Keeping it on a View avoids Pressable's
 // implicit button-like tab stop and pointer cursor around the journal reader.
-type BodyViewProps = React.ComponentProps<typeof View> & { onClick?: () => void };
+type BodyViewProps = React.ComponentPropsWithRef<typeof View> & { onClick?: () => void };
 const BodyView = View as React.ComponentType<BodyViewProps>;
+
+// react-native-web emits ``dataSet`` as ``data-*`` attributes; React Native's
+// public TextProps omit it, and native would ignore it.
+type SourceHostProps = TextProps & { dataSet?: { srcStart: number } };
+const SourceHostText = Text as React.ComponentType<SourceHostProps>;
+
+/**
+ * On the web, a run of rendered text drawn inside a host that records where in
+ * the source it starts (``data-src-start``), so a reader's selection over the
+ * rendered page maps back to exact code points (#3661, ``renderedSelection``).
+ * Native has no selection to read, so it draws the run as it always has.
+ */
+function sourceHost(start: number, content: React.ReactNode): React.ReactNode {
+  if (Platform.OS !== 'web') return content;
+  return (
+    <SourceHostText key={`src-${start}`} dataSet={{ srcStart: start }}>
+      {content}
+    </SourceHostText>
+  );
+}
+
+/** One visible run, inside its source host on the web. */
+function renderSourceRun(run: JournalMarkdownRun): React.ReactNode {
+  return sourceHost(run.start, renderMarkdownRun(run));
+}
 
 export interface HighlightedBodyProps {
   body: string;
@@ -70,6 +96,8 @@ export interface HighlightedBodyProps {
   onDismissRemove?: () => void;
   /** Finished-entry task glyphs become controls only when this is supplied. */
   onTaskPress?: TaskPress;
+  /** The body container, where a web reader's selection is read (#3661). */
+  bodyRef?: React.Ref<View>;
 }
 
 /** A promoted-quote span: washed while pending, quietly dimmed once folded in. */
@@ -173,11 +201,11 @@ function anchoredSliceContent(
   hasAnchor: boolean,
 ): React.ReactNode[] {
   const runs = markdownRuns(document, start, end);
-  if (runs.length > 0) return runs.map(renderMarkdownRun);
+  if (runs.length > 0) return runs.map(renderSourceRun);
   // A selection may consist solely of hidden Markdown punctuation. Showing that
   // tiny literal only while it owns an anchor keeps the saved note/promotion
   // discoverable and removable instead of creating an unreachable database row.
-  return hasAnchor ? [document.chars.slice(start, end).join('')] : [];
+  return hasAnchor ? [sourceHost(start, document.chars.slice(start, end).join(''))] : [];
 }
 
 /** Everything the block renderers share for one pass over the body. */
@@ -481,6 +509,7 @@ function HighlightedBody({
   onConfirmRemove = NOOP,
   onDismissRemove,
   onTaskPress,
+  bodyRef,
 }: HighlightedBodyProps): React.JSX.Element {
   const segments = React.useMemo(
     () => buildAnchoredSegments(body, notes, quotes),
@@ -504,6 +533,7 @@ function HighlightedBody({
   return (
     <>
       <BodyView
+        ref={bodyRef}
         accessible={false}
         style={styles.bodyContainer}
         testID="journal-body-read"

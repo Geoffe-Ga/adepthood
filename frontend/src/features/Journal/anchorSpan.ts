@@ -82,15 +82,26 @@ export function trimAnchorEdges(text: string): string {
 }
 
 /**
+ * ``span`` (code points into ``body``) with its edge whitespace trimmed away, by
+ * exactly the rule ``trimAnchorEdges`` applies to text. A whitespace-only span
+ * collapses to an empty one at its trimmed start.
+ */
+export function trimSpanEdges(body: string, span: AnchorSpan): AnchorSpan {
+  const chars = Array.from(body);
+  let { start, end } = span;
+  while (start < end && isEdgeWhitespace(chars[start])) start += 1;
+  while (end > start && isEdgeWhitespace(chars[end - 1])) end -= 1;
+  return { start, end };
+}
+
+/**
  * Convert a UTF-16 selection over ``body`` into the code-point span to post,
  * with edge whitespace trimmed. A whitespace-only selection collapses to an
  * empty span at its trimmed start, which the surface treats as "nothing chosen".
  */
 export function selectionToAnchorSpan(body: string, selection: Utf16Selection): AnchorSpan {
-  const chars = Array.from(body);
-  let start = utf16ToSource(body, Math.min(selection.start, selection.end));
-  let end = utf16ToSource(body, Math.max(selection.start, selection.end));
-  while (start < end && isEdgeWhitespace(chars[start])) start += 1;
-  while (end > start && isEdgeWhitespace(chars[end - 1])) end -= 1;
-  return { start, end };
+  return trimSpanEdges(body, {
+    start: utf16ToSource(body, Math.min(selection.start, selection.end)),
+    end: utf16ToSource(body, Math.max(selection.start, selection.end)),
+  });
 }
