@@ -48,6 +48,7 @@ from collections.abc import Awaitable, Callable, Iterator, Mapping, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
+from http import HTTPStatus
 from json import JSONDecodeError
 from textwrap import shorten
 from time import perf_counter
@@ -57,6 +58,7 @@ from httpx import AsyncClient, HTTPError, Response
 from sqlalchemy.exc import SQLAlchemyError
 
 from scripts.dast.discovery import RouteSpec, discover_routes, is_object_scoped
+from scripts.dast.pacing import Pacer, PacingCapError, PacingPolicy
 from scripts.dast.policy import (
     AllowlistEntry,
     Classification,
@@ -78,6 +80,7 @@ from scripts.dast.report import MatrixReport
 from scripts.dast.seeds import (
     REPLAY_BODIES,
     SEED_REGISTRY,
+    SHARED_SEED_ROUTES,
     UNIQUE_FIELD,
     SeedSpec,
     create_bodies,
@@ -166,7 +169,19 @@ class LiveTargetError(Exception):
 # than raised. Deliberately narrow -- a ``TypeError`` in the harness is a bug and
 # must still surface as one -- and deliberately all ``Exception`` subclasses, so
 # ``KeyboardInterrupt`` and ``SystemExit`` are never captured here.
-_OPERATIONAL_ERRORS = (HTTPError, OSError, SQLAlchemyError, JSONDecodeError, LiveTargetError)
+#
+# ``PacingCapError`` belongs with them for the same reason: seeding that would
+# have to wait past its cap leaves the run unable to finish what it started, and
+# reporting the partial run as coverage would be the vacuous pass this package
+# exists to refuse.
+_OPERATIONAL_ERRORS = (
+    HTTPError,
+    OSError,
+    SQLAlchemyError,
+    JSONDecodeError,
+    LiveTargetError,
+    PacingCapError,
+)
 
 # The live stages, phrased the way the report should name them.
 _STAGE_BOOTSTRAP = "the identity bootstrap"
@@ -221,6 +236,9 @@ class MatrixConfig:
         min_references: The floor the reference-coverage guard enforces.
         budget_seconds: The ceiling the time-box guard enforces.
         max_allowlist_fraction: The share of routes the allow-list may excuse.
+        shared_seed_routes: Routes whose four cells share one seeded object
+            (see :data:`scripts.dast.seeds.SHARED_SEED_ROUTES`).
+        pacing: How the creates that spend the owner's generations are paced.
     """
 
     # Both constants are ``MappingProxyType``, which Python 3.11 rejects as a
@@ -234,6 +252,8 @@ class MatrixConfig:
     min_references: int = DEFAULT_MIN_REFERENCES
     budget_seconds: float = DEFAULT_BUDGET_SECONDS
     max_allowlist_fraction: float = DEFAULT_MAX_ALLOWLIST_FRACTION
+    shared_seed_routes: frozenset[tuple[str, str]] = SHARED_SEED_ROUTES
+    pacing: PacingPolicy = field(default_factory=PacingPolicy)
 
 
 @dataclass
@@ -245,6 +265,7 @@ class _Session:
     owner: Identity
     intruder: Identity
     forged_token: str
+    pacer: Pacer
     statuses: list[int] = field(default_factory=list)
 
 
@@ -278,6 +299,8 @@ class _Outcome:
     statuses: tuple[int, ...]
     elapsed_seconds: float
     live_failure: LiveFailure | None = None
+    paced_seconds: float = 0.0
+    paced_refusals: int = 0
 
 
 class _StageError(Exception):
@@ -355,12 +378,12 @@ class _Request:
     form: Mapping[str, object] | None = None
 
 
-async def _send(session: _Session, request: _Request, *, token: str | None) -> Response:
-    """Issue one request, recording its status for the throttling guard."""
+async def _dispatch(session: _Session, request: _Request, *, token: str | None) -> Response:
+    """Issue one request from a fresh forwarded address, recording nothing."""
     headers = {"X-Forwarded-For": forwarded_for()}
     if token is not None:
         headers["Authorization"] = f"Bearer {token}"
-    response = await session.client.request(
+    return await session.client.request(
         request.method,
         request.path,
         headers=headers,
@@ -368,8 +391,35 @@ async def _send(session: _Session, request: _Request, *, token: str | None) -> R
         data=request.form,
         params=request.params,
     )
+
+
+async def _send(session: _Session, request: _Request, *, token: str | None) -> Response:
+    """Issue one request, recording its status for the throttling guard."""
+    response = await _dispatch(session, request, token=token)
     session.statuses.append(response.status_code)
     return response
+
+
+async def _send_paced(session: _Session, request: _Request, *, token: str | None) -> Response:
+    """Issue one create that spends a generation, waiting its turn for the owner's window.
+
+    Admitted only while the ledger has room (:meth:`Pacer.admit`). A 429 is the
+    owner's generation window saying "not yet", so it is waited out and the
+    create sent again; it never reaches the statuses the throttling guard reads,
+    and the refusal is tallied on the pacer instead. Every other answer is
+    recorded exactly as :func:`_send` records it. The waiting is bounded by the
+    run's pacing cap, whose :class:`PacingCapError` ends the run as a harness
+    error.
+    """
+    pacer = session.pacer
+    while True:
+        await pacer.admit()
+        response = await _dispatch(session, request, token=token)
+        if response.status_code != HTTPStatus.TOO_MANY_REQUESTS:
+            pacer.record()
+            session.statuses.append(response.status_code)
+            return response
+        await pacer.wait_out(response.headers)
 
 
 def _render_fields(values: Mapping[str, str]) -> dict[str, object]:
@@ -402,16 +452,14 @@ async def _seed_one(
     """
     fields = _render_fields(values)
     body, form = create_bodies(spec, fields)
-    response = await _send(
-        session,
-        _Request(
-            method=spec.create_method,
-            path=render_text(spec.create_path, fields),
-            body=body,
-            form=form,
-        ),
-        token=identity.token,
+    request = _Request(
+        method=spec.create_method,
+        path=render_text(spec.create_path, fields),
+        body=body,
+        form=form,
     )
+    send = _send_paced if spec.paced else _send
+    response = await send(session, request, token=identity.token)
     if not seed_succeeded(spec, response.status_code):
         return None
     return read_seed_id(spec, text=response.text, location=response.headers.get("location"))
@@ -468,9 +516,18 @@ def _token_for(session: _Session, cell: Cell) -> str | None:
     return None
 
 
-async def _run_cell(session: _Session, route: RouteSpec, cell: Cell) -> CellResult | None:
-    """Seed a fresh object, probe one route with one credential, and grade the answer."""
-    values = await _seed_cell(session, route)
+async def _run_cell(
+    session: _Session,
+    route: RouteSpec,
+    cell: Cell,
+    shared: dict[str, str] | None,
+) -> CellResult | None:
+    """Probe one route with one credential and grade the answer.
+
+    The object is the route's ``shared`` one when it has one, else a fresh one
+    seeded for this cell alone.
+    """
+    values = shared if shared is not None else await _seed_cell(session, route)
     if values is None:
         return None
     resolved = render_text(route.path, values)
@@ -494,10 +551,20 @@ async def _run_cell(session: _Session, route: RouteSpec, cell: Cell) -> CellResu
 
 
 async def _run_route(session: _Session, route: RouteSpec) -> tuple[CellResult, ...] | None:
-    """Run all four cells of one route in order, or report it unseedable."""
+    """Run all four cells of one route in order, or report it unseedable.
+
+    A route listed in ``shared_seed_routes`` seeds its object once, before the
+    first cell, and every cell probes that one; every other route seeds afresh
+    per cell.
+    """
+    shared: dict[str, str] | None = None
+    if (route.method, route.path) in session.config.shared_seed_routes:
+        shared = await _seed_cell(session, route)
+        if shared is None:
+            return None
     results: list[CellResult] = []
     for cell in CELL_ORDER:
-        result = await _run_cell(session, route, cell)
+        result = await _run_cell(session, route, cell, shared)
         if result is None:
             return None
         results.append(result)
@@ -999,6 +1066,8 @@ def _build_report(outcome: _Outcome, config: MatrixConfig, base_url: str) -> Mat
         guard_failures=_collect_guards(outcome, config),
         elapsed_seconds=outcome.elapsed_seconds,
         reference_results=outcome.reference_results,
+        paced_seconds=outcome.paced_seconds,
+        paced_refusals=outcome.paced_refusals,
     )
 
 
@@ -1022,6 +1091,7 @@ async def _collect_outcome(
         owner=owner,
         intruder=intruder,
         forged_token=_forged_token(),
+        pacer=Pacer(config.pacing),
     )
     with _stage(_STAGE_AUTH_PROBE):
         probe = await _probe_auth(session)
@@ -1053,6 +1123,8 @@ async def _collect_outcome(
         unprobed_references=unprobed,
         statuses=tuple(session.statuses),
         elapsed_seconds=perf_counter() - started,
+        paced_seconds=session.pacer.waited_seconds,
+        paced_refusals=session.pacer.refusals,
     )
 
 

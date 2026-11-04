@@ -1,12 +1,14 @@
-"""Quote-promotion API — lift a span from one entry, optionally fold it into another.
+"""Quote-promotion API — lift a span from something read, optionally fold it into a review.
 
-Promoting a quote anchors a character span of a source journal entry; the server
-slices and snapshots the text (the client sends only offsets) so the quote
-survives later edits. A promotion can then be folded into a hierarchical
-reflection or returned to pending. ``GET /promotions`` lists every quote the
-caller has promoted -- from entries, Course chapters and Resonance Letters alike
-(#3656) -- for the Promoted quotes screen (#2865). Only entry quotes are created
-here so far. ``user_id`` is never returned.
+Promoting a quote anchors a character span of a source -- one of the caller's
+journal entries, a released Course chapter, or the Resonance Letter on one of
+the caller's margin notes (#3658) -- and the server slices and snapshots the
+text (the client sends only offsets) so the quote survives later edits. All
+three write routes share one slicer, and each source has a ``GET .../promotions``
+that rehydrates its highlights through the gate its write passes. A promotion
+can then be folded into a hierarchical reflection or returned to pending.
+``GET /promotions`` lists every quote the caller has promoted, of every kind
+(#3656), for the Promoted quotes screen (#2865). ``user_id`` is never returned.
 """
 
 from __future__ import annotations
@@ -27,13 +29,15 @@ from sqlmodel import col, select
 
 from bounds import MAX_PAGE_OFFSET, RowIdPath
 from database import get_session
-from dependencies.ownership import require_owned_journal_entry
-from error_responses import build_router
+from dependencies.ownership import log_ownership_denied, require_owned_journal_entry
+from dependencies.timezone import current_user_timezone
+from error_responses import build_router, refusal_responses
 from errors import not_found, unprocessable
 from models.course_stage import CourseStage
 from models.journal_entry import JournalEntry, JournalTag
 from models.marginalia import Marginalia
 from models.promoted_quote import (
+    PROMOTED_QUOTE_SOURCE_TITLE_MAX,
     PROMOTED_QUOTE_TEXT_MAX,
     PromotedQuote,
     PromotedQuoteSourceKind,
@@ -42,8 +46,11 @@ from models.stage_content import StageContent
 from observability import route_template
 from rate_limit import limiter
 from routers.auth import get_current_user
+from routers.course import read_chapter_body, resolve_released_content
+from routers.journal import load_user_marginalia
 from schemas.pagination import DEFAULT_PAGE_SIZE, MAX_PAGE_SIZE, count_query_total, page_has_more
 from schemas.promotion import (
+    PromoteCourseQuoteCreate,
     PromotedQuoteListItemResponse,
     PromotedQuoteListResponse,
     PromotedQuoteResponse,
@@ -52,7 +59,12 @@ from schemas.promotion import (
     PromotionUpdate,
 )
 from security import TextTooLongError, sanitize_user_text
-from services.folded_quote_privacy import refuse_unfoldable_quote, refuse_unquotable_span
+from services import demo_visibility
+from services.folded_quote_privacy import (
+    refuse_unfoldable_quote,
+    refuse_unquotable_letter_span,
+    refuse_unquotable_span,
+)
 from services.journal_withdrawal_obligation import refuse_if_deletion_pending
 
 logger = logging.getLogger(__name__)
@@ -79,22 +91,54 @@ def _quote_response(quote: PromotedQuote) -> PromotedQuoteResponse:
     )
 
 
-def _slice_anchor_text(entry: JournalEntry, payload: PromoteQuoteCreate) -> str:
-    """Slice + sanitize the anchored span from the persisted body.
+def _slice_anchor_text(body: str, payload: PromoteQuoteCreate) -> str:
+    """Slice + sanitize the anchored span from a server-held source body.
 
-    Offsets are Unicode code points (Python string indexing is code-point-based),
-    which is the anchor API's contract. The span is validated against the
-    *server-held* body (never client text): an end past the body length is 422
-    ``anchor_out_of_range``, and a normalized span longer than the plaintext cap
-    is 422 ``quote_too_long``.
+    The one slicer every promote route shares: an entry's message, a Course
+    chapter's served Markdown, a letter. Offsets are Unicode code points (Python
+    string indexing is code-point-based), which is the anchor API's contract.
+    The span is validated against the *server-held* body (never client text):
+    an end past the body length is 422 ``anchor_out_of_range``, and a normalized
+    span longer than the plaintext cap is 422 ``quote_too_long``.
     """
-    if payload.anchor_end > len(entry.message):
+    if payload.anchor_end > len(body):
         raise unprocessable("anchor_out_of_range")
-    span = entry.message[payload.anchor_start : payload.anchor_end]
+    span = body[payload.anchor_start : payload.anchor_end]
     try:
         return sanitize_user_text(span, max_len=PROMOTED_QUOTE_TEXT_MAX)
     except TextTooLongError as exc:
         raise unprocessable("quote_too_long") from exc
+
+
+async def _store_quote(session: AsyncSession, quote: PromotedQuote) -> PromotedQuoteResponse:
+    """Persist a freshly promoted quote and answer with it; logs ids and the kind only."""
+    session.add(quote)
+    await session.commit()
+    await session.refresh(quote)
+    logger.info(
+        "quote_promoted",
+        extra={"user_id": quote.user_id, "quote_id": quote.id, "source_kind": quote.source_kind},
+    )
+    return _quote_response(quote)
+
+
+async def _source_quotes(
+    session: AsyncSession, user_id: int, source: ColumnElement[bool]
+) -> list[PromotedQuoteResponse]:
+    """The caller's quotes of one source, every status, ordered by ``(anchor_start, id)``."""
+    result = await session.execute(
+        select(PromotedQuote)
+        .where(source, col(PromotedQuote.user_id) == user_id)
+        .order_by(col(PromotedQuote.anchor_start), col(PromotedQuote.id))
+    )
+    return [_quote_response(quote) for quote in result.scalars().all()]
+
+
+def _log_source_listed(request: Request, user_id: int) -> None:
+    """Record a source's highlight read; ``request`` is also what ``@limiter.limit`` keys on."""
+    logger.info(
+        "promoted_quotes_listed", extra={"user_id": user_id, "path": route_template(request)}
+    )
 
 
 @router.post(
@@ -119,7 +163,7 @@ async def promote_quote(
     ``quote_source_restricted`` and stores nothing (#3059, owner decision R5-2).
     """
     await refuse_if_deletion_pending(session, entry)
-    anchor_text = _slice_anchor_text(entry, payload)
+    anchor_text = _slice_anchor_text(entry.message, payload)
     await refuse_unquotable_span(session, entry, payload.anchor_start, payload.anchor_end)
     quote = PromotedQuote(
         user_id=current_user,
@@ -130,11 +174,7 @@ async def promote_quote(
         anchor_text=anchor_text,
         included_in_entry_id=None,
     )
-    session.add(quote)
-    await session.commit()
-    await session.refresh(quote)
-    logger.info("quote_promoted", extra={"user_id": current_user, "quote_id": quote.id})
-    return _quote_response(quote)
+    return await _store_quote(session, quote)
 
 
 @router.get("/journal/{entry_id}/promotions", response_model=list[PromotedQuoteResponse])
@@ -151,15 +191,206 @@ async def list_promotions(
     every quote regardless of status -- pending, folded, and stale -- so a
     reopened entry can rehydrate all of its highlights.
     """
-    result = await session.execute(
-        select(PromotedQuote)
-        .where(
-            PromotedQuote.source_entry_id == entry.id,
-            PromotedQuote.user_id == current_user,
-        )
-        .order_by(col(PromotedQuote.anchor_start), col(PromotedQuote.id))
+    return await _source_quotes(
+        session, current_user, col(PromotedQuote.source_entry_id) == entry.id
     )
-    return [_quote_response(quote) for quote in result.scalars().all()]
+
+
+# ── Course chapters (#3658) ──────────────────────────────────────────────
+
+
+@router.post(
+    "/course/content/{content_id}/promote",
+    response_model=PromotedQuoteResponse,
+    status_code=status.HTTP_201_CREATED,
+    # A content directory that cannot serve a listed chapter (the body route's 502).
+    responses=refusal_responses((status.HTTP_502_BAD_GATEWAY,)),
+)
+async def promote_course_quote(
+    content_id: RowIdPath,
+    payload: PromoteCourseQuoteCreate,
+    current_user: Annotated[int, Depends(get_current_user)],
+    session: Annotated[AsyncSession, Depends(get_session)],
+    user_tz: Annotated[str, Depends(current_user_timezone)],
+) -> PromotedQuoteResponse:
+    """Promote a span of a released Course chapter into a pending quote.
+
+    The chapter passes the gate ``GET /course/content/{content_id}/body``
+    applies -- stage unlocked, released by the proportional drip, a local
+    body -- so a missing, locked or unreleased chapter is 404
+    ``content_not_found``, masked identically (BUG-COURSE-004), and nothing is
+    stored. Offsets are code points into ``body_markdown`` exactly as that route
+    returns it (frontmatter already stripped), bounded by the chapter bound
+    rather than the entry one; a span past the body is 422
+    ``anchor_out_of_range`` and one past the quote cap 422 ``quote_too_long``.
+    A content directory that cannot serve the listed chapter is 502
+    ``content_unavailable``.
+
+    Course text is published, the same for every reader, so no writer's tier
+    applies to it. The quote snapshots the chapter's title (truncated to its
+    column) so it still names its chapter once a content pin prunes it.
+    """
+    content, chapter_id = await resolve_released_content(session, current_user, content_id, user_tz)
+    anchor_text = _slice_anchor_text(read_chapter_body(chapter_id).body_markdown, payload)
+    quote = PromotedQuote(
+        user_id=current_user,
+        source_kind=PromotedQuoteSourceKind.COURSE,
+        source_content_id=cast("int", content.id),
+        source_title=content.title[:PROMOTED_QUOTE_SOURCE_TITLE_MAX],
+        anchor_start=payload.anchor_start,
+        anchor_end=payload.anchor_end,
+        anchor_text=anchor_text,
+    )
+    return await _store_quote(session, quote)
+
+
+@router.get("/course/content/{content_id}/promotions", response_model=list[PromotedQuoteResponse])
+@limiter.limit(LIST_PROMOTIONS_RATE_LIMIT)
+async def list_course_promotions(
+    request: Request,
+    content_id: RowIdPath,
+    current_user: Annotated[int, Depends(get_current_user)],
+    session: Annotated[AsyncSession, Depends(get_session)],
+    user_tz: Annotated[str, Depends(current_user_timezone)],
+) -> list[PromotedQuoteResponse]:
+    """List every quote the caller promoted from one released Course chapter.
+
+    The chapter passes the same release gate as its promote route, so a
+    missing, locked or unreleased chapter is 404 ``content_not_found``.
+    Scoped to the caller, every status, ordered by ``(anchor_start, id)`` --
+    what a reopened chapter needs to rehydrate its highlights.
+    """
+    content, _chapter_id = await resolve_released_content(
+        session, current_user, content_id, user_tz
+    )
+    quotes = await _source_quotes(
+        session, current_user, col(PromotedQuote.source_content_id) == content.id
+    )
+    _log_source_listed(request, current_user)
+    return quotes
+
+
+# ── Resonance Letters (#3658) ────────────────────────────────────────────
+
+
+class _LetterSource(NamedTuple):
+    """A letter the caller may quote: its margin note, the live entry under it, its text."""
+
+    note: Marginalia
+    entry: JournalEntry
+    letter: str
+
+
+async def _audit_foreign_note(session: AsyncSession, marginalia_id: int, user_id: int) -> None:
+    """Audit a probe of a note that exists but is not the caller's; a missing id records nothing."""
+    owner = await session.scalar(
+        select_columns(col(Marginalia.user_id)).where(col(Marginalia.id) == marginalia_id)
+    )
+    if owner is not None and owner != user_id:
+        log_ownership_denied("marginalia", marginalia_id, user_id)
+
+
+async def _letter_entry(session: AsyncSession, note: Marginalia, user_id: int) -> JournalEntry:
+    """The live entry ``note`` sits on, if it is the caller's own, else 404 ``journal_entry``.
+
+    The note's denormalized ``user_id`` is not trusted alone: an entry of
+    another account under a note naming the caller is audited and refused.
+    """
+    entry = await session.get(JournalEntry, note.journal_entry_id)
+    if entry is not None and entry.user_id != user_id:
+        log_ownership_denied("journal_entry", note.journal_entry_id, user_id)
+        raise not_found("journal_entry")
+    if entry is None or entry.deleted_at is not None:
+        raise not_found("journal_entry")
+    return entry
+
+
+async def _resolve_letter(session: AsyncSession, marginalia_id: int, user_id: int) -> _LetterSource:
+    """The caller's note, the live entry it sits on, and the letter it carries -- or a 404.
+
+    The note is loaded through the margin-note scope (``user_id`` and the
+    demo-visibility clauses), so a foreign or hidden note is 404
+    ``marginalia_not_found`` -- a foreign one audited. A note with no letter, or
+    whose letter is a withheld stub (``demo_visibility.has_served_letter``), is
+    404 ``letter_not_found``.
+    """
+    note = await load_user_marginalia(session, marginalia_id, user_id)
+    if note is None:
+        await _audit_foreign_note(session, marginalia_id, user_id)
+        raise not_found("marginalia")
+    entry = await _letter_entry(session, note, user_id)
+    letter = demo_visibility.served_letter(note)
+    if letter is None:
+        raise not_found("letter")
+    return _LetterSource(note, entry, letter)
+
+
+@router.post(
+    "/journal/marginalia/{marginalia_id}/letter/promote",
+    response_model=PromotedQuoteResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+async def promote_letter_quote(
+    marginalia_id: RowIdPath,
+    payload: PromoteQuoteCreate,
+    current_user: Annotated[int, Depends(get_current_user)],
+    session: Annotated[AsyncSession, Depends(get_session)],
+) -> PromotedQuoteResponse:
+    """Promote a span of the Resonance Letter on one of the caller's margin notes.
+
+    A missing, foreign or hidden note is 404 ``marginalia_not_found``; a note
+    whose entry is deleted (or not the caller's) is 404
+    ``journal_entry_not_found``; a note with no letter, or only a withheld stub
+    one, is 404 ``letter_not_found``. An entry whose deletion is in progress is
+    409 ``journal_entry_deletion_pending``. Offsets are code points into the
+    letter; a span past it is 422 ``anchor_out_of_range`` and one past the
+    quote cap 422 ``quote_too_long``. Letters are write-once, so no re-anchoring
+    follows.
+
+    A letter has no tier of its own: it inherits its entry's. A letter on an
+    entry that may not egress (Intimate, or an unknown tier), or a span carrying
+    a passage that entry holds from a restricted fold, is 409
+    ``quote_source_restricted``, and nothing is stored.
+    """
+    source = await _resolve_letter(session, marginalia_id, current_user)
+    await refuse_if_deletion_pending(session, source.entry)
+    anchor_text = _slice_anchor_text(source.letter, payload)
+    await refuse_unquotable_letter_span(session, source.entry, anchor_text)
+    quote = PromotedQuote(
+        user_id=current_user,
+        source_kind=PromotedQuoteSourceKind.LETTER,
+        source_marginalia_id=cast("int", source.note.id),
+        anchor_start=payload.anchor_start,
+        anchor_end=payload.anchor_end,
+        anchor_text=anchor_text,
+    )
+    return await _store_quote(session, quote)
+
+
+@router.get(
+    "/journal/marginalia/{marginalia_id}/letter/promotions",
+    response_model=list[PromotedQuoteResponse],
+)
+@limiter.limit(LIST_PROMOTIONS_RATE_LIMIT)
+async def list_letter_promotions(
+    request: Request,
+    marginalia_id: RowIdPath,
+    current_user: Annotated[int, Depends(get_current_user)],
+    session: Annotated[AsyncSession, Depends(get_session)],
+) -> list[PromotedQuoteResponse]:
+    """List every quote the caller promoted from the letter on one of their margin notes.
+
+    The same gate as its promote route: a missing, foreign or hidden note is
+    404 ``marginalia_not_found``, a deleted entry 404 ``journal_entry_not_found``,
+    and a note with no served letter 404 ``letter_not_found``. Scoped to the
+    caller, every status, ordered by ``(anchor_start, id)``.
+    """
+    source = await _resolve_letter(session, marginalia_id, current_user)
+    quotes = await _source_quotes(
+        session, current_user, col(PromotedQuote.source_marginalia_id) == source.note.id
+    )
+    _log_source_listed(request, current_user)
+    return quotes
 
 
 async def _load_owned_quote(

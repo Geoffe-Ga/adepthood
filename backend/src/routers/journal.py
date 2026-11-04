@@ -3154,13 +3154,15 @@ def _essay_clients(
     )
 
 
-async def _load_user_marginalia(
+async def load_user_marginalia(
     session: AsyncSession, marginalia_id: int, user_id: int
 ) -> Marginalia | None:
     """Load the caller's own marginalia row by id (denormalized user_id scope).
 
     Shares the listing's visibility filter, so a stored demo note hidden there
     is a 404 here too rather than a letter the writer can still be charged for.
+    Public because promoting a passage of a note's letter (``routers.promotions``,
+    #3658) resolves the note through this same scope.
     """
     result = await session.execute(
         select(Marginalia).where(
@@ -3253,7 +3255,7 @@ async def _expand_essay(
     clients: _EssayClients,
 ) -> Marginalia | LetterEscalation:
     """Authorize, apply the privacy floor and the price gate, then generate."""
-    note = await _load_user_marginalia(session, marginalia_id, user_id)
+    note = await load_user_marginalia(session, marginalia_id, user_id)
     if note is None:
         raise not_found("marginalia")
     # A stored demo letter is not a letter already bought: ask again (#3096).
