@@ -62,6 +62,13 @@ describe('RenderedSelectionPill', () => {
     });
   });
 
+  it('keeps a deeper band where no row of controls follows the text', () => {
+    const { getByTestId } = render(
+      <RenderedSelectionPill passage={null} onPromote={jest.fn()} reserve={128} />,
+    );
+    expect(StyleSheet.flatten(getByTestId(`${FAB}-band`).props.style)).toEqual({ height: 128 });
+  });
+
   it('lifts each chosen passage clear of the pill riding its dock', () => {
     const { rerender } = render(<RenderedSelectionPill passage={null} onPromote={jest.fn()} />);
     expect(useLiftClearOfPill).toHaveBeenLastCalledWith(expect.anything(), null);

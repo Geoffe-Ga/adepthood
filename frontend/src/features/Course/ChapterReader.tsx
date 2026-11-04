@@ -21,7 +21,15 @@ import PromoteExplainerDialog from '../Journal/PromoteExplainerDialog';
 import QuoteSelectionSurface, { type CodePointSpan } from '../Journal/QuoteSelectionSurface';
 import type { PromoteExplainerGate } from '../Journal/usePromoteExplainer';
 
+import {
+  ChapterHighlightPill,
+  HighlightPromoteExplainer,
+  useChapterHighlight,
+  useHighlightPromotion,
+  type HighlightPromoteSource,
+} from './ChapterHighlight';
 import { resolveChapterHighlight, type ChapterHighlightSpan } from './chapterHighlight';
+import type { ChapterPassage } from './chapterProjection';
 import ChapterPromotionNotice from './ChapterPromotionNotice';
 import styles, { markdownStyles } from './Course.styles';
 import RetryButton from './RetryButton';
@@ -298,11 +306,76 @@ interface PassageSelection {
   dialogVisible: boolean;
   onScroll: (_event: NativeSyntheticEvent<NativeScrollEvent>) => void;
   beginSelection: () => void;
+  /** Open the selection field with ``seed`` chosen: a highlighted passage only guessed at (#3661). */
+  beginSelectionAt: (_seed?: CodePointSpan) => void;
+  /** Write a note on ``span``, a passage highlighted on the rendered chapter (#3661). */
+  noteOn: (_span: CodePointSpan) => void;
   cancelSelection: () => void;
   handleSelectionChange: (_span: CodePointSpan) => void;
   openDialog: () => Promise<void>;
   closeDialog: () => void;
   confirmNote: () => void;
+}
+
+/**
+ * Track the reading sheet's latest scroll offset, and snapshot it (``capture``)
+ * at the moment a passage gesture begins, so a note can return the reader there.
+ */
+function useCapturedScroll(): {
+  onScroll: (_event: NativeSyntheticEvent<NativeScrollEvent>) => void;
+  capture: () => void;
+  capturedOffset: number;
+} {
+  const [capturedOffset, setCapturedOffset] = useState(0);
+  const scrollOffsetRef = useRef(0);
+  const onScroll = useCallback((event: NativeSyntheticEvent<NativeScrollEvent>) => {
+    scrollOffsetRef.current = event.nativeEvent.contentOffset.y;
+  }, []);
+  const capture = useCallback(() => setCapturedOffset(scrollOffsetRef.current), []);
+  return { onScroll, capture, capturedOffset };
+}
+
+/** The selection gesture's state setters, which React keeps stable. */
+interface SelectionSetters {
+  setSeed: (_seed: CodePointSpan | undefined) => void;
+  setSpan: (_span: CodePointSpan | null) => void;
+  setSelecting: (_selecting: boolean) => void;
+  setDialogVisible: (_visible: boolean) => void;
+}
+
+/**
+ * The ways into the gesture, each snapshotting the scroll offset first: Select
+ * a passage (``beginSelection``), and from a passage highlighted on the
+ * rendered chapter (#3661) the selection field with it chosen
+ * (``beginSelectionAt``, for a passage only guessed at) or straight to the
+ * note's dialog (``noteOn``).
+ */
+function useEntrances(
+  capture: () => void,
+  { setSeed, setSpan, setSelecting, setDialogVisible }: SelectionSetters,
+): Pick<PassageSelection, 'beginSelection' | 'beginSelectionAt' | 'noteOn'> {
+  const beginSelection = useCallback(() => {
+    capture();
+    setSelecting(true);
+  }, [capture, setSelecting]);
+  const beginSelectionAt = useCallback(
+    (next?: CodePointSpan) => {
+      capture();
+      setSeed(next);
+      setSpan(next ?? null);
+      setSelecting(true);
+    },
+    [capture, setSeed, setSpan, setSelecting],
+  );
+  const noteOn = useCallback(
+    (next: CodePointSpan) => {
+      capture();
+      setSpan(next);
+      setDialogVisible(true);
+    },
+    [capture, setSpan, setDialogVisible],
+  );
+  return { beginSelection, beginSelectionAt, noteOn };
 }
 
 /**
@@ -324,17 +397,10 @@ function usePassageSelection(
   const [selecting, setSelecting] = useState(initialSeed != null);
   const [dialogVisible, setDialogVisible] = useState(false);
   const [span, setSpan] = useState<CodePointSpan | null>(initialSeed ?? null);
-  const [capturedOffset, setCapturedOffset] = useState(0);
-  const scrollOffsetRef = useRef(0);
+  const { onScroll, capture, capturedOffset } = useCapturedScroll();
 
-  const onScroll = useCallback((event: NativeSyntheticEvent<NativeScrollEvent>) => {
-    scrollOffsetRef.current = event.nativeEvent.contentOffset.y;
-  }, []);
-
-  const beginSelection = useCallback(() => {
-    setCapturedOffset(scrollOffsetRef.current);
-    setSelecting(true);
-  }, []);
+  const setters = { setSeed, setSpan, setSelecting, setDialogVisible };
+  const { beginSelection, beginSelectionAt, noteOn } = useEntrances(capture, setters);
 
   const cancelSelection = useCallback(() => {
     setSeed(undefined);
@@ -362,6 +428,8 @@ function usePassageSelection(
     dialogVisible,
     onScroll,
     beginSelection,
+    beginSelectionAt,
+    noteOn,
     cancelSelection,
     handleSelectionChange,
     openDialog,
@@ -374,6 +442,8 @@ interface EssayEndHandlers {
   onScroll: (_event: NativeSyntheticEvent<NativeScrollEvent>) => void;
   onLayout: (_event: LayoutChangeEvent) => void;
   onContentSizeChange: (_width: number, _height: number) => void;
+  /** Say again whether the end is in view, from the last measurements. */
+  report: () => void;
 }
 
 /**
@@ -440,7 +510,7 @@ function useEssayEndSignal(
     [report],
   );
 
-  return { onScroll, onLayout, onContentSizeChange };
+  return { onScroll, onLayout, onContentSizeChange, report };
 }
 
 /** Fan one scroll event out to both listeners the reading sheet feeds. */
@@ -467,6 +537,10 @@ interface ReadingSheetProps {
   onLayout: (_event: LayoutChangeEvent) => void;
   onContentSizeChange: (_width: number, _height: number) => void;
   onBeginNote: () => void;
+  /** The rendered Markdown's container, where a web reader's highlight is read (#3661). */
+  markdownRef: React.RefObject<View | null>;
+  /** Drawn last in the sheet: the pill over a highlighted passage (web, #3661). */
+  afterText: React.ReactNode;
 }
 
 /** The reading view: the markdown sheet plus the calm invitation to select a passage. */
@@ -480,6 +554,8 @@ const ReadingSheet = ({
   onLayout,
   onContentSizeChange,
   onBeginNote,
+  markdownRef,
+  afterText,
 }: ReadingSheetProps): React.JSX.Element => (
   <ScrollView
     style={styles.readerScroll}
@@ -503,9 +579,12 @@ const ReadingSheet = ({
           <Text style={styles.readerWriteNoteLink}>{SELECT_PASSAGE_LABEL}</Text>
         </TouchableOpacity>
       )}
-      <Markdown style={markdownStyles} rules={markdownRules} onLinkPress={isExternalWebUrl}>
-        {markdown}
-      </Markdown>
+      <View ref={markdownRef}>
+        <Markdown style={markdownStyles} rules={markdownRules} onLinkPress={isExternalWebUrl}>
+          {markdown}
+        </Markdown>
+      </View>
+      {afterText}
     </View>
   </ScrollView>
 );
@@ -707,23 +786,108 @@ const ReadingView = (props: ReadingSheetProps): React.JSX.Element => (
 );
 
 /**
- * Keep the chapter controls (mark read, reflect, prev / next) out of selection
- * mode: they float at the reader's foot, where the selection footer and the
- * Promote pill live. Back on the rendered chapter, its fresh layout reports
- * afresh whether the essay's end is in view.
+ * Keep the chapter controls (mark read, reflect, prev / next) away while the
+ * Promote pill is up -- in selection mode, or over a passage highlighted on
+ * the rendered chapter (#3661): they float at the reader's foot, where the
+ * pill and its notice live. Back on the rendered chapter its fresh layout
+ * reports afresh whether the essay's end is in view, and so, when a highlight
+ * is let go, does ``report``.
  */
 function useControlsAwayWhileSelecting(
-  selecting: boolean,
+  held: boolean,
   onEndReachedChange: (_reached: boolean) => void,
+  report: () => void,
 ): void {
   useEffect(() => {
-    if (selecting) onEndReachedChange(false);
-  }, [selecting, onEndReachedChange]);
+    if (held) onEndReachedChange(false);
+    else report();
+  }, [held, onEndReachedChange, report]);
 }
 
 /** The chapter a passage can be promoted from, or null for an introduction or a resource. */
 function usePromoteSource(contentId: number | null, served: string): PromoteSource | null {
   return useMemo(() => (contentId === null ? null : { contentId, served }), [contentId, served]);
+}
+
+/** A passage highlighted on the rendered chapter (web, #3661), and what its pill promotes with. */
+interface ReadingHighlight {
+  markdownRef: React.RefObject<View | null>;
+  passage: ChapterPassage | null;
+  promotion: ReturnType<typeof useHighlightPromotion> | null;
+}
+
+/** Follow a highlight over the rendered ``markdown`` and ready its promote, on a chapter. */
+function useReadingHighlight(
+  markdown: string,
+  body: ContentBody,
+  contentId: number | null,
+): ReadingHighlight {
+  const markdownRef = useRef<View>(null);
+  const passage = useChapterHighlight(markdownRef, markdown);
+  const source = useMemo<HighlightPromoteSource | null>(
+    () =>
+      contentId === null ? null : { contentId, served: body.body_markdown, title: body.title },
+    [contentId, body.body_markdown, body.title],
+  );
+  const promotion = useHighlightPromotion(source);
+  return { markdownRef, passage, promotion: source === null ? null : promotion };
+}
+
+/**
+ * The rendered chapter with promote by highlighting (web, #3661): the pill last
+ * in the sheet, the first promote's note, its notice floating where the pill
+ * was, and the dialog the pill's Write a note opens.
+ */
+function HighlightedReading({
+  highlight,
+  selection,
+  canWriteNote,
+  ...sheet
+}: Omit<ReadingSheetProps, 'markdownRef' | 'afterText'> & {
+  highlight: ReadingHighlight;
+  selection: PassageSelection;
+}): React.JSX.Element {
+  const { passage, promotion } = highlight;
+  const pill = (
+    <ChapterHighlightPill
+      passage={passage}
+      promotion={promotion}
+      onWriteNote={canWriteNote ? selection.noteOn : undefined}
+      onChoose={selection.beginSelectionAt}
+    />
+  );
+  return (
+    <>
+      <ReadingView
+        {...sheet}
+        canWriteNote={canWriteNote}
+        markdownRef={highlight.markdownRef}
+        afterText={pill}
+      />
+      {promotion === null ? null : (
+        <>
+          <ChapterPromotionNotice feedback={promotion.feedback} lifted={passage !== null} />
+          <HighlightPromoteExplainer explainer={promotion.explainer} />
+        </>
+      )}
+      <WriteNoteDialog selection={selection} />
+    </>
+  );
+}
+
+/** The chapter as shown (its title heading stripped) and the passage gesture over it. */
+function useShownChapter(
+  body: ContentBody,
+  onWriteNote: ((_passage: WriteNotePassage) => void) | undefined,
+  initialHighlight: ChapterHighlightSpan | undefined,
+): { markdown: string; selection: PassageSelection } {
+  const markdown = useMemo(
+    () => stripLeadingTitleHeading(body.body_markdown, body.title),
+    [body.body_markdown, body.title],
+  );
+  const seed = resolveChapterHighlight(body.body_markdown, body.title, initialHighlight);
+  const selection = usePassageSelection(markdown, body.title, onWriteNote, seed);
+  return { markdown, selection };
 }
 
 /** Renders the loaded body: empty notice, reading sheet, or selection surface. */
@@ -735,17 +899,14 @@ const ReaderBody = ({
   initialHighlight,
   onEndReachedChange,
 }: ReaderBodyProps): React.JSX.Element => {
-  const markdown = useMemo(
-    () => stripLeadingTitleHeading(body.body_markdown, body.title),
-    [body.body_markdown, body.title],
-  );
-  const seed = resolveChapterHighlight(body.body_markdown, body.title, initialHighlight);
-  const selection = usePassageSelection(markdown, body.title, onWriteNote, seed);
+  const { markdown, selection } = useShownChapter(body, onWriteNote, initialHighlight);
   const eyebrow = READER_EYEBROWS[body.content_type];
   const isEmpty = markdown.trim() === '';
   const essayEnd = useEssayEndSignal(onEndReachedChange, isEmpty);
   const handleScroll = useMergedScroll(selection.onScroll, essayEnd.onScroll);
-  useControlsAwayWhileSelecting(selection.selecting, onEndReachedChange);
+  const highlight = useReadingHighlight(markdown, body, contentId);
+  const pillUp = selection.selecting || highlight.passage !== null;
+  useControlsAwayWhileSelecting(pillUp, onEndReachedChange, essayEnd.report);
   const promoteFrom = usePromoteSource(contentId, body.body_markdown);
 
   if (isEmpty) {
@@ -765,7 +926,7 @@ const ReaderBody = ({
           promoteFrom={promoteFrom}
         />
       ) : (
-        <ReadingView
+        <HighlightedReading
           markdown={markdown}
           eyebrow={eyebrow}
           title={body.title}
@@ -775,6 +936,8 @@ const ReaderBody = ({
           onLayout={essayEnd.onLayout}
           onContentSizeChange={essayEnd.onContentSizeChange}
           onBeginNote={selection.beginSelection}
+          highlight={highlight}
+          selection={selection}
         />
       )}
     </View>

@@ -28,7 +28,7 @@
  * tap-to-select surface), so it draws nothing at all.
  */
 import React, { useCallback, useRef } from 'react';
-import { Platform, StyleSheet, View, type ViewStyle } from 'react-native';
+import { Platform, View, type ViewStyle } from 'react-native';
 
 import type { AnchorSpan } from './anchorSpan';
 import FloatingPromoteButton, {
@@ -72,6 +72,13 @@ export interface RenderedSelectionPillProps extends Omit<
   passage: AnchorSpan | null;
   /** Promote ``passage`` (behind the host's one-time note). */
   onPromote: (_span: AnchorSpan) => void;
+  /**
+   * The band kept under the surface, in dp. Defaults to the pill's lift, which
+   * with a row of controls (a touch target) above it clears a text's end; a
+   * surface whose text ends with no such row (a Course chapter) keeps the whole
+   * pill and its breath as well.
+   */
+  reserve?: number;
 }
 
 function RenderedSelectionPill({
@@ -79,6 +86,7 @@ function RenderedSelectionPill({
   onPromote,
   onCancel = clearRenderedSelection,
   testID = FLOATING_PROMOTE_TEST_ID,
+  reserve = RESONANCE_BUTTON_CLEARANCE,
   ...pill
 }: RenderedSelectionPillProps): React.JSX.Element | null {
   const dockRef = useRef<View>(null);
@@ -89,7 +97,7 @@ function RenderedSelectionPill({
   if (Platform.OS !== 'web') return null;
   return (
     <>
-      <View style={styles.band} testID={`${testID}-band`} />
+      <View style={{ height: reserve }} testID={`${testID}-band`} />
       <Dock
         ref={dockRef}
         style={floatingDockStyle}
@@ -108,12 +116,5 @@ function RenderedSelectionPill({
     </>
   );
 }
-
-const styles = StyleSheet.create({
-  /** The pill's lift: with the opener's row above it, a text's end clears the resting pill. */
-  band: {
-    height: RESONANCE_BUTTON_CLEARANCE,
-  },
-});
 
 export default RenderedSelectionPill;
