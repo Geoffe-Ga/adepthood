@@ -1,9 +1,18 @@
 import { expect, test, type Locator, type Page } from '@playwright/test';
 
-import { backendUrl, bearer, signUp, tokenFor } from './journalHabitsBrowserSupport';
 import {
+  backendUrl,
+  bearer,
+  setProgramAnchorDaysAgo,
+  signUp,
+  tokenFor,
+} from './journalHabitsBrowserSupport';
+import {
+  answerPromoteNote,
+  chapterId,
   expectPromotedNotice,
   onlyQuote,
+  openChapter,
   openLetter,
   pressRenderedPill,
   seedLetter,
@@ -22,7 +31,12 @@ import {
  * A letter is covered here at both viewports: the pill rests where the card's
  * Promote a quote stood, which steps aside for it, so even the letter's
  * closing line stays readable, and the passage goes up over the letter route
- * exactly as the reader chose it. A journal page in read mode is covered for
+ * exactly as the reader chose it. So is a Course chapter, whose rendered
+ * Markdown keeps no offsets: a sentence the projection places exactly is
+ * promoted at its served offsets, and one it can only guess at -- across an
+ * ordered list's drawn numbers -- is offered honestly as Choose this passage…,
+ * opening the selection field with the guess chosen. A journal page in read
+ * mode is covered for
  * the pill's own manners -- lifting a passage it would cover clear of it,
  * withdrawing while its passage is scrolled away, letting go from its X --
  * and, deep in a long entry, for the promote itself, under
@@ -34,7 +48,15 @@ const VIEWPORTS = [
   { name: 'desktop', width: 1280, height: 720 },
 ] as const;
 const FAB = 'promote-selection-fab';
-const LETTER_PROMOTE_A11Y = 'Promote this passage';
+const PROMOTE_A11Y = 'Promote this passage';
+const CHOOSE_A11Y = 'Choose this passage in the selection field';
+/** Far enough into Beige that its third chapter, The Journaling Prompts of Beige, is out. */
+const DAYS_INTO_BEIGE = 4;
+const PROMPTS_CHAPTER = 'The Journaling Prompts of Beige';
+/** A sentence of What is Beige? the projection places exactly. */
+const BEIGE_WORDS = 'Beige relates to the aspect of our identity';
+/** Across items 3 and 4 of an ordered list, whose drawn ``4.`` the source spells ``4.  ``. */
+const ACROSS_ITEMS = 'ignore it and keep writing.4.Don\u2019t reread or cross';
 /** Sub-pixel rounding allowance on a box comparison. */
 const EPSILON_PX = 1;
 const HALF = 2;
@@ -83,7 +105,7 @@ for (const viewport of VIEWPORTS) {
 
     // The pill comes to it with no field opened, Promote a quote stepping
     // aside for it, and leaves the closing line readable.
-    const pill = page.getByRole('button', { name: LETTER_PROMOTE_A11Y, exact: true });
+    const pill = page.getByRole('button', { name: PROMOTE_A11Y, exact: true });
     await expect(pill).toBeInViewport();
     await expect(pill).toContainText('Promote');
     await expect(page.locator('textarea[data-testid="letter-quote-select-input"]')).toHaveCount(0);
@@ -101,7 +123,7 @@ for (const viewport of VIEWPORTS) {
 
     // Pressed at its place, the passage stays chosen; the one-time note is set
     // in the card, worded for a passage already chosen, and goes ahead.
-    await pressRenderedPill(page, LETTER_PROMOTE_A11Y);
+    await pressRenderedPill(page, PROMOTE_A11Y);
     await expect(card.getByTestId('promote-explainer-panel')).toBeVisible();
     await expect(page.getByTestId('promote-explainer-scrim')).toHaveCount(0);
     const continueButton = card.getByTestId('promote-explainer-continue');
@@ -209,3 +231,82 @@ test('the pill lifts a passage it would cover clear of it, withdraws while its p
   expect(listed.ok()).toBe(true);
   expect(await listed.json()).toEqual([]);
 });
+
+/** Bring the rendered text holding ``text`` to the middle of the chapter's scroll. */
+async function centreInChapter(page: Page, text: string): Promise<void> {
+  await page.getByTestId('reader-markdown').evaluate((element, needle) => {
+    const walker = document.createTreeWalker(element, NodeFilter.SHOW_TEXT);
+    let holder: Element | null = null;
+    for (let node = walker.nextNode(); node !== null && holder === null; node = walker.nextNode()) {
+      if ((node.textContent ?? '').includes(needle)) holder = node.parentElement;
+    }
+    if (holder === null) throw new Error(`"${needle}" is not rendered`);
+    holder.scrollIntoView({ block: 'center' });
+  }, text);
+}
+
+for (const viewport of VIEWPORTS) {
+  test(`a reader highlights a chapter where it reads: an exact passage promotes, a guess opens the field (${viewport.name})`, async ({
+    page,
+  }) => {
+    await page.setViewportSize({ width: viewport.width, height: viewport.height });
+    const email = await signUp(page, `highlight-chapter-${viewport.name}`);
+    const token = await tokenFor(page.request, email);
+    setProgramAnchorDaysAgo(email, DAYS_INTO_BEIGE);
+    await page.reload();
+    await openChapter(page);
+    const id = await chapterId(page, token);
+
+    // Placed exactly: Promote beside Write a note, centred over the sheet, the
+    // passage clear of it, and no field opened.
+    await centreInChapter(page, BEIGE_WORDS);
+    expect(await selectRenderedText(page, 'reader-markdown', BEIGE_WORDS)).toBe(BEIGE_WORDS);
+    await expect(page.getByRole('button', { name: PROMOTE_A11Y, exact: true })).toBeInViewport();
+    await expect(page.getByRole('button', { name: 'Write a note on this passage' })).toBeVisible();
+    await expect(page.locator('textarea[data-testid="passage-select-input"]')).toHaveCount(0);
+    const pill = await boxOf(page.getByTestId(FAB));
+    const clear = await boxOf(page.getByTestId(`${FAB}-cancel`));
+    const sheet = await boxOf(page.getByTestId('reader-sheet-title'));
+    expect(
+      Math.abs((pill.x + clear.x + clear.width) / HALF - (sheet.x + sheet.width / HALF)),
+    ).toBeLessThanOrEqual(EPSILON_PX);
+    await expectPassageClearOf(page, pill);
+
+    // Promote goes up over the chapter's route at its served offsets, and the
+    // notice floats where the pill was.
+    await pressRenderedPill(page, PROMOTE_A11Y);
+    const posted = page.waitForResponse(
+      (response) =>
+        response.request().method() === 'POST' &&
+        new URL(response.url()).pathname === `/course/content/${id}/promote`,
+    );
+    const [response] = await Promise.all([
+      posted,
+      answerPromoteNote(page, 'Promote the passage', { dontShowAgain: true }),
+    ]);
+    expect(response.ok()).toBe(true);
+    await expectPromotedNotice(page);
+    await expect(page.getByTestId('chapter-promotion-notice')).toBeInViewport();
+    await expect(page.getByTestId(FAB)).toHaveCount(0);
+    const stored = await onlyQuote(page, token, `/course/content/${id}/promotions`);
+    expect(stored).toMatchObject({ source_kind: 'course', anchor_text: BEIGE_WORDS });
+
+    // Only a guess: across an ordered list's drawn numbers the pill says so,
+    // and opens the selection field with the guess chosen to confirm.
+    await page.getByTestId('reader-back-button').click();
+    await page.getByRole('button', { name: PROMPTS_CHAPTER, exact: true }).click();
+    await expect(page.getByRole('button', { name: 'Select a passage' })).toBeVisible();
+    await centreInChapter(page, 'ignore it and keep writing');
+    await selectRenderedText(page, 'reader-markdown', ACROSS_ITEMS);
+    const choose = page.getByRole('button', { name: CHOOSE_A11Y, exact: true });
+    await expect(choose).toBeInViewport();
+    await expect(choose).toContainText('Choose this passage\u2026');
+    await expect(page.getByRole('button', { name: 'Write a note on this passage' })).toHaveCount(0);
+    await pressRenderedPill(page, CHOOSE_A11Y);
+    await expect(page.locator('textarea[data-testid="passage-select-input"]')).toBeVisible();
+    const echo = page.getByTestId('passage-select-preview');
+    await expect(echo).toContainText('ignore it and keep writing.');
+    await expect(echo).toContainText('Don\u2019t rere');
+    await expect(page.getByRole('button', { name: PROMOTE_A11Y, exact: true })).toBeInViewport();
+  });
+}

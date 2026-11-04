@@ -83,10 +83,15 @@ nothing washes over the footer or the pill.
 
 **Promote by highlighting** (`features/Journal/RenderedSelectionPill.tsx`,
 #3661): on the web a reader need not open a selection field at all. A passage
-highlighted right where it is rendered -- journal read mode, a Resonance Letter
--- brings the same pill to the same place, and the passage stays selected when
-it is pressed. Each such surface keeps a band the height of the pill's lift
-under its last row, its Promote a quote opener: at the text's end the pill rests
+highlighted right where it is rendered -- journal read mode, a Resonance Letter,
+a Course chapter -- brings the same pill to the same place, and the passage
+stays selected when it is pressed. A chapter's rendered Markdown keeps no
+offsets, so its passage is found in a projection of the source; where that is
+only a guess the pill says so, reading Choose this passage… and opening the
+selection field with the guess chosen, and only an exact passage is offered
+Promote beside Write a note. Each such surface keeps a band the height of the pill's lift
+under its last row, its Promote a quote opener (a chapter, whose text ends with
+no such row, keeps the whole pill and its breath as well): at the text's end the pill rests
 on that row and the opener steps aside under it (in place, unseen, inert), so
 the pill never sits on the last line. The band is permanent, never conjured
 with the pill, because a band that came and went would move a centred card --
