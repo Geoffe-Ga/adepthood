@@ -19,13 +19,24 @@ from bounds import RowIdField
 from models.promoted_quote import PromotedQuoteSourceKind
 from schemas.journal import JOURNAL_MESSAGE_MAX_LENGTH
 
+#: The largest code-point offset a Course chapter quote may name (#3658).
+#:
+#: A chapter is longer than any journal entry can be: the longest vendored
+#: chapter body runs to about 24,400 code points, well past the
+#: ``JOURNAL_MESSAGE_MAX_LENGTH`` that bounds an entry or a letter, so it needs a
+#: bound of its own. This leaves room for a chapter four times that long, and a
+#: drift test over the vendored content fails before a content pin outgrows it.
+COURSE_CHAPTER_OFFSET_MAX = 100_000
+
 
 class PromoteQuoteCreate(BaseModel):
-    """Payload for promoting a span of a source entry into a pending quote.
+    """Payload for promoting a span of a source entry or a letter into a pending quote.
 
     Only offsets are accepted; the server slices ``anchor_text`` from the
     persisted body. ``anchor_end`` must lie strictly past ``anchor_start`` so an
-    empty or inverted span is rejected before it reaches the database.
+    empty or inverted span is rejected before it reaches the database. The
+    bound fits both bodies: a letter is capped at ``domain.resonance.ESSAY_MAX``,
+    no more than an entry may hold.
     """
 
     anchor_start: int = Field(ge=0, le=JOURNAL_MESSAGE_MAX_LENGTH)
@@ -38,6 +49,18 @@ class PromoteQuoteCreate(BaseModel):
             msg = "anchor_end must be greater than anchor_start"
             raise ValueError(msg)
         return self
+
+
+class PromoteCourseQuoteCreate(PromoteQuoteCreate):
+    """Payload for promoting a span of a Course chapter, bounded by the chapter bound.
+
+    The same offsets-only contract and span check as :class:`PromoteQuoteCreate`;
+    only the bound differs (:data:`COURSE_CHAPTER_OFFSET_MAX`). Offsets index the
+    ``body_markdown`` that ``GET /course/content/{content_id}/body`` returns.
+    """
+
+    anchor_start: int = Field(ge=0, le=COURSE_CHAPTER_OFFSET_MAX)
+    anchor_end: int = Field(ge=1, le=COURSE_CHAPTER_OFFSET_MAX)
 
 
 class PromotionUpdate(BaseModel):

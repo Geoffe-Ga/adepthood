@@ -132,6 +132,18 @@ path     = "/course/content/{content_id}/mark-read"
 category = "shared_catalog"
 reason   = "global course catalog; the call mutates only the caller's own read state"
 
+[[route]]
+method   = "POST"
+path     = "/course/content/{content_id}/promote"
+category = "shared_catalog"
+reason   = "global course catalog; the call writes a quote owned by the caller alone"
+
+[[route]]
+method   = "GET"
+path     = "/course/content/{content_id}/promotions"
+category = "shared_catalog"
+reason   = "global course catalog; the list is the caller's own quotes of that chapter"
+
 # These three are excused because the application deliberately grants every
 # authenticated user access to a preset: ``require_visible_practice`` returns any
 # approved practice to anybody, and the share-link resolver admits a practice
@@ -235,12 +247,6 @@ method   = "POST"
 path     = "/invitations/{invitation_id}/dismiss"
 category = "no_seed_strategy"
 reason   = "invitations are generated server-side; there is no endpoint that creates one"
-
-[[route]]
-method   = "POST"
-path     = "/journal/marginalia/{marginalia_id}/essay"
-category = "no_seed_strategy"
-reason   = "marginalia are model-generated; a fresh entry's marginalia list comes back empty"
 
 [[route]]
 method   = "POST"

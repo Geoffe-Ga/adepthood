@@ -854,6 +854,9 @@ _DECLARED_ROUTE_LIMITS: dict[str, tuple[str, ...]] = {
     "routers.practices.submit_practice": ("5 per 1 minute",),
     # The cross-entry quote list (#2865), limited like the journal list.
     "routers.promotions.list_all_promotions": ("30 per 1 minute",),
+    # A chapter's and a letter's highlights (#3658), at the same list budget.
+    "routers.promotions.list_course_promotions": ("30 per 1 minute",),
+    "routers.promotions.list_letter_promotions": ("30 per 1 minute",),
     # Per address and per account: an uncharged unusable read (#2851) must not
     # be buyable by rotating addresses.
     "routers.transcription.transcribe_page": ("20 per 1 minute", "20 per 1 minute"),

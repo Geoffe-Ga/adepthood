@@ -192,6 +192,8 @@ _REQUIRED_GUARDS: Final = frozenset(
         ("services.creek_vault_withdraw", "_withdrawal_is_confirmed"),
         # #3657: the per-kind tier branch, so deleting the letter join is caught.
         ("services.folded_quote_privacy", "fold_source_admits_egress"),
+        # #3658: promoting a letter span holds it to its entry's tier.
+        ("services.folded_quote_privacy", "refuse_unquotable_letter_span"),
     }
 )
 

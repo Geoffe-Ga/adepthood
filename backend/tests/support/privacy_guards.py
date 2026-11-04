@@ -162,6 +162,17 @@ async def _every_span_is_quotable(
     del session, entry, start, end
 
 
+async def _every_letter_span_is_quotable(
+    session: AsyncSession, entry: JournalEntry, text: str
+) -> None:
+    """``refuse_unquotable_letter_span`` that promotes a letter span off an Intimate page (#3658).
+
+    Both arms go: a letter on an entry that may not egress, and a span carrying
+    a passage that entry holds from a restricted fold, are both promoted.
+    """
+    del session, entry, text
+
+
 def _letters_pass_as_published(kind: object, entry_tier: object, letter_tier: object) -> bool:
     """``fold_source_admits_egress`` with the letter join deleted (#3657).
 
@@ -289,6 +300,14 @@ PRIVACY_GUARDS: Final[tuple[GuardMutation, ...]] = (
         "fold_source_admits_egress",
         ("C10",),
         _letters_pass_as_published,
+    ),
+    # #3658: a letter span answers to the tier of the entry its note sits on.
+    GuardMutation(
+        "refuse_unquotable_letter_span",
+        "services.folded_quote_privacy",
+        "refuse_unquotable_letter_span",
+        ("C10",),
+        _every_letter_span_is_quotable,
     ),
 )
 
