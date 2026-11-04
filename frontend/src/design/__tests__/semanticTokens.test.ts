@@ -2,7 +2,15 @@
 /* global describe, it, expect */
 import { StyleSheet } from 'react-native';
 
-import { accent, colors, ink, surface, surfaceShadow } from '../tokens';
+import {
+  FLOATING_GLASS_BLUR_PX,
+  accent,
+  colors,
+  floatingChrome,
+  ink,
+  surface,
+  surfaceShadow,
+} from '../tokens';
 
 /** WCAG relative luminance of a #rrggbb color. */
 const luminance = (hex: string): number => {
@@ -94,5 +102,26 @@ describe('semantic tokens (Candle & Ink)', () => {
       // A raised sheet sits higher off the desk than a card.
       expect(surfaceShadow.raised.elevation).toBeGreaterThan(surfaceShadow.card.elevation);
     });
+  });
+});
+
+describe('floating glass (#3661)', () => {
+  /** The channels and alpha of an ``rgba(r, g, b, a)`` color. */
+  const rgba = (color: string): number[] => {
+    const match = /^rgba\((\d+), (\d+), (\d+), ([\d.]+)\)$/.exec(color);
+    if (!match) throw new Error(`not an rgba() color: ${color}`);
+    return match.slice(1).map(Number);
+  };
+
+  it('washes a glass companion in the canvas paper, dense enough that prose cannot read through', () => {
+    const [r, g, b, alpha] = rgba(floatingChrome.glassWash);
+    const canvas = [1, 3, 5].map((at) => Number.parseInt(surface.canvas.slice(at, at + 2), 16));
+    expect([r, g, b]).toEqual(canvas);
+    expect(alpha).toBeGreaterThanOrEqual(0.92);
+    expect(alpha).toBeLessThanOrEqual(0.95);
+  });
+
+  it('frosts what little shows through with a blur wide enough to smear body type', () => {
+    expect(FLOATING_GLASS_BLUR_PX).toBeGreaterThanOrEqual(12);
   });
 });

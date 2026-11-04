@@ -940,6 +940,30 @@ export const showcaseShadow = {
  * text under it read through behind its controls (#3403); floating chrome sits
  * over writing, so nothing beneath it may be legible.
  */
+/**
+ * How opaque a glass companion floating over prose is (the Promote pill's X
+ * and its secondary action, #3661): dense enough that the words beneath it
+ * cannot be read through it, with just enough of the page left to read as
+ * frosted paper rather than a card.
+ */
+const FLOATING_GLASS_OPACITY = 0.94;
+
+/**
+ * The web backdrop blur behind floating glass, in px: wide enough to smear
+ * body-size type into texture, so what little the wash lets through is never
+ * legible.
+ */
+export const FLOATING_GLASS_BLUR_PX = 12;
+
+/** Radix of a hex channel. */
+const HEX_RADIX = 16;
+
+/** ``hex`` (``#rrggbb``) at ``alpha``, as an ``rgba()`` color. */
+function hexAt(hex: string, alpha: number): string {
+  const channels = [1, 3, 5].map((at) => Number.parseInt(hex.slice(at, at + 2), HEX_RADIX));
+  return `rgba(${channels.join(', ')}, ${alpha})`;
+}
+
 export const floatingChrome = {
   pill: {
     backgroundColor: surface.canvas,
@@ -947,4 +971,11 @@ export const floatingChrome = {
     borderWidth: 1,
     ...surfaceShadow.raised,
   },
+  /**
+   * The wash of glass floating over prose: the canvas paper at
+   * ``FLOATING_GLASS_OPACITY``. The translucent white it replaced let a line
+   * of the page beneath read straight through the Promote pill's X and Write
+   * a note (#3661), as the timer's once did (#3403).
+   */
+  glassWash: hexAt(surface.canvas, FLOATING_GLASS_OPACITY),
 } as const;
