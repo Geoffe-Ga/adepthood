@@ -18,6 +18,7 @@
 import { isDeviceKnownOffline } from './networkSignal';
 
 import { ApiError, ApiTimeoutError, ApiValidationError } from './index';
+import type { PromotedQuoteSourceKind } from './index';
 
 // Shared copy fragments — duplicated strings trip sonarjs/no-duplicate-string
 // and, more importantly, drift when we eventually tweak the tone.
@@ -227,6 +228,10 @@ export const USER_FACING_ERROR_MESSAGES: Readonly<Record<string, string>> = Obje
   // no privacy promise (B24, #3076 gates those).
   quote_source_restricted:
     "Passages from a page marked Intimate stay on that page, so this one can't be quoted or folded into a review. Nothing was changed.",
+  // Only the letter promote and list routes emit this (#3658): the note is
+  // still there but carries no letter the server will serve. Nothing is stored
+  // and nothing is lost, which is the whole of what the reader needs to know.
+  letter_not_found: "This letter can't be quoted any more. Nothing was changed.",
 
   // --- Wallet / BotMason quota -----------------------------------------
   payment_required: MONTHLY_FREE_MESSAGES_USED,
@@ -281,6 +286,40 @@ export const USER_FACING_ERROR_MESSAGES: Readonly<Record<string, string>> = Obje
   'Database unavailable':
     "We can't reach your saved data right now. Give it a moment, then pull down to refresh.",
 });
+
+/**
+ * The narrower meaning a shared code takes on a promote from a reading (#3660).
+ *
+ * ``content_not_found`` is app-wide copy about a lesson that will not open, but
+ * on a chapter's promote route it is the masked answer for a chapter that is
+ * locked or not released to this reader yet. ``quote_source_restricted`` names
+ * a page marked Intimate, but a letter has no tier of its own: it inherits the
+ * tier of the page it answered, so that is what the copy names. An entry keeps
+ * the app-wide copy for every code.
+ */
+const PROMOTE_ERROR_MESSAGES: Readonly<
+  Record<PromotedQuoteSourceKind, Readonly<Record<string, string>>>
+> = Object.freeze({
+  entry: Object.freeze({}),
+  course: Object.freeze({
+    content_not_found: "This chapter isn't open to you yet, so nothing was promoted.",
+  }),
+  letter: Object.freeze({
+    quote_source_restricted:
+      "The page this letter answered is marked Intimate, and its letter stays with it, so this passage can't be quoted. Nothing was changed.",
+  }),
+});
+
+/**
+ * Describe a failed promote from ``kind`` of source: the per-source reading of
+ * the backend code when it has one, otherwise exactly what ``formatApiError``
+ * would say.
+ */
+export function formatPromoteError(err: unknown, kind: PromotedQuoteSourceKind): string {
+  const detail = err == null ? undefined : extractDetail(err as ErrorLike);
+  const narrowed = detail === undefined ? undefined : PROMOTE_ERROR_MESSAGES[kind][detail];
+  return narrowed ?? formatApiError(err);
+}
 
 /**
  * What a 422 means to a reader: the server read the request and something in it

@@ -2595,7 +2595,10 @@ export interface PromoteQuoteSpan {
  * ``setIncluded`` folds a quote into another entry (or returns it to pending
  * with ``null``); ``list`` fetches every quote anchored in an entry so a
  * reopened entry can rehydrate its highlights; ``listAll`` pages every quote the
- * writer has promoted, across entries, for the Promoted quotes screen.
+ * writer has promoted, across entries, for the Promoted quotes screen. A Course
+ * chapter and a Resonance Letter promote and list through their own pairs
+ * (``createForCourse`` / ``listForCourse``, ``createForLetter`` /
+ * ``listForLetter``, #3660), which parse through the same quote schema.
  */
 export const promotions = {
   /** Promote a reader-selected span of an entry into the corpus. */
@@ -2623,6 +2626,55 @@ export const promotions = {
   /** List every quote anchored in ``entryId`` (ordered by anchor then id). */
   list(entryId: number, token?: string): Promise<PromotedQuote[]> {
     return request<PromotedQuote[]>(`/journal/${entryId}/promotions`, {
+      token,
+      schema: z.array(promotedQuoteSchema) as unknown as z.ZodType<PromotedQuote[]>,
+    });
+  },
+  /**
+   * Promote a span of a released Course chapter (#3660). Offsets are code
+   * points into ``body_markdown`` exactly as ``course.contentBody`` serves it;
+   * a missing, locked or unreleased chapter is a masked 404 ``content_not_found``.
+   */
+  createForCourse(
+    contentId: number,
+    span: PromoteQuoteSpan,
+    token?: string,
+  ): Promise<PromotedQuote> {
+    return request<PromotedQuote>(`/course/content/${contentId}/promote`, {
+      method: 'POST',
+      body: span,
+      token,
+      schema: promotedQuoteSchema as unknown as z.ZodType<PromotedQuote>,
+    });
+  },
+  /** List every quote promoted from one released Course chapter (ordered by anchor then id). */
+  listForCourse(contentId: number, token?: string): Promise<PromotedQuote[]> {
+    return request<PromotedQuote[]>(`/course/content/${contentId}/promotions`, {
+      token,
+      schema: z.array(promotedQuoteSchema) as unknown as z.ZodType<PromotedQuote[]>,
+    });
+  },
+  /**
+   * Promote a span of the Resonance Letter on margin note ``marginaliaId``
+   * (#3660). Offsets are code points into the letter; a letter on an Intimate
+   * page is 409 ``quote_source_restricted``, and a note without a servable
+   * letter 404 ``letter_not_found``.
+   */
+  createForLetter(
+    marginaliaId: number,
+    span: PromoteQuoteSpan,
+    token?: string,
+  ): Promise<PromotedQuote> {
+    return request<PromotedQuote>(`/journal/marginalia/${marginaliaId}/letter/promote`, {
+      method: 'POST',
+      body: span,
+      token,
+      schema: promotedQuoteSchema as unknown as z.ZodType<PromotedQuote>,
+    });
+  },
+  /** List every quote promoted from the letter on margin note ``marginaliaId``. */
+  listForLetter(marginaliaId: number, token?: string): Promise<PromotedQuote[]> {
+    return request<PromotedQuote[]>(`/journal/marginalia/${marginaliaId}/letter/promotions`, {
       token,
       schema: z.array(promotedQuoteSchema) as unknown as z.ZodType<PromotedQuote[]>,
     });

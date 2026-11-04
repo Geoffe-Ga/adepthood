@@ -18,14 +18,21 @@
  * honestly disabled Button that lights once a passage is chosen, an empty tap
  * surfacing a gentle hint instead.
  *
+ * A host can add to the pill (#3660): a Course chapter offers Write a note
+ * beside Promote, shows the pill busy while a promote it holds behind a
+ * one-time explainer is in flight, and -- staying in selection mode after a
+ * promote so the reader keeps their place -- clears the selection once it
+ * settles (``clearSelectionKey``).
+ *
  * The field trades the browser focus ring for a terracotta rule lit while it
  * holds focus and grows to its text. Shared by the read-mode promote flow on
  * ``JournalEntryScreen``, the in-panel re-promotion flow in
- * ``ReflectionSourcesPanel`` and the Course reader's passage selection;
+ * ``ReflectionSourcesPanel``, the Course reader's passage selection and a
+ * Resonance Letter's;
  * ``testID`` prefixes every element so more than one surface can coexist on a
  * page.
  */
-import React, { useCallback, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Platform,
   Pressable,
@@ -40,12 +47,16 @@ import {
 
 import { selectionToAnchorSpan } from './anchorSpan';
 import { codePointToUtf16 } from './codePoints';
-import FloatingPromoteButton, { DEFAULT_PROMOTE_LABEL } from './FloatingPromoteButton';
+import FloatingPromoteButton, {
+  DEFAULT_PROMOTE_LABEL,
+  type FloatingSecondaryAction,
+} from './FloatingPromoteButton';
 import styles from './JournalEntry.styles';
 import { floatingDockStyle, pinnedFooterStyle } from './readingSurfaceStyles';
 import { buildSelectionSurfaceCopy } from './selectionSurfaceCopy';
 import { useGrowingFieldHeight } from './useGrowingFieldHeight';
 import { useInitialFieldSelection, useWebSelectionListener } from './webSelectionListener';
+import { revealWebOffset } from './webSelectionReveal';
 
 import { Button } from '@/components/Button';
 import { editorialType, writingFieldFocus } from '@/design/tokens';
@@ -79,6 +90,24 @@ interface Utf16Span {
 /** Prefix for the surface's testIDs; the read-mode flow relies on this default. */
 const DEFAULT_TEST_ID = 'quote-select';
 
+/** The footer's way out, by default: it leaves the promote flow. */
+const DEFAULT_CANCEL_LABEL = 'Cancel';
+const DEFAULT_CANCEL_A11Y = 'Cancel promoting';
+
+/** How the footer's Cancel reads, and what a screen reader calls it. */
+interface CancelNaming {
+  label: string;
+  accessibilityLabel: string;
+}
+
+/** What the host adds to the floating pill beyond its label (#3660). */
+interface PillOptions {
+  accessibilityLabel?: string;
+  secondaryAction?: FloatingSecondaryAction;
+  /** The host's own work is in flight: the pill shows busy whatever its press did. */
+  busy: boolean;
+}
+
 /**
  * Where the surface puts its confirm: on the floating pill that comes to the
  * selection (the default, #3134), or in the footer under the field.
@@ -100,10 +129,33 @@ export interface QuoteSelectionSurfaceProps {
   /** Label on the confirm; defaults to the promote-flow wording. */
   confirmLabel?: string;
   /**
-   * The floating pill by default. The Course reader keeps its footer confirm
-   * until its own move onto the pill (#3660).
+   * The floating pill by default; ``'footer'`` keeps the older confirm under
+   * the field for a host that still wants it.
    */
   confirmPlacement?: ConfirmPlacement;
+  /** The pill's accessible name, when it should say more than its label ("Promote this passage"). */
+  confirmAccessibilityLabel?: string;
+  /**
+   * A quieter second action on the floating pill, beside the confirm: a Course
+   * chapter's Write a note (#3660). Floating placement only.
+   */
+  secondaryAction?: FloatingSecondaryAction;
+  /**
+   * The host's confirm is still working after ``onConfirm`` settled -- a promote
+   * held behind a one-time explainer -- so the pill shows busy until it is not.
+   */
+  confirmBusy?: boolean;
+  /**
+   * Collapse the selection whenever this changes after mount (not on mount):
+   * a host that stays in selection mode after promoting (the Course reader)
+   * moves it on once the promote settles, so the pill and the echo leave with
+   * the passage just promoted and the reader keeps their place.
+   */
+  clearSelectionKey?: number;
+  /** The footer Cancel's label; defaults to "Cancel". */
+  cancelLabel?: string;
+  /** The footer Cancel's accessible name; defaults to "Cancel promoting". */
+  cancelAccessibilityLabel?: string;
   /**
    * Cap on the field's height, in dp. Unset (read mode, and the panel on web,
    * whose footer is sticky), the field grows to its text and never scrolls
@@ -282,21 +334,25 @@ function CancelControl({
   onCancel,
   testID,
   inline,
+  naming,
 }: {
   onCancel: () => void;
   testID: string;
   /** True in the floating footer's row, where the label centres on the row's line. */
   inline: boolean;
+  naming: CancelNaming;
 }): React.JSX.Element {
   return (
     <TouchableOpacity
       onPress={onCancel}
       accessibilityRole="button"
-      accessibilityLabel="Cancel promoting"
+      accessibilityLabel={naming.accessibilityLabel}
       style={styles.quoteActionButton}
       testID={`${testID}-cancel`}
     >
-      <Text style={inline ? styles.quoteSelectCancelInline : styles.controlLink}>Cancel</Text>
+      <Text style={inline ? styles.quoteSelectCancelInline : styles.controlLink}>
+        {naming.label}
+      </Text>
     </TouchableOpacity>
   );
 }
@@ -308,6 +364,7 @@ interface SelectionActionsProps {
   showHint: () => void;
   testID: string;
   confirmLabel: string;
+  cancelNaming: CancelNaming;
 }
 
 /**
@@ -324,6 +381,7 @@ function SelectionActions({
   showHint,
   testID,
   confirmLabel,
+  cancelNaming,
 }: SelectionActionsProps): React.JSX.Element {
   return (
     <View style={styles.quoteSelectActions}>
@@ -340,7 +398,7 @@ function SelectionActions({
           testID={`${testID}-confirm`}
         />
       </Pressable>
-      <CancelControl onCancel={onCancel} testID={testID} inline={false} />
+      <CancelControl onCancel={onCancel} testID={testID} inline={false} naming={cancelNaming} />
     </View>
   );
 }
@@ -396,10 +454,12 @@ function FloatingFooterRow({
   previewSlice,
   onCancel,
   testID,
+  cancelNaming,
 }: {
   previewSlice: string;
   onCancel: () => void;
   testID: string;
+  cancelNaming: CancelNaming;
 }): React.JSX.Element {
   return (
     <View style={styles.quoteSelectFooterRow} testID={`${testID}-footer-row`}>
@@ -408,7 +468,7 @@ function FloatingFooterRow({
       ) : (
         <PreviewCard previewSlice={previewSlice} testID={testID} inline />
       )}
-      <CancelControl onCancel={onCancel} testID={testID} inline />
+      <CancelControl onCancel={onCancel} testID={testID} inline naming={cancelNaming} />
     </View>
   );
 }
@@ -431,23 +491,81 @@ function collapseFieldSelection(node: TextInput | null, at: number): void {
   }
 }
 
-interface FloatingConfirmProps {
-  isEmpty: boolean;
-  selectionEnd: number;
-  emitSpan: (_startUtf16: number, _endUtf16: number) => void;
-  inputRef: React.RefObject<TextInput | null>;
-  onConfirm: () => Promise<void>;
-  confirmLabel: string;
-  testID: string;
+/**
+ * Bring a passage chosen before the surface opened into view, once (#3660).
+ *
+ * The field grows to its text and never scrolls inside, so a Course quote's
+ * Open, landing on a chapter screens long, would show the passage selected but
+ * out of sight. So once the field has grown past its floor -- before that, the
+ * page is not yet tall enough to scroll there -- the page is scrolled to it,
+ * on the web (``revealWebOffset``; native's reader scroll is the field's own).
+ * Once: a reader who scrolls away from it is never pulled back.
+ */
+function useRevealInitialSelection(
+  inputRef: React.RefObject<TextInput | null>,
+  initialSpan: Utf16Span | null,
+  fieldHeight: number | undefined,
+): void {
+  const revealed = useRef(false);
+  const grown = fieldHeight !== undefined && fieldHeight > SELECTION_FIELD_MIN_HEIGHT;
+  useEffect(() => {
+    if (revealed.current || initialSpan === null || initialSpan.end <= initialSpan.start) {
+      return undefined;
+    }
+    if (!grown) return undefined;
+    // A frame later, so the grown height has been laid out before it is scrolled.
+    const frame = requestAnimationFrame(() => {
+      revealed.current = true;
+      revealWebOffset(inputRef.current, initialSpan.start);
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [inputRef, initialSpan, grown]);
 }
 
-/** The floating confirm's press handlers and its in-flight flag. */
-function useFloatingConfirm({
-  selectionEnd,
-  emitSpan,
-  inputRef,
-  onConfirm,
-}: FloatingConfirmProps): { confirming: boolean; confirm: () => void; clear: () => void } {
+/**
+ * Collapse the field's own selection too, so the highlight and the pill leave
+ * together, then hand focus back to the text -- the control that asked (the
+ * pill's X, or its primary once a host's promote settles) is about to leave.
+ */
+function useCollapseSelection(
+  inputRef: React.RefObject<TextInput | null>,
+  selectionEnd: number,
+  emitSpan: (_startUtf16: number, _endUtf16: number) => void,
+): () => void {
+  return useCallback(() => {
+    collapseFieldSelection(inputRef.current, selectionEnd);
+    emitSpan(selectionEnd, selectionEnd);
+    inputRef.current?.focus();
+  }, [emitSpan, inputRef, selectionEnd]);
+}
+
+/**
+ * Collapse the selection each time ``key`` moves on after mount. The key the
+ * surface mounted with is remembered, not acted on, so opening on a seeded
+ * passage never clears it.
+ */
+function useClearOnKey(key: number | undefined, collapse: () => void): void {
+  const seen = useRef(key);
+  useEffect(() => {
+    if (seen.current === key) return;
+    seen.current = key;
+    collapse();
+  }, [key, collapse]);
+}
+
+interface FloatingConfirmProps {
+  isEmpty: boolean;
+  collapse: () => void;
+  onConfirm: () => Promise<void>;
+  confirmLabel: string;
+  pill: PillOptions;
+}
+
+/** The floating confirm's press handler and its in-flight flag. */
+function useFloatingConfirm(onConfirm: () => Promise<void>): {
+  confirming: boolean;
+  confirm: () => void;
+} {
   const [confirming, setConfirming] = useState(false);
   // A ref, not the state above: two presses in one frame both read it before
   // either re-render lands, so a double tap still posts once.
@@ -466,15 +584,7 @@ function useFloatingConfirm({
     });
   }, [onConfirm]);
 
-  // Collapse the field's own selection too, so the highlight and the pill
-  // leave together, then hand focus back to the text the X is leaving.
-  const clear = useCallback(() => {
-    collapseFieldSelection(inputRef.current, selectionEnd);
-    emitSpan(selectionEnd, selectionEnd);
-    inputRef.current?.focus();
-  }, [emitSpan, inputRef, selectionEnd]);
-
-  return { confirming, confirm, clear };
+  return { confirming, confirm };
 }
 
 /**
@@ -483,16 +593,25 @@ function useFloatingConfirm({
  * native (``floatingDockStyle``). ``box-none`` keeps the text beneath it
  * selectable.
  */
-function FloatingConfirm(props: FloatingConfirmProps): React.JSX.Element {
-  const { confirming, confirm, clear } = useFloatingConfirm(props);
+function FloatingConfirm({
+  isEmpty,
+  collapse,
+  onConfirm,
+  confirmLabel,
+  pill,
+  testID,
+}: FloatingConfirmProps & { testID: string }): React.JSX.Element {
+  const { confirming, confirm } = useFloatingConfirm(onConfirm);
   return (
-    <View style={floatingDockStyle} pointerEvents="box-none" testID={`${props.testID}-dock`}>
+    <View style={floatingDockStyle} pointerEvents="box-none" testID={`${testID}-dock`}>
       <FloatingPromoteButton
-        visible={!props.isEmpty}
-        label={props.confirmLabel}
+        visible={!isEmpty}
+        label={confirmLabel}
+        accessibilityLabel={pill.accessibilityLabel}
+        secondaryAction={pill.secondaryAction}
         onPress={confirm}
-        onCancel={clear}
-        busy={confirming}
+        onCancel={collapse}
+        busy={confirming || pill.busy}
       />
     </View>
   );
@@ -501,11 +620,13 @@ function FloatingConfirm(props: FloatingConfirmProps): React.JSX.Element {
 interface SelectionActionsAreaProps {
   state: SelectionSurfaceState;
   floating: boolean;
-  inputRef: React.RefObject<TextInput | null>;
+  collapse: () => void;
   onConfirm: () => Promise<void>;
   onCancel: () => void;
   testID: string;
   confirmLabel: string;
+  pill: PillOptions;
+  cancelNaming: CancelNaming;
 }
 
 /**
@@ -516,11 +637,13 @@ interface SelectionActionsAreaProps {
 function SelectionActionsArea({
   state,
   floating,
-  inputRef,
+  collapse,
   onConfirm,
   onCancel,
   testID,
   confirmLabel,
+  pill,
+  cancelNaming,
 }: SelectionActionsAreaProps): React.JSX.Element {
   return (
     <>
@@ -533,6 +656,7 @@ function SelectionActionsArea({
             previewSlice={state.previewSlice}
             onCancel={onCancel}
             testID={testID}
+            cancelNaming={cancelNaming}
           />
         ) : (
           <FooterConfirm
@@ -542,17 +666,17 @@ function SelectionActionsArea({
             onCancel={onCancel}
             testID={testID}
             confirmLabel={confirmLabel}
+            cancelNaming={cancelNaming}
           />
         )}
       </SelectionFooter>
       {floating ? (
         <FloatingConfirm
           isEmpty={state.isEmpty}
-          selectionEnd={state.selectionEnd}
-          emitSpan={state.emitSpan}
-          inputRef={inputRef}
+          collapse={collapse}
           onConfirm={onConfirm}
           confirmLabel={confirmLabel}
+          pill={pill}
           testID={testID}
         />
       ) : null}
@@ -574,6 +698,32 @@ function SelectionInstruction({ testID }: { testID: string }): React.JSX.Element
   );
 }
 
+/** The host's additions to the pill and the footer Cancel, memoised so the chrome re-renders only when they change. */
+function useHostChrome({
+  confirmAccessibilityLabel,
+  secondaryAction,
+  confirmBusy = false,
+  cancelLabel = DEFAULT_CANCEL_LABEL,
+  cancelAccessibilityLabel = DEFAULT_CANCEL_A11Y,
+}: Pick<
+  QuoteSelectionSurfaceProps,
+  | 'confirmAccessibilityLabel'
+  | 'secondaryAction'
+  | 'confirmBusy'
+  | 'cancelLabel'
+  | 'cancelAccessibilityLabel'
+>): { pill: PillOptions; cancelNaming: CancelNaming } {
+  const pill = useMemo<PillOptions>(
+    () => ({ accessibilityLabel: confirmAccessibilityLabel, secondaryAction, busy: confirmBusy }),
+    [confirmAccessibilityLabel, secondaryAction, confirmBusy],
+  );
+  const cancelNaming = useMemo<CancelNaming>(
+    () => ({ label: cancelLabel, accessibilityLabel: cancelAccessibilityLabel }),
+    [cancelLabel, cancelAccessibilityLabel],
+  );
+  return { pill, cancelNaming };
+}
+
 function QuoteSelectionSurface({
   body,
   onSelectionChange,
@@ -582,14 +732,20 @@ function QuoteSelectionSurface({
   testID = DEFAULT_TEST_ID,
   confirmLabel = DEFAULT_PROMOTE_LABEL,
   confirmPlacement = 'floating',
+  clearSelectionKey,
   maxFieldHeight,
   initialSelection,
+  ...host
 }: QuoteSelectionSurfaceProps): React.JSX.Element {
   const state = useSelectionSurfaceState(body, onSelectionChange, initialSelection);
   const inputRef = useRef<TextInput>(null);
   useWebSelectionListener(inputRef, state.emitSpan);
   useInitialFieldSelection(inputRef, state.initialSpan);
   const { growth, onContentSizeChange } = useSelectionFieldGrowth();
+  useRevealInitialSelection(inputRef, state.initialSpan, growth.height);
+  const collapse = useCollapseSelection(inputRef, state.selectionEnd, state.emitSpan);
+  useClearOnKey(clearSelectionKey, collapse);
+  const { pill, cancelNaming } = useHostChrome(host);
 
   return (
     <View>
@@ -606,11 +762,13 @@ function QuoteSelectionSurface({
       <SelectionActionsArea
         state={state}
         floating={confirmPlacement === 'floating'}
-        inputRef={inputRef}
+        collapse={collapse}
         onConfirm={onConfirm}
         onCancel={onCancel}
         testID={testID}
         confirmLabel={confirmLabel}
+        pill={pill}
+        cancelNaming={cancelNaming}
       />
     </View>
   );
@@ -624,6 +782,7 @@ function FooterConfirm({
   onCancel,
   testID,
   confirmLabel,
+  cancelNaming,
 }: {
   state: SelectionSurfaceState;
   emptyHint: string;
@@ -631,6 +790,7 @@ function FooterConfirm({
   onCancel: () => void;
   testID: string;
   confirmLabel: string;
+  cancelNaming: CancelNaming;
 }): React.JSX.Element {
   return (
     <>
@@ -644,6 +804,7 @@ function FooterConfirm({
         showHint={state.showHint}
         testID={testID}
         confirmLabel={confirmLabel}
+        cancelNaming={cancelNaming}
       />
       {state.hintVisible ? (
         <Text style={styles.quoteSelectHint} testID={`${testID}-hint`}>

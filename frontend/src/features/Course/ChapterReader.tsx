@@ -16,12 +16,17 @@ import { course as courseApi, type ContentBody } from '../../api';
 import { BottomFade } from '../../components/layout/BottomFade';
 import { colors, rhythm, surface } from '../../design/tokens';
 import ConfirmDialog from '../Habits/components/ConfirmDialog';
+import type { FloatingSecondaryAction } from '../Journal/FloatingPromoteButton';
+import PromoteExplainerDialog from '../Journal/PromoteExplainerDialog';
 import QuoteSelectionSurface, { type CodePointSpan } from '../Journal/QuoteSelectionSurface';
+import type { PromoteExplainerGate } from '../Journal/usePromoteExplainer';
 
 import { resolveChapterHighlight, type ChapterHighlightSpan } from './chapterHighlight';
+import ChapterPromotionNotice from './ChapterPromotionNotice';
 import styles, { markdownStyles } from './Course.styles';
 import RetryButton from './RetryButton';
 import { stripLeadingTitleHeading } from './stripLeadingTitleHeading';
+import { useChapterPromotion } from './useChapterPromotion';
 
 import { useMountedRef } from '@/hooks/useMountedRef';
 
@@ -39,8 +44,19 @@ const SCROLL_EVENT_THROTTLE = 16;
  */
 const READER_CONTROLS_REVEAL_THRESHOLD = rhythm.bottomFadeHeight;
 const PASSAGE_SELECT_TEST_ID = 'passage-select';
-const WRITE_NOTE_AFFORDANCE_LABEL = 'Write a note on a passage';
+/**
+ * One gesture for both things a passage can become (#3660): the reader selects
+ * it, and the floating pill offers Promote beside Write a note -- the same pill,
+ * learned once, as on a journal page.
+ */
+const SELECT_PASSAGE_LABEL = 'Select a passage';
+const PROMOTE_LABEL = 'Promote';
+const PROMOTE_A11Y = 'Promote this passage';
 const WRITE_NOTE_CONFIRM_LABEL = 'Write a note';
+const WRITE_NOTE_A11Y = 'Write a note on this passage';
+/** The surface's way out: back to the rendered chapter, never an undo of a promote. */
+const DONE_LABEL = 'Done';
+const DONE_A11Y = 'Back to the chapter';
 const WRITE_NOTE_DIALOG_TITLE = 'Write a note on this passage?';
 const WRITE_NOTE_DIALOG_MESSAGE = 'You can pick up right where you left off.';
 const WRITE_NOTE_DIALOG_CANCEL = 'Keep reading';
@@ -277,6 +293,8 @@ interface PassageSelection {
   selecting: boolean;
   /** The passage the surface mounts with chosen: a deep link's, until it is left. */
   seed: CodePointSpan | undefined;
+  /** The passage chosen right now, in the shown text; null before any is. */
+  span: CodePointSpan | null;
   dialogVisible: boolean;
   onScroll: (_event: NativeSyntheticEvent<NativeScrollEvent>) => void;
   beginSelection: () => void;
@@ -340,6 +358,7 @@ function usePassageSelection(
   return {
     selecting,
     seed,
+    span,
     dialogVisible,
     onScroll,
     beginSelection,
@@ -450,7 +469,7 @@ interface ReadingSheetProps {
   onBeginNote: () => void;
 }
 
-/** The reading view: the markdown sheet plus the calm write-note invitation. */
+/** The reading view: the markdown sheet plus the calm invitation to select a passage. */
 const ReadingSheet = ({
   markdown,
   eyebrow,
@@ -479,9 +498,9 @@ const ReadingSheet = ({
           testID="reader-write-note-affordance"
           onPress={onBeginNote}
           accessibilityRole="button"
-          accessibilityLabel={WRITE_NOTE_AFFORDANCE_LABEL}
+          accessibilityLabel={SELECT_PASSAGE_LABEL}
         >
-          <Text style={styles.readerWriteNoteLink}>{WRITE_NOTE_AFFORDANCE_LABEL}</Text>
+          <Text style={styles.readerWriteNoteLink}>{SELECT_PASSAGE_LABEL}</Text>
         </TouchableOpacity>
       )}
       <Markdown style={markdownStyles} rules={markdownRules} onLinkPress={isExternalWebUrl}>
@@ -496,36 +515,19 @@ interface SelectingSheetProps {
   eyebrow: string | undefined;
   title: string;
   selection: PassageSelection;
+  /** The chapter's id and its body as served, when it is a chapter a reader can promote from. */
+  promoteFrom: PromoteSource | null;
 }
 
-/** The selection view: the passage-select surface over the confirm dialog. */
-const SelectingSheet = ({
-  markdown,
-  eyebrow,
-  title,
-  selection,
-}: SelectingSheetProps): React.JSX.Element => (
-  <>
-    <ScrollView
-      style={styles.readerScroll}
-      contentContainerStyle={{ paddingBottom: rhythm.bottomFadeHeight }}
-    >
-      <View style={styles.readerSheet}>
-        <ReaderSheetHeader eyebrow={eyebrow} title={title} />
-        <QuoteSelectionSurface
-          body={markdown}
-          testID={PASSAGE_SELECT_TEST_ID}
-          confirmLabel={WRITE_NOTE_CONFIRM_LABEL}
-          // A chapter keeps its footer confirm until it moves onto the
-          // floating pill with Promote beside Write a note (#3660).
-          confirmPlacement="footer"
-          onSelectionChange={selection.handleSelectionChange}
-          onCancel={selection.cancelSelection}
-          onConfirm={selection.openDialog}
-          initialSelection={selection.seed}
-        />
-      </View>
-    </ScrollView>
+/** A chapter a passage can be promoted from: its id, and the body exactly as served. */
+interface PromoteSource {
+  contentId: number;
+  served: string;
+}
+
+/** The write-note confirm, unchanged: the journal handoff begins only once the reader says so. */
+function WriteNoteDialog({ selection }: { selection: PassageSelection }): React.JSX.Element {
+  return (
     <ConfirmDialog
       visible={selection.dialogVisible}
       testID="write-note-dialog"
@@ -538,11 +540,151 @@ const SelectingSheet = ({
       onCancel={selection.closeDialog}
       onConfirm={selection.confirmNote}
     />
-  </>
-);
+  );
+}
+
+/** The scrolling sheet both selection views share: the header, then the surface. */
+function SelectionScroll({
+  eyebrow,
+  title,
+  children,
+}: {
+  eyebrow: string | undefined;
+  title: string;
+  children: React.ReactNode;
+}): React.JSX.Element {
+  return (
+    <ScrollView
+      style={styles.readerScroll}
+      contentContainerStyle={{ paddingBottom: rhythm.bottomFadeHeight }}
+    >
+      <View style={styles.readerSheet}>
+        <ReaderSheetHeader eyebrow={eyebrow} title={title} />
+        {children}
+      </View>
+    </ScrollView>
+  );
+}
+
+/** The surface's footer way out, named for a chapter: Done, back to the rendered text. */
+const DONE_NAMING = { cancelLabel: DONE_LABEL, cancelAccessibilityLabel: DONE_A11Y } as const;
+
+/** Write a note, offered beside Promote on the pill; its testID is the old footer confirm's. */
+function useWriteNoteAction(openDialog: () => Promise<void>): FloatingSecondaryAction {
+  return useMemo(
+    () => ({
+      label: WRITE_NOTE_CONFIRM_LABEL,
+      accessibilityLabel: WRITE_NOTE_A11Y,
+      onPress: () => void openDialog(),
+      testID: `${PASSAGE_SELECT_TEST_ID}-confirm`,
+    }),
+    [openDialog],
+  );
+}
+
+/** The first Promote's one-time note, worded for a chapter whose passage is already chosen. */
+function ChapterPromoteExplainer({
+  explainer,
+}: {
+  explainer: PromoteExplainerGate;
+}): React.JSX.Element {
+  return (
+    <PromoteExplainerDialog
+      visible={explainer.visible}
+      sourceKind="course"
+      passageChosen
+      dontShowAgain={explainer.dontShowAgain}
+      onToggleDontShowAgain={explainer.onToggleDontShowAgain}
+      onContinue={explainer.onContinue}
+      onCancel={explainer.onCancel}
+    />
+  );
+}
+
+/**
+ * Selection on a chapter: the floating pill offers Promote, with Write a note
+ * beside it. The first Promote explains itself; its notice floats where the
+ * pill rides.
+ */
+function PromotingSheet({
+  markdown,
+  eyebrow,
+  title,
+  selection,
+  promoteFrom,
+}: SelectingSheetProps & { promoteFrom: PromoteSource }): React.JSX.Element {
+  const promotion = useChapterPromotion(
+    promoteFrom.contentId,
+    promoteFrom.served,
+    title,
+    selection.span,
+  );
+  const writeNote = useWriteNoteAction(selection.openDialog);
+  const chosen = selection.span !== null && selection.span.end > selection.span.start;
+  return (
+    <>
+      <SelectionScroll eyebrow={eyebrow} title={title}>
+        <QuoteSelectionSurface
+          body={markdown}
+          testID={PASSAGE_SELECT_TEST_ID}
+          confirmLabel={PROMOTE_LABEL}
+          confirmAccessibilityLabel={PROMOTE_A11Y}
+          secondaryAction={writeNote}
+          confirmBusy={promotion.busy}
+          clearSelectionKey={promotion.clearKey}
+          {...DONE_NAMING}
+          onSelectionChange={selection.handleSelectionChange}
+          onCancel={selection.cancelSelection}
+          onConfirm={promotion.onPromote}
+          initialSelection={selection.seed}
+        />
+      </SelectionScroll>
+      <ChapterPromotionNotice feedback={promotion.feedback} lifted={chosen} />
+      <ChapterPromoteExplainer explainer={promotion.explainer} />
+      <WriteNoteDialog selection={selection} />
+    </>
+  );
+}
+
+/** Selection on a reading with no chapter to promote from: Write a note alone, on the pill. */
+function NoteOnlySheet({
+  markdown,
+  eyebrow,
+  title,
+  selection,
+}: SelectingSheetProps): React.JSX.Element {
+  return (
+    <>
+      <SelectionScroll eyebrow={eyebrow} title={title}>
+        <QuoteSelectionSurface
+          body={markdown}
+          testID={PASSAGE_SELECT_TEST_ID}
+          confirmLabel={WRITE_NOTE_CONFIRM_LABEL}
+          confirmAccessibilityLabel={WRITE_NOTE_A11Y}
+          {...DONE_NAMING}
+          onSelectionChange={selection.handleSelectionChange}
+          onCancel={selection.cancelSelection}
+          onConfirm={selection.openDialog}
+          initialSelection={selection.seed}
+        />
+      </SelectionScroll>
+      <WriteNoteDialog selection={selection} />
+    </>
+  );
+}
+
+/** The selection view: Promote and Write a note on a chapter, Write a note elsewhere. */
+const SelectingSheet = (props: SelectingSheetProps): React.JSX.Element =>
+  props.promoteFrom === null ? (
+    <NoteOnlySheet {...props} />
+  ) : (
+    <PromotingSheet {...props} promoteFrom={props.promoteFrom} />
+  );
 
 interface ReaderBodyProps {
   body: ContentBody;
+  /** The chapter's id, when the reading is a chapter a passage can be promoted from. */
+  contentId: number | null;
   onWriteNote?: (_passage: WriteNotePassage) => void;
   initialScrollOffset?: number;
   initialHighlight?: ChapterHighlightSpan;
@@ -551,9 +693,43 @@ interface ReaderBodyProps {
   onEndReachedChange: (_reached: boolean) => void;
 }
 
+/**
+ * The rendered chapter under its bottom fade. The veil covers the reading sheet
+ * for all but the last inch of the scroll, so the sheet's own ground is the
+ * only color it can honestly resolve to; fading toward the desk behind the
+ * sheet printed a band of a color that was nowhere under the text.
+ */
+const ReadingView = (props: ReadingSheetProps): React.JSX.Element => (
+  <>
+    <ReadingSheet {...props} />
+    <BottomFade color={surface.canvas} testID="reader-bottom-fade" />
+  </>
+);
+
+/**
+ * Keep the chapter controls (mark read, reflect, prev / next) out of selection
+ * mode: they float at the reader's foot, where the selection footer and the
+ * Promote pill live. Back on the rendered chapter, its fresh layout reports
+ * afresh whether the essay's end is in view.
+ */
+function useControlsAwayWhileSelecting(
+  selecting: boolean,
+  onEndReachedChange: (_reached: boolean) => void,
+): void {
+  useEffect(() => {
+    if (selecting) onEndReachedChange(false);
+  }, [selecting, onEndReachedChange]);
+}
+
+/** The chapter a passage can be promoted from, or null for an introduction or a resource. */
+function usePromoteSource(contentId: number | null, served: string): PromoteSource | null {
+  return useMemo(() => (contentId === null ? null : { contentId, served }), [contentId, served]);
+}
+
 /** Renders the loaded body: empty notice, reading sheet, or selection surface. */
 const ReaderBody = ({
   body,
+  contentId,
   onWriteNote,
   initialScrollOffset,
   initialHighlight,
@@ -569,11 +745,15 @@ const ReaderBody = ({
   const isEmpty = markdown.trim() === '';
   const essayEnd = useEssayEndSignal(onEndReachedChange, isEmpty);
   const handleScroll = useMergedScroll(selection.onScroll, essayEnd.onScroll);
+  useControlsAwayWhileSelecting(selection.selecting, onEndReachedChange);
+  const promoteFrom = usePromoteSource(contentId, body.body_markdown);
 
   if (isEmpty) {
     return <EmptyView />;
   }
 
+  // Selecting, the field and its pinned footer and pill own the reader's foot,
+  // so the bottom fade stands down rather than washing over them.
   return (
     <View style={styles.readerScrollRegion}>
       {selection.selecting ? (
@@ -582,9 +762,10 @@ const ReaderBody = ({
           eyebrow={eyebrow}
           title={body.title}
           selection={selection}
+          promoteFrom={promoteFrom}
         />
       ) : (
-        <ReadingSheet
+        <ReadingView
           markdown={markdown}
           eyebrow={eyebrow}
           title={body.title}
@@ -596,11 +777,6 @@ const ReaderBody = ({
           onBeginNote={selection.beginSelection}
         />
       )}
-      {/* The veil covers the reading sheet for all but the last inch of the
-          scroll, so the sheet's own ground is the only color it can honestly
-          resolve to; fading toward the desk behind the sheet printed a band of
-          a color that was nowhere under the text. */}
-      <BottomFade color={surface.canvas} testID="reader-bottom-fade" />
     </View>
   );
 };
@@ -634,6 +810,7 @@ function useChapterControls(
 
 interface ReaderContentProps {
   body: ContentBody | null;
+  contentId: number | null;
   loading: boolean;
   error: string | null;
   retry: () => void;
@@ -646,6 +823,7 @@ interface ReaderContentProps {
 /** The reader's one live region: spinner, error, or the loaded body. */
 const ReaderContent = ({
   body,
+  contentId,
   loading,
   error,
   retry,
@@ -670,6 +848,7 @@ const ReaderContent = ({
   return (
     <ReaderBody
       body={body}
+      contentId={contentId}
       onWriteNote={onWriteNote}
       initialScrollOffset={initialScrollOffset}
       initialHighlight={initialHighlight}
@@ -695,6 +874,7 @@ const ChapterReader = ({
       <ReaderHeader title={body?.title || fallbackTitle} onBack={onBack} />
       <ReaderContent
         body={body}
+        contentId={source.kind === 'content' ? source.id : null}
         loading={loading}
         error={error}
         retry={retry}

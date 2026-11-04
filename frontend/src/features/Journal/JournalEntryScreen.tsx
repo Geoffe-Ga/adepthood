@@ -57,8 +57,8 @@ import { MarginNavigationProvider } from './marginNavigation';
 import MarginNote from './MarginNote';
 import PassReceiptNotice from './PassReceiptNotice';
 import PrivacyTierControl, { DEFAULT_TIER, tierLabel } from './PrivacyTierControl';
-import { PROMOTED_NOTICE_COPY } from './promoteExplainerCopy';
 import PromoteExplainerDialog from './PromoteExplainerDialog';
+import PromotionFeedback from './PromotionFeedback';
 import QuoteInclusionHint from './QuoteInclusionHint';
 import QuoteSelectionSurface, { type CodePointSpan } from './QuoteSelectionSurface';
 import { readingScrollStyle } from './readingSurfaceStyles';
@@ -139,7 +139,6 @@ import { useRestoreFocusOnClose } from '@/hooks/useRestoreFocusOnClose';
 import type { RootStackParamList } from '@/navigation/RootStack';
 import { useCapturedTranscriptStore } from '@/store/useCapturedTranscriptStore';
 import { selectGoalUnitById, useHabitStore } from '@/store/useHabitStore';
-import { announceOnIos } from '@/utils/announceOnIos';
 import { useDayKey } from '@/utils/dayRollover';
 
 /** Default idle delay before an edit is persisted. */
@@ -3168,7 +3167,7 @@ function useQuoteInteraction(
 /** Compose the promoted-quote state with its read-mode selection gestures. */
 function useQuotePromotion(routeEntryId: number | null): QuotePromotion {
   const { quotes, hint, promote, removePromotion, promoting, promoted, retryPromote, refresh } =
-    usePromotions({ entryId: routeEntryId ?? 0 });
+    usePromotions({ target: { kind: 'entry', entryId: routeEntryId ?? 0 } });
   const interaction = useQuoteInteraction(promote, removePromotion);
   // Composed here rather than in the action row, so the flag outlives the row
   // unmounting while the reader is selecting.
@@ -3240,68 +3239,6 @@ function ReadModeControls({ quote }: { quote: QuotePromotion }): React.JSX.Eleme
   );
 }
 
-/** Copy for the promote-lifecycle notices (real ellipsis inside the in-flight line). */
-const PROMOTING_COPY = 'Promoting…';
-
-/**
- * Transient success confirmation that settles in (motion-safe via useEntrance)
- * and names where the quote went. A polite live region announces it on Android
- * and the web; VoiceOver ignores live regions, so iOS is told explicitly.
- */
-function PromotedNotice(): React.JSX.Element {
-  const settle = useEntrance();
-  useEffect(() => announceOnIos(PROMOTED_NOTICE_COPY), []);
-  return (
-    <Animated.Text
-      style={[styles.promotionSuccess, settle]}
-      testID="quote-promotion-success"
-      accessibilityRole="text"
-      accessibilityLiveRegion="polite"
-    >
-      {PROMOTED_NOTICE_COPY}
-    </Animated.Text>
-  );
-}
-
-/** The failed-promote notice: a legible error line plus a same-anchors retry. */
-function PromotionErrorNotice({ quote }: { quote: QuotePromotion }): React.JSX.Element {
-  const retry = quote.retryPromote;
-  return (
-    <>
-      <Text style={styles.promotionErrorText} testID="quote-promotion-error">
-        {quote.hint}
-      </Text>
-      {retry != null ? (
-        <Button
-          variant="tertiary"
-          label="Try again"
-          accessibilityLabel="Try again"
-          testID="quote-promotion-retry"
-          onPress={() => void retry()}
-        />
-      ) : null}
-    </>
-  );
-}
-
-/**
- * In-flight / error / success feedback for the promote lifecycle, under the body.
- * An error (``hint``) outranks a lingering success notice so a failed remove that
- * lands while a prior "Promoted" confirmation is still up reads honestly.
- */
-function QuotePromotionFeedback({ quote }: { quote: QuotePromotion }): React.JSX.Element | null {
-  if (quote.promoting) {
-    return (
-      <Text style={styles.promotionInflight} testID="quote-promotion-inflight">
-        {PROMOTING_COPY}
-      </Text>
-    );
-  }
-  if (quote.hint != null) return <PromotionErrorNotice quote={quote} />;
-  if (quote.promoted) return <PromotedNotice />;
-  return null;
-}
-
 /** The read-mode passage tree: highlighted body plus the promote-lifecycle notice. */
 function ReadBodyContent({
   body,
@@ -3329,7 +3266,12 @@ function ReadBodyContent({
         onDismissRemove={quote.dismissRemove}
         onTaskPress={onTaskPress}
       />
-      <QuotePromotionFeedback quote={quote} />
+      <PromotionFeedback
+        promoting={quote.promoting}
+        hint={quote.hint}
+        promoted={quote.promoted}
+        retryPromote={quote.retryPromote}
+      />
     </>
   );
 }

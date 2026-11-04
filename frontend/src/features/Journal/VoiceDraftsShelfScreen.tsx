@@ -29,6 +29,7 @@ import { ActivityIndicator, ScrollView, Text, TouchableOpacity, View } from 'rea
 
 import { excerpt } from './excerpt';
 import JournalModalShell from './JournalModalShell';
+import LetterPassage from './LetterPassage';
 import { formatDate } from './recency';
 import { sourceLabel } from './sourceLabel';
 import styles from './VoiceDraftsShelf.styles';
@@ -248,6 +249,19 @@ function ShelfError({
   );
 }
 
+/** The letter's words, with "Promote a quote" beneath (#3660); keyed so each letter opens afresh. */
+function LetterText({ draft }: { draft: VoiceDraft }): React.JSX.Element {
+  return (
+    <LetterPassage
+      key={draft.marginalia_id}
+      marginaliaId={draft.marginalia_id}
+      essay={draft.essay}
+      textStyle={styles.letterBody}
+      textTestID="voice-draft-letter-text"
+    />
+  );
+}
+
 /**
  * The letter itself, opened straight from the page already in hand.
  *
@@ -286,9 +300,7 @@ function LetterCard({
       </View>
       <Text style={styles.letterQuote}>{draft ? `“${draft.anchor_text}”` : ''}</Text>
       <ScrollView contentContainerStyle={styles.letterScroll}>
-        <Text testID="voice-draft-letter-text" style={styles.letterBody}>
-          {draft?.essay}
-        </Text>
+        {draft === null ? null : <LetterText draft={draft} />}
       </ScrollView>
       <TouchableOpacity
         testID="voice-draft-open-page"
