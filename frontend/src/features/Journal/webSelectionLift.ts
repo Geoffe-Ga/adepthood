@@ -20,15 +20,13 @@ import { Platform } from 'react-native';
 
 import type { AnchorSpan } from './anchorSpan';
 import { RESONANCE_BUTTON_CLEARANCE } from './JournalEntry.styles';
+import { currentRange, isElement } from './useRenderedSelection';
 
 import { SPACING, touchTarget } from '@/design/tokens';
 import { useReducedMotion } from '@/hooks/useReducedMotion';
 
 /** The breath left between a lifted passage and the top of the pill. */
 const LIFT_BREATH = SPACING.sm;
-
-/** ``Node.ELEMENT_NODE``, spelled out so nothing here needs a DOM global at load. */
-const ELEMENT_NODE = 1;
 
 /** The vertical extent of a box on screen. */
 interface Band {
@@ -61,25 +59,15 @@ function scrollerOf(node: Element, view: Window): Element | null {
   return null;
 }
 
-/** True when ``value`` is a laid-out DOM element. */
-function isElement(value: unknown): value is Element {
-  if (value == null || typeof value !== 'object') return false;
-  const candidate = value as Partial<Element>;
-  return (
-    candidate.nodeType === ELEMENT_NODE && typeof candidate.getBoundingClientRect === 'function'
-  );
-}
-
 /** Scroll the document's selection clear of the pill riding ``dock``, if it covers it. */
 function liftSelectionClear(doc: Document, dock: unknown, reducedMotion: boolean): void {
-  const selection = doc.getSelection();
+  const range = currentRange(doc);
   const view = doc.defaultView;
-  if (selection === null || selection.rangeCount === 0 || selection.isCollapsed) return;
-  if (view === null || !isElement(dock)) return;
+  if (range === null || view === null || !isElement(dock)) return;
   const scroller = scrollerOf(dock, view);
   if (scroller === null) return;
   const by = liftNeeded(
-    selection.getRangeAt(0).getBoundingClientRect(),
+    range.getBoundingClientRect(),
     dock.getBoundingClientRect(),
     scroller.getBoundingClientRect(),
   );

@@ -29,7 +29,7 @@ const ELEMENT_NODE = 1;
 const SCROLL_LISTENER: AddEventListenerOptions = { capture: true, passive: true };
 
 /** True when ``value`` is a laid-out DOM element (a react-native-web host node). */
-function isElement(value: unknown): value is Element {
+export function isElement(value: unknown): value is Element {
   if (value == null || typeof value !== 'object') return false;
   const candidate = value as Partial<Element>;
   return (
@@ -63,7 +63,7 @@ function inView(range: Range, container: Element, view: Window | null): boolean 
 }
 
 /** The document's live range, when there is a non-empty one. */
-function currentRange(doc: Document): Range | null {
+export function currentRange(doc: Document): Range | null {
   const selection = doc.getSelection();
   if (selection === null || selection.rangeCount === 0 || selection.isCollapsed) return null;
   return selection.getRangeAt(0);
