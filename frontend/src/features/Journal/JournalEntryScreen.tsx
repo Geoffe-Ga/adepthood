@@ -21,6 +21,7 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
+import type { AnchorSpan } from './anchorSpan';
 import { appendTranscript } from './appendTranscript';
 import AspectChordControl, { EMPTY_CHORD, type AspectChordValue } from './AspectChordControl';
 import CareSupportNote from './CareSupportNote';
@@ -68,6 +69,8 @@ import ReflectionSourcesPanel, {
   SOURCES_PANE_OCCUPIED_WIDTH,
 } from './ReflectionSourcesPanel';
 import { useRefreshAfterEdit } from './refreshAfterEdit';
+import { journalSourceSpan } from './renderedSelection';
+import RenderedSelectionPill, { STEP_ASIDE } from './RenderedSelectionPill';
 import { isStoredAs, replayReconcilePatch, type SentPage } from './replayReconcile';
 import ResonanceEssayModal from './ResonanceEssayModal';
 import ResonanceExplainerDialog from './ResonanceExplainerDialog';
@@ -80,10 +83,12 @@ import { useGrowingFieldHeight } from './useGrowingFieldHeight';
 import { useLinkedHabitCheckOff } from './useLinkedHabitCheckOff';
 import { useMarginSlots } from './useMarginSlots';
 import { usePromotedQuoteHandoff } from './usePromotedQuoteHandoff';
-import { usePromoteExplainer, type PromoteExplainerGate } from './usePromoteExplainer';
+import type { PromoteExplainerGate } from './usePromoteExplainer';
+import { usePromoteGate } from './usePromoteGate';
 import { usePromotions } from './usePromotions';
 import { useQuickLaunchedSession } from './useQuickLaunchedSession';
 import { useReflectionMode } from './useReflectionMode';
+import { clearRenderedSelection, useHighlightedPassage } from './useRenderedSelection';
 import { PAGE_NOT_SAVED, type PassFlushResult, useResonance } from './useResonance';
 import { useResonanceExplainer } from './useResonanceExplainer';
 import {
@@ -3103,14 +3108,29 @@ interface QuotePromotion {
   confirmRemove: () => void;
   /** Dismiss the revealed remove card without removing (tap elsewhere in the body). */
   dismissRemove: () => void;
-  /** The one-time note in front of "Promote a quote"; its ``onPress`` is the button's. */
+  /** The one-time note in front of either door to Promote (``usePromoteGate``). */
   explainer: PromoteExplainerGate;
+  /** The note stands in front of a passage already highlighted, not of choosing one. */
+  passageChosen: boolean;
+  /** "Promote a quote": the note first (once), then the selection field. */
+  openSelection: () => void;
+  /** The web pill over a passage highlighted on the page: the note first (once), then promote it. */
+  promotePassage: (_span: AnchorSpan) => void;
 }
 
 /** The gesture slice of {@link QuotePromotion} owned by {@link useQuoteInteraction}. */
 type QuoteInteraction = Omit<
   QuotePromotion,
-  'quotes' | 'hint' | 'promoting' | 'promoted' | 'retryPromote' | 'refresh' | 'explainer'
+  | 'quotes'
+  | 'hint'
+  | 'promoting'
+  | 'promoted'
+  | 'retryPromote'
+  | 'refresh'
+  | 'explainer'
+  | 'passageChosen'
+  | 'openSelection'
+  | 'promotePassage'
 >;
 
 /** The read-mode selection/removal gestures over the {@link usePromotions} state. */
@@ -3169,10 +3189,35 @@ function useQuotePromotion(routeEntryId: number | null): QuotePromotion {
   const { quotes, hint, promote, removePromotion, promoting, promoted, retryPromote, refresh } =
     usePromotions({ target: { kind: 'entry', entryId: routeEntryId ?? 0 } });
   const interaction = useQuoteInteraction(promote, removePromotion);
+  // A passage highlighted on the rendered page (#3661) goes up as it is, the
+  // selection let go first as the field is, so the reader sees the words they
+  // chose take the promoted wash in place.
+  const promoteHighlighted = useCallback(
+    (span: AnchorSpan): void => {
+      clearRenderedSelection();
+      void promote(span.start, span.end);
+    },
+    [promote],
+  );
   // Composed here rather than in the action row, so the flag outlives the row
   // unmounting while the reader is selecting.
-  const explainer = usePromoteExplainer(interaction.startSelecting);
-  return { quotes, hint, promoting, promoted, retryPromote, refresh, ...interaction, explainer };
+  const { explainer, passageChosen, openSelection, promotePassage } = usePromoteGate(
+    interaction.startSelecting,
+    promoteHighlighted,
+  );
+  return {
+    quotes,
+    hint,
+    promoting,
+    promoted,
+    retryPromote,
+    refresh,
+    ...interaction,
+    explainer,
+    passageChosen,
+    openSelection,
+    promotePassage,
+  };
 }
 
 /**
@@ -3198,14 +3243,28 @@ interface ResonanceAction {
 /**
  * The reading view's action row, closing the reading column under the save
  * hint: Promote, the one action about the body itself (#3004). Resonance lives
- * in the margin and Edit in the exit row, as they do while writing.
+ * in the margin and Edit in the exit row, as they do while writing. While a
+ * passage highlighted on the page is chosen (web, #3661) the floating pill
+ * stands in for it, resting on this very row at the column's end, so the row
+ * steps aside: in place, unseen and inert.
  */
-function ReadActions({ quote }: { quote: QuotePromotion }): React.JSX.Element {
+function ReadActions({
+  quote,
+  stepAside,
+}: {
+  quote: QuotePromotion;
+  stepAside: boolean;
+}): React.JSX.Element {
   return (
-    <View style={styles.readActionsRow} testID="journal-read-actions">
+    <View
+      style={[styles.readActionsRow, stepAside && STEP_ASIDE]}
+      pointerEvents={stepAside ? 'none' : undefined}
+      {...(stepAside ? decorativeHidden() : null)}
+      testID="journal-read-actions"
+    >
       <Button
         variant="tertiary"
-        onPress={quote.explainer.onPress}
+        onPress={quote.openSelection}
         accessibilityLabel="Promote a quote"
         testID="promote-quote-button"
         label="Promote a quote"
@@ -3223,13 +3282,20 @@ function ReadActions({ quote }: { quote: QuotePromotion }): React.JSX.Element {
  * ``useQuotePromotion``, so the row unmounting while the reader selects loses
  * nothing).
  */
-function ReadModeControls({ quote }: { quote: QuotePromotion }): React.JSX.Element {
+function ReadModeControls({
+  quote,
+  stepAside,
+}: {
+  quote: QuotePromotion;
+  stepAside: boolean;
+}): React.JSX.Element {
   const { explainer } = quote;
   return (
     <>
-      <ReadActions quote={quote} />
+      <ReadActions quote={quote} stepAside={stepAside} />
       <PromoteExplainerDialog
         visible={explainer.visible}
+        passageChosen={quote.passageChosen}
         dontShowAgain={explainer.dontShowAgain}
         onToggleDontShowAgain={explainer.onToggleDontShowAgain}
         onContinue={explainer.onContinue}
@@ -3246,16 +3312,19 @@ function ReadBodyContent({
   quote,
   onOpen,
   onTaskPress,
+  bodyRef,
 }: {
   body: string;
   notes: Marginalia[];
   quote: QuotePromotion;
   onOpen: (_note: Marginalia) => void;
   onTaskPress: (_lineStart: number) => void;
+  bodyRef: React.RefObject<View | null>;
 }): React.JSX.Element {
   return (
     <>
       <HighlightedBody
+        bodyRef={bodyRef}
         body={body}
         notes={notes}
         onOpen={onOpen}
@@ -3301,6 +3370,10 @@ function ReadColumn({
   onRetrySave,
   onTaskPress,
 }: ReadColumnProps) {
+  const bodyRef = useRef<View>(null);
+  // On the web, a passage highlighted right on the page (#3661); exact, since
+  // every drawn run carries its source start.
+  const passage = useHighlightedPassage(bodyRef, body, journalSourceSpan);
   return (
     <View style={[styles.writingColumn, readingScrollStyle]}>
       <View style={styles.writingColumnContent}>
@@ -3320,12 +3393,37 @@ function ReadColumn({
             quote={quote}
             onOpen={onOpen}
             onTaskPress={onTaskPress}
+            bodyRef={bodyRef}
           />
         )}
         <ReadSaveStatus saveState={saveState} justSaved={justSaved} onRetry={onRetrySave} />
-        {quote.selecting ? null : <ReadModeControls quote={quote} />}
+        {quote.selecting ? null : <ReadModeTail quote={quote} passage={passage} />}
       </View>
     </View>
+  );
+}
+
+/**
+ * The column's close in read mode: its controls, then -- last, where the
+ * selection field's own pill rides -- the pill over a passage highlighted on
+ * the page (web, #3661), which the controls step aside for.
+ */
+function ReadModeTail({
+  quote,
+  passage,
+}: {
+  quote: QuotePromotion;
+  passage: AnchorSpan | null;
+}): React.JSX.Element {
+  return (
+    <>
+      <ReadModeControls quote={quote} stepAside={passage !== null} />
+      <RenderedSelectionPill
+        passage={passage}
+        onPromote={quote.promotePassage}
+        busy={quote.promoting}
+      />
+    </>
   );
 }
 

@@ -11,6 +11,11 @@
  * throughout, so the first promote's one-time explainer is set in the card in
  * place of the letter rather than over it as a second dialog.
  *
+ * On the web the letter can also be promoted from right where it reads (#3661):
+ * a reader who highlights a sentence of it meets the same floating pill over
+ * the passage, and Promote lifts it with no selection field in between.
+ * "Promote a quote" stays, the keyboard's and the screen reader's way in.
+ *
  * The host renders this only for a real letter: never for the priced offer, a
  * letter still being written, an error, or the care surface a vault can send
  * instead. Only offsets go up (``promotions.createForLetter``); the server
@@ -21,12 +26,17 @@
 import React, { useCallback, useRef, useState, type ReactNode } from 'react';
 import { StyleSheet, Text, TouchableOpacity, type StyleProp, type TextStyle } from 'react-native';
 
+import type { AnchorSpan } from './anchorSpan';
 import { PromoteExplainerPanel } from './PromoteExplainerDialog';
 import PromotionFeedback from './PromotionFeedback';
 import QuoteSelectionSurface, { type CodePointSpan } from './QuoteSelectionSurface';
-import { usePromoteExplainer } from './usePromoteExplainer';
+import { letterSourceSpan } from './renderedSelection';
+import RenderedSelectionPill, { STEP_ASIDE } from './RenderedSelectionPill';
+import { usePromoteGate, type PromoteGate } from './usePromoteGate';
 import { usePromotions } from './usePromotions';
+import { clearRenderedSelection, useHighlightedPassage } from './useRenderedSelection';
 
+import { decorativeHidden } from '@/components/a11yHidden';
 import { accent, spacing, touchTarget, editorialType } from '@/design/tokens';
 
 /** The link under the letter, and what a screen reader calls it. */
@@ -60,12 +70,21 @@ function useLetterPromotion(marginaliaId: number) {
     spanRef.current = { start: 0, end: 0 };
     setSelecting(true);
   }, []);
-  const explainer = usePromoteExplainer(startSelecting);
+  const { promote } = promotion;
+  // A passage highlighted on the rendered letter goes up as it is (#3661); the
+  // selection is let go first, as the field is, and the notice reads beneath.
+  const promoteHighlighted = useCallback(
+    (span: AnchorSpan): void => {
+      clearRenderedSelection();
+      void promote(span.start, span.end);
+    },
+    [promote],
+  );
+  const gate = usePromoteGate(startSelecting, promoteHighlighted);
   const onSelectionChange = useCallback((span: CodePointSpan) => {
     spanRef.current = span;
   }, []);
   const cancel = useCallback(() => setSelecting(false), []);
-  const { promote } = promotion;
   // Back to the letter first, as a journal page does: the notice -- or the
   // failure and its retry -- is read beneath the letter, not over the field.
   // The surface lights its pill only for a non-empty passage.
@@ -74,23 +93,58 @@ function useLetterPromotion(marginaliaId: number) {
     setSelecting(false);
     await promote(start, end);
   }, [promote]);
-  return { promotion, selecting, explainer, onSelectionChange, cancel, confirm };
+  return { promotion, selecting, gate, onSelectionChange, cancel, confirm };
 }
 
-function LetterPassage({
-  marginaliaId,
+/** The letter as it reads, its two doors to Promote, and what a promote says beneath it. */
+function LetterReading({
   essay,
   textStyle,
   textTestID,
   children,
-}: LetterPassageProps): React.JSX.Element {
-  const { promotion, selecting, explainer, onSelectionChange, cancel, confirm } =
+  promotion,
+  gate,
+}: Omit<LetterPassageProps, 'marginaliaId'> & {
+  promotion: ReturnType<typeof usePromotions>;
+  gate: PromoteGate;
+}): React.JSX.Element {
+  const textRef = useRef<Text>(null);
+  // On the web, a passage highlighted right in the letter (#3661).
+  const passage = useHighlightedPassage(textRef, essay, letterSourceSpan);
+  return (
+    <>
+      <Text ref={textRef} style={textStyle} testID={textTestID}>
+        {essay}
+      </Text>
+      {children}
+      <PromoteQuoteLink onPress={gate.openSelection} stepAside={passage !== null} />
+      <PromotionFeedback
+        promoting={promotion.promoting}
+        hint={promotion.hint}
+        promoted={promotion.promoted}
+        retryPromote={promotion.retryPromote}
+      />
+      <RenderedSelectionPill
+        passage={passage}
+        onPromote={gate.promotePassage}
+        label={PROMOTE_LABEL}
+        accessibilityLabel={PROMOTE_A11Y}
+        busy={promotion.promoting}
+      />
+    </>
+  );
+}
+
+function LetterPassage({ marginaliaId, ...letter }: LetterPassageProps): React.JSX.Element {
+  const { promotion, selecting, gate, onSelectionChange, cancel, confirm } =
     useLetterPromotion(marginaliaId);
+  const { explainer } = gate;
 
   if (explainer.visible) {
     return (
       <PromoteExplainerPanel
         sourceKind="letter"
+        passageChosen={gate.passageChosen}
         dontShowAgain={explainer.dontShowAgain}
         onToggleDontShowAgain={explainer.onToggleDontShowAgain}
         onContinue={explainer.onContinue}
@@ -101,7 +155,7 @@ function LetterPassage({
   if (selecting) {
     return (
       <QuoteSelectionSurface
-        body={essay}
+        body={letter.essay}
         testID={LETTER_SELECT_TEST_ID}
         confirmLabel={PROMOTE_LABEL}
         confirmAccessibilityLabel={PROMOTE_A11Y}
@@ -111,29 +165,27 @@ function LetterPassage({
       />
     );
   }
-  return (
-    <>
-      <Text style={textStyle} testID={textTestID}>
-        {essay}
-      </Text>
-      {children}
-      <PromoteQuoteLink onPress={explainer.onPress} />
-      <PromotionFeedback
-        promoting={promotion.promoting}
-        hint={promotion.hint}
-        promoted={promotion.promoted}
-        retryPromote={promotion.retryPromote}
-      />
-    </>
-  );
+  return <LetterReading {...letter} promotion={promotion} gate={gate} />;
 }
 
-/** The quiet link under the letter that opens the gesture. */
-function PromoteQuoteLink({ onPress }: { onPress: () => void }): React.JSX.Element {
+/**
+ * The quiet link under the letter that opens the gesture. While a passage
+ * highlighted in the letter is chosen (web, #3661) the floating pill rests on
+ * this row in its stead, so the link steps aside: in place, unseen and inert.
+ */
+function PromoteQuoteLink({
+  onPress,
+  stepAside,
+}: {
+  onPress: () => void;
+  stepAside: boolean;
+}): React.JSX.Element {
   return (
     <TouchableOpacity
-      style={styles.promoteLink}
+      style={[styles.promoteLink, stepAside && STEP_ASIDE]}
       onPress={onPress}
+      disabled={stepAside}
+      {...(stepAside ? decorativeHidden() : null)}
       accessibilityRole="button"
       accessibilityLabel={LETTER_PROMOTE_A11Y}
       testID="letter-promote-open"
