@@ -541,7 +541,7 @@ def test_compute_habit_streak_subtractive_with_no_logs_counts_from_start_date() 
     at all, meaning I have abstained."
     """
     today = datetime.now(UTC).date()
-    ctx = SubtractiveContext(clear_threshold=5.0, start_date=today - timedelta(days=5))
+    ctx = SubtractiveContext(threshold=5.0, start_date=today - timedelta(days=5))
 
     assert compute_habit_streak([], "UTC", ctx) == 6
 
@@ -563,7 +563,7 @@ def test_compute_habit_streak_subtractive_breaks_on_transgression() -> None:
         )
     ]
     today_date = datetime.now(UTC).date()
-    ctx = SubtractiveContext(clear_threshold=5.0, start_date=today_date - timedelta(days=10))
+    ctx = SubtractiveContext(threshold=5.0, start_date=today_date - timedelta(days=10))
 
     assert compute_habit_streak(completions, "UTC", ctx) == 1
 
@@ -581,7 +581,7 @@ def test_compute_habit_streak_subtractive_below_threshold_keeps_streak() -> None
         for days_ago in (0, 1, 2)
     ]
     today_date = datetime.now(UTC).date()
-    ctx = SubtractiveContext(clear_threshold=5.0, start_date=today_date - timedelta(days=5))
+    ctx = SubtractiveContext(threshold=5.0, start_date=today_date - timedelta(days=5))
 
     # Five days of habit existence, every day below the clear threshold ->
     # full streak from today back to start_date (6 days inclusive).
@@ -607,7 +607,7 @@ def test_compute_habit_streak_subtractive_at_threshold_is_success() -> None:
         )
     ]
     today_date = datetime.now(UTC).date()
-    ctx = SubtractiveContext(clear_threshold=5.0, start_date=today_date)
+    ctx = SubtractiveContext(threshold=5.0, start_date=today_date)
 
     assert compute_habit_streak(completions, "UTC", ctx) == 1
 
@@ -615,7 +615,7 @@ def test_compute_habit_streak_subtractive_at_threshold_is_success() -> None:
 def test_compute_habit_streak_subtractive_returns_zero_before_start_date() -> None:
     """A habit that hasn't started yet has no streak to accrue."""
     today_date = datetime.now(UTC).date()
-    ctx = SubtractiveContext(clear_threshold=5.0, start_date=today_date + timedelta(days=3))
+    ctx = SubtractiveContext(threshold=5.0, start_date=today_date + timedelta(days=3))
     assert compute_habit_streak([], "UTC", ctx) == 0
 
 
@@ -635,7 +635,7 @@ async def test_compute_consecutive_streak_subtractive_no_logs(
     assert goal.id is not None
 
     today_date = datetime.now(UTC).date()
-    ctx = SubtractiveContext(clear_threshold=5.0, start_date=today_date - timedelta(days=3))
+    ctx = SubtractiveContext(threshold=5.0, start_date=today_date - timedelta(days=3))
     assert await compute_consecutive_streak(db_session, goal.id, user.id, "UTC", ctx) == 4
 
 
@@ -661,7 +661,7 @@ async def test_compute_consecutive_streak_subtractive_breaks_on_transgression(
     await db_session.commit()
 
     today_date = datetime.now(UTC).date()
-    ctx = SubtractiveContext(clear_threshold=5.0, start_date=today_date - timedelta(days=10))
+    ctx = SubtractiveContext(threshold=5.0, start_date=today_date - timedelta(days=10))
     # Today + yesterday are abstention days (streak=2), then day -2 is a
     # transgression that breaks the chain.
     assert await compute_consecutive_streak(db_session, goal.id, user.id, "UTC", ctx) == 2

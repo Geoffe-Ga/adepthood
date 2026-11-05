@@ -59,16 +59,21 @@ def subtractive_context_for_goals(
 ) -> SubtractiveContext | None:
     """Apply the one habit-level polarity rule used by reads and check-ins.
 
-    A habit is subtractive when any tier is non-additive. Its clear-tier target
-    is the ceiling; when that tier is absent, the first non-additive goal is the
-    fallback. More than one clear tier is an invalid ladder and remains a loud
-    error instead of making the chosen ceiling depend on row order.
+    A habit is subtractive when any tier is non-additive. Low Grit keeps the
+    run alive, always: its target is the ceiling a day must stay within, so a
+    low-energy day that kept to Low Grit never breaks the abstention streak.
+    Without a low tier the clear tier, then the first non-additive goal, sets
+    it. More than one clear tier is an invalid ladder and remains a loud error;
+    duplicate low tiers resolve to the most forgiving one (see
+    :func:`_low_grit_goal`), so neither choice depends on row order.
     """
     non_additive = _non_additive_goals(goals)
     if not non_additive:
         return None
-    threshold_goal = _single_clear_goal(goals) or non_additive[0]
-    return SubtractiveContext(clear_threshold=threshold_goal.target, start_date=start_date)
+    clear = _single_clear_goal(goals)
+    lows = [goal for goal in goals if goal.tier == "low"]
+    threshold_goal = _low_grit_goal(lows, subtractive=True) or clear or non_additive[0]
+    return SubtractiveContext(threshold=threshold_goal.target, start_date=start_date)
 
 
 def period_cadence_for_goals(goals: Sequence[Goal], start_date: date) -> PeriodCadence | None:
@@ -80,18 +85,19 @@ def period_cadence_for_goals(goals: Sequence[Goal], start_date: date) -> PeriodC
     cadences return ``None`` so their callers keep the day-based streak bit
     for bit.
 
-    The period target is the goal's own ``target * frequency`` -- the same
-    period target the frontend scores against. A subtractive habit keeps the
-    clear-tier ceiling its daily streak uses. An additive habit's run is kept
-    by its Low Grit floor (:func:`_additive_floor_goal`): the daily additive
-    streak counts any day that was shown up for, so a week that met Low Grit
-    must not break a weekly run that a single logged day would keep daily.
+    The period target is a goal's own ``target * frequency`` -- the same
+    period target the frontend scores against -- and it is the Low Grit
+    tier's, for either polarity: Low Grit keeps the run alive, always, so a
+    week that reached the Low Grit floor (or stayed within its limit) is kept.
+    A low tier only sets it when counted in the cadence's own period unit;
+    otherwise the cadence goal's target applies.
     """
     goal = _cadence_goal(goals)
     if goal is None or goal.frequency_unit not in PERIOD_UNITS:
         return None
     subtractive = bool(_non_additive_goals(goals))
-    target_goal = goal if subtractive else _additive_floor_goal(goals, goal)
+    lows = [g for g in goals if g.tier == "low" and g.frequency_unit == goal.frequency_unit]
+    target_goal = _low_grit_goal(lows, subtractive=subtractive) or goal
     return PeriodCadence(
         unit=cast("PeriodUnit", goal.frequency_unit),
         period_target=target_goal.target * target_goal.frequency,
@@ -100,18 +106,22 @@ def period_cadence_for_goals(goals: Sequence[Goal], start_date: date) -> PeriodC
     )
 
 
-def _additive_floor_goal(goals: Sequence[Goal], cadence_goal: Goal) -> Goal:
-    """Return the Low Grit goal that keeps an additive period run, else ``cadence_goal``.
+def _low_grit_goal(lows: Sequence[Goal], *, subtractive: bool) -> Goal | None:
+    """Return the most forgiving of the habit's Low Grit goals, else ``None``.
 
-    The low tier only sets the floor when it is counted in the same period as
-    the cadence; a low tier on another unit has no comparable period total.
-    Mirrors the frontend ``additiveFloorGoal`` in ``HabitUtils.ts``; change
-    both together.
+    Low Grit is the bar that keeps a run alive, so when a ladder carries more
+    than one low row the easiest one wins rather than whichever loaded first:
+    the lowest ``target * frequency`` floor for an additive habit, the highest
+    limit for a subtractive one. Mirrors the frontend ``lowGritGoal`` in
+    ``HabitUtils.ts``; change both together.
     """
-    return next(
-        (g for g in goals if g.tier == "low" and g.frequency_unit == cadence_goal.frequency_unit),
-        cadence_goal,
-    )
+    if not lows:
+        return None
+
+    def period_amount(goal: Goal) -> float:
+        return goal.target * goal.frequency
+
+    return max(lows, key=period_amount) if subtractive else min(lows, key=period_amount)
 
 
 def _cadence_goal(goals: Sequence[Goal]) -> Goal | None:
@@ -161,7 +171,7 @@ async def compute_consecutive_streak(
     For subtractive habits, pass ``subtractive`` to flip the success
     polarity: a day with no log = perfect abstention (success), and the
     chain only breaks on a day where the user logged above
-    ``subtractive.clear_threshold``.  Omitting ``subtractive`` keeps
+    ``subtractive.threshold``.  Omitting ``subtractive`` keeps
     legacy additive behavior, so callers that don't know the habit's
     polarity stay safe.
     """
@@ -300,7 +310,7 @@ def compute_habit_streak(
     For **subtractive** habits (e.g. "abstain from sugar") a day with
     *no* log is the best possible outcome, so the recency gate would
     invert the correct behavior.  Pass a :class:`SubtractiveContext`
-    bundling the sibling clear-tier goal's target and the habit's
+    bundling the habit's Low Grit limit and its
     ``start_date`` to walk backwards counting abstention days instead.
 
     For a **weekly or monthly** cadence pass ``cadence`` (see

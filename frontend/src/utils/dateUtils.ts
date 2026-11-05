@@ -284,8 +284,8 @@ export const streakFromCompletions = (
 export interface SubtractiveStreakInput {
   /** Completion log entries: timestamp + units logged on that timestamp. */
   completions: ReadonlyArray<{ timestamp: string | Date; completed_units: number }>;
-  /** The clear-tier goal's target; a day's sum > this value breaks the streak. */
-  clearThreshold: number;
+  /** The habit's Low Grit limit; a day's sum > this value breaks the streak. */
+  threshold: number;
   /** Habit's start date as `YYYY-MM-DD` in the user's TZ; the walk stops here. */
   startDate: string;
 }
@@ -298,9 +298,9 @@ export interface SubtractiveStreakInput {
  * "every counted day must have a row" model produces the wrong answer.
  * This helper walks backwards from `now` in the user's TZ:
  *
- *   - A day where the user's logged sum stays ≤ ``clearThreshold``
+ *   - A day where the user's logged sum stays ≤ ``threshold``
  *     counts as a streak day (no row at all maps to sum=0 = success).
- *   - The first day going back where the sum > ``clearThreshold`` is
+ *   - The first day going back where the sum > ``threshold`` is
  *     a transgression and breaks the chain.
  *   - The walk stops at ``startDate`` so the streak can never exceed
  *     the habit's life.
@@ -327,7 +327,7 @@ export const subtractiveStreakFromCompletions = (
   let cursor = today;
   while (cursor >= input.startDate) {
     const total = dayTotals.get(cursor) ?? 0;
-    if (total > input.clearThreshold) break;
+    if (total > input.threshold) break;
     streak += 1;
     cursor = addDaysInTZ(cursor, -1, tz);
   }
@@ -339,7 +339,7 @@ export const subtractiveStreakFromCompletions = (
  *
  * Walks the full ``[startDate, today]`` window in the user's TZ and
  * tracks the longest consecutive run of days that stayed within the
- * clear threshold.  An additive longest streak counts logged days,
+ * threshold (the habit's Low Grit limit).  An additive longest streak counts logged days,
  * which is the inverse of what a subtractive habit cares about and
  * produces a contradictory pair (e.g. "Current: 30 · Longest: 0"
  * for a 30-day perfect abstention).
@@ -366,7 +366,7 @@ export const subtractiveLongestStreakFromCompletions = (
   let run = 0;
   let cursor = input.startDate;
   while (cursor <= today) {
-    if ((dayTotals.get(cursor) ?? 0) > input.clearThreshold) {
+    if ((dayTotals.get(cursor) ?? 0) > input.threshold) {
       run = 0;
     } else {
       run += 1;

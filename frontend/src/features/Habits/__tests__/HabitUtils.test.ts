@@ -2052,14 +2052,14 @@ describe('cadence-period scoring', () => {
       completions: [],
     };
 
-    // 2 of a 7-per-week clear limit: the open week is met (#2819), where the
-    // old day walk scored the same log against a 1/day limit and broke it.
+    // 2 of a 14-per-week Low Grit limit: the open week is met (#2819), where
+    // the old day walk scored the same log against a 1/day limit and broke it.
     // The tile's optimistic check-in recomputes the period streak.
     const logged = logHabitUnits(habit, 2, new Date('2026-03-13T12:00:00Z'), 'UTC');
     expect(logged.streak).toBe(1);
     const cadence = {
       kind: 'week' as const,
-      periodTarget: 7,
+      periodTarget: 14,
       startDay: '2026-03-13',
       subtractive: true,
     };

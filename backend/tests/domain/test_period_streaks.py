@@ -155,12 +155,50 @@ def test_additive_low_tier_on_another_cadence_falls_back_to_the_clear_tier() -> 
     assert cadence.period_target == clear.target * clear.frequency
 
 
-def test_subtractive_period_target_stays_the_clear_limit() -> None:
-    """A subtractive period keeps the clear-tier ceiling its daily streak uses."""
+def test_subtractive_period_target_is_the_low_grit_limit() -> None:
+    """A subtractive period is kept by staying within the Low Grit limit, not clear."""
     case = _case("weekly subtractive: abstention weeks count")
     cadence = period_cadence_for_goals(_goals(case), date(2026, 1, 1))
     assert cadence is not None
-    assert cadence.period_target == case["targets"]["clear"] * case["frequency"]
+    assert cadence.period_target == case["targets"]["low"] * case["frequency"]
+
+
+def test_duplicate_low_tiers_pick_the_most_forgiving_floor() -> None:
+    """Two low rows never make the run depend on row order: the easier one wins."""
+    additive = _goals(_case("weekly additive: a week that meets only Low Grit"))
+    additive.append(additive[0].model_copy(update={"id": 9, "target": 0.5}))
+    cadence = period_cadence_for_goals(additive, date(2026, 1, 1))
+    assert cadence is not None
+    assert cadence.period_target == 0.5
+
+    subtractive = _goals(_case("weekly subtractive: abstention weeks count"))
+    subtractive.append(subtractive[0].model_copy(update={"id": 9, "target": 6}))
+    ctx = subtractive_context_for_goals(subtractive, date(2026, 1, 1))
+    assert ctx is not None
+    assert ctx.threshold == 6
+
+
+def test_daily_subtractive_threshold_is_the_low_grit_limit() -> None:
+    """A daily abstention run survives any day kept within the Low Grit limit."""
+    case = _case("daily subtractive keeps")
+    ctx = subtractive_context_for_goals(_goals(case), date(2026, 1, 1))
+    assert ctx is not None
+    assert ctx.threshold == case["targets"]["low"]
+
+
+@pytest.mark.parametrize(
+    ("kept_tiers", "expected_tier"),
+    [(("clear", "stretch"), "clear"), (("stretch",), "stretch")],
+)
+def test_subtractive_threshold_falls_back_without_a_low_tier(
+    kept_tiers: tuple[str, ...], expected_tier: str
+) -> None:
+    """Without a low tier the clear limit, then the first non-additive goal, decides."""
+    case = _case("daily subtractive keeps")
+    goals = [g for g in _goals(case) if g.tier in kept_tiers]
+    ctx = subtractive_context_for_goals(goals, date(2026, 1, 1))
+    assert ctx is not None
+    assert ctx.threshold == case["targets"][expected_tier]
 
 
 def test_period_cadence_falls_back_to_the_first_goal_without_a_clear_tier() -> None:

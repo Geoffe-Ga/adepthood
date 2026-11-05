@@ -189,11 +189,29 @@ describe('period streak target', () => {
     expect(cadence?.periodTarget).toBe(3);
   });
 
-  it('keeps the clear-tier limit for a subtractive habit', () => {
+  it('keeps a subtractive run within the Low Grit limit, not the clear tier', () => {
     const subtractive = cases.find((c) => c.name.startsWith('weekly subtractive: abstention'))!;
     expect(periodStreakCadence(habitFor(subtractive), 'UTC')?.periodTarget).toBe(
-      subtractive.targets.clear * subtractive.frequency,
+      subtractive.targets.low * subtractive.frequency,
     );
+  });
+
+  it('resolves duplicate low tiers to the most forgiving one', () => {
+    const additive = habitFor(lowGritCase());
+    const easierLow = { ...additive.goals[0]!, id: 9, target: 0.5 };
+    expect(
+      periodStreakCadence({ ...additive, goals: [...additive.goals, easierLow] }, 'UTC')
+        ?.periodTarget,
+    ).toBe(0.5);
+
+    const subtractive = habitFor(
+      cases.find((c) => c.name.startsWith('weekly subtractive: abstention'))!,
+    );
+    const looserLow = { ...subtractive.goals[0]!, id: 9, target: 6 };
+    expect(
+      periodStreakCadence({ ...subtractive, goals: [...subtractive.goals, looserLow] }, 'UTC')
+        ?.periodTarget,
+    ).toBe(6);
   });
 });
 

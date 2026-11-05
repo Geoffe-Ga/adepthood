@@ -610,6 +610,77 @@ async def test_get_habits_reports_subtractive_streak_from_start_date(
     assert body_habit["streak"] == 4
 
 
+# Grams logged on a low-energy day: over the clear limit (5) but within the
+# Low Grit limit (10) of ``_SUBTRACTIVE_TIERS_FOR_API``.
+_LOW_GRIT_DAY_GRAMS = 8.0
+
+
+@pytest.mark.asyncio
+async def test_subtractive_day_within_low_grit_keeps_the_streak(
+    async_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """Low Grit keeps the run alive, always: a day within its limit never breaks it.
+
+    Pinned on both wirings of the subtractive context -- ``GET /habits`` and the
+    ``POST /goal_completions`` check-in -- with days that went over the clear
+    limit but stayed within Low Grit's.
+    """
+    headers, user_id = await _signup_with_user_id(async_client, "abstain_low_grit")
+    today = today_in_tz("UTC")
+    habit = Habit(
+        name="No sugar",
+        icon="🍬",
+        start_date=today - timedelta(days=3),
+        energy_cost=1,
+        energy_return=2,
+        user_id=user_id,
+    )
+    db_session.add(habit)
+    await db_session.commit()
+    await db_session.refresh(habit)
+    goals = {
+        tier: Goal(
+            habit_id=habit.id,
+            title=f"{tier} sugar",
+            tier=tier,
+            target=target,
+            target_unit="g",
+            frequency=1.0,
+            frequency_unit="per_day",
+            is_additive=False,
+        )
+        for tier, target in _SUBTRACTIVE_TIERS_FOR_API
+    }
+    db_session.add_all(goals.values())
+    await db_session.commit()
+    yesterday = today - timedelta(days=1)
+    db_session.add(
+        GoalCompletion(
+            goal_id=goals["clear"].id,
+            user_id=user_id,
+            local_day=yesterday,
+            timestamp=datetime(yesterday.year, yesterday.month, yesterday.day, 12, tzinfo=UTC),
+            completed_units=_LOW_GRIT_DAY_GRAMS,
+        )
+    )
+    await db_session.commit()
+
+    [listed] = (await async_client.get("/habits/", headers=headers)).json()
+    assert listed["streak"] == 4
+
+    check_in = await async_client.post(
+        "/goal_completions/",
+        json={
+            "goal_id": goals["clear"].id,
+            "did_complete": True,
+            "completed_units": _LOW_GRIT_DAY_GRAMS,
+        },
+        headers=headers,
+    )
+    assert check_in.status_code == HTTPStatus.OK
+    assert check_in.json()["streak"] == 4
+
+
 @pytest.mark.asyncio
 async def test_get_habit_completions_filtered_to_caller(
     async_client: AsyncClient, db_session: AsyncSession

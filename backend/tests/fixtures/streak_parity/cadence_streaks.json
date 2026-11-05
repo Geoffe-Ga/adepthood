@@ -106,11 +106,27 @@
       "frequency_unit": "per_week",
       "targets": { "low": 4, "clear": 2, "stretch": 0 },
       "completions": [
-        ["2026-02-17", 3],
+        ["2026-02-17", 5],
         ["2026-02-24", 1],
         ["2026-03-10", 1]
       ],
       "expected": { "current": 3, "longest": 3 }
+    },
+    {
+      "name": "weekly subtractive: a week within the Low Grit limit keeps the run",
+      "timezone": "America/Los_Angeles",
+      "today": "2026-03-11",
+      "start_date": "2026-02-16",
+      "is_additive": false,
+      "frequency": 1,
+      "frequency_unit": "per_week",
+      "targets": { "low": 4, "clear": 2, "stretch": 0 },
+      "completions": [
+        ["2026-02-17", 3],
+        ["2026-02-24", 1],
+        ["2026-03-10", 1]
+      ],
+      "expected": { "current": 4, "longest": 4 }
     },
     {
       "name": "weekly subtractive: an over-limit open week is grace",
@@ -162,8 +178,20 @@
       "frequency": 1,
       "frequency_unit": "per_day",
       "targets": { "low": 3, "clear": 1, "stretch": 0 },
-      "completions": [["2026-03-07", 2]],
+      "completions": [["2026-03-07", 4]],
       "expected": { "current": 4, "longest": 4 }
+    },
+    {
+      "name": "daily subtractive: a day within the Low Grit limit keeps the run",
+      "timezone": "America/Los_Angeles",
+      "today": "2026-03-11",
+      "start_date": "2026-03-05",
+      "is_additive": false,
+      "frequency": 1,
+      "frequency_unit": "per_day",
+      "targets": { "low": 3, "clear": 1, "stretch": 0 },
+      "completions": [["2026-03-07", 2]],
+      "expected": { "current": 7, "longest": 7 }
     }
   ]
 }
