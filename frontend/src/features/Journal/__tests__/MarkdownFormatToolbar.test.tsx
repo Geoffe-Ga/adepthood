@@ -4,7 +4,16 @@ import { join } from 'node:path';
 
 import { afterEach, beforeEach, describe, expect, it, jest } from '@jest/globals';
 import { fireEvent, render, within } from '@testing-library/react-native';
-import { Bold, Italic, Underline, type LucideIcon } from 'lucide-react-native';
+import {
+  Bold,
+  Heading,
+  Italic,
+  List,
+  ListOrdered,
+  TextQuote,
+  Underline,
+  type LucideIcon,
+} from 'lucide-react-native';
 import React from 'react';
 import { StyleSheet } from 'react-native';
 
@@ -19,6 +28,10 @@ const GLYPHS: Partial<Record<MarkdownCommand, LucideIcon>> = {
   bold: Bold,
   italic: Italic,
   underline: Underline,
+  heading: Heading,
+  bullet: List,
+  ordered: ListOrdered,
+  quote: TextQuote,
 };
 
 /** WCAG 1.4.11: a state indicator is a non-text UI component. */
@@ -37,13 +50,42 @@ function contrast(a: string, b: string): number {
   return (high! + 0.05) / (low! + 0.05);
 }
 
-const PLAIN = { bold: false, italic: false, underline: false, listLevel: null };
+const PLAIN = {
+  bold: false,
+  italic: false,
+  underline: false,
+  bullet: false,
+  ordered: false,
+  quote: false,
+  heading: false,
+  listLevel: null,
+};
+
+/** Every action, in the order the strip lays them out. */
+const ACTION_ORDER: MarkdownCommand[] = [
+  'bold',
+  'italic',
+  'underline',
+  'heading',
+  'bullet',
+  'ordered',
+  'quote',
+  'indent',
+  'outdent',
+];
+
+/** The style toggles: each reflects its state and reads as pressed on web. */
+const TOGGLES = ['bold', 'italic', 'underline', 'heading', 'bullet', 'ordered', 'quote'] as const;
 
 describe('MarkdownFormatToolbar -- inline styles', () => {
   const LABELLED: [label: string, command: MarkdownCommand][] = [
     ['Bold', 'bold'],
     ['Italic', 'italic'],
     ['Underline', 'underline'],
+    ['Heading', 'heading'],
+    ['Bulleted list', 'bullet'],
+    ['Numbered list', 'ordered'],
+    ['Quote', 'quote'],
   ];
   it.each(LABELLED)('offers %s as a labelled button that runs the %s command', (label, command) => {
     const onCommand = jest.fn();
@@ -59,25 +101,22 @@ describe('MarkdownFormatToolbar -- inline styles', () => {
     expect(onCommand).toHaveBeenCalledWith(command);
   });
 
-  it.each(['bold', 'italic', 'underline'] as const)(
-    'marks %s selected exactly when the caret is in that style',
-    (style) => {
-      const { getByTestId, rerender } = render(
-        <MarkdownFormatToolbar state={PLAIN} onCommand={jest.fn()} />,
-      );
-      expect(getByTestId(`journal-format-${style}`).props.accessibilityState).toMatchObject({
-        selected: false,
-      });
-      rerender(<MarkdownFormatToolbar state={{ ...PLAIN, [style]: true }} onCommand={jest.fn()} />);
-      expect(getByTestId(`journal-format-${style}`).props.accessibilityState).toMatchObject({
-        selected: true,
-      });
-    },
-  );
+  it.each(TOGGLES)('marks %s selected exactly when the caret is in that style', (style) => {
+    const { getByTestId, rerender } = render(
+      <MarkdownFormatToolbar state={PLAIN} onCommand={jest.fn()} />,
+    );
+    expect(getByTestId(`journal-format-${style}`).props.accessibilityState).toMatchObject({
+      selected: false,
+    });
+    rerender(<MarkdownFormatToolbar state={{ ...PLAIN, [style]: true }} onCommand={jest.fn()} />);
+    expect(getByTestId(`journal-format-${style}`).props.accessibilityState).toMatchObject({
+      selected: true,
+    });
+  });
 
   it('gives every action at least the minimum touch target', () => {
     const { getByTestId } = render(<MarkdownFormatToolbar state={PLAIN} onCommand={jest.fn()} />);
-    for (const style of ['bold', 'italic', 'underline']) {
+    for (const style of TOGGLES) {
       const flat = StyleSheet.flatten(getByTestId(`journal-format-${style}`).props.style);
       expect(flat.minWidth).toBeGreaterThanOrEqual(touchTarget.minimum);
       expect(flat.minHeight).toBeGreaterThanOrEqual(touchTarget.minimum);
@@ -156,12 +195,13 @@ describe('MarkdownFormatToolbar -- one scrolling line', () => {
     expect(row.flexWrap ?? 'nowrap').toBe('nowrap');
   });
 
-  it('puts all five actions in the toolbar on every line', () => {
+  it('puts every action in the toolbar on every line, inline styles first, list nesting last', () => {
     const { getByTestId } = render(<MarkdownFormatToolbar state={PLAIN} onCommand={jest.fn()} />);
     const toolbar = getByTestId('journal-format-toolbar');
-    for (const command of ['bold', 'italic', 'underline', 'indent', 'outdent']) {
-      expect(within(toolbar).getByTestId(`journal-format-${command}`)).toBeTruthy();
-    }
+    const ids = within(toolbar)
+      .getAllByRole('button')
+      .map((button) => String(button.props.testID));
+    expect(ids).toEqual(ACTION_ORDER.map((command) => `journal-format-${command}`));
   });
 });
 
@@ -183,6 +223,17 @@ describe('MarkdownFormatToolbar -- pressed state for assistive technology and si
     expect(getByTestId('journal-format-bold').props['aria-pressed']).toBe(true);
     expect(getByTestId('journal-format-italic').props['aria-pressed']).toBe(false);
     expect(getByTestId('journal-format-underline').props['aria-pressed']).toBe(false);
+  });
+
+  it('exposes the line styles as aria-pressed toggles on web too', () => {
+    Platform.OS = 'web';
+    const { getByTestId } = render(
+      <MarkdownFormatToolbar state={{ ...PLAIN, quote: true }} onCommand={jest.fn()} />,
+    );
+    expect(getByTestId('journal-format-quote').props['aria-pressed']).toBe(true);
+    for (const style of ['heading', 'bullet', 'ordered']) {
+      expect(getByTestId(`journal-format-${style}`).props['aria-pressed']).toBe(false);
+    }
   });
 
   it('leaves list actions without a pressed state: they are commands, not toggles', () => {

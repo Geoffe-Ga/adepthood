@@ -69,6 +69,33 @@ describe('applyMarkdownCommand -- inline styles', () => {
   });
 });
 
+describe('applyMarkdownCommand -- line styles', () => {
+  it.each<[MarkdownCommand, string]>([
+    ['bullet', '- note'],
+    ['ordered', '1. note'],
+    ['quote', '> note'],
+    ['heading', '# note'],
+  ])('turns the caret line into a %s', (command, text) => {
+    const result = applyMarkdownCommand('note', { start: 2, end: 2 }, command);
+    expect(result).toMatchObject({ kind: 'edit', edit: { text } });
+  });
+
+  it('consumes a press with nothing to style, such as on a rule', () => {
+    expect(applyMarkdownCommand('---', { start: 1, end: 1 }, 'bullet')).toEqual({
+      kind: 'consumed',
+    });
+  });
+
+  it('reports the line styles at the caret', () => {
+    expect(markdownCommandState('> said', { start: 3, end: 3 })).toMatchObject({
+      quote: true,
+      bullet: false,
+      ordered: false,
+      heading: false,
+    });
+  });
+});
+
 describe('markdownCommandState', () => {
   it('reports each style in force at the caret', () => {
     expect(markdownCommandState('**a** _b_ <u>c</u>', { start: 3, end: 3 })).toMatchObject({

@@ -11,12 +11,27 @@
  * ``edit`` and ``consumed`` both claim the key; only ``pass`` lets it through.
  */
 import type { InlineStyle } from './journalMarkdown';
+import { blockStyleState, toggleBlockStyle, type BlockStyle } from './markdownBlockToggle';
 import type { MarkdownEdit, MarkdownSelection } from './markdownEditing';
 import { listLevelAt, shiftListLines, type ShiftDirection } from './markdownIndent';
 import { inlineStyleActive, toggleInlineStyle } from './markdownInlineToggle';
 
-/** What an editor action does: style the selection, or move its list items a level. */
-export type MarkdownCommand = InlineStyle | ShiftDirection;
+/**
+ * What an editor action does: style the selection, turn its lines into a list,
+ * quote or heading, or move its list items a level.
+ */
+export type MarkdownCommand = InlineStyle | BlockStyle | ShiftDirection;
+
+const BLOCK_STYLES: ReadonlySet<MarkdownCommand> = new Set<BlockStyle>([
+  'bullet',
+  'ordered',
+  'quote',
+  'heading',
+]);
+
+function isBlockStyle(command: MarkdownCommand): command is BlockStyle {
+  return BLOCK_STYLES.has(command);
+}
 
 /** The parts of a keyboard event the dispatcher reads (a DOM KeyboardEvent fits). */
 export interface MarkdownKeyEvent {
@@ -70,6 +85,11 @@ export interface MarkdownCommandState {
   bold: boolean;
   italic: boolean;
   underline: boolean;
+  /** Line-level styles: whether every touched line is a bullet, number, quote or heading. */
+  bullet: boolean;
+  ordered: boolean;
+  quote: boolean;
+  heading: boolean;
   /** The caret's list level (0 = flush), or null off a list line. */
   listLevel: number | null;
 }
@@ -125,6 +145,10 @@ export function applyMarkdownCommand(
     const shifted = shiftListLines(body, selection, command);
     return shifted == null ? { kind: 'pass' } : { kind: 'edit', edit: shifted };
   }
+  if (isBlockStyle(command)) {
+    const edit = toggleBlockStyle(body, selection, command);
+    return edit == null ? { kind: 'consumed' } : { kind: 'edit', edit };
+  }
   const edit = toggleInlineStyle(body, selection, command);
   // A refused toggle still claims the key: the writer asked for formatting,
   // and the browser's own Cmd+B / Cmd+U would do something unrelated.
@@ -140,6 +164,7 @@ export function markdownCommandState(
     bold: inlineStyleActive(body, selection, 'bold'),
     italic: inlineStyleActive(body, selection, 'italic'),
     underline: inlineStyleActive(body, selection, 'underline'),
+    ...blockStyleState(body, selection),
     listLevel: listLevelAt(body, selection.start),
   };
 }

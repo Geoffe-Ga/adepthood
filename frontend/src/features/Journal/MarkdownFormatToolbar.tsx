@@ -2,8 +2,10 @@
  * The body's formatting actions, for writers without a keyboard shortcut --
  * touch, and anyone who would rather press a button.
  *
- * Every action is always on show; Indent and Outdent are disabled while the
- * caret is off a list item, so the bar never shifts under the writer's thumb.
+ * Bold, Italic, Underline, Heading, Bulleted list, Numbered list, Quote,
+ * Indent and Outdent. Every action is always on show; Indent and Outdent are
+ * disabled while the caret is off a bulleted item, so the bar never shifts
+ * under the writer's thumb.
  * The actions sit on one line that never wraps: when they outgrow it, the
  * strip scrolls sideways -- a finger swipe on mobile, a click-and-drag (or
  * trackpad pan) on web.
@@ -15,9 +17,13 @@
  */
 import {
   Bold,
+  Heading,
   Italic,
+  List,
   ListIndentDecrease,
   ListIndentIncrease,
+  ListOrdered,
+  TextQuote,
   Underline,
   type LucideIcon,
 } from 'lucide-react-native';
@@ -44,10 +50,21 @@ interface ToolbarAction {
   Icon: LucideIcon;
 }
 
-const STYLE_ACTIONS: readonly (ToolbarAction & { command: 'bold' | 'italic' | 'underline' })[] = [
+/** The commands whose on/off state the toolbar reflects. */
+type ToggleCommand = Exclude<MarkdownCommand, 'indent' | 'outdent'>;
+
+/**
+ * Inline styles, then line styles. Heading steps ``#`` to ``###`` and back to
+ * prose; the others turn the touched lines into that block, or back.
+ */
+const STYLE_ACTIONS: readonly (ToolbarAction & { command: ToggleCommand })[] = [
   { command: 'bold', label: 'Bold', Icon: Bold },
   { command: 'italic', label: 'Italic', Icon: Italic },
   { command: 'underline', label: 'Underline', Icon: Underline },
+  { command: 'heading', label: 'Heading', Icon: Heading },
+  { command: 'bullet', label: 'Bulleted list', Icon: List },
+  { command: 'ordered', label: 'Numbered list', Icon: ListOrdered },
+  { command: 'quote', label: 'Quote', Icon: TextQuote },
 ];
 
 const INDENT_ACTION: ToolbarAction = {

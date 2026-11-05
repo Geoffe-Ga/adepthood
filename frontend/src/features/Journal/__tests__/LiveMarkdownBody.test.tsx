@@ -690,6 +690,22 @@ describe('LiveMarkdownBody formatting toolbar', () => {
     }
   });
 
+  it('turns the caret line into a quote and back from the toolbar, reflecting it as selected', () => {
+    const onChangeBody = jest.fn();
+    const { getByTestId, getByRole } = render(
+      <Harness initial={'first\nsaid'} onChangeBody={onChangeBody} />,
+    );
+    const input = getByTestId('journal-body-input');
+    select(input, 8);
+    fireEvent.press(getByRole('button', { name: 'Quote' }));
+    expect(onChangeBody).toHaveBeenLastCalledWith('first\n> said');
+    expect(getByTestId('journal-format-quote').props.accessibilityState).toMatchObject({
+      selected: true,
+    });
+    fireEvent.press(getByRole('button', { name: 'Quote' }));
+    expect(onChangeBody).toHaveBeenLastCalledWith('first\nsaid');
+  });
+
   it('applies a toolbar action at the field selection and returns focus to the field', () => {
     const onChangeBody = jest.fn();
     const focus = jest.fn();

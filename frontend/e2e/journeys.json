@@ -407,11 +407,11 @@
   },
   {
     "id": "journal.format-toolbar-scroll",
-    "description": "A writer sees every formatting action the journal offers -- Bold, Italic, Underline, Indent and Outdent -- on show at once in the toolbar above the body, on mobile and web alike, with Indent and Outdent disabled on prose and enabled on a list line. The actions sit on a single line that never wraps; when they outgrow its width the strip scrolls sideways, by a finger swipe on mobile and by a mouse click-and-drag on web. The click that ends a drag never presses the button it is released over, while an ordinary click still formats the selection.",
+    "description": "A writer sees every formatting action the journal offers -- Bold, Italic, Underline, Heading, Bulleted list, Numbered list, Quote, Indent and Outdent -- on show at once in the toolbar above the body, on mobile and web alike, with Indent and Outdent disabled on prose and enabled on a list line. The actions sit on a single line that never wraps; when they outgrow its width the strip scrolls sideways, by a finger swipe on mobile and by a mouse click-and-drag on web. The click that ends a drag never presses the button it is released over, while an ordinary click still formats the selection. The line-style buttons turn the lines a selection touches into a heading (each press steps # to ### and back to prose), a bulleted or numbered list (numbered 1, 2, 3 and continuing an item just above) or a quote, replacing any other block marker and pressing again turns them back into prose; the stored body is exactly that Markdown and read mode draws the heading, the numbered items and the blockquote.",
     "crosses": {
       "screen": "frontend/src/features/Journal/JournalEntryScreen.tsx",
       "client": ["journal"],
-      "routes": ["POST /journal/", "PATCH /journal/{entry_id}"],
+      "routes": ["POST /journal/", "PATCH /journal/{entry_id}", "GET /journal/{entry_id}"],
       "tables": ["journalentry"]
     },
     "status": "covered",
