@@ -74,21 +74,43 @@ def subtractive_context_for_goals(
 def period_cadence_for_goals(goals: Sequence[Goal], start_date: date) -> PeriodCadence | None:
     """Return the period cadence a habit's streak is counted in, else ``None``.
 
-    The cadence (``frequency`` / ``frequency_unit``) is shared by every tier,
-    so the clear tier speaks for the habit; without one, the polarity rule's
-    threshold goal (subtractive) or the first goal (additive) does. Daily and
-    per-session cadences return ``None`` so their callers keep the day-based
-    streak bit for bit. The period target is that goal's ``target *
-    frequency`` -- the same period target the frontend scores against.
+    The cadence unit (``frequency_unit``) is shared by every tier, so the clear
+    tier speaks for it; without one, the polarity rule's threshold goal
+    (subtractive) or the first goal (additive) does. Daily and per-session
+    cadences return ``None`` so their callers keep the day-based streak bit
+    for bit.
+
+    The period target is the goal's own ``target * frequency`` -- the same
+    period target the frontend scores against. A subtractive habit keeps the
+    clear-tier ceiling its daily streak uses. An additive habit's run is kept
+    by its Low Grit floor (:func:`_additive_floor_goal`): the daily additive
+    streak counts any day that was shown up for, so a week that met Low Grit
+    must not break a weekly run that a single logged day would keep daily.
     """
     goal = _cadence_goal(goals)
     if goal is None or goal.frequency_unit not in PERIOD_UNITS:
         return None
+    subtractive = bool(_non_additive_goals(goals))
+    target_goal = goal if subtractive else _additive_floor_goal(goals, goal)
     return PeriodCadence(
         unit=cast("PeriodUnit", goal.frequency_unit),
-        period_target=goal.target * goal.frequency,
+        period_target=target_goal.target * target_goal.frequency,
         start_date=start_date,
-        subtractive=bool(_non_additive_goals(goals)),
+        subtractive=subtractive,
+    )
+
+
+def _additive_floor_goal(goals: Sequence[Goal], cadence_goal: Goal) -> Goal:
+    """Return the Low Grit goal that keeps an additive period run, else ``cadence_goal``.
+
+    The low tier only sets the floor when it is counted in the same period as
+    the cadence; a low tier on another unit has no comparable period total.
+    Mirrors the frontend ``additiveFloorGoal`` in ``HabitUtils.ts``; change
+    both together.
+    """
+    return next(
+        (g for g in goals if g.tier == "low" and g.frequency_unit == cadence_goal.frequency_unit),
+        cadence_goal,
     )
 
 

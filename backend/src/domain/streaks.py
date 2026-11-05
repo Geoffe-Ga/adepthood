@@ -63,8 +63,9 @@ class PeriodCadence:
     A habit whose goals are ``per_week`` or ``per_month`` is scored in
     periods, not days (#2819): an ISO week starting Monday, or a calendar
     month, in the user's calendar. A period is *met* when its summed units
-    reach ``period_target`` (the clear tier's ``target * frequency``) for an
-    additive habit, or stay at or under it for a subtractive one.
+    reach ``period_target`` for an additive habit (the Low Grit floor's
+    ``target * frequency``), or stay at or under it for a subtractive one (the
+    clear limit's); :func:`services.streaks.period_cadence_for_goals` picks it.
     ``start_date`` is the habit's birth: a subtractive walk starts at the
     period *containing* it and never counts an earlier one, since an absent
     row there is not an abstention. A habit begun mid-period has that whole
@@ -109,7 +110,7 @@ def _period_totals(day_totals: dict[date, float], unit: PeriodUnit) -> dict[date
 
 
 def _period_met(total: float, cadence: PeriodCadence) -> bool:
-    """Whether a period's summed units satisfy the cadence's clear target."""
+    """Whether a period's summed units satisfy the cadence's period target."""
     if cadence.subtractive:
         return total <= cadence.period_target
     return total >= cadence.period_target

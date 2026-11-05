@@ -571,7 +571,7 @@ export const streakPeriodKind = (habit: Habit): HabitPeriodKind => {
 /** Everything a weekly / monthly streak walk needs (#2819). */
 export interface PeriodStreakCadence {
   kind: Exclude<HabitPeriodKind, 'day'>;
-  /** The clear tier's `target × frequency`. */
+  /** Additive: the Low Grit floor's `target × frequency`; subtractive: the clear limit's. */
   periodTarget: number;
   /**
    * The habit's start as a `YYYY-MM-DD` key. A subtractive walk starts at the
@@ -675,17 +675,34 @@ export const periodLongestStreak = (
   return longest;
 };
 
-/** The habit's weekly / monthly streak cadence, or `null` for day cadences. */
+/**
+ * The Low Grit goal that keeps an additive period run, else `cadenceGoal`.
+ * The daily additive streak counts any day that was shown up for, so a week
+ * that met Low Grit must not break a weekly run. The low tier only sets the
+ * floor when it is counted in the same period as the cadence. Mirrors the
+ * backend ``_additive_floor_goal``; change both together.
+ */
+const additiveFloorGoal = (habit: Habit, cadenceGoal: Goal): Goal =>
+  habit.goals.find((g) => g.tier === 'low' && g.frequency_unit === cadenceGoal.frequency_unit) ??
+  cadenceGoal;
+
+/**
+ * The habit's weekly / monthly streak cadence, or `null` for day cadences.
+ * The period target is the goal's own `target × frequency`: the clear-tier
+ * limit for a subtractive habit, the Low Grit floor for an additive one.
+ */
 export const periodStreakCadence = (habit: Habit, tz: string): PeriodStreakCadence | null => {
   const goal = streakCadenceGoal(habit);
   if (!goal) return null;
   const { kind } = periodOf(goal);
   if (kind === 'day') return null;
+  const subtractive = isSubtractiveHabit(habit);
+  const targetGoal = subtractive ? goal : additiveFloorGoal(habit, goal);
   return {
     kind,
-    periodTarget: goal.target * goal.frequency,
+    periodTarget: targetGoal.target * targetGoal.frequency,
     startDay: dayKeyInTZ(habit.start_date, tz),
-    subtractive: isSubtractiveHabit(habit),
+    subtractive,
   };
 };
 

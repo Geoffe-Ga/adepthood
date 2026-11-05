@@ -157,6 +157,46 @@ describe('period streak walk', () => {
   });
 });
 
+describe('period streak target', () => {
+  const lowGritCase = (): ParityCase =>
+    cases.find((c) => c.name.startsWith('weekly additive: a week that meets only Low Grit'))!;
+
+  it('keeps an additive run at the Low Grit floor, not the clear tier', () => {
+    const cadence = periodStreakCadence(habitFor(lowGritCase()), 'UTC');
+    expect(cadence?.periodTarget).toBe(1);
+  });
+
+  it("uses the low tier's own frequency for a 1x / 3x / 5x weekly ladder", () => {
+    const base = habitFor(lowGritCase());
+    const frequencies = [1, 3, 5];
+    const habit: Habit = {
+      ...base,
+      goals: base.goals.map((g, index) => ({ ...g, target: 1, frequency: frequencies[index]! })),
+    };
+    expect(periodStreakCadence(habit, 'UTC')?.periodTarget).toBe(1);
+  });
+
+  it('falls back to the clear tier when the low tier counts in another period', () => {
+    const base = habitFor(lowGritCase());
+    const habit: Habit = {
+      ...base,
+      goals: base.goals.map((g) =>
+        g.tier === 'low' ? { ...g, frequency_unit: 'per_day' as const } : g,
+      ),
+    };
+    const cadence = periodStreakCadence(habit, 'UTC');
+    expect(cadence?.kind).toBe('week');
+    expect(cadence?.periodTarget).toBe(3);
+  });
+
+  it('keeps the clear-tier limit for a subtractive habit', () => {
+    const subtractive = cases.find((c) => c.name.startsWith('weekly subtractive: abstention'))!;
+    expect(periodStreakCadence(habitFor(subtractive), 'UTC')?.periodTarget).toBe(
+      subtractive.targets.clear * subtractive.frequency,
+    );
+  });
+});
+
 describe('streak copy', () => {
   it('keeps the daily copy and pluralises weeks and months', () => {
     expect(formatStreakCount(1, 'day')).toBe('1 days');

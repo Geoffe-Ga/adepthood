@@ -119,8 +119,8 @@ def test_no_goals_have_no_period_cadence() -> None:
     assert period_cadence_for_goals([], date(2026, 1, 1)) is None
 
 
-def test_period_target_is_the_clear_tier_target_times_frequency() -> None:
-    """The clear tier's ``target * frequency`` is what a period must reach."""
+def test_additive_period_target_is_the_low_grit_tier_target_times_frequency() -> None:
+    """An additive period is kept by reaching the Low Grit floor, not the clear tier."""
     case = {
         **_case("weekly additive: two met"),
         "targets": {"low": 1, "clear": 2, "stretch": 3},
@@ -128,8 +128,39 @@ def test_period_target_is_the_clear_tier_target_times_frequency() -> None:
     }
     cadence = period_cadence_for_goals(_goals(case), date(2026, 1, 1))
     assert cadence == PeriodCadence(
-        unit="per_week", period_target=6, start_date=date(2026, 1, 1), subtractive=False
+        unit="per_week", period_target=3, start_date=date(2026, 1, 1), subtractive=False
     )
+
+
+def test_additive_period_target_uses_the_low_tiers_own_frequency() -> None:
+    """A ladder of 1x / 3x / 5x a week is kept by one session, not three."""
+    goals = _goals(_case("weekly additive: two met"))
+    for goal, frequency in zip(goals, (1, 3, 5), strict=True):
+        goal.target = 1
+        goal.frequency = frequency
+    cadence = period_cadence_for_goals(goals, date(2026, 1, 1))
+    assert cadence is not None
+    assert cadence.period_target == 1
+
+
+def test_additive_low_tier_on_another_cadence_falls_back_to_the_clear_tier() -> None:
+    """A low tier counted per day cannot set a weekly floor; the clear tier does."""
+    goals = _goals({**_case("weekly additive: two met"), "frequency": 3})
+    low = next(g for g in goals if g.tier == "low")
+    low.frequency_unit = "per_day"
+    clear = next(g for g in goals if g.tier == "clear")
+    cadence = period_cadence_for_goals(goals, date(2026, 1, 1))
+    assert cadence is not None
+    assert cadence.unit == "per_week"
+    assert cadence.period_target == clear.target * clear.frequency
+
+
+def test_subtractive_period_target_stays_the_clear_limit() -> None:
+    """A subtractive period keeps the clear-tier ceiling its daily streak uses."""
+    case = _case("weekly subtractive: abstention weeks count")
+    cadence = period_cadence_for_goals(_goals(case), date(2026, 1, 1))
+    assert cadence is not None
+    assert cadence.period_target == case["targets"]["clear"] * case["frequency"]
 
 
 def test_period_cadence_falls_back_to_the_first_goal_without_a_clear_tier() -> None:
