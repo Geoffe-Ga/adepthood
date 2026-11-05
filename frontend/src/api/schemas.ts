@@ -512,10 +512,32 @@ const stageExpressionSchema = z.object({
  * or misspelled phase raises ``ApiValidationError`` at the boundary rather than
  * rendering an unlabelled block downstream.
  */
+const wavelengthPhaseSchema = z.enum([
+  'Rising',
+  'Peaking',
+  'Withdrawal',
+  'Diminishing',
+  'Bottoming Out',
+  'Restoration',
+]);
+
 export const stageManifestationSchema = z.object({
-  phase: z.enum(['Rising', 'Peaking', 'Withdrawal', 'Diminishing', 'Bottoming Out', 'Restoration']),
+  phase: wavelengthPhaseSchema,
   integrated: stageExpressionSchema,
   shadow: stageExpressionSchema,
+});
+
+/** A stage's Mode statement (mirrors the backend ``StageMode``). */
+const stageModeSchema = z.object({
+  name: z.string(),
+  description: z.string(),
+  holds_all_modes: z.boolean(),
+});
+
+/** One phase of a Neither/Both stage's chord (mirrors the backend ``StagePhaseChord``). */
+const stagePhaseChordSchema = z.object({
+  phase: wavelengthPhaseSchema,
+  notes: z.array(z.object({ stage_number: z.number().int(), name: z.string() })),
 });
 
 /** A course stage row (mirrors the backend ``Stage`` response). */
@@ -537,6 +559,10 @@ export const stageSchema = z.object({
   // Per-phase integrated/shadow expressions. Optional so responses predating
   // the field still validate; the live backend always sends it.
   manifestations: z.array(stageManifestationSchema).optional(),
+  // The Mode statement and, for Clear Light, its chord per phase. Optional for
+  // the same reason as manifestations.
+  mode: stageModeSchema.nullable().optional(),
+  chord: z.array(stagePhaseChordSchema).optional(),
 });
 
 /** A user's stage-progress record (mirrors the backend ``StageProgressRecord``). */

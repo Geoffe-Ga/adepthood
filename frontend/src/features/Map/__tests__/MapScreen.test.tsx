@@ -802,6 +802,38 @@ describe('MapScreen stage-expressions modal integration', () => {
       0,
     );
   });
+
+  it('states the Neither/Both Mode and its chord, not a scale, for a stage that holds all Modes', () => {
+    const neitherBoth = {
+      name: 'Be (Neither/Both)',
+      description: 'Holds the healthy expression of all the other Modes.',
+      holds_all_modes: true,
+    };
+    const chord = [{ phase: 'Rising', notes: [{ stage_number: 2, name: 'Rising medicine' }] }];
+    mockMapState.stages = Array.from({ length: 10 }, (_, i) => {
+      const stageNumber = 10 - i;
+      return stageNumber === 1
+        ? mockMakeCanonicalStage(1, { manifestations: [], mode: neitherBoth, chord })
+        : mockMakeCanonicalStage(stageNumber);
+    });
+    const tree = create(<MapScreen />);
+    act(() => {
+      tree.root.findByProps({ testID: 'stage-hotspot-1-0' }).props.onPress();
+    });
+    expect(tree.root.findByProps({ testID: 'stage-mode' })).toBeTruthy();
+    expect(tree.root.findByProps({ testID: 'stage-chord-rising-note-2' })).toBeTruthy();
+    expect(tree.root.findAll((n: TestNode) => n.props.testID === 'stage-expressions')).toHaveLength(
+      0,
+    );
+  });
+
+  it('omits the Mode section for a stage that states no Mode', () => {
+    const tree = create(<MapScreen />);
+    act(() => {
+      tree.root.findByProps({ testID: 'stage-hotspot-1-0' }).props.onPress();
+    });
+    expect(tree.root.findAll((n: TestNode) => n.props.testID === 'stage-mode')).toHaveLength(0);
+  });
 });
 
 describe('MapScreen stage words follow the served stage (#2666)', () => {

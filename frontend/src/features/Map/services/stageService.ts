@@ -64,6 +64,8 @@ export const toStageData = (apiStage: Stage): StageData => {
     freeWillDescription: apiStage.free_will_description,
     overviewUrl: apiStage.overview_url,
     manifestations: apiStage.manifestations ?? [],
+    mode: apiStage.mode ?? null,
+    chord: apiStage.chord ?? [],
   };
 };
 

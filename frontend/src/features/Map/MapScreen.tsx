@@ -75,6 +75,7 @@ import {
 import { STAGE_COUNT, type StageData } from './stageData';
 import { StageExpressionsSection } from './StageExpressionsSection';
 import { stageCenterCellLabel, stageNodeLabel, THIN_FULLNESS } from './stageLegend';
+import { StageModeSection } from './StageModeSection';
 import { deriveStageVocabulary, mapWatermarkLines, rowCategory } from './stageVocabulary';
 import type { StageVocabulary } from './stageVocabulary';
 import { nominalAnchorY } from './waveGeometry';
@@ -917,6 +918,7 @@ const ModalBody = ({ stage, onClose, onNavigate }: ModalBodyProps): React.JSX.El
     <Text style={styles.modalSubtitle}>{stage.subtitle}</Text>
     <StageProgressSection stage={stage} />
     <StageMetadataSection stage={stage} />
+    <StageModeSection mode={stage.mode} chord={stage.chord} />
     <StageExpressionsSection manifestations={stage.manifestations} />
     {stage.isUnlocked && (
       <StageHistorySection stageNumber={stage.stageNumber} isUnlocked={stage.isUnlocked} />

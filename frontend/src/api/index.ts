@@ -3156,6 +3156,29 @@ export interface StageManifestation {
   shadow: StageExpression;
 }
 
+/**
+ * A stage's Mode of the Wavelength, where the curriculum states one. Today only
+ * Clear Light does: the Neither/Both Mode (``holds_all_modes``), which contains
+ * the healthy expression of every other Mode rather than a scale of its own.
+ */
+export interface StageMode {
+  name: string;
+  description: string;
+  holds_all_modes: boolean;
+}
+
+/** One stage's healthy (integrated) expression sounding inside a phase chord. */
+export interface StageChordNote {
+  stage_number: number;
+  name: string;
+}
+
+/** Every scale stage's healthy expression of one Wavelength phase, in stage order. */
+export interface StagePhaseChord {
+  phase: string;
+  notes: StageChordNote[];
+}
+
 export interface Stage {
   id: number;
   title: string;
@@ -3174,6 +3197,11 @@ export interface Stage {
   // Per-phase integrated/shadow expressions. Optional so responses predating
   // the field still type-check; the live backend always sends it.
   manifestations?: StageManifestation[];
+  // The stage's Mode statement (null for a stage that states none) and, for a
+  // stage whose Mode holds all the Modes, its chord per phase. Optional so
+  // responses predating the fields still type-check.
+  mode?: StageMode | null;
+  chord?: StagePhaseChord[];
 }
 
 export interface PracticeHistoryItem {

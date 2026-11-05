@@ -70,6 +70,8 @@ export function mockMakeStage(stageNumber: number, overrides: Partial<StageData>
     relationshipToFreeWill: 'Free Will',
     freeWillDescription: `Free will at stage ${stageNumber}.`,
     overviewUrl: '',
+    mode: null,
+    chord: [],
     manifestations: defaultManifestations(),
     ...overrides,
   };

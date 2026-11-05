@@ -284,6 +284,8 @@ const makeStage = (overrides: Partial<StageData> = {}): StageData => ({
   relationshipToFreeWill: 'Victim',
   freeWillDescription: 'Behaviour is determined by the relationships one is embedded in.',
   overviewUrl: '',
+  mode: null,
+  chord: [],
   manifestations: [],
   ...overrides,
 });
