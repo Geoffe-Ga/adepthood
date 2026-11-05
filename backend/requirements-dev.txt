@@ -22,6 +22,6 @@ xenon==0.9.3
 pydantic==2.13.5
 sqlmodel==0.0.42
 types-cachetools==7.0.0.20260713
-types-requests==2.33.0.20260712
+types-requests==2.33.0.20260906
 types-ujson==5.10.0.20250822
 types-orjson==3.6.2
