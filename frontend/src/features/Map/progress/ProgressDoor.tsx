@@ -3,7 +3,7 @@ import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { TrendingUp } from 'lucide-react-native';
 import React from 'react';
 
-import { DrawerItem } from '@/components/drawer';
+import { DrawerDivider, DrawerItem } from '@/components/drawer';
 import { accent } from '@/design/tokens';
 import type { RootStackParamList } from '@/navigation/RootStack';
 import {
@@ -16,9 +16,11 @@ import {
 const DOOR_ICON_SIZE = 20;
 
 /**
- * The Map's "Your progress" door (#3528). Hidden when neither the habits nor
- * the practice ring is on: with both off there is no rhythm, arc birth or
- * energy to show, and the door would open onto nothing chosen.
+ * The Map's "Stats and progress" door (#3528), followed by its own divider so
+ * the door has breathing room from the stage legend beneath it. Hidden, divider
+ * and all, when neither the habits nor the practice ring is on: with both off
+ * there is no rhythm, arc birth or energy to show, and the door would open onto
+ * nothing chosen.
  */
 export function ProgressDoor({ onOpen }: { onOpen?: () => void }): React.JSX.Element | null {
   const habits = useDepthPreferencesStore(selectEnableHabits);
@@ -26,14 +28,17 @@ export function ProgressDoor({ onOpen }: { onOpen?: () => void }): React.JSX.Ele
   const navigation = useNavigation<NativeStackNavigationProp<RootStackParamList>>();
   if (!habits && !practices) return null;
   return (
-    <DrawerItem
-      testID="map-progress-door"
-      label="Your progress"
-      icon={<TrendingUp size={DOOR_ICON_SIZE} color={accent.primary} />}
-      onPress={() => {
-        onOpen?.();
-        navigation.navigate('Progress');
-      }}
-    />
+    <>
+      <DrawerItem
+        testID="map-progress-door"
+        label="Stats and progress"
+        icon={<TrendingUp size={DOOR_ICON_SIZE} color={accent.primary} />}
+        onPress={() => {
+          onOpen?.();
+          navigation.navigate('Progress');
+        }}
+      />
+      <DrawerDivider testID="map-progress-door-divider" />
+    </>
   );
 }

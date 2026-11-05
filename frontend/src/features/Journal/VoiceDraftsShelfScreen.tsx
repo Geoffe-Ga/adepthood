@@ -43,7 +43,7 @@ import type { RootStackParamList } from '@/navigation/RootStack';
 /** How much of a letter a shelf row previews before the reader opens it. */
 const EXCERPT_LENGTH = 160;
 
-const SCREEN_TITLE = 'Voice drafts';
+const SCREEN_TITLE = 'Reflections';
 const SCREEN_EYEBROW = 'In your own words';
 const SCREEN_LEAD =
   'Margin notes you asked to hear out at length. They keep, and they wait for nothing.';

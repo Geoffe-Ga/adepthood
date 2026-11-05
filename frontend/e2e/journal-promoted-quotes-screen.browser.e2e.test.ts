@@ -43,7 +43,7 @@ test('a writer finds a promoted quote from the drawer, opens it at the passage, 
       new URL(response.url()).pathname === '/promotions' &&
       new URL(response.url()).searchParams.get('status') === 'pending',
   );
-  await page.getByRole('dialog').getByRole('button', { name: 'Promoted quotes' }).click();
+  await page.getByRole('dialog').getByRole('button', { name: 'Write a review' }).click();
   expect((await listed).ok()).toBe(true);
   await expect(page.getByTestId('promoted-quotes-screen')).toBeVisible();
   await expect(page.getByText('Not yet in a review (1)')).toBeVisible();
@@ -77,7 +77,7 @@ test('a writer finds a promoted quote from the drawer, opens it at the passage, 
   // A cold reload proves the removal was durable, not just optimistic.
   await page.reload();
   await page.getByRole('button', { name: 'Open Journal menu' }).click();
-  await page.getByRole('dialog').getByRole('button', { name: 'Promoted quotes' }).click();
+  await page.getByRole('dialog').getByRole('button', { name: 'Write a review' }).click();
   await expect(
     page.getByText(
       'Nothing promoted yet. While reading a page, a chapter or a letter, tap Promote a quote to carry a passage forward.',

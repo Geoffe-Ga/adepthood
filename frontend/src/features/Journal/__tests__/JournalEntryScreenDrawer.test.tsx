@@ -224,7 +224,7 @@ describe('Journal header drawer from JournalEntryScreen', () => {
     expect(queryByTestId('screen-drawer')).toBeNull();
   });
 
-  it('opens Promoted quotes in place from the entry drawer and closes the drawer', async () => {
+  it('opens Write a review in place from the entry drawer and closes the drawer', async () => {
     const { getByTestId, getByLabelText, navigation, queryByTestId } = renderScreen(7);
     await waitFor(() => expect(getByTestId('journal-title-input')).toBeTruthy());
 
@@ -242,7 +242,7 @@ describe('Journal header drawer from JournalEntryScreen', () => {
 
   // #2885: from a review being written, the door carries a hand-off token so
   // the screen can fold a selection back into THIS review -- and only then.
-  it('opens Promoted quotes with a hand-off token from a review being written', async () => {
+  it('opens Write a review with a hand-off token from a review being written', async () => {
     mockGet.mockResolvedValue(
       entry({
         tag: 'hierarchical_reflection' as JournalMessage['tag'],
@@ -264,7 +264,7 @@ describe('Journal header drawer from JournalEntryScreen', () => {
     });
   });
 
-  it('opens Promoted quotes with no token from a finished review until the writer edits it', async () => {
+  it('opens Write a review with no token from a finished review until the writer edits it', async () => {
     mockGet.mockResolvedValue(
       entry({
         tag: 'hierarchical_reflection' as JournalMessage['tag'],
@@ -286,7 +286,7 @@ describe('Journal header drawer from JournalEntryScreen', () => {
     expect(navigation.navigate).toHaveBeenCalledWith('PromotedQuotes');
   });
 
-  it("routes a consented account from Everything you've written to the import surface", async () => {
+  it('routes a consented account from Corpus upload to the import surface', async () => {
     const { getByTestId, getByLabelText, navigation, queryByTestId } = renderScreen(7);
     await waitFor(() => expect(getByTestId('journal-title-input')).toBeTruthy());
 

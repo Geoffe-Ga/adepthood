@@ -265,7 +265,7 @@ export const ROUTES: readonly Route[] = [
   },
   {
     name: 'VoiceDrafts',
-    label: 'Voice drafts shelf',
+    label: 'Reflections shelf',
     anchor: 'voice-drafts-shelf',
     open: async (page) => {
       await goTo(page, '/journal');

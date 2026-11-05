@@ -24,7 +24,7 @@ describe('ProgressDoor', () => {
   it('opens the Progress screen and closes the drawer', () => {
     const onOpen = jest.fn();
     const tree = render(<ProgressDoor onOpen={onOpen} />);
-    fireEvent.press(tree.getByRole('button', { name: 'Your progress' }));
+    fireEvent.press(tree.getByRole('button', { name: 'Stats and progress' }));
     expect(onOpen).toHaveBeenCalledTimes(1);
     expect(mockNavigate).toHaveBeenCalledWith('Progress');
   });
@@ -37,8 +37,20 @@ describe('ProgressDoor', () => {
     expect(render(<ProgressDoor />).getByTestId('map-progress-door')).toBeTruthy();
   });
 
-  it('is hidden when both the habits and practice rings are off', () => {
+  it('draws a divider after the door, setting it apart from the stage legend', () => {
+    const tree = render(<ProgressDoor />);
+    tree.getByTestId('map-progress-door-divider');
+    // The divider follows the door, not precedes it.
+    const json = JSON.stringify(tree.toJSON());
+    expect(json.indexOf('map-progress-door-divider')).toBeGreaterThan(
+      json.indexOf('"map-progress-door"'),
+    );
+  });
+
+  it('is hidden, divider and all, when both the habits and practice rings are off', () => {
     rings(false, false);
-    expect(render(<ProgressDoor />).queryByTestId('map-progress-door')).toBeNull();
+    const tree = render(<ProgressDoor />);
+    expect(tree.queryByTestId('map-progress-door')).toBeNull();
+    expect(tree.queryByTestId('map-progress-door-divider')).toBeNull();
   });
 });

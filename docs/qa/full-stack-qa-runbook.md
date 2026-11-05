@@ -808,7 +808,7 @@ Run one supported document at a time, then a mixed multi-file batch if the UI pe
 
 Stats live in four places, all read from the server's one counting rule: the Habit Story
 sheet (the tile's Story glyph), the Habit Ledger (Story → Everything), the Practice Story
-(Practice → practice details), and the Map's "Your progress" door.
+(Practice → practice details), and the Map's "Stats and progress" door.
 
 - [ ] Check in each goal tier/unit; count, star fill, streak, date, and the Habit Story
       sheet's runs, rates, and calendar change once.
@@ -819,7 +819,7 @@ sheet (the tile's Story glyph), the Habit Ledger (Story → Everything), the Pra
 - [ ] Undo completions and backdated (past-day) logs affect only intended days and time zone.
 - [ ] Day rollover while the screen stays mounted updates eligibility and today state without
       refresh.
-- [ ] The Habit Story, the Practice Story, and the Map's "Your progress" door handle no data,
+- [ ] The Habit Story, the Practice Story, and the Map's "Stats and progress" door handle no data,
       one event, many events, DST, timezone change, future data, and legacy rows, and report
       the same streak the tile shows.
 

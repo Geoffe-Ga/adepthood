@@ -288,7 +288,7 @@ describe('Journal header drawer from JournalShelfScreen', () => {
     expect(queryByTestId('screen-drawer')).toBeNull();
   });
 
-  it('opens Promoted quotes from the drawer and closes the drawer behind it', async () => {
+  it('opens Write a review from the drawer and closes the drawer behind it', async () => {
     const { getByTestId, getByLabelText, queryByTestId } = render(<ShelfScreenWithHeader />);
     await waitFor(() => expect(getByTestId('journal-shelf-card-1')).toBeTruthy());
 
@@ -318,7 +318,7 @@ describe('Journal header drawer from JournalShelfScreen', () => {
     expect(queryByTestId('screen-drawer')).toBeNull();
   });
 
-  it("keeps Everything you've written in the drawer and routes an undecided account to consent", async () => {
+  it('keeps Corpus upload in the drawer and routes an undecided account to consent', async () => {
     const { getByTestId, getByLabelText, queryByTestId } = render(<ShelfScreenWithHeader />);
     await waitFor(() => expect(getByTestId('journal-shelf-card-1')).toBeTruthy());
     const callsBeforeDrawerPress = mockVoiceReadiness.mock.calls.length;

@@ -333,7 +333,7 @@ describe('JournalDrawer (presentational)', () => {
     expect(getByTestId('journal-photograph-entry')).toBeTruthy();
   });
 
-  it("gives Photograph and Everything you've written muted leading icons", () => {
+  it('gives Photograph and Corpus upload muted leading icons', () => {
     const { getByTestId } = renderDrawer({ items: [], onPhotograph: jest.fn() });
     const photographIcon = getByTestId('journal-photograph-entry').findByType(Camera);
     const corpusIcon = getByTestId('journal-drawer-corpus').findByType(Library);
@@ -342,43 +342,43 @@ describe('JournalDrawer (presentational)', () => {
     expect(corpusIcon.props.color).toBe(ink.muted);
   });
 
-  it("always renders Everything you've written and fires its action", () => {
+  it('always renders Corpus upload and fires its action', () => {
     const onOpenCorpus = jest.fn();
     const { getByRole, getByTestId } = renderDrawer({ items: [], onOpenCorpus });
 
-    expect(getByRole('button', { name: "Everything you've written" })).toBeTruthy();
+    expect(getByRole('button', { name: 'Corpus upload' })).toBeTruthy();
     fireEvent.press(getByTestId('journal-drawer-corpus'));
     expect(onOpenCorpus).toHaveBeenCalledTimes(1);
   });
 
-  it('offers Voice drafts as a door, never as a count', () => {
+  it('offers Reflections as a door, never as a count', () => {
     // The shelf is retrieval, not an invitation (NORTH-STAR §3/§6): the row
     // names the place and says nothing about how much is in it, because the
     // drawer is where a badge would go if one were ever going to appear.
     const onOpenVoiceDrafts = jest.fn();
     const { getByRole, getByTestId } = renderDrawer({ items: [], onOpenVoiceDrafts });
 
-    const row = getByRole('button', { name: 'Voice drafts' });
+    const row = getByRole('button', { name: 'Reflections' });
     expect(row).toBeTruthy();
     fireEvent.press(getByTestId('journal-drawer-voice-drafts'));
     expect(onOpenVoiceDrafts).toHaveBeenCalledTimes(1);
   });
 
-  it('gives the Voice drafts row the same muted leading icon as its neighbours', () => {
+  it('gives the Reflections row the same muted leading icon as its neighbours', () => {
     const { getByTestId } = renderDrawer({ items: [] });
     const icon = getByTestId('journal-drawer-voice-drafts').findByType(ScrollText);
     expect(icon.props.color).toBe(ink.muted);
   });
 
-  it('offers Promoted quotes as a door with no count, after Voice drafts', () => {
-    // The same rule as Voice drafts: a number beside a row is neither resonant
+  it('offers Write a review as a door with no count, after Reflections', () => {
+    // The same rule as Reflections: a number beside a row is neither resonant
     // nor declinable (NORTH-STAR §3/§6), so the counts live on the screen.
     const onOpenPromotedQuotes = jest.fn();
     const { getByRole, getByTestId, toJSON } = renderDrawer({ items: [], onOpenPromotedQuotes });
 
-    const row = getByRole('button', { name: 'Promoted quotes' });
+    const row = getByRole('button', { name: 'Write a review' });
     expect(row).toBeTruthy();
-    expect(within(row).getByText(/^Promoted quotes$/)).toBeTruthy();
+    expect(within(row).getByText(/^Write a review$/)).toBeTruthy();
     expect(within(row).queryByText(/\d/)).toBeNull();
     const order = JSON.stringify(toJSON());
     expect(order.indexOf('journal-drawer-voice-drafts')).toBeLessThan(

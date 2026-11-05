@@ -15,7 +15,7 @@ import { backendUrl, bearer, signUp, tokenFor } from './journalHabitsBrowserSupp
 
 const PAGE = 'I walked beside the river and noticed the light on the water.';
 const PASSAGE = 'noticed the light on the water';
-const NOTICE = 'Promoted — find it any time under Promoted quotes';
+const NOTICE = 'Promoted — find it any time under Write a review';
 const DISMISSED_KEY_BASE = '@adepthood/promote_explainer_dismissed';
 
 /** Select `passage` in the mirrored field the way a keyboard user does. */
@@ -72,7 +72,7 @@ test('the first promote explains where a quote goes, and the quote is there', as
     'a review that covers the week you wrote it',
   );
   await expect(page.getByTestId('promote-explainer-body')).toContainText(
-    'under Promoted quotes in the Journal menu',
+    'under Write a review in the Journal menu',
   );
   const tick = card.getByRole('checkbox', { name: /Don’t show this note again/ });
   await expect(tick).not.toBeChecked();
@@ -127,7 +127,7 @@ test('the first promote explains where a quote goes, and the quote is there', as
 
   // 6. The place the note named is real: the quote is waiting there.
   await page.getByRole('button', { name: 'Open Journal menu' }).click();
-  await page.getByRole('dialog').getByRole('button', { name: 'Promoted quotes' }).click();
+  await page.getByRole('dialog').getByRole('button', { name: 'Write a review' }).click();
   await expect(page.getByText('Not yet in a review (1)')).toBeVisible();
   await expect(page.getByTestId(`promoted-quote-${quoteId}`)).toContainText(PASSAGE);
 

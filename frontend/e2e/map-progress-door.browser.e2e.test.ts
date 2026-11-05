@@ -85,7 +85,7 @@ async function openProgressFromMap(page: Page): Promise<ApiProgressOverview> {
   );
   await page
     .getByRole('dialog')
-    .getByRole('button', { name: 'Your progress', exact: true })
+    .getByRole('button', { name: 'Stats and progress', exact: true })
     .click();
   const response = await read;
   expect(response.status()).toBe(200);

@@ -215,7 +215,7 @@ const JournalScreens = (): React.JSX.Element => (
     <Stack.Screen
       name="VoiceDrafts"
       component={VoiceDraftsShelfScreen}
-      options={{ title: 'Voice drafts' }}
+      options={{ title: 'Reflections' }}
     />
     <Stack.Screen
       name="PromotedQuotes"
@@ -278,6 +278,27 @@ const SettingsScreens = (): React.JSX.Element => (
   </>
 );
 
+/** Practice screens pushed over the tabs: a practice's details, the wizard, the catalog. */
+const PracticeScreens = (): React.JSX.Element => (
+  <>
+    <Stack.Screen
+      name="PracticeDetail"
+      component={PracticeDetailScreen}
+      options={{ title: 'Practice' }}
+    />
+    <Stack.Screen
+      name="CreatePractice"
+      component={CreatePracticeWizard}
+      options={{ title: 'New practice' }}
+    />
+    <Stack.Screen
+      name="Catalog"
+      component={PracticeCatalogScreen}
+      options={{ title: 'Practices' }}
+    />
+  </>
+);
+
 const RootStack = (): React.JSX.Element => (
   <Stack.Navigator screenOptions={NAV_SCREEN_OPTIONS}>
     <Stack.Screen name="Tabs" component={BottomTabs} options={{ headerShown: false }} />
@@ -297,22 +318,12 @@ const RootStack = (): React.JSX.Element => (
       component={SharePreviewScreen}
       options={{ title: 'Shared practice' }}
     />
-    <Stack.Screen name="Progress" component={ProgressScreen} options={{ title: 'Your progress' }} />
     <Stack.Screen
-      name="PracticeDetail"
-      component={PracticeDetailScreen}
-      options={{ title: 'Practice' }}
+      name="Progress"
+      component={ProgressScreen}
+      options={{ title: 'Stats and progress' }}
     />
-    <Stack.Screen
-      name="CreatePractice"
-      component={CreatePracticeWizard}
-      options={{ title: 'New practice' }}
-    />
-    <Stack.Screen
-      name="Catalog"
-      component={PracticeCatalogScreen}
-      options={{ title: 'Practices' }}
-    />
+    {PracticeScreens()}
     {JournalScreens()}
     <Stack.Screen
       name="Feedback"
