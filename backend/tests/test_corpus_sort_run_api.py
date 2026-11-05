@@ -23,7 +23,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-from collections.abc import AsyncIterator, Iterator
+from collections.abc import AsyncIterator, Callable, Iterator
 from datetime import UTC, datetime, timedelta
 from http import HTTPStatus
 from types import SimpleNamespace
@@ -36,6 +36,13 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from sqlmodel import col, func, select
 
 from dependencies.creek_vault import get_creek_vault_client
+from domain.creek_vault import (
+    CreekVaultContractError,
+    CreekVaultUnavailableError,
+    VaultErrorCode,
+    VaultIngestRequest,
+    VaultIngestResult,
+)
 from domain.frequencies import Frequency
 from errors import service_unavailable
 from main import app
@@ -435,6 +442,112 @@ async def test_a_vault_that_sheds_for_a_moment_is_waited_out(
     assert run["entries_sorted"] == _SMALL_BACKLOG
     assert settled["entries_pending"] == 0
     assert len(shedding.ingest_calls) == _SMALL_BACKLOG
+
+
+class _ShedsSends(SequencedVaultClient):
+    """A vault that answers every handshake and sheds some ingests, as Creek's edge does.
+
+    ``sheds`` is asked about each ingest by its 1-based call number; a ``True``
+    refuses that call with ``503 temporarily_unavailable``, the answer Creek
+    publishes as clearing with backoff.
+    """
+
+    def __init__(self, sheds: Callable[[int], bool]) -> None:
+        """Keep the rule that decides which ingests are shed."""
+        super().__init__()
+        self._sheds = sheds
+
+    async def ingest(self, request: VaultIngestRequest, /) -> VaultIngestResult:
+        """Shed this call if the rule says so, else store it as the parent does."""
+        if self._sheds(len(self.ingest_calls) + 1):
+            self.ingest_calls.append(request)
+            raise CreekVaultUnavailableError(
+                "creek vault call failed: creek.journal",
+                code=VaultErrorCode.TEMPORARILY_UNAVAILABLE,
+            )
+        return await super().ingest(request)
+
+
+async def _vault_sort(
+    async_client: AsyncClient,
+    db_session: AsyncSession,
+    vault: SequencedVaultClient,
+    username: str,
+) -> dict[str, object]:
+    """Press Sort for a vault-bound account with a small backlog; the settled view."""
+    app.dependency_overrides[get_creek_vault_client] = lambda: vault
+    headers, user_id = await _signup(async_client, username)
+    await store_vault_config(
+        db_session, user_id, vault_url=_VAULT_URL, api_key=_VAULT_KEY, provisioned=True
+    )
+    await _consent(db_session, user_id)
+    await _entries(db_session, user_id, _SMALL_BACKLOG)
+    await _press(async_client, headers)
+    return await _settled(async_client, headers)
+
+
+@pytest.mark.asyncio
+async def test_a_send_the_vault_sheds_is_sent_again_until_it_lands(
+    async_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """The reported failure: every run left the writing whose send was shed unsorted.
+
+    Creek's edge refused some ingests with ``503 temporarily_unavailable`` even
+    when they came one at a time, interleaved with ones it took. The run moved
+    past each refused send, so it ended with those entries still pending, and
+    the next press did the same to what was left. Here every entry's first send
+    is shed and its second lands.
+    """
+    shedding = _ShedsSends(lambda call: call % 2 == 1)
+
+    settled = await _vault_sort(async_client, db_session, shedding, "sort-run-send-shed")
+
+    run = _run_of(settled)
+    assert run["state"] == SortRunState.COMPLETED.value
+    assert run["entries_sorted"] == _SMALL_BACKLOG
+    assert settled["entries_pending"] == 0
+    assert len(shedding.ingest_calls) == 2 * _SMALL_BACKLOG
+
+
+@pytest.mark.asyncio
+async def test_a_vault_that_sheds_every_send_stops_the_run(
+    async_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """A shed that outlasts the whole ladder is a vault that cannot take writing now.
+
+    Moving on to the next entry would spend the same half minute on each of
+    them in turn, so the run stops and says the vault could not be reached.
+    """
+    shedding = _ShedsSends(lambda _call: True)
+
+    settled = await _vault_sort(async_client, db_session, shedding, "sort-run-send-shed-on")
+
+    run = _run_of(settled)
+    assert run["state"] == SortRunState.STOPPED.value
+    assert run["stop_reason"] == SortStopReason.VAULT_UNAVAILABLE.value
+    assert run["entries_sorted"] == 0
+    assert settled["entries_pending"] == _SMALL_BACKLOG
+    assert len(shedding.ingest_calls) == 1 + len(corpus_sort_run.VAULT_RETRY_DELAYS_SECONDS)
+
+
+@pytest.mark.asyncio
+async def test_a_send_the_vault_refuses_is_not_sent_again(
+    async_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """Only a passing refusal is retried: one about the request answers the same every time."""
+    refusing = SequencedVaultClient(
+        ingest_error=CreekVaultContractError(
+            "creek vault rejected the request", code=VaultErrorCode.INVALID_REQUEST
+        )
+    )
+
+    settled = await _vault_sort(async_client, db_session, refusing, "sort-run-send-refused")
+
+    run = _run_of(settled)
+    assert run["state"] == SortRunState.COMPLETED.value
+    assert run["entries_sorted"] == 0
+    assert settled["entries_pending"] == _SMALL_BACKLOG
+    assert len(refusing.ingest_calls) == _SMALL_BACKLOG
 
 
 @pytest.mark.asyncio

@@ -74,6 +74,9 @@ _SENTINEL_BODY = "SENTINEL_JOURNAL_BODY_DO_NOT_LOG"
 _SENTINEL_ERROR_TEXT = "SENTINEL_VAULT_ERROR_TEXT_DO_NOT_LOG"
 
 _DEGRADED_OUTCOME = VaultWriteOutcome(status=VaultWriteStatus.DEGRADED, vault_ref=None, tags=())
+_RETRYABLE_DEGRADED_OUTCOME = VaultWriteOutcome(
+    status=VaultWriteStatus.DEGRADED, vault_ref=None, tags=(), retryable=True
+)
 
 
 def _empty_reflection() -> VaultReflection:
@@ -307,7 +310,9 @@ async def test_ingest_raising_creek_vault_error_returns_degraded_without_raising
     outcome = await store_and_classify(
         client, body=_BODY, classification="personal", created_at=_CREATED_AT, entry_id=101
     )
-    assert outcome == VaultWriteOutcome(status=VaultWriteStatus.DEGRADED, vault_ref=None, tags=())
+    assert outcome == VaultWriteOutcome(
+        status=VaultWriteStatus.DEGRADED, vault_ref=None, tags=(), retryable=True
+    )
 
 
 @pytest.mark.asyncio
@@ -434,9 +439,66 @@ async def test_contract_failure_and_unavailability_log_distinct_reasons(
     )
     unavailable_reasons = _logged_fields(caplog, "reason")
 
-    assert contract_outcome == unavailable_outcome == _DEGRADED_OUTCOME
+    assert contract_outcome == _DEGRADED_OUTCOME
+    assert unavailable_outcome == _RETRYABLE_DEGRADED_OUTCOME
     assert contract_reasons == [VaultDegradeReason.CONTRACT.value]
     assert unavailable_reasons == [VaultDegradeReason.UNAVAILABLE.value]
+
+
+@pytest.mark.parametrize(
+    ("ingest", "retryable"),
+    [
+        pytest.param(
+            CreekVaultUnavailableError(
+                "creek vault call failed: creek.journal",
+                code=VaultErrorCode.TEMPORARILY_UNAVAILABLE,
+            ),
+            True,
+            id="shed",
+        ),
+        pytest.param(
+            CreekVaultUnavailableError("creek vault call failed: creek.journal"),
+            True,
+            id="no_answer",
+        ),
+        pytest.param(
+            CreekVaultUnavailableError(
+                "creek vault call failed: creek.journal", code=VaultErrorCode.UNAVAILABLE
+            ),
+            False,
+            id="needs_an_operator",
+        ),
+        pytest.param(
+            CreekVaultContractError(
+                "creek vault rejected the request", code=VaultErrorCode.INVALID_REQUEST
+            ),
+            False,
+            id="contract",
+        ),
+        pytest.param(CreekVaultAuthError("creek vault rejected the credential"), False, id="auth"),
+        pytest.param(
+            CreekCapabilityUnsupportedError("creek vault capability unsupported: creek.journal"),
+            False,
+            id="unsupported_capability",
+        ),
+        pytest.param(VaultIngestResult(stored=False, vault_ref=None), False, id="not_stored"),
+    ],
+)
+@pytest.mark.asyncio
+async def test_only_a_passing_refusal_marks_a_degraded_write_retryable(
+    caplog: pytest.LogCaptureFixture, ingest: VaultIngestResult | Exception, *, retryable: bool
+) -> None:
+    """A shed or unanswered ingest is worth sending again; a refusal of the request is not.
+
+    Creek publishes ``temporarily_unavailable`` as clearing with backoff, and a
+    managed vault sheds that way under load, so a caller sending many entries
+    in a row must be able to tell it from a refusal that will answer the same
+    way every time. ``unavailable`` is the vault saying a human must act first,
+    so backing off would only repeat it.
+    """
+    outcome = await _write_with(caplog, ingest)
+    assert outcome.status is VaultWriteStatus.DEGRADED
+    assert outcome.retryable is retryable
 
 
 @pytest.mark.asyncio
@@ -681,6 +743,46 @@ async def test_a_suspended_real_adapter_ingest_reports_suspended(
 
     assert outcome.status is VaultWriteStatus.SUSPENDED
     assert sent == ["GET"]
+
+
+@pytest.mark.parametrize(
+    ("code", "retryable"),
+    [
+        pytest.param(VaultErrorCode.TEMPORARILY_UNAVAILABLE, True, id="shed"),
+        pytest.param(VaultErrorCode.UNAVAILABLE, False, id="needs_an_operator"),
+    ],
+)
+@pytest.mark.asyncio
+async def test_a_real_adapter_ingest_refused_with_503_says_whether_to_send_again(
+    code: VaultErrorCode,
+    *,
+    retryable: bool,
+    vault_http_clients: _VaultClientFactory,
+) -> None:
+    """Off the wire: Creek's ``503 temporarily_unavailable`` on the PUT is worth sending again.
+
+    That is the answer a managed vault's edge gave the sends a sort left
+    behind, so the flag is pinned through the real adapter's own error
+    classification rather than a fake that raises the type directly.
+    """
+
+    def _handler(request: httpx.Request) -> httpx.Response:
+        if request.method == "GET":
+            payload = _vault_capability_payload([CreekCapability.JOURNAL.value])
+            return httpx.Response(HTTPStatus.OK, json=payload)
+        refusal = {"code": code.value, "detail": "the vault refused this request"}
+        return httpx.Response(HTTPStatus.SERVICE_UNAVAILABLE, json=refusal)
+
+    client = HttpCreekVaultClient(
+        _VAULT_URL, _VAULT_API_KEY, http_client=vault_http_clients(_handler)
+    )
+
+    outcome = await store_and_classify(
+        client, body=_BODY, classification="personal", created_at=_CREATED_AT, entry_id=_ENTRY_ID
+    )
+
+    assert outcome.status is VaultWriteStatus.DEGRADED
+    assert outcome.retryable is retryable
 
 
 def test_vault_write_status_wire_values_are_stable() -> None:

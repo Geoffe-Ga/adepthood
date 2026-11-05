@@ -32,7 +32,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import col, select
 
 from dependencies.creek_vault import get_creek_vault_client
-from domain.creek_vault import CreekVaultUnavailableError, HandshakeResult
+from domain.creek_vault import CreekVaultContractError, HandshakeResult, VaultErrorCode
 from main import app
 from models.corpus_fragment import CorpusSource
 from models.journal_entry import JournalClassification, JournalEntry
@@ -285,8 +285,17 @@ async def test_a_vault_that_cannot_take_writing_stops_the_pass(
 async def test_one_entry_the_vault_dropped_stays_pending_and_the_rest_go(
     async_client: AsyncClient, db_session: AsyncSession
 ) -> None:
-    """A dropped write is about that entry: it waits for the next pass, the others are sent."""
-    flaky = SequencedVaultClient(ingest_error=CreekVaultUnavailableError("blip"))
+    """A dropped write is about that entry: it waits for the next pass, the others are sent.
+
+    The drop is a refusal of the request itself, which answers the same however
+    often it is sent. A shed send is retried instead
+    (``test_corpus_sort_run_api.test_a_send_the_vault_sheds_is_sent_again_until_it_lands``).
+    """
+    flaky = SequencedVaultClient(
+        ingest_error=CreekVaultContractError(
+            "creek vault rejected the request", code=VaultErrorCode.INVALID_REQUEST
+        )
+    )
     app.dependency_overrides[get_creek_vault_client] = lambda: flaky
     try:
         headers, user_id = await _signup(async_client, "vault-sort-flaky")

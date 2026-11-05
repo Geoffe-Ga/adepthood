@@ -71,7 +71,7 @@ from services.corpus_backfill import BackfillOutcome
 from services.corpus_consent import load_consent, standing_consent_change
 from services.corpus_ingest import INGEST_SOURCE
 from services.creek_vault_relay import keyless_context
-from services.creek_vault_write import VaultWriteStatus
+from services.creek_vault_write import VaultWriteOutcome, VaultWriteStatus
 from services.privacy_suspension import external_ai_suspended
 from services.reflection_boundary import ReflectionBoundary
 
@@ -94,12 +94,14 @@ STALE_AFTER: Final[timedelta] = timedelta(minutes=3)
 
 #: How long to wait before each retry of a vault send that found the vault
 #: unavailable, in seconds. A managed vault sheds with ``503
-#: temporarily_unavailable`` whenever its concurrency limit is reached
+#: temporarily_unavailable`` whenever it cannot take a request just then
 #: (``domain.creek_vault``), and a shed clears in a second or two -- so a single
-#: unavailable handshake is not a vault that is down, and stopping on it ended
-#: whole sorts on a blip. Doubling, five retries, about half a minute in all:
-#: long enough to ride out a shed, short enough that a vault that really is
-#: down is reported as such while somebody may still be looking.
+#: shed is not a vault that is down. It can land on the handshake or on the
+#: ingest after it, and both are retried: stopping on the first ended whole
+#: sorts on a blip, and moving past the second left every shed entry unsorted.
+#: Doubling, five retries, about half a minute in all: long enough to ride out a
+#: shed, short enough that a vault that really is down is reported as such while
+#: somebody may still be looking.
 VAULT_RETRY_DELAYS_SECONDS: Final[tuple[float, ...]] = (1.0, 2.0, 4.0, 8.0, 16.0)
 
 #: The log lines a run writes: ids, counts and the closed vocabulary only.
@@ -148,7 +150,8 @@ _NOT_OFFERED: Final = _Step()
 #: The vault lane's answer for each write outcome. A dropped write and an
 #: Intimate skip were offered without being sorted; an operator's suspension is
 #: a fact about every entry, so the run stops. ``UNAVAILABLE`` stops it too, but
-#: only once :data:`VAULT_RETRY_DELAYS_SECONDS` has been spent on that entry.
+#: only once :data:`VAULT_RETRY_DELAYS_SECONDS` has been spent on that entry,
+#: and so does a shed ingest (:data:`_SHED_THROUGHOUT`).
 _VAULT_STEPS: Final = {
     VaultWriteStatus.INGESTED: _Step(offered=True, sorted=True),
     VaultWriteStatus.DEGRADED: _Step(offered=True),
@@ -156,6 +159,11 @@ _VAULT_STEPS: Final = {
     VaultWriteStatus.UNAVAILABLE: _Step(stop=SortStopReason.VAULT_UNAVAILABLE),
     VaultWriteStatus.SUSPENDED: _Step(stop=SortStopReason.SUSPENDED),
 }
+
+#: A ``DEGRADED`` write the vault was still shedding when the ladder ran out.
+#: Moving on would spend the same half minute on every entry after it, so the
+#: run stops as it would on a vault that never answered the handshake.
+_SHED_THROUGHOUT: Final = _Step(stop=SortStopReason.VAULT_UNAVAILABLE)
 
 
 @dataclass(slots=True)
@@ -210,7 +218,7 @@ async def _offer_to_corpus(session: AsyncSession, drive: _Drive, entry_id: int) 
 
 async def _send_once(
     session: AsyncSession, drive: _Drive, entry_id: int
-) -> VaultWriteStatus | None:
+) -> VaultWriteOutcome | None:
     """One send down the journal save's own path, without the per-write pipeline nudge.
 
     The nudge is left to :func:`_nudge_the_vault` at the end: a nudge per entry
@@ -222,23 +230,41 @@ async def _send_once(
     )
 
 
+def _waits(outcome: VaultWriteOutcome | None) -> bool:
+    """Whether a send found the vault unable to take it just now, at handshake or ingest."""
+    return outcome is not None and (
+        outcome.status is VaultWriteStatus.UNAVAILABLE or outcome.retryable
+    )
+
+
+def _step_for(outcome: VaultWriteOutcome | None) -> _Step:
+    """Read a send's last answer as the run's next step."""
+    if outcome is None:
+        return _NOT_OFFERED
+    if outcome.retryable:
+        return _SHED_THROUGHOUT
+    return _VAULT_STEPS[outcome.status]
+
+
 async def _offer_to_vault(session: AsyncSession, drive: _Drive, entry_id: int) -> _Step:
     """Send one entry, waiting out a vault that is unavailable for a moment.
 
-    An unavailable answer is retried after each of :data:`VAULT_RETRY_DELAYS_SECONDS`.
-    Before every wait the heartbeat is refreshed -- which also commits, so no
-    pooled connection is held while asleep -- and a lost lease ends the driver
-    there rather than after the wait. Read through :data:`_VAULT_STEPS` once the
-    answer is anything else, or once the ladder is spent.
+    An unavailable handshake or a shed ingest (:func:`_waits`) is retried after
+    each of :data:`VAULT_RETRY_DELAYS_SECONDS`; the ingest is an upsert keyed by
+    the entry id, so a send that did land is not duplicated. Before every wait
+    the heartbeat is refreshed -- which also commits, so no pooled connection is
+    held while asleep -- and a lost lease ends the driver there rather than
+    after the wait. Read through :func:`_step_for` once the answer is anything
+    else, or once the ladder is spent.
     """
-    status = await _send_once(session, drive, entry_id)
+    outcome = await _send_once(session, drive, entry_id)
     for delay in VAULT_RETRY_DELAYS_SECONDS:
-        if status is not VaultWriteStatus.UNAVAILABLE:
+        if not _waits(outcome):
             break
         await _record(session, drive, _NOT_OFFERED)
         await asyncio.sleep(delay)
-        status = await _send_once(session, drive, entry_id)
-    return _NOT_OFFERED if status is None else _VAULT_STEPS[status]
+        outcome = await _send_once(session, drive, entry_id)
+    return _step_for(outcome)
 
 
 async def _offer(session: AsyncSession, drive: _Drive, entry_id: int) -> _Step:
