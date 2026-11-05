@@ -63,7 +63,8 @@ _REAL_THIN = {"teal-7", "orange-7"}
 #: Beige 8 moved to the site resources and Orange 26-28 were removed upstream
 #: (aptitude-course#76); ids are never reused, so their numbers stay vacant.
 _REAL_NUMBERING = {"1:8", "1:12", "5:26", "5:27", "5:28"}
-_REAL_PRACTICE_COUNT = 37
+#: Green 25 ("... Find a Group to Practice Belonging With") arrived at the 1dda3e7 pin.
+_REAL_PRACTICE_COUNT = 38
 
 
 # --- fixture trees ------------------------------------------------------------

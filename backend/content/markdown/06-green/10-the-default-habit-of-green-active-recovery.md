@@ -2,7 +2,7 @@
 id: green-10
 stage: 6
 chapter: 10
-order: 10
+order: 11
 slug: the-default-habit-of-green-active-recovery
 title: "The Default Habit of Green: Active Recovery"
 content_type: chapter

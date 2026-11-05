@@ -2,7 +2,7 @@
 id: green-19
 stage: 6
 chapter: 19
-order: 19
+order: 20
 slug: the-descent-of-inanna-the-mythic-template-for-shadow-work
 title: "The Descent of Inanna: The Mythic Template for Shadow Work"
 content_type: chapter

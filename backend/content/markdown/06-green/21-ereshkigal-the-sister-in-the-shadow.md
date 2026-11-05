@@ -2,7 +2,7 @@
 id: green-21
 stage: 6
 chapter: 21
-order: 21
+order: 22
 slug: ereshkigal-the-sister-in-the-shadow
 title: "Ereshkigal: The Sister in the Shadow"
 content_type: chapter

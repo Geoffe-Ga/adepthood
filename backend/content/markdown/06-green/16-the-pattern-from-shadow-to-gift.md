@@ -2,7 +2,7 @@
 id: green-16
 stage: 6
 chapter: 16
-order: 16
+order: 17
 slug: the-pattern-from-shadow-to-gift
 title: "The Pattern: From Shadow to Gift"
 content_type: chapter

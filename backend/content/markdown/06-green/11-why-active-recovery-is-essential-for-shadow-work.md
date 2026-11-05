@@ -2,7 +2,7 @@
 id: green-11
 stage: 6
 chapter: 11
-order: 11
+order: 12
 slug: why-active-recovery-is-essential-for-shadow-work
 title: "Why Active Recovery is Essential for Shadow Work"
 content_type: chapter
