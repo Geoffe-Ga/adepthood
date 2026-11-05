@@ -53,6 +53,7 @@ from domain.creek_vault import (
 )
 from domain.privacy_tier import admits_egress
 from domain.resonance import accept_vault_letter
+from domain.vault_key_rejection import CreekVaultRequestKeyRejectedError
 from errors import service_unavailable
 from models.journal_entry import JournalEntry
 from models.marginalia import Marginalia
@@ -68,6 +69,7 @@ from services.reflection_boundary import (
     REFLECTION_SOURCE_UNAVAILABLE,
     ReflectionBoundary,
     VaultSourceUnavailableReason,
+    vault_refusal,
 )
 from services.voice_draft_privacy import voice_draft_privacy
 
@@ -91,6 +93,7 @@ class VaultLetterOutcome(StrEnum):
     WITHHELD = "withheld"  # a withdrawal is still owed at this id: nothing sent
     SUSPENDED = "suspended"  # the operator's vault-send switch refused it before the wire
     ESCALATED = "escalated"  # the vault's care guard answered instead of a letter
+    KEY_REJECTED = "key_rejected"  # the writer's own relayed key was refused by its vendor
     FAILED = "failed"  # refused, unreadable, unreachable, or not a letter
 
 
@@ -264,6 +267,9 @@ async def _dial_letter(
     :class:`VaultSendSuspendedError` is matched first: it proves nothing left
     the server, which is what lets the caller drop the intent. A care
     escalation is a published answer, not a fault, and is reported as such. A
+    writer key its vendor refused (contract 0.28) is ``KEY_REJECTED``, so the
+    writer is told to replace the key; like ``FAILED`` it keeps the intent owed,
+    since nothing in that answer proves the vault stored nothing. A
     letter a relayed key was to pay for
     (:func:`~services.creek_vault_relay.forwarding_provider_key`) is ``FAILED``
     unless the vault's receipt says that key paid (#3483): it may be stored, so
@@ -278,6 +284,8 @@ async def _dial_letter(
     except CreekVaultCareEscalationError:
         _LOGGER.warning(_LETTER_ESCALATED_EVENT, extra={"external_id": external_id})
         return VaultLetterAnswer(VaultLetterOutcome.ESCALATED)
+    except CreekVaultRequestKeyRejectedError:
+        return _degraded(external_id, "key_rejected", VaultLetterOutcome.KEY_REJECTED)
     except CreekVaultError:
         _LOGGER.warning(
             _LETTER_DEGRADED_EVENT, extra={"external_id": external_id, "reason": "vault_error"}
@@ -303,10 +311,12 @@ def _answer_written(written: VaultLetter, external_id: str) -> VaultLetterAnswer
     return VaultLetterAnswer(VaultLetterOutcome.WRITTEN, letter)
 
 
-def _degraded(external_id: str, reason: str) -> VaultLetterAnswer:
-    """Log one content-free degrade under ``reason`` and answer ``FAILED``."""
+def _degraded(
+    external_id: str, reason: str, outcome: VaultLetterOutcome = VaultLetterOutcome.FAILED
+) -> VaultLetterAnswer:
+    """Log one content-free degrade under ``reason`` and answer ``outcome`` (``FAILED``)."""
     _LOGGER.warning(_LETTER_DEGRADED_EVENT, extra={"external_id": external_id, "reason": reason})
-    return VaultLetterAnswer(VaultLetterOutcome.FAILED)
+    return VaultLetterAnswer(outcome)
 
 
 def log_letter_unavailable(note: Marginalia, reason: VaultSourceUnavailableReason) -> None:
@@ -382,11 +392,13 @@ async def answer_vault_letter(
     the route answers with adepthood's reviewed care surface (#3380). A tier that
     admitted no vault at all is the bare note with no letter. Every failure -- a
     refused, unreadable or unreachable vault, an answer that was not a letter, a
-    withheld or suspended request -- is #3183's refusal under its token. Never a
-    fallback to the app provider.
+    withheld or suspended request -- is #3183's refusal under its token, except a
+    writer key its vendor refused, which is the 424 ``reflection_key_rejected``
+    (contract 0.28). Never a fallback to the app provider.
 
     Raises:
-        HTTPException: The 503 ``reflection_source_unavailable``.
+        HTTPException: The 503 ``reflection_source_unavailable``, or the 424
+            ``reflection_key_rejected``.
     """
     if answer.letter is not None:
         await session.refresh(note)
@@ -399,8 +411,13 @@ async def answer_vault_letter(
         return LetterEscalation(note)
     if answer.outcome is VaultLetterOutcome.NOT_OFFERED:
         return note
-    log_letter_unavailable(note, VaultSourceUnavailableReason.NO_ANSWER)
-    raise service_unavailable(REFLECTION_SOURCE_UNAVAILABLE)
+    reason = (
+        VaultSourceUnavailableReason.KEY_REJECTED
+        if answer.outcome is VaultLetterOutcome.KEY_REJECTED
+        else VaultSourceUnavailableReason.NO_ANSWER
+    )
+    log_letter_unavailable(note, reason)
+    raise vault_refusal(reason)
 
 
 @dataclass(frozen=True)

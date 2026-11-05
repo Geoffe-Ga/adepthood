@@ -65,6 +65,7 @@ from domain.creek_vault import (
     CreekVaultUnavailableError,
     VaultErrorCode,
 )
+from domain.vault_key_rejection import CreekVaultRequestKeyRejectedError
 from observability import SUPPRESS_TRACE_CORRELATION
 
 _LOGGER = logging.getLogger(__name__)
@@ -80,7 +81,7 @@ VAULT_OUTCOME_EVENT = "creek vault outcome"
 class VaultTelemetryOutcome(enum.StrEnum):
     """How one attempt at one vault capability ended.
 
-    Twelve members rather than "worked" and "did not", because the failures have
+    Fourteen members rather than "worked" and "did not", because the failures have
     different owners and different remedies: ``UNAVAILABLE`` is infrastructure to
     restore, ``TIMEOUT`` is a vault that is up and too slow, ``AUTH_FAILED`` is a
     credential to rotate, ``INCOMPATIBLE_VERSION`` is two pins to align,
@@ -91,7 +92,9 @@ class VaultTelemetryOutcome(enum.StrEnum):
     deployment exercising its choice not to have a vault -- and
     ``ESCALATED`` is not a failure either: it is Creek's care guard answering a
     person in acute distress, which is a successful outcome that happens to
-    arrive as an exception.
+    arrive as an exception. ``KEY_REJECTED`` is the writer's own relayed
+    provider key refused by its vendor (contract 0.28): a key for the writer to
+    replace, which no restore, retry or pin change on either side can cure.
 
     ``FALLBACK_NOT_OWNER`` is the twelfth, and it sits next to
     ``FALLBACK_UNCONFIGURED`` because it is the other half of the same sentence
@@ -123,6 +126,7 @@ class VaultTelemetryOutcome(enum.StrEnum):
     CAPABILITY_UNSUPPORTED = "vault_capability_unsupported"
     REFUSED = "vault_refused"
     ESCALATED = "vault_escalated"
+    KEY_REJECTED = "vault_key_rejected"
 
 
 class VaultCallTimedOutError(CreekVaultUnavailableError):
@@ -178,6 +182,7 @@ _OUTCOME_BY_ERROR_TYPE: tuple[tuple[type[BaseException], VaultTelemetryOutcome],
     (CreekVaultRateLimitedError, VaultTelemetryOutcome.RATE_LIMITED),
     (CreekVaultCareEscalationError, VaultTelemetryOutcome.ESCALATED),
     (CreekVaultAuthError, VaultTelemetryOutcome.AUTH_FAILED),
+    (CreekVaultRequestKeyRejectedError, VaultTelemetryOutcome.KEY_REJECTED),
     (CreekVaultPayloadError, VaultTelemetryOutcome.SCHEMA_FAILURE),
     (CreekCapabilityUnsupportedError, VaultTelemetryOutcome.CAPABILITY_UNSUPPORTED),
 )

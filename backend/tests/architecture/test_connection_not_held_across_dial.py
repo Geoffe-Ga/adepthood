@@ -81,6 +81,10 @@ _MODULES_IMPORTING_A_TRANSPORT = frozenset(
         # authorized transport, which it is handed; its one route commits the
         # request's transaction before the vault is called.
         "services.creek_vault_export_wire",
+        # Reads a refused writer key off a reflection or letter response
+        # (contract 0.28). It imports httpx for the response type alone and
+        # never sends anything: the client hands it an answer already received.
+        "services.creek_vault_key_rejected",
         "services.creek_vault_pinned_transport",
         "services.creek_vault_url_resolution",
         "services.email",

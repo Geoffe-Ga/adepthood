@@ -145,6 +145,17 @@ def bad_gateway(reason: str) -> HTTPException:
     return HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=reason)
 
 
+def failed_dependency(reason: str) -> HTTPException:
+    """Return a 424 HTTPException: a dependency refused something only the caller can replace.
+
+    Distinct from :func:`service_unavailable` because waiting does not clear it:
+    the request was well formed and the dependency was there, but something of
+    the caller's own that the call relied on -- a provider key, say -- was turned
+    down, and the same request fails the same way until the caller changes it.
+    """
+    return HTTPException(status_code=status.HTTP_424_FAILED_DEPENDENCY, detail=reason)
+
+
 def service_unavailable(reason: str) -> HTTPException:
     """Return a 503 HTTPException for a temporarily unusable dependency.
 

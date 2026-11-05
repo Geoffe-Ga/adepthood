@@ -239,6 +239,7 @@ from services.reflection_boundary import (
     VaultSourceUnavailableReason,
     app_provider_llm,
     require_app_provider_llm,
+    vault_refusal,
 )
 from services.resonance_care import (
     care_for,
@@ -1759,7 +1760,9 @@ async def _fail_closed_unavailable(
     settles as failed, exactly as a provider failure does -- but it answers a
     retryable 503 under its own token rather than the provider's 502, because
     nothing upstream of a model failed: the one source this writer's pass may
-    use was not there, and no other was asked.
+    use was not there, and no other was asked. A writer key its vendor refused
+    is the one exception (:func:`vault_refusal`): a 424 naming the key, since
+    waiting never clears it.
 
     One WARNING, in a closed vocabulary: ids and this module's own reason word,
     never the body, a prompt, a key, or anything the vault said.
@@ -1769,7 +1772,7 @@ async def _fail_closed_unavailable(
         REFLECTION_SOURCE_UNAVAILABLE,
         extra={"user_id": context.user_id, "entry_id": entry_id, "reason": reason.value},
     )
-    return service_unavailable(REFLECTION_SOURCE_UNAVAILABLE)
+    return vault_refusal(reason)
 
 
 async def _reflect_or_answer(

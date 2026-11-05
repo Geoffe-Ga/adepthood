@@ -93,7 +93,12 @@ from domain.vault_export import VaultExportPage
 #    The owner export (`GET /v1/export`, Creek-Vault#2033, #3579) declares 0.27
 #    the same way (`VAULT_EXPORT_SINCE_MINOR`), and only to a vault that both
 #    advertises `export` and lists 0.27; `tests/test_creek_contract_0_27_export.py`
-#    pins it.
+#    pins it. The reflection and letter calls declare 0.28 -- which answers a
+#    writer key its vendor refused as `424 request_key_rejected` instead of `503
+#    temporarily_unavailable` -- only to a vault listing 0.28
+#    (`domain.vault_key_rejection`). Creek gates nothing else on those two
+#    routes above 0.21, so the declaration changes no answer they rely on;
+#    `tests/test_creek_contract_0_28.py` pins it.
 CONTRACT_VERSION = "0.22.0"
 
 

@@ -39,6 +39,7 @@ from domain.creek_vault import (
     VaultWheelAspect,
     VaultWheelBalance,
 )
+from domain.vault_key_rejection import CreekVaultRequestKeyRejectedError
 from domain.wheel import compute_wheel_balance
 from models.course_stage import CourseStage
 from models.goal import Goal
@@ -664,6 +665,7 @@ def test_vault_read_degrade_reason_wire_values_are_stable() -> None:
         "auth",
         "unsupported_capability",
         "unavailable",
+        "key_rejected",
     ]
 
 
@@ -699,6 +701,12 @@ def test_vault_read_degrade_reason_wire_values_are_stable() -> None:
             VaultReadDegradeReason.UNSUPPORTED_CAPABILITY,
             None,
             id="unsupported_capability",
+        ),
+        pytest.param(
+            CreekVaultRequestKeyRejectedError(_SENTINEL_VAULT_TEXT),
+            VaultReadDegradeReason.KEY_REJECTED,
+            None,
+            id="key_rejected",
         ),
     ],
 )

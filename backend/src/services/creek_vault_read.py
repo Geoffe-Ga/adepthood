@@ -39,6 +39,7 @@ from domain.creek_vault import (
     CreekVaultUnavailableError,
     VaultErrorCode,
 )
+from domain.vault_key_rejection import CreekVaultRequestKeyRejectedError
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -51,9 +52,11 @@ class VaultReadDegradeReason(enum.StrEnum):
     countable *apart*, and each names a different owner: ``PAYLOAD`` is a vault
     bug to report upstream, ``CONTRACT`` is a defect in adepthood's own request,
     ``AUTH`` is a credential to rotate, ``UNSUPPORTED_CAPABILITY`` is a vault
-    that never offered this read, and ``UNAVAILABLE`` is infrastructure to
-    restore. Values are the wire strings telemetry counts by, so they are part
-    of this module's contract and must not be reworded casually.
+    that never offered this read, ``UNAVAILABLE`` is infrastructure to
+    restore, and ``KEY_REJECTED`` is the writer's own provider key, refused by
+    its vendor, for the writer to replace (contract 0.28). Values are the wire
+    strings telemetry counts by, so they are part of this module's contract and
+    must not be reworded casually.
     """
 
     PAYLOAD = "payload"
@@ -61,6 +64,7 @@ class VaultReadDegradeReason(enum.StrEnum):
     AUTH = "auth"
     UNSUPPORTED_CAPABILITY = "unsupported_capability"
     UNAVAILABLE = "unavailable"
+    KEY_REJECTED = "key_rejected"
 
 
 # The one static log event this module emits. Static because a vault error's own
@@ -68,6 +72,17 @@ class VaultReadDegradeReason(enum.StrEnum):
 # travels in the structured ``extra`` fields instead, each of which is a wire
 # name or one of our own enum values.
 _DEGRADED_EVENT = "creek vault read degraded"
+
+
+#: Each error type that names its own degrade reason, most specific first. A
+#: table rather than a branch per type, so a new type costs a row, not a branch.
+_REASON_BY_ERROR_TYPE: tuple[tuple[type[CreekVaultError], VaultReadDegradeReason], ...] = (
+    (CreekVaultPayloadError, VaultReadDegradeReason.PAYLOAD),
+    (CreekVaultContractError, VaultReadDegradeReason.CONTRACT),
+    (CreekVaultAuthError, VaultReadDegradeReason.AUTH),
+    (CreekCapabilityUnsupportedError, VaultReadDegradeReason.UNSUPPORTED_CAPABILITY),
+    (CreekVaultRequestKeyRejectedError, VaultReadDegradeReason.KEY_REJECTED),
+)
 
 
 def _degrade_reason_for(error: CreekVaultError) -> VaultReadDegradeReason:
@@ -84,14 +99,9 @@ def _degrade_reason_for(error: CreekVaultError) -> VaultReadDegradeReason:
     way so that re-parenting one under the other later cannot silently
     reclassify every unreadable answer as a refused request.
     """
-    if isinstance(error, CreekVaultPayloadError):
-        return VaultReadDegradeReason.PAYLOAD
-    if isinstance(error, CreekVaultContractError):
-        return VaultReadDegradeReason.CONTRACT
-    if isinstance(error, CreekVaultAuthError):
-        return VaultReadDegradeReason.AUTH
-    if isinstance(error, CreekCapabilityUnsupportedError):
-        return VaultReadDegradeReason.UNSUPPORTED_CAPABILITY
+    for error_type, reason in _REASON_BY_ERROR_TYPE:
+        if isinstance(error, error_type):
+            return reason
     return VaultReadDegradeReason.UNAVAILABLE
 
 

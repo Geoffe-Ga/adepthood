@@ -58,6 +58,7 @@ from domain.creek_vault import (
     VaultWheelBalance,
 )
 from domain.resonance import ANCHOR_TEXT_MAX, NOTE_MAX, VALID_KINDS
+from domain.vault_key_rejection import CreekVaultRequestKeyRejectedError
 from main import app, lifespan
 from scripts.creek_contract_drift import BUNDLE_ROOT
 from services import creek_vault_url_resolution
@@ -3287,6 +3288,17 @@ async def _drive_reflect_refused(
         await client.reflect(_ENTRY_BODY, VaultTierCeiling.PERSONAL)
 
 
+async def _drive_reflect_key_rejected(
+    http_clients: ClientFactory, _monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Drive contract 0.28's refused writer key, which is neither an outage nor our fault."""
+    envelope = {"code": "request_key_rejected", "message": "refused", "request_id": "req-1"}
+    handler = _ReflectRouteHandler(envelope, HTTPStatus.FAILED_DEPENDENCY)
+    client = await _handshaken_client(handler, http_clients)
+    with pytest.raises(CreekVaultRequestKeyRejectedError):
+        await client.reflect(_ENTRY_BODY, VaultTierCeiling.PERSONAL)
+
+
 async def _drive_reflect_escalated(
     http_clients: ClientFactory, _monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -3361,6 +3373,11 @@ _OUTCOME_DRIVERS: tuple[tuple[VaultTelemetryOutcome, CreekCapability, OutcomeDri
     ),
     (VaultTelemetryOutcome.REFUSED, CreekCapability.REFLECT, _drive_reflect_refused),
     (VaultTelemetryOutcome.ESCALATED, CreekCapability.REFLECT, _drive_reflect_escalated),
+    (
+        VaultTelemetryOutcome.KEY_REJECTED,
+        CreekCapability.REFLECT,
+        _drive_reflect_key_rejected,
+    ),
     (
         VaultTelemetryOutcome.CAPABILITY_UNSUPPORTED,
         CreekCapability.CLASSIFY,

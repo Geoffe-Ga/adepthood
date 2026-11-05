@@ -93,7 +93,7 @@ import enum
 import logging
 import os
 from collections.abc import Callable, Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from functools import partial
 from http import HTTPStatus
 from types import MappingProxyType, TracebackType
@@ -159,6 +159,7 @@ from services.creek_vault_export_wire import (
     export_offered,
     read_export_page,
 )
+from services.creek_vault_key_rejected import key_rejected_or, keyed_generation_minor
 from services.creek_vault_payload import (
     _CALL_FAILED,
     _CREDENTIAL_REJECTED,
@@ -2365,7 +2366,10 @@ class HttpCreekVaultClient:
                 f"{self._url}{_LETTERS_PATH}{segment}",
                 _letter_body(request, tier),
                 ceiling=tier,
-                departures=_LETTER_CALL,
+                departures=replace(
+                    _LETTER_CALL,
+                    contract_minor=keyed_generation_minor(self._last_handshake, CONTRACT_MINOR),
+                ),
             )
         except _HTTP_CALL_TIMED_OUT_ERRORS:
             raise VaultCallTimedOutError(_LETTER_FAILED_MESSAGE) from None
@@ -2388,7 +2392,7 @@ class HttpCreekVaultClient:
                 raise CreekCapabilityUnsupportedError(_unsupported_message(CreekCapability.LETTERS))
             response = await self._post_letter(request)
             if not response.is_success:
-                raise _letter_failure(response) from None
+                raise key_rejected_or(CreekCapability.LETTERS, response, _letter_failure) from None
             payload = _decoded_object(response)
             if payload is None:
                 raise CreekVaultPayloadError(_LETTER_UNREADABLE_MESSAGE)
@@ -2449,7 +2453,10 @@ class HttpCreekVaultClient:
                 f"{self._url}{_REFLECTIONS_PATH}",
                 _reflection_request_body(body),
                 ceiling=ceiling,
-                departures=_REFLECTION_CALL,
+                departures=replace(
+                    _REFLECTION_CALL,
+                    contract_minor=keyed_generation_minor(self._last_handshake, CONTRACT_MINOR),
+                ),
             )
         except _HTTP_CALL_TIMED_OUT_ERRORS:
             raise VaultCallTimedOutError(_REFLECT_FAILED_MESSAGE) from None
@@ -2477,7 +2484,9 @@ class HttpCreekVaultClient:
         never put on a wire toward a capability nobody claimed to serve.
 
         The answer splits four ways. A transport failure is an absent vault. A
-        non-2xx is classified by :func:`_read_failure`, which reads the vault's
+        non-2xx is a refused writer key (contract 0.28,
+        :func:`~services.creek_vault_key_rejected.key_rejected_or`), else
+        classified by :func:`_read_failure`, which reads the vault's
         own code before the status class. A 2xx that will not decode as a JSON
         object, or that :func:`_parse_reflection_result` cannot read as the
         published shape, is a :class:`CreekVaultPayloadError` -- a vault that
@@ -2494,7 +2503,9 @@ class HttpCreekVaultClient:
             raise CreekCapabilityUnsupportedError(_unsupported_message(CreekCapability.REFLECT))
         response = await self._post_reflection(body, wire_ceiling_for(tier_ceiling))
         if not response.is_success:
-            raise _read_failure(CreekCapability.REFLECT, response) from None
+            raise key_rejected_or(
+                CreekCapability.REFLECT, response, partial(_read_failure, CreekCapability.REFLECT)
+            ) from None
         payload = _decoded_object(response)
         if payload is None:
             raise CreekVaultPayloadError(_REFLECT_UNREADABLE_MESSAGE)
