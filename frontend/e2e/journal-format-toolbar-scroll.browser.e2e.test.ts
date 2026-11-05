@@ -1,18 +1,29 @@
-import { expect, test, type Page } from '@playwright/test';
+import { expect, test, type Locator, type Page } from '@playwright/test';
 
-import { signUp } from './journalHabitsBrowserSupport';
+import { backendUrl, signUp, tokenFor } from './journalHabitsBrowserSupport';
 
 /**
- * The journal's formatting toolbar: every action on show, on one line that
- * never wraps, scrolling sideways when it outgrows its width. On web a mouse
+ * The journal's formatting toolbar: every action on show -- inline styles,
+ * line styles (heading, bulleted and numbered lists, quote) and list nesting --
+ * on one line that never wraps, scrolling sideways when it outgrows its width. On web a mouse
  * click-and-drag pans the strip, and the release that ends a drag never
  * presses the button it lands on. (A finger swipe is the browser's own
  * overflow scroll, which this does not re-test.)
  */
 
-const ACTIONS = ['bold', 'italic', 'underline', 'indent', 'outdent'] as const;
+const ACTIONS = [
+  'bold',
+  'italic',
+  'underline',
+  'heading',
+  'bullet',
+  'ordered',
+  'quote',
+  'indent',
+  'outdent',
+] as const;
 
-/** Narrower than the five 44px actions, so the strip must overflow. */
+/** Narrower than the 44px actions, so the strip must overflow. */
 const NARROW_STRIP_PX = 120;
 
 async function openFreshPage(page: Page, label: string) {
@@ -92,4 +103,75 @@ test('an overflowing toolbar stays one line and a mouse drag scrolls it without 
   });
   await page.getByRole('button', { name: 'Bold' }).click();
   await expect(field).toHaveValue('**plain** prose');
+});
+
+/** Select from the start of one line's text to the end of another's. */
+async function selectLines(field: Locator, from: string, to = from): Promise<void> {
+  await field.evaluate(
+    (element, [first, last]) => {
+      const area = element as HTMLTextAreaElement;
+      const start = area.value.indexOf(first!);
+      const end = area.value.indexOf(last!) + last!.length;
+      area.focus();
+      area.setSelectionRange(start, end);
+    },
+    [from, to],
+  );
+}
+
+test('line-style buttons make a heading, lists and a quote that save and render', async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  const email = await signUp(page, 'journal-toolbar-blocks');
+  const token = await tokenFor(page.request, email);
+  await page.getByTestId('journal-new-entry').click();
+  const created = page.waitForResponse(
+    (response) =>
+      response.request().method() === 'POST' && new URL(response.url()).pathname === '/journal/',
+  );
+  await page.getByTestId('journal-title-input').fill('Line styles');
+  const field = page.getByTestId('journal-body-input');
+  await field.click();
+  await page.keyboard.type('Plan');
+  for (const line of ['milk', 'eggs', 'first', 'second', 'said']) {
+    await page.keyboard.press('Enter');
+    await page.keyboard.type(line);
+  }
+  const press = async (name: string) => {
+    const button = page.getByRole('button', { name, exact: true });
+    await button.scrollIntoViewIfNeeded();
+    await button.click();
+  };
+
+  await selectLines(field, 'said');
+  await press('Quote');
+  await expect(field).toHaveValue('Plan\nmilk\neggs\nfirst\nsecond\n> said');
+  await expect(page.getByTestId('journal-format-quote')).toHaveAttribute('aria-pressed', 'true');
+
+  await selectLines(field, 'first', 'second');
+  await press('Numbered list');
+  await selectLines(field, 'milk', 'eggs');
+  await press('Bulleted list');
+  await selectLines(field, 'Plan');
+  await press('Heading');
+  const message = '# Plan\n- milk\n- eggs\n1. first\n2. second\n> said';
+  await expect(field).toHaveValue(message);
+  await expect(field).toBeFocused();
+
+  const entryId = ((await (await created).json()) as { id: number }).id;
+  await page.getByTestId('journal-finish-button').click();
+  const read = page.getByTestId('journal-body-read');
+  await expect(read).toBeVisible();
+  await expect(read.getByRole('heading', { level: 1, name: 'Plan' })).toBeVisible();
+  await expect(read.locator('blockquote')).toHaveCount(1);
+  await expect(read.locator('[data-testid^="journal-markdown-ordinal-"]')).toHaveCount(2);
+  await expect
+    .poll(async () => {
+      const stored = await page.request.get(`${backendUrl()}/journal/${entryId}`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      return ((await stored.json()) as { message: string }).message;
+    })
+    .toBe(message);
 });
