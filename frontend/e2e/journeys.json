@@ -2766,7 +2766,7 @@
   },
   {
     "id": "map.wavelength-phase-terms-are-canon",
-    "description": "A traveller opens a stage on the Map and reads its six Wavelength phases, each with an integrated (Rx) and a shadow (OD) name, and every name is the course's canonical term from aptitude-course's Modes of the Wavelength CSV: Teal reads Epiphany / Delusion through Pattern-Seeking / Belief Salience, not Yellow's old meditation terms (#3135). The names come only from GET /stages manifestations, which the server reads from src/curriculum/archetypal_wavelength.json; nothing is hardcoded client-side. Clear Light has no CSV row, and its six pairs are app-authored. The covering spec names no term of its own beyond a guard on its CSV parse: it reads the GET /stages response the page's own stages client received (never stubbed or rewritten), requires Teal's served manifestations to equal Teal's Medicine and Toxic rows in the vendored backend/content/curriculum/modes_of_the_wavelength.csv phase for phase, then opens Teal from the Map drawer and requires each phase eyebrow and each Integrated / Shadow name in the stage modal to be the served one, at 390 and 1280 px, at normal and doubled text, with every card's text inside its card and no sideways scroll. The source is also pinned by backend/scripts/check_wavelength_terms.py, which the content-drift CI job runs against the vendored CSV, and by backend/tests/test_curriculum.py (test_phase_names_match_the_canonical_modes_csv). The renderer is pinned by fixture tests in src/features/Map/__tests__/StageExpressionsSection.test.tsx.",
+    "description": "A traveller opens a stage on the Map and reads its six Wavelength phases, each with an integrated (Rx) and a shadow (OD) name, and every name is the course's canonical term from aptitude-course's Modes of the Wavelength CSV: Teal reads Epiphany / Delusion through Pattern-Seeking / Belief Salience, not Yellow's old meditation terms (#3135). The names come only from GET /stages manifestations, which the server reads from src/curriculum/archetypal_wavelength.json; nothing is hardcoded client-side. Clear Light has no CSV row and no pairs: it is the Neither/Both Mode, covered by map.clear-light-neither-both-mode. The covering spec names no term of its own beyond a guard on its CSV parse: it reads the GET /stages response the page's own stages client received (never stubbed or rewritten), requires Teal's served manifestations to equal Teal's Medicine and Toxic rows in the vendored backend/content/curriculum/modes_of_the_wavelength.csv phase for phase, then opens Teal from the Map drawer and requires each phase eyebrow and each Integrated / Shadow name in the stage modal to be the served one, at 390 and 1280 px, at normal and doubled text, with every card's text inside its card and no sideways scroll. The source is also pinned by backend/scripts/check_wavelength_terms.py, which the content-drift CI job runs against the vendored CSV, and by backend/tests/test_curriculum.py (test_phase_names_match_the_canonical_modes_csv). The renderer is pinned by fixture tests in src/features/Map/__tests__/StageExpressionsSection.test.tsx.",
     "crosses": {
       "screen": "frontend/src/features/Map/MapScreen.tsx",
       "client": ["stages"],
@@ -2775,6 +2775,18 @@
     },
     "status": "covered",
     "coveredBy": "frontend/e2e/map-wavelength-phases.browser.e2e.test.ts"
+  },
+  {
+    "id": "map.clear-light-neither-both-mode",
+    "description": "A traveller opens Clear Light on the Map and reads it as the Neither/Both Mode, which contains the healthy expression of every other Mode, not as one more six-phase scale: the modal states the served Mode (its name and description, including that playing healthy chords of Frequencies from Clear Light is like playing jazz instead of scales) and, for each of the six phases, a chord of every other stage's integrated (Rx) name, each note coloured by its stage, with no integrated/shadow pairs of its own. The copy lives only in src/curriculum/archetypal_wavelength.json (Clear Light's mode, holds_all_modes); the chord is composed server-side by curriculum.phase_chords and served by GET /stages as mode + chord. The covering spec names no copy of its own: it reads the GET /stages response the page's own stages client received (never stubbed), requires Clear Light's served chord to equal every scale stage's served integrated name phase for phase, then opens Clear Light from the Map drawer and requires the modal to show the served Mode and every served note, and no expressions section, at 390 and 1280 px with every note inside the modal and no sideways scroll. The source is also pinned by backend/tests/test_curriculum.py and backend/tests/test_stages_api.py; the renderer by src/features/Map/__tests__/StageModeSection.test.tsx.",
+    "crosses": {
+      "screen": "frontend/src/features/Map/MapScreen.tsx",
+      "client": ["stages"],
+      "routes": ["GET /stages"],
+      "tables": ["coursestage"]
+    },
+    "status": "covered",
+    "coveredBy": "frontend/e2e/map-clear-light-mode.browser.e2e.test.ts"
   },
   {
     "id": "habits.offline-calendar-and-legacy-recovery",

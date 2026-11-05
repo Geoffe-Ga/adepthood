@@ -245,8 +245,11 @@ running database.
    and expression whose name in `archetypal_wavelength.json` differs from the
    CSV. Fix it by carrying the CSV term into the mirror and rewriting that
    phase's description. Never fix it by editing the CSV. A stage with no CSV
-   row (today only Clear Light) must mark each manifestation
-   `"source": "app-authored"`.
+   row must mark each manifestation `"source": "app-authored"`. Clear Light
+   has no row and carries no manifestations at all: it is the Neither/Both
+   Mode (`"mode": {"holds_all_modes": true}`), and `GET /stages` serves its
+   phases as a `chord` of stages 1-9's integrated names, composed by
+   `curriculum.phase_chords`.
 4. **Run the parity and consumer tests.** `backend/tests/test_stage_correspondence.py`
    holds `archetypal_wavelength.json`'s copy of the seven fields equal to the
    artifact, stage by stage, and pins the #1637 stages literally.

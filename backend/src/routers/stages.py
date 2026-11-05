@@ -11,7 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import col, select
 
 from bounds import StageNumberPath
-from curriculum import CurriculumDataError, stage_curriculum
+from curriculum import CurriculumDataError, phase_chords, stage_curriculum
 from database import get_session
 from dependencies.creek_vault import get_creek_vault_client
 from dependencies.timezone import current_user_timezone
@@ -44,11 +44,14 @@ from schemas.pagination import paginate_query
 from schemas.stage import (
     ProgramCalendarResponse,
     ProgramStartRequest,
+    StageChordNote,
     StageCorrespondenceProvenance,
     StageCorrespondenceResponse,
     StageExpression,
     StageHistoryResponse,
     StageManifestation,
+    StageMode,
+    StagePhaseChord,
     StageProgressRecord,
     StageProgressResponse,
     StageResponse,
@@ -85,6 +88,37 @@ def _stage_manifestations(stage_number: int) -> list[StageManifestation]:
     ]
 
 
+def _stage_mode(stage_number: int) -> StageMode | None:
+    """Return a stage's Mode statement, or ``None`` when it states none (or the lookup fails)."""
+    try:
+        mode = stage_curriculum(stage_number).mode
+    except CurriculumDataError:
+        return None
+    if mode is None:
+        return None
+    return StageMode(
+        name=mode.name, description=mode.description, holds_all_modes=mode.holds_all_modes
+    )
+
+
+def _stage_chord(stage_number: int) -> list[StagePhaseChord]:
+    """Return a Neither/Both stage's phase chords; empty for every other stage."""
+    try:
+        chords = phase_chords(stage_number)
+    except CurriculumDataError:
+        return []
+    return [
+        StagePhaseChord(
+            phase=chord.phase.value,
+            notes=[
+                StageChordNote(stage_number=note.stage_number, name=note.name)
+                for note in chord.notes
+            ],
+        )
+        for chord in chords
+    ]
+
+
 def _build_stage_response(
     stage: CourseStage,
     stage_progress: float,
@@ -112,6 +146,8 @@ def _build_stage_response(
         is_unlocked=unlocked,
         progress=float(stage_progress),
         manifestations=_stage_manifestations(stage.stage_number),
+        mode=_stage_mode(stage.stage_number),
+        chord=_stage_chord(stage.stage_number),
     )
 
 

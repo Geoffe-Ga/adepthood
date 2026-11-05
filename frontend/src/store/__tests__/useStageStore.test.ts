@@ -19,6 +19,8 @@ const makeStage = (stageNumber: number, overrides: Partial<StageData> = {}): Sta
   relationshipToFreeWill: '',
   freeWillDescription: '',
   overviewUrl: '',
+  mode: null,
+  chord: [],
   manifestations: [],
   ...overrides,
 });

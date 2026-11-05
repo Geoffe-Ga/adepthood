@@ -23,6 +23,30 @@ class StageManifestation(BaseModel):
     shadow: StageExpression
 
 
+class StageMode(BaseModel):
+    """A stage's Mode of the Wavelength, where the curriculum states one."""
+
+    name: str
+    description: str
+    holds_all_modes: bool = Field(
+        description="True for the Neither/Both Mode, which holds every other Mode's medicine."
+    )
+
+
+class StageChordNote(BaseModel):
+    """One stage's healthy (integrated) expression sounding inside a phase chord."""
+
+    stage_number: int
+    name: str
+
+
+class StagePhaseChord(BaseModel):
+    """Every scale stage's healthy expression of one phase, in stage order."""
+
+    phase: str
+    notes: list[StageChordNote]
+
+
 class StageResponse(BaseModel):
     """Public representation of a CourseStage with user progress overlay."""
 
@@ -41,6 +65,11 @@ class StageResponse(BaseModel):
     is_unlocked: bool = False
     progress: float = 0.0
     manifestations: list[StageManifestation] = Field(default_factory=list)
+    mode: StageMode | None = None
+    chord: list[StagePhaseChord] = Field(
+        default_factory=list,
+        description="Non-empty only for a stage whose mode holds all the Modes (Clear Light).",
+    )
 
 
 class StageCorrespondenceProvenance(BaseModel):

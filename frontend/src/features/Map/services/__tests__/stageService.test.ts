@@ -616,6 +616,31 @@ describe('stageService', () => {
     });
   });
 
+  describe('toStageData mode and chord mapping', () => {
+    const neitherBoth = {
+      name: 'Be (Neither/Both)',
+      description: 'Holds the healthy expression of all the other Modes.',
+      holds_all_modes: true,
+    };
+    const chord = [{ phase: 'Rising', notes: [{ stage_number: 1, name: 'Commitment' }] }];
+
+    it('maps mode and chord through unchanged', () => {
+      const { toStageData } = require('../stageService');
+      const result = toStageData(makeApiStage(10, { mode: neitherBoth, chord }));
+
+      expect(result.mode).toEqual(neitherBoth);
+      expect(result.chord).toEqual(chord);
+    });
+
+    it('defaults mode to null and chord to [] when the payload omits them', () => {
+      const { toStageData } = require('../stageService');
+      const result = toStageData(makeApiStage(1));
+
+      expect(result.mode).toBeNull();
+      expect(result.chord).toEqual([]);
+    });
+  });
+
   describe('beginAgain action', () => {
     function makeProgressRecord(cycleNumber: number): StageProgressRecord {
       return {

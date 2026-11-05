@@ -454,6 +454,35 @@ describe('per-item paginated schemas', () => {
     expect(() => stageSchema.parse({ ...stage, manifestations: [invalidPhase] })).toThrow();
   });
 
+  const neitherBoth = {
+    name: 'Be (Neither/Both)',
+    description: 'Holds the healthy expression of all the other Modes.',
+    holds_all_modes: true,
+  };
+  const risingChord = { phase: 'Rising', notes: [{ stage_number: 1, name: 'Commitment' }] };
+
+  it('stageSchema accepts a Neither/Both mode with its chord', () => {
+    const parsed = stageSchema.parse({ ...stage, mode: neitherBoth, chord: [risingChord] });
+    expect(parsed.mode?.holds_all_modes).toBe(true);
+    expect(parsed.chord?.[0]?.notes[0]?.name).toBe('Commitment');
+  });
+
+  it('stageSchema accepts a null mode and an omitted chord', () => {
+    const parsed = stageSchema.parse({ ...stage, mode: null });
+    expect(parsed.mode).toBeNull();
+    expect(parsed.chord).toBeUndefined();
+  });
+
+  it('stageSchema rejects an unknown phase name in the chord', () => {
+    const invalidPhase = { ...risingChord, phase: 'Not A Real Phase' };
+    expect(() => stageSchema.parse({ ...stage, chord: [invalidPhase] })).toThrow();
+  });
+
+  it('stageSchema rejects a mode with a non-boolean holds_all_modes', () => {
+    const invalidMode = { ...neitherBoth, holds_all_modes: 'yes' };
+    expect(() => stageSchema.parse({ ...stage, mode: invalidMode })).toThrow();
+  });
+
   const practiceItem = {
     id: 7,
     stage_number: 2,

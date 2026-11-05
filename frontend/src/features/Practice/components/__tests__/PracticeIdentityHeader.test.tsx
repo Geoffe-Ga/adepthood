@@ -69,6 +69,8 @@ const stageFixture = (
   freeWillDescription: 'Free will is emerging.',
   overviewUrl: 'https://example.com/stage',
   manifestations: [],
+  mode: null,
+  chord: [],
 });
 
 /** Minimal shape of a rendered node, for tree walks over `findAll`. */

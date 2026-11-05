@@ -148,6 +148,7 @@ const EXPECTED_BROWSER_JOURNEYS = [
   'journal-writing-timer.browser.e2e.test.ts',
   'managed-agent-address-unconfirmed.browser.e2e.test.ts',
   'managed-vault-own-key.browser.e2e.test.ts',
+  'map-clear-light-mode.browser.e2e.test.ts',
   'map-continue-course.browser.e2e.test.ts',
   'map-legibility.browser.e2e.test.ts',
   'map-progress-door.browser.e2e.test.ts',
