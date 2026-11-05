@@ -337,6 +337,7 @@ def test_outcome_wire_values_are_stable() -> None:
         "vault_capability_unsupported",
         "vault_refused",
         "vault_escalated",
+        "vault_key_rejected",
     ]
 
 
@@ -533,6 +534,7 @@ _SEVERITY_BY_OUTCOME: Mapping[VaultTelemetryOutcome, int] = {
     VaultTelemetryOutcome.CONTRACT_FAILURE: logging.WARNING,
     VaultTelemetryOutcome.CAPABILITY_UNSUPPORTED: logging.WARNING,
     VaultTelemetryOutcome.REFUSED: logging.WARNING,
+    VaultTelemetryOutcome.KEY_REJECTED: logging.WARNING,
 }
 
 

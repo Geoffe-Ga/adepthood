@@ -393,6 +393,17 @@ export type ResonanceRequestOutcome =
  */
 const PAYMENT_UNCONFIRMED_DETAIL = 'resonance_payment_unconfirmed';
 
+/** The 424 a vault-bound pass gets when the writer's provider refused their key. */
+const KEY_REJECTED_STATUS = 424;
+const KEY_REJECTED_DETAIL = 'reflection_key_rejected';
+
+/** Only a replaced key can clear this refusal, so the margin must not invite a retry. */
+function keyRejected(error: unknown): boolean {
+  if (typeof error !== 'object' || error === null) return false;
+  const response = error as { status?: unknown; detail?: unknown };
+  return response.status === KEY_REJECTED_STATUS && response.detail === KEY_REJECTED_DETAIL;
+}
+
 function paymentUnconfirmed(error: unknown): boolean {
   if (typeof error !== 'object' || error === null) return false;
   const response = error as { status?: unknown; detail?: unknown };
@@ -493,7 +504,8 @@ interface PassFailureDeps extends PassFailureContext {
    * Whether the line may invite another pass "whenever you like". False for a
    * generation-guardrail refusal (#623), whose own copy says when asking again
    * can work: once the one in flight finishes, or after midnight UTC. False too
-   * for a revoked entitlement (#1938), where asking again cannot succeed.
+   * for a revoked entitlement (#1938), where asking again cannot succeed, and
+   * for a refused writer key, which only replacing the key in Settings clears.
    */
   retryInvited: boolean;
 }
@@ -549,7 +561,8 @@ async function settlePassFailure(
     // Funding has its own immediate, actionable surface. Detection still runs
     // and merges offers, but must not announce a contradictory retry error.
     surfaceError: funding === null,
-    retryInvited: generationRefusal(error) === null && !aiAccessRevoked(error),
+    retryInvited:
+      generationRefusal(error) === null && !aiAccessRevoked(error) && !keyRejected(error),
   });
   if (funding !== null) {
     // Payment recovery is local and actionable. Do not hold it behind the

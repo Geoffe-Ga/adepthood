@@ -473,6 +473,26 @@ capability is still used for the others it supports:
   resonance handler answers it with adepthood's own reviewed care
   resources and no reflection, never with a cloud fallback and never
   with Creek's own copy.
+- **A refused writer key on REFLECT and LETTERS (0.28 extension; content
+  pin stays 0.22).** When a vault relays the writer's own provider key and
+  the vendor refuses it, Creek 0.28 answers `POST /v1/reflections` and
+  `POST /v1/letters/{external_id}` with `424 request_key_rejected`, retry
+  disposition terminal; a caller declaring an older minor gets
+  `503 temporarily_unavailable` for the same refusal. Those two calls
+  declare `X-Creek-Contract-Version: 0.28` only to a vault whose handshake
+  lists `0.28` in `supported_contract_minors`
+  (`REQUEST_KEY_REJECTED_SINCE_MINOR`); every other call, and both calls
+  against an older vault, keep declaring `0.22`. Creek gates nothing else
+  on those two routes above 0.21, so the higher declaration changes no other
+  answer they rely on. The code is matched exactly on those two routes,
+  raised as `CreekVaultRequestKeyRejectedError` (a sibling of the
+  unavailable type, never retried), and answered to the writer as
+  `424 reflection_key_rejected` instead of `503 reflection_source_unavailable`.
+  The refund and the no-fallback rule are unchanged: nothing is charged and
+  the app provider is never asked. Creek's 0.28 bundle is not vendored
+  yet, so the code is read outside `VaultErrorCode`, which mirrors the
+  vendored 0.22 envelope; `backend/tests/test_creek_contract_0_28.py` pins
+  the negotiation.
 - **WHEEL** — if absent, or if the vault does not advertise it,
   `fetch_vault_wheel` returns `None` before any call is made
   (`backend/src/services/creek_vault_wheel.py:128-147`). A malformed or

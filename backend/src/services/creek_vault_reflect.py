@@ -21,7 +21,9 @@ closed-vocabulary reason, which the router settles as a refunded, retryable
   any handshake, so a tier is never widened and the vault is untouched (#3059);
 * a vault that does not handshake as available, or never advertises REFLECT;
 * a :class:`~domain.creek_vault.CreekVaultError` from the call itself, which is
-  also recorded through :mod:`services.creek_vault_read` so it stays countable.
+  also recorded through :mod:`services.creek_vault_read` so it stays countable --
+  a refused writer key (contract 0.28) under its own reason, which the router
+  answers as a ``424`` naming the key rather than a retryable "unavailable".
 
 A distress-flagged entry never gets here either: the router answers it with
 adepthood's own care surface and asks no model at all.
@@ -89,6 +91,7 @@ from domain.creek_vault import (
 )
 from domain.privacy_tier import admits_egress
 from domain.resonance import ResonanceLLM
+from domain.vault_key_rejection import CreekVaultRequestKeyRejectedError
 from services.botmason import LLMResponse
 from services.creek_vault_read import log_read_degraded
 from services.creek_vault_relay import forwarded_key_vendor
@@ -144,6 +147,13 @@ def _carries_notes(reflection: VaultReflection) -> bool:
     answer an empty notes list and the pass settles as one that kept no notes.
     """
     return reflection.status is VaultReflectionStatus.OK and bool(reflection.notes)
+
+
+def _refusal_reason(error: CreekVaultError) -> VaultSourceUnavailableReason:
+    """The closed-vocabulary reason a failed vault reflection is refused under."""
+    if isinstance(error, CreekVaultRequestKeyRejectedError):
+        return VaultSourceUnavailableReason.KEY_REJECTED
+    return VaultSourceUnavailableReason.VAULT_ERROR
 
 
 class VaultResonanceLLM:
@@ -215,13 +225,15 @@ class VaultResonanceLLM:
         the record. The raise carries only this seam's own reason word.
 
         :class:`~domain.creek_vault.CreekVaultCareEscalationError` is deliberately
-        outside that hierarchy and so propagates untouched.
+        outside that hierarchy and so propagates untouched. A refused writer key
+        is raised as ``KEY_REJECTED`` rather than ``VAULT_ERROR``, so the writer
+        is told to replace it instead of to wait.
         """
         try:
             return await self._client.reflect(self._body, self._tier_ceiling)
         except CreekVaultError as error:
             log_read_degraded(CreekCapability.REFLECT, error)
-            raise VaultSourceUnavailableError(VaultSourceUnavailableReason.VAULT_ERROR) from None
+            raise VaultSourceUnavailableError(_refusal_reason(error)) from None
 
     async def complete(self, prompt: str) -> str:
         """Return the vault's reflection on the bound body as the marginalia contract.

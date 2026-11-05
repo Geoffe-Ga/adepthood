@@ -38,11 +38,19 @@ from __future__ import annotations
 from enum import StrEnum
 from typing import Final
 
+from fastapi import HTTPException
+
+from errors import failed_dependency, service_unavailable
 from services.marginalia import BotmasonResonanceLLM
 
 #: The stable error token a vault-bound operation answers when its vault could
 #: not. Neutral on purpose: it names what failed to happen, not where.
 REFLECTION_SOURCE_UNAVAILABLE: Final[str] = "reflection_source_unavailable"
+
+#: The token a vault-bound operation answers when the vendor of the writer's own
+#: provider key refused it (Creek contract 0.28). Its own word because the remedy
+#: is the writer's -- replace the key -- and waiting never clears it.
+REFLECTION_KEY_REJECTED: Final[str] = "reflection_key_rejected"
 
 
 class ReflectionBoundary(StrEnum):
@@ -77,6 +85,9 @@ class VaultSourceUnavailableReason(StrEnum):
     #: a forged key, or a handshake that changed before the dial (#3483). The
     #: answer is not kept, so no pass is ever free.
     KEY_NOT_SPENT = "key_not_spent"
+    #: The vault relayed the writer's own provider key and its vendor refused it
+    #: (Creek contract 0.28). Terminal until the writer replaces the key.
+    KEY_REJECTED = "key_rejected"
 
 
 class VaultSourceUnavailableError(Exception):
@@ -93,6 +104,19 @@ class VaultSourceUnavailableError(Exception):
         """Record the closed-vocabulary reason; the message is the static token."""
         super().__init__(REFLECTION_SOURCE_UNAVAILABLE)
         self.reason = reason
+
+
+def vault_refusal(reason: VaultSourceUnavailableReason) -> HTTPException:
+    """The HTTP answer a vault-bound operation refused for ``reason`` gives its caller.
+
+    ``424 reflection_key_rejected`` for a refused writer key, whose remedy is the
+    writer's own; every other reason is the retryable ``503
+    reflection_source_unavailable``. Either way nothing is answered elsewhere --
+    this chooses the words of the refusal, never a fallback.
+    """
+    if reason is VaultSourceUnavailableReason.KEY_REJECTED:
+        return failed_dependency(REFLECTION_KEY_REJECTED)
+    return service_unavailable(REFLECTION_SOURCE_UNAVAILABLE)
 
 
 class AppProviderRefusedError(RuntimeError):
