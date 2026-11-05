@@ -24,7 +24,7 @@ Rules, all read-only:
   carry exactly the CSV's Medicine (``integrated``) and Toxic (``shadow``)
   terms, compared case-insensitively with whitespace collapsed (the CSV has
   edge spaces such as ``"Overwhelm "``).
-* A stage with no CSV row (today only Clear Light) must mark each of its
+* A stage with no CSV row must mark each of its
   manifestations ``"source": "app-authored"`` so the gap is explicit, and a
   CSV-backed phase may not carry that marker (it would exempt itself).
 * Every CSV stage must appear in the dataset.

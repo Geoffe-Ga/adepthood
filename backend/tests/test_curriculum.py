@@ -12,8 +12,10 @@ from curriculum import (
     CurriculumDataError,
     WavelengthPhase,
     all_stages,
+    compose_phase_chords,
     load_curriculum,
     manifestation,
+    phase_chords,
     stage_curriculum,
 )
 from scripts.check_wavelength_terms import APP_AUTHORED, read_canonical_terms
@@ -128,9 +130,18 @@ def test_all_stages_returns_ten_stages_in_order() -> None:
     assert [s.stage_number for s in stages] == list(range(1, 11))
 
 
+#: Clear Light: the Neither/Both Mode, which holds every other Mode's medicine.
+_NEITHER_BOTH_STAGE = 10
+#: The stages that play their own six-phase scale.
+_SCALE_STAGES = range(1, _NEITHER_BOTH_STAGE)
+
+
 def test_each_stage_has_six_phases_in_canonical_order() -> None:
-    """Every stage carries exactly six manifestations in canonical phase order."""
+    """Every stage but Clear Light carries six manifestations in canonical phase order."""
     for stage in all_stages():
+        if stage.stage_number == _NEITHER_BOTH_STAGE:
+            assert stage.manifestations == ()
+            continue
         assert len(stage.manifestations) == 6
         phases = tuple(m.phase for m in stage.manifestations)
         assert phases == CANONICAL_PHASE_ORDER
@@ -149,15 +160,22 @@ def test_each_manifestation_has_nonempty_integrated_and_shadow() -> None:
 
 
 def test_all_ten_stages_and_six_phases_resolve_from_dataset() -> None:
-    """Headline seed assertion: all 10 stages x 6 phases fully resolve."""
+    """Headline seed assertion: all 10 stages resolve, and stages 1-9 x 6 phases do too."""
     stages = all_stages()
     assert len(stages) == 10
     for stage_number in range(1, 11):
         resolved = stage_curriculum(stage_number)
         assert resolved.stage_number == stage_number
+    for stage_number in _SCALE_STAGES:
         for phase in CANONICAL_PHASE_ORDER:
             found = manifestation(stage_number, phase)
             assert found.phase == phase
+
+
+def test_manifestation_of_clear_light_raises() -> None:
+    """Clear Light plays no scale of its own, so it has no single phase pair to return."""
+    with pytest.raises(CurriculumDataError):
+        manifestation(_NEITHER_BOTH_STAGE, WavelengthPhase.RISING)
 
 
 def test_stage_curriculum_returns_beige_survival() -> None:
@@ -448,9 +466,6 @@ _MODES_CSV_PATH = (
 #: Stages whose phase terms the Modes CSV defines (Clear Light has no row).
 _CSV_BACKED_STAGES = range(1, 10)
 
-#: The one stage whose six pairs are app-authored, pending an upstream row.
-_APP_AUTHORED_STAGE = 10
-
 
 def _normalised(term: str) -> str:
     """Case-fold and collapse whitespace, the comparison the drift gate uses."""
@@ -493,9 +508,94 @@ def _raw_stage(stage_number: int) -> dict[str, Any]:
     return found
 
 
-def test_clear_light_phase_pairs_are_marked_app_authored() -> None:
-    """Clear Light has no Modes CSV row, so its pairs must say they are app copy."""
+def test_clear_light_has_no_modes_csv_row_and_no_pairs_of_its_own() -> None:
+    """Clear Light has no Modes CSV row, and carries no app-authored stand-in pairs."""
     canonical = read_canonical_terms(_MODES_CSV_PATH)
-    clear_light = _raw_stage(_APP_AUTHORED_STAGE)
+    clear_light = _raw_stage(_NEITHER_BOTH_STAGE)
     assert _normalised(clear_light["spiral_dynamics_color"]) not in canonical
-    assert {m.get("source") for m in clear_light["manifestations"]} == {APP_AUTHORED}
+    assert clear_light["manifestations"] == []
+    assert APP_AUTHORED not in json.dumps(clear_light)
+
+
+def test_clear_light_is_the_neither_both_mode() -> None:
+    """The Map says Clear Light is the Neither/Both Mode holding every other Mode's medicine."""
+    mode = stage_curriculum(_NEITHER_BOTH_STAGE).mode
+    assert mode is not None
+    assert mode.holds_all_modes is True
+    assert "Neither/Both" in mode.name
+    assert "healthy expression of all the other Modes" in mode.description
+    assert "jazz instead of scales" in mode.description
+
+
+def test_only_clear_light_states_a_mode() -> None:
+    """No other stage claims to hold all the Modes."""
+    for stage_number in _SCALE_STAGES:
+        assert stage_curriculum(stage_number).mode is None
+
+
+def test_clear_light_chord_is_every_other_stages_healthy_expression() -> None:
+    """Each phase of Clear Light's chord is stages 1-9's integrated (Rx) names, in order."""
+    chords = phase_chords(_NEITHER_BOTH_STAGE)
+    assert tuple(chord.phase for chord in chords) == CANONICAL_PHASE_ORDER
+    for index, chord in enumerate(chords):
+        expected = [
+            (n, stage_curriculum(n).manifestations[index].integrated.name) for n in _SCALE_STAGES
+        ]
+        assert [(note.stage_number, note.name) for note in chord.notes] == expected
+
+
+def test_a_scale_stage_has_no_chord() -> None:
+    """Only a stage that holds all the Modes is composed into a chord."""
+    assert phase_chords(1) == ()
+
+
+def _neither_both_stage(stage_number: int) -> dict[str, object]:
+    stage = _valid_stage(stage_number)
+    stage["manifestations"] = []
+    stage["mode"] = {"name": "Be", "description": "Holds them all.", "holds_all_modes": True}
+    return stage
+
+
+def test_load_curriculum_accepts_a_stage_that_holds_all_modes(tmp_path: Path) -> None:
+    """A holds-all-modes stage loads with no pairs, and its chord draws from the rest."""
+    payload = [*(_valid_stage(n) for n in range(1, 10)), _neither_both_stage(10)]
+    stages = load_curriculum(path=_write_json(tmp_path, "neither_both.json", payload))
+    chords = compose_phase_chords(stages, 10)
+    assert len(chords) == len(CANONICAL_PHASE_ORDER)
+    assert [note.stage_number for note in chords[0].notes] == list(range(1, 10))
+
+
+def test_load_curriculum_rejects_pairs_on_a_stage_that_holds_all_modes(tmp_path: Path) -> None:
+    """A stage that holds all the Modes may not also carry a scale of its own."""
+    stage = _neither_both_stage(10)
+    stage["manifestations"] = _valid_manifestations()
+    payload = [*(_valid_stage(n) for n in range(1, 10)), stage]
+    with pytest.raises(CurriculumDataError, match="holds all the Modes"):
+        load_curriculum(path=_write_json(tmp_path, "both.json", payload))
+
+
+def test_load_curriculum_rejects_a_scale_stage_without_pairs(tmp_path: Path) -> None:
+    """Without holds_all_modes, a stage still needs its six phase pairs."""
+    stage = _neither_both_stage(10)
+    stage["mode"] = {"name": "Be", "description": "Holds them all."}
+    payload = [*(_valid_stage(n) for n in range(1, 10)), stage]
+    with pytest.raises(CurriculumDataError, match="canonical order"):
+        load_curriculum(path=_write_json(tmp_path, "no_pairs.json", payload))
+
+
+@pytest.mark.parametrize(
+    "mode",
+    [
+        {"name": "", "description": "Holds them all.", "holds_all_modes": True},
+        {"name": "Be", "holds_all_modes": True},
+        {"name": "Be", "description": "Holds them all.", "holds_all_modes": "yes"},
+        "Be",
+    ],
+)
+def test_load_curriculum_rejects_a_malformed_mode(tmp_path: Path, mode: object) -> None:
+    """A mode needs a name, a description, and a boolean holds_all_modes."""
+    stage = _neither_both_stage(10)
+    stage["mode"] = mode
+    payload = [*(_valid_stage(n) for n in range(1, 10)), stage]
+    with pytest.raises(CurriculumDataError):
+        load_curriculum(path=_write_json(tmp_path, "bad_mode.json", payload))

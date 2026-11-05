@@ -14,7 +14,7 @@ from sqlalchemy import event
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import col, select
 
-from curriculum import CANONICAL_PHASE_ORDER, CurriculumDataError, stage_curriculum
+from curriculum import CANONICAL_PHASE_ORDER, CurriculumDataError, phase_chords, stage_curriculum
 from domain.constants import TOTAL_STAGES
 from domain.dates import ensure_aware
 from models.course_stage import CourseStage
@@ -243,6 +243,8 @@ async def test_list_stages_populates_progress_field(
 
 _CANONICAL_PHASE_NAMES: tuple[str, ...] = tuple(phase.value for phase in CANONICAL_PHASE_ORDER)
 _MANIFESTATION_COUNT = 6
+#: Clear Light: the Neither/Both Mode, served as a Mode and a chord, not a scale.
+_NEITHER_BOTH_STAGE = 10
 
 
 @pytest.mark.asyncio
@@ -250,7 +252,7 @@ async def test_list_stages_includes_six_canonical_manifestations(
     async_client: AsyncClient,
     db_session: AsyncSession,
 ) -> None:
-    """Every stage carries its 6 integrated/shadow phase pairs, in canonical order."""
+    """Stages 1-9 carry 6 integrated/shadow pairs in canonical order; Clear Light none."""
     headers, _user_id = await _signup(async_client, "manifestations_all")
     await _seed_stages(db_session, count=TOTAL_STAGES)
 
@@ -261,6 +263,11 @@ async def test_list_stages_includes_six_canonical_manifestations(
 
     for stage_payload in data:
         manifestations = stage_payload["manifestations"]
+        if stage_payload["stage_number"] == _NEITHER_BOTH_STAGE:
+            assert manifestations == []
+            continue
+        assert stage_payload["mode"] is None
+        assert stage_payload["chord"] == []
         assert len(manifestations) == _MANIFESTATION_COUNT
         assert [m["phase"] for m in manifestations] == list(_CANONICAL_PHASE_NAMES)
         for m in manifestations:
@@ -305,13 +312,14 @@ async def test_list_stages_manifestations_degrade_to_empty_on_curriculum_error(
     db_session: AsyncSession,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """A curriculum lookup failure leaves the list intact; that stage's manifestations become []."""
+    """A curriculum lookup failure leaves the list intact; that stage's wavelength fields empty."""
 
     def _raise_curriculum_error(stage_number: int) -> object:
         del stage_number
         raise CurriculumDataError("boom")
 
     monkeypatch.setattr(stages_router, "stage_curriculum", _raise_curriculum_error)
+    monkeypatch.setattr(stages_router, "phase_chords", _raise_curriculum_error)
 
     headers, _user_id = await _signup(async_client, "manifestations_degrade")
     await _seed_stages(db_session, count=1)
@@ -320,6 +328,38 @@ async def test_list_stages_manifestations_degrade_to_empty_on_curriculum_error(
     assert resp.status_code == HTTPStatus.OK
     data = resp.json()
     assert data[0]["manifestations"] == []
+    assert data[0]["mode"] is None
+    assert data[0]["chord"] == []
+
+
+@pytest.mark.asyncio
+async def test_list_stages_serves_clear_light_as_the_neither_both_mode(
+    async_client: AsyncClient,
+    db_session: AsyncSession,
+) -> None:
+    """Clear Light carries its Mode statement and a chord of every other stage's Rx names."""
+    headers, _user_id = await _signup(async_client, "clear_light_mode")
+    await _seed_stages(db_session, count=TOTAL_STAGES)
+
+    resp = await async_client.get("/stages", headers=headers)
+    assert resp.status_code == HTTPStatus.OK
+    clear_light = next(s for s in resp.json() if s["stage_number"] == _NEITHER_BOTH_STAGE)
+
+    expected_mode = stage_curriculum(_NEITHER_BOTH_STAGE).mode
+    assert expected_mode is not None
+    assert clear_light["mode"] == {
+        "name": expected_mode.name,
+        "description": expected_mode.description,
+        "holds_all_modes": True,
+    }
+    assert clear_light["chord"] == [
+        {
+            "phase": chord.phase.value,
+            "notes": [{"stage_number": n.stage_number, "name": n.name} for n in chord.notes],
+        }
+        for chord in phase_chords(_NEITHER_BOTH_STAGE)
+    ]
+    assert [c["phase"] for c in clear_light["chord"]] == list(_CANONICAL_PHASE_NAMES)
 
 
 # ── GET /stages/{stage_number}/progress ─────────────────────────────────

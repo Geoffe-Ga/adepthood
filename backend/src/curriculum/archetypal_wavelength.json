@@ -1,9 +1,9 @@
 {
-  "dataset_version": "2.4.1",
+  "dataset_version": "2.5.0",
   "provenance": {
     "stage_attributes_source": "APTITUDE Complete Map.csv (aptitude-course repository, database_of_course_curriculum), with the December 2025 supersessions recorded in that repository's CLAUDE.md: stage 4 aspect 'Community Love'; stage 8 color 'Teal' and free-will archetype 'True Self Embodier'. Stage 8's aspect 'True Self Wisdom' is the CSV's own cell (owner ruling 2026-10-13, #2664)",
     "manifestations_source": "Archetypal Wavelength spreadsheet, 'Expanded List' sheet (the six-phase Rx/OD manifestation copy and the Stage titles; the subtitles are sourced separately, see subtitles_source)",
-    "manifestation_names_source": "Stages 1-9: every integrated (Rx) and shadow (OD) name equals the aptitude-course 'The Archetypal Wavelength - Modes of the Wavelength.csv' Medicine/Toxic cell, vendored by scripts/sync_content.py to backend/content/curriculum/modes_of_the_wavelength.csv and gated by scripts/check_wavelength_terms.py (issue #3135); descriptions are app-authored summaries of the vendored full-6-phase-wavelength-breakdown chapters. Stage 10 (Clear Light) has no CSV row, so its six pairs are app-authored and each carries \"source\": \"app-authored\".",
+    "manifestation_names_source": "Stages 1-9: every integrated (Rx) and shadow (OD) name equals the aptitude-course 'The Archetypal Wavelength - Modes of the Wavelength.csv' Medicine/Toxic cell, vendored by scripts/sync_content.py to backend/content/curriculum/modes_of_the_wavelength.csv and gated by scripts/check_wavelength_terms.py (issue #3135); descriptions are app-authored summaries of the vendored full-6-phase-wavelength-breakdown chapters. Stage 10 (Clear Light) has no CSV row and no pairs of its own: it is the Neither/Both Mode (its \"mode\" holds_all_modes), and GET /stages serves its phases as a chord of stages 1-9's integrated names, composed by curriculum.phase_chords.",
     "subtitles_source": "aptitude-course repository (Geoffe-Ga/aptitude-course) resource copy: markdown/resources/04-aptitude-stages.md headings and the markdown/resources/02-about.md item list. Stage 8 follows commit 3bf0df5 (2026-07-31), carried by the vendored pin at backend/content/CONTENT_VERSION since the re-pin to 9d0f896",
     "extracted_from": "in-repo vendored course markdown (backend/content/markdown/backup/ and *full-6-phase-wavelength-breakdown chapters)",
     "stage_2_free_will_source": "Stage 2's relationship_to_free_will 'Pleasure Seeker' follows the vendored course at the CONTENT_VERSION pin 9d0f896: the chapter backend/content/markdown/02-purple/04-the-relationship-to-free-will-at-purple-pleasure-seeker.md and the markdown/resources/aptitude-stages.md heading, superseding the stale archetype carried over from backup/2.PURPLE.md (issue #2915). Its free_will_description is the vendored APTITUDE Complete Map.csv sentence carried by src/curriculum/stage_correspondence.json (#2664), replacing the earlier chapter paraphrase; tests/test_stage_correspondence.py holds it equal to the artifact (#2667) until #2666 retires this copy of the correspondence fields",
@@ -425,44 +425,12 @@
       "divine_gender_polarity": "Divine Hermaphrodite",
       "relationship_to_free_will": "Whole Adept",
       "free_will_description": "At Clear Light, the question of Free Will dissolves. Not because it's been answered, but because it's been seen through.",
-      "manifestations": [
-        {
-          "phase": "Rising",
-          "source": "app-authored",
-          "integrated": {"name": "Riding", "description": "Letting momentum carry you while staying rooted."},
-          "shadow": {"name": "Grasping", "description": "Clutching at the returning energy and believing the hype."}
-        },
-        {
-          "phase": "Peaking",
-          "source": "app-authored",
-          "integrated": {"name": "Gratitude", "description": "Enjoying the flow fully and letting it pass in time."},
-          "shadow": {"name": "Attachment", "description": "Clinging to the peak instead of releasing it."}
-        },
-        {
-          "phase": "Withdrawal",
-          "source": "app-authored",
-          "integrated": {"name": "Trust", "description": "Letting go as the descent unfolds its natural rhythm."},
-          "shadow": {"name": "Collapse", "description": "Reading the natural ebb as failure and falling apart."}
-        },
-        {
-          "phase": "Diminishing",
-          "source": "app-authored",
-          "integrated": {"name": "Patience", "description": "Knowing this too shall pass, having been here before."},
-          "shadow": {"name": "Despair", "description": "Believing the trough is permanent and hopeless."}
-        },
-        {
-          "phase": "Bottoming Out",
-          "source": "app-authored",
-          "integrated": {"name": "Rest", "description": "Ceasing to fix it and letting the ground hold you."},
-          "shadow": {"name": "Fixing", "description": "Straining to repair the bottom instead of resting."}
-        },
-        {
-          "phase": "Restoration",
-          "source": "app-authored",
-          "integrated": {"name": "Recommitment", "description": "Returning to the same practice, path, and truth again."},
-          "shadow": {"name": "Novelty-Seeking", "description": "Chasing something new instead of the proven path."}
-        }
-      ]
+      "mode": {
+        "name": "Be (Neither/Both)",
+        "description": "Clear Light is the Neither/Both Mode. It is not one more scale beside the others: it contains within it the healthy expression of all the other Modes, Inhabit, Express, Collaborate, Integrate and Absorb, and is reducible to none of them. Employing healthy chords of Frequencies from Clear Light is like playing jazz instead of scales.",
+        "holds_all_modes": true
+      },
+      "manifestations": []
     }
   ]
 }
