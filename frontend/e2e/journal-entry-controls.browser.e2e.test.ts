@@ -205,13 +205,20 @@ function expectWritingLayout(frame: EntryFrame): void {
   expect(frame.focusOrderHolds).toBe(true);
 }
 
-/** Actual Tab navigation follows the title, formatting controls and body. */
+/**
+ * Actual Tab navigation follows the title, formatting controls and body. On a
+ * prose line Indent and Outdent are disabled, so Tab passes over them.
+ */
 async function expectWritingTabOrder(page: Page): Promise<void> {
   await page.getByTestId('journal-title-input').focus();
   for (const id of [
     'journal-format-bold',
     'journal-format-italic',
     'journal-format-underline',
+    'journal-format-heading',
+    'journal-format-bullet',
+    'journal-format-ordered',
+    'journal-format-quote',
     'journal-body-input',
   ]) {
     await page.keyboard.press('Tab');
