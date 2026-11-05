@@ -2,7 +2,7 @@
 id: green-22
 stage: 6
 chapter: 22
-order: 22
+order: 23
 slug: the-katabasis-descent-as-spiritual-practice
 title: "The Katabasis: Descent as Spiritual Practice"
 content_type: chapter

@@ -2,7 +2,7 @@
 id: green-12
 stage: 6
 chapter: 12
-order: 12
+order: 13
 slug: the-rhythm-of-yang-and-yin
 title: "The Rhythm of Yang and Yin"
 content_type: chapter

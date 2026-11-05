@@ -2,7 +2,7 @@
 id: green-13
 stage: 6
 chapter: 13
-order: 13
+order: 14
 slug: greens-divine-gender-divine-femininedescent-and-integration
 title: "Green's Divine Gender: Divine Feminine—Descent and Integration"
 content_type: chapter

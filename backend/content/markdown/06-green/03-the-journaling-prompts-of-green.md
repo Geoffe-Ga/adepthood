@@ -110,7 +110,7 @@ When you witness someone else do brave shadow work, it gives you permission to g
 
 - **Be specific.** Don't just say, "I'm struggling." Name the pattern. Describe the shadow element. Share the connection you're seeing. Specificity creates intimacy.
 
-- **Don't perform vulnerability.** Share to connect, not to be seen as brave or deep. The community can tell the difference.
+- **Don't perform vulnerability.** Share to connect, not to be seen as brave or deep. The community can tell the difference. A shadow story told to hold the room is still working the room.
 
 - **Reciprocate.** If someone shares, witness them. Reflect what you heard. Don't try to fix them. Just say, "I see you. Thank you for trusting us with this."
 

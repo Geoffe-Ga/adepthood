@@ -2,7 +2,7 @@
 id: green-15
 stage: 6
 chapter: 15
-order: 15
+order: 16
 slug: three-shadow-integration-stories
 title: "Three Shadow Integration Stories"
 content_type: chapter

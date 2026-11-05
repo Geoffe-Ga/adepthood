@@ -18,6 +18,8 @@
 
 [Alternatives for Green Practice](#alternatives-for-green-practice)
 
+[Green's Core Task: Find a Group to Practice Belonging With](#greens-core-task-find-a-group-to-practice-belonging-with)
+
 [The Default Habit of Green: Active Recovery](#the-default-habit-of-green-active-recovery)
 
 [Why Active Recovery is Essential for Shadow Work](#why-active-recovery-is-essential-for-shadow-work)

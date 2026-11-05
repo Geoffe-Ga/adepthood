@@ -2,7 +2,7 @@
 id: green-24
 stage: 6
 chapter: 24
-order: 24
+order: 25
 slug: practicing-embodied-understanding-off-the-cushion
 title: "Practicing Embodied Understanding Off the Cushion"
 content_type: chapter
@@ -39,6 +39,14 @@ Someone says something that hits your wound. You feel the constriction in your c
 Excuse yourself if you need to. Go somewhere private. Place your hand on the place in your body where the feeling lives. Breathe into it. Let it move. Maybe you need to cry, shake, scream into a pillow. Let the body discharge the charge.
 
 This is shadow work in real time. You're not suppressing the emotion or intellectualizing it. You're *completing* it. And when you return to the conversation, you'll be clearer.
+
+**In Community: Retire First, Then Sit Down**
+
+You're about to walk into a gathering—the group from Green's core task, a dinner, a group chat that has become a place. The old pattern is to arrive *on*: ready to be the funny one, the intense one, the one who knows. The Green practice is to arrive off-duty.
+
+Retire first. Twenty minutes before you go, put down whatever is stressing your life: close the laptop, take the walk, let your hands do something simple. Then, once you're there, pick one of the three old jobs—entertain, titillate, educate—and don't take it tonight. Sit alongside people rather than in front of them. Let a silence happen. Notice the pull to fill it, and notice what the pull is protecting.
+
+Afterward, ask the Boring Test question: *was there a moment I could have been boring here, and was that okay?* If yes, that's Belonging, and you don't need to make it a project. If not, that's information—about the room, or about the fee you charge yourself—and you can look at either with curiosity. The first time may feel like nothing happened. That's about right. Belonging often feels less like arrival and more like being a little less tired.
 
 **In Community: Offering and Receiving Feedback**
 

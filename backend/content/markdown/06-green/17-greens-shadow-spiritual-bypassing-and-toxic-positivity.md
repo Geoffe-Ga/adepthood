@@ -2,7 +2,7 @@
 id: green-17
 stage: 6
 chapter: 17
-order: 17
+order: 18
 slug: greens-shadow-spiritual-bypassing-and-toxic-positivity
 title: "Green's Shadow: Spiritual Bypassing and Toxic Positivity"
 content_type: chapter
@@ -19,6 +19,8 @@ Green's shadow is subtle. It masquerades as healing. As compassion. As conscious
 This is Green's trap. It's the person who's done so much inner work that they've convinced themselves they don't need to take action. Who can name their trauma but won't set a boundary. Who can articulate their needs but won't risk asking for them to be met.
 
 Spiritual bypassing is the shadow side of shadow work. It's using the language of healing to stay stuck.
+
+Remember the sidewalk of frogs from Green's Gift? This is the person walking it with their eyes on the stars. The stars are real, and they'll still be there after you look down. But a view of the heavens used to avoid the pavement is just a prettier way to keep stepping on things.
 
 **Toxic positivity** is related but slightly different. It's the insistence that you must always be "high vibe." That negative emotions are signs of "low consciousness." That if you're struggling, it's because you're "not doing the work." It's the wellness culture that shames you for being human.
 

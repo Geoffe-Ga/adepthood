@@ -2,7 +2,7 @@
 id: green-23
 stage: 6
 chapter: 23
-order: 23
+order: 24
 slug: the-compost-heap-death-as-fertilizer
 title: "The Compost Heap: Death as Fertilizer"
 content_type: chapter

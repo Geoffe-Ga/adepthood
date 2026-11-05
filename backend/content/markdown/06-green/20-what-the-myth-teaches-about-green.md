@@ -2,7 +2,7 @@
 id: green-20
 stage: 6
 chapter: 20
-order: 20
+order: 21
 slug: what-the-myth-teaches-about-green
 title: "What the Myth Teaches About Green"
 content_type: chapter

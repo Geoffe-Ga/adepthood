@@ -1,5 +1,5 @@
 {
-  "dataset_version": "2.4.0",
+  "dataset_version": "2.4.1",
   "provenance": {
     "stage_attributes_source": "APTITUDE Complete Map.csv (aptitude-course repository, database_of_course_curriculum), with the December 2025 supersessions recorded in that repository's CLAUDE.md: stage 4 aspect 'Community Love'; stage 8 color 'Teal' and free-will archetype 'True Self Embodier'. Stage 8's aspect 'True Self Wisdom' is the CSV's own cell (owner ruling 2026-10-13, #2664)",
     "manifestations_source": "Archetypal Wavelength spreadsheet, 'Expanded List' sheet (the six-phase Rx/OD manifestation copy and the Stage titles; the subtitles are sourced separately, see subtitles_source)",
@@ -390,7 +390,7 @@
         {
           "phase": "Peaking",
           "integrated": {"name": "Jhana", "description": "Stable, bright absorption you can rest in and see by."},
-          "shadow": {"name": "Bliss Addiction", "description": "Sitting for the state instead of in it, chasing the high."}
+          "shadow": {"name": "Transmission Fixation", "description": "Gripping the transmission itself, the state or its source, instead of what it lets you see."}
         },
         {
           "phase": "Withdrawal",

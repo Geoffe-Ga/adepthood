@@ -14,6 +14,7 @@ This folder contains the modular sections for the GREEN stage of the APTITUDE co
 - [What to Expect: The First Month of Shadow Work](./07-what-to-expect-the-first-month-of-shadow-work.md)
 - [Advanced Shadow Work: Going Deeper](./08-advanced-shadow-work-going-deeper.md)
 - [Alternatives for Green Practice](./09-alternatives-for-green-practice.md)
+- [Green's Core Task: Find a Group to Practice Belonging With](./25-find-a-group-to-practice-belonging.md)
 - [The Default Habit of Green: Active Recovery](./10-the-default-habit-of-green-active-recovery.md)
 - [Why Active Recovery is Essential for Shadow Work](./11-why-active-recovery-is-essential-for-shadow-work.md)
 - [The Rhythm of Yang and Yin](./12-the-rhythm-of-yang-and-yin.md)
@@ -41,4 +42,6 @@ This folder contains the modular sections for the GREEN stage of the APTITUDE co
 
 Original monolithic file: `../6.GREEN.md` (preserved as backup)
 
-Total sections: 25
+Total sections: 26
+
+Note on numbering: chapter 25 (`25-find-a-group-to-practice-belonging.md`) is read after chapter 9 (`order: 10`). Chapter ids are stable once shipped, so the new chapter took the next free id and the `order` of chapters 10-24 moved up by one instead of renumbering them.

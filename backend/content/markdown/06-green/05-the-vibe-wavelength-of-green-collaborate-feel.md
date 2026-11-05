@@ -32,6 +32,8 @@ The six phases of Green's Wavelength map the territory of authentic connectionâ€
 
 This is the rhythm of relational work. Of showing up, connecting deeply, retreating to integrate, and returning renewed. It's the cycle of intimacy. And like all cycles, it has medicine and poison at every phase.
 
+One thing to carry into the phases: Belonging, at the Peak, is not the reward for working the room well. It tends to arrive when you stop working itâ€”when you retire from the stress of your life and from the job of being interesting, and relax alongside people instead of performing for them. The Overdose of that Peak, Megalomania, is anything that keeps you on stage.
+
 We'll explore each in depth. But first, notice this: Green's Wavelength is *slower* than Orange's. Where Orange moved quickly (hypothesize, experiment, data, analysis, synthesis, question), Green lingers. It takes its time. It honors the pauses.
 
 Because feelings can't be rushed. The body has its own timeline. And Green is where you learn to trust that.
