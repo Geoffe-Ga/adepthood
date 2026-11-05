@@ -149,3 +149,39 @@ async def test_explicit_units_check_in_reports_the_period_streak(
 
     assert resp.status_code == HTTPStatus.OK
     assert resp.json()["streak"] == _CLOSED_WEEKS_MET + 1
+
+
+@pytest.mark.asyncio
+async def test_weeks_that_meet_only_low_grit_keep_the_weekly_streak(
+    async_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """A closed week at the Low Grit floor, short of the clear target, still counts."""
+    headers, user_id = await _signup(async_client)
+    habit_id, clear_goal = await _weekly_habit(async_client, db_session, headers)
+    low_goal = (
+        await db_session.execute(select(Goal).where(Goal.habit_id == habit_id, Goal.tier == "low"))
+    ).scalar_one()
+    low_floor = low_goal.target * low_goal.frequency
+    assert low_floor < clear_goal.target * clear_goal.frequency
+    this_monday = today_in_tz("UTC") - timedelta(days=today_in_tz("UTC").weekday())
+    for weeks_back in range(1, _CLOSED_WEEKS_MET + 1):
+        monday = this_monday - timedelta(days=_DAYS_PER_WEEK * weeks_back)
+        db_session.add(
+            GoalCompletion(
+                goal_id=clear_goal.id,
+                user_id=user_id,
+                local_day=monday,
+                timestamp=datetime.combine(monday, time(12), tzinfo=UTC),
+                completed_units=low_floor,
+            )
+        )
+    await db_session.commit()
+
+    [listed] = (await async_client.get("/habits/", headers=headers)).json()
+    detail = (await async_client.get(f"/habits/{habit_id}", headers=headers)).json()
+    story = (await async_client.get(f"/habits/{habit_id}/story", headers=headers)).json()
+
+    assert listed["streak"] == _CLOSED_WEEKS_MET
+    assert detail["streak"] == _CLOSED_WEEKS_MET
+    assert story["continuity"]["current_run"] == _CLOSED_WEEKS_MET
+    assert story["continuity"]["longest_run"] == _CLOSED_WEEKS_MET

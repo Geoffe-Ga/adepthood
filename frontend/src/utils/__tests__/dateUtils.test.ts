@@ -187,7 +187,7 @@ describe('subtractiveStreakFromCompletions', () => {
     // log since.  That is 5 days of perfect abstention (today inclusive).
     expect(
       subtractiveStreakFromCompletions(
-        { completions: [], clearThreshold: 5, startDate: '2026-06-11' },
+        { completions: [], threshold: 5, startDate: '2026-06-11' },
         TZ,
         TODAY,
       ),
@@ -199,21 +199,21 @@ describe('subtractiveStreakFromCompletions', () => {
 
     expect(
       subtractiveStreakFromCompletions(
-        { completions: [], clearThreshold: 5, startDate: '2026-06-15' },
+        { completions: [], threshold: 5, startDate: '2026-06-15' },
         TZ,
         evening,
       ),
     ).toBe(1);
   });
 
-  it('breaks the streak on a day where the user logged above the clear threshold', () => {
-    // Two days ago the user blew past the clear limit; today and yesterday
+  it('breaks the streak on a day where the user logged above the Low Grit threshold', () => {
+    // Two days ago the user blew past the threshold; today and yesterday
     // are still abstention days, so streak = 2.
     expect(
       subtractiveStreakFromCompletions(
         {
           completions: [{ timestamp: '2026-06-13T17:00:00Z', completed_units: 10 }],
-          clearThreshold: 5,
+          threshold: 5,
           startDate: '2026-06-01',
         },
         TZ,
@@ -222,14 +222,14 @@ describe('subtractiveStreakFromCompletions', () => {
     ).toBe(2);
   });
 
-  it('treats a log equal to the clear threshold as success (boundary)', () => {
+  it('treats a log equal to the threshold as success (boundary)', () => {
     // total == clear is "just within budget" per the frontend tier
     // resolver; the streak must agree or the tile and stats diverge.
     expect(
       subtractiveStreakFromCompletions(
         {
           completions: [{ timestamp: '2026-06-15T17:00:00Z', completed_units: 5 }],
-          clearThreshold: 5,
+          threshold: 5,
           startDate: '2026-06-15',
         },
         TZ,
@@ -247,7 +247,7 @@ describe('subtractiveStreakFromCompletions', () => {
             { timestamp: '2026-06-15T15:00:00Z', completed_units: 3 },
             { timestamp: '2026-06-15T22:00:00Z', completed_units: 3 },
           ],
-          clearThreshold: 5,
+          threshold: 5,
           startDate: '2026-06-01',
         },
         TZ,
@@ -259,7 +259,7 @@ describe('subtractiveStreakFromCompletions', () => {
   it('returns 0 when the habit has not started yet', () => {
     expect(
       subtractiveStreakFromCompletions(
-        { completions: [], clearThreshold: 5, startDate: '2026-06-20' },
+        { completions: [], threshold: 5, startDate: '2026-06-20' },
         TZ,
         TODAY,
       ),
@@ -271,7 +271,7 @@ describe('subtractiveStreakFromCompletions', () => {
     // the dawn of time".
     expect(
       subtractiveStreakFromCompletions(
-        { completions: [], clearThreshold: 5, startDate: '2026-06-15' },
+        { completions: [], threshold: 5, startDate: '2026-06-15' },
         TZ,
         TODAY,
       ),
@@ -289,7 +289,7 @@ describe('subtractiveLongestStreakFromCompletions', () => {
     // Longest disagreed used to display "Current: 7 · Longest: 0".
     expect(
       subtractiveLongestStreakFromCompletions(
-        { completions: [], clearThreshold: 5, startDate: '2026-06-09' },
+        { completions: [], threshold: 5, startDate: '2026-06-09' },
         TZ,
         TODAY,
       ),
@@ -309,7 +309,7 @@ describe('subtractiveLongestStreakFromCompletions', () => {
             { timestamp: '2026-06-04T15:00:00Z', completed_units: 8 },
             { timestamp: '2026-06-13T15:00:00Z', completed_units: 8 },
           ],
-          clearThreshold: 5,
+          threshold: 5,
           startDate: '2026-06-01',
         },
         TZ,
@@ -326,7 +326,7 @@ describe('subtractiveLongestStreakFromCompletions', () => {
             { timestamp: '2026-06-14T15:00:00Z', completed_units: 99 },
             { timestamp: '2026-06-15T15:00:00Z', completed_units: 99 },
           ],
-          clearThreshold: 5,
+          threshold: 5,
           startDate: '2026-06-14',
         },
         TZ,
@@ -338,7 +338,7 @@ describe('subtractiveLongestStreakFromCompletions', () => {
   it('returns 0 when the habit has not started yet', () => {
     expect(
       subtractiveLongestStreakFromCompletions(
-        { completions: [], clearThreshold: 5, startDate: '2026-06-20' },
+        { completions: [], threshold: 5, startDate: '2026-06-20' },
         TZ,
         TODAY,
       ),

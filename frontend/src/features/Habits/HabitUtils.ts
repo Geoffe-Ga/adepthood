@@ -571,7 +571,7 @@ export const streakPeriodKind = (habit: Habit): HabitPeriodKind => {
 /** Everything a weekly / monthly streak walk needs (#2819). */
 export interface PeriodStreakCadence {
   kind: Exclude<HabitPeriodKind, 'day'>;
-  /** The clear tier's `target × frequency`. */
+  /** The Low Grit goal's `target × frequency`: a floor (additive) or a limit (subtractive). */
   periodTarget: number;
   /**
    * The habit's start as a `YYYY-MM-DD` key. A subtractive walk starts at the
@@ -675,17 +675,42 @@ export const periodLongestStreak = (
   return longest;
 };
 
-/** The habit's weekly / monthly streak cadence, or `null` for day cadences. */
+/**
+ * The most forgiving of a habit's Low Grit goals, or `undefined`. Low Grit
+ * keeps the run alive, always, so with more than one low row the easiest one
+ * wins rather than whichever loaded first: the lowest `target × frequency`
+ * floor for an additive habit, the highest limit for a subtractive one.
+ * Mirrors the backend ``_low_grit_goal``; change both together.
+ */
+const lowGritGoal = (lows: ReadonlyArray<Goal>, subtractive: boolean): Goal | undefined =>
+  lows.reduce<Goal | undefined>((best, goal) => {
+    if (!best) return goal;
+    const amount = goal.target * goal.frequency;
+    const bestAmount = best.target * best.frequency;
+    return (subtractive ? amount > bestAmount : amount < bestAmount) ? goal : best;
+  }, undefined);
+
+/**
+ * The habit's weekly / monthly streak cadence, or `null` for day cadences.
+ * The period target is the Low Grit goal's own `target × frequency` for either
+ * polarity (Low Grit keeps the run alive, always); a low tier counted in
+ * another period unit falls back to the cadence goal's.
+ */
 export const periodStreakCadence = (habit: Habit, tz: string): PeriodStreakCadence | null => {
   const goal = streakCadenceGoal(habit);
   if (!goal) return null;
   const { kind } = periodOf(goal);
   if (kind === 'day') return null;
+  const subtractive = isSubtractiveHabit(habit);
+  const lows = habit.goals.filter(
+    (g) => g.tier === 'low' && g.frequency_unit === goal.frequency_unit,
+  );
+  const targetGoal = lowGritGoal(lows, subtractive) ?? goal;
   return {
     kind,
-    periodTarget: goal.target * goal.frequency,
+    periodTarget: targetGoal.target * targetGoal.frequency,
     startDay: dayKeyInTZ(habit.start_date, tz),
-    subtractive: isSubtractiveHabit(habit),
+    subtractive,
   };
 };
 
@@ -703,18 +728,26 @@ const toDayUnits = (completions: ReadonlyArray<Completion>, tz: string): DayUnit
  * shared with ``getGoalTier`` (the badge) and the backend
  * ``_subtractive_context`` (BUG #768): probing one specific tier let the two
  * disagree, so a never-logged abstention habit reported a ``0`` streak while
- * the badge said "Achieved". The threshold comes from the ``clear``-tier goal,
- * or the first non-additive goal if the clear tier is absent.
+ * the badge said "Achieved". The threshold is the Low Grit limit (Low Grit
+ * keeps the run alive, always; the most forgiving low row wins), else the
+ * ``clear``-tier goal, else the first non-additive goal — the backend
+ * ``subtractive_context_for_goals`` order.
  */
 const subtractiveStreakInputs = (
   habit: Habit,
   tz: string,
-): { clearThreshold: number; startDate: string } | null => {
+): { threshold: number; startDate: string } | null => {
   const nonAdditive = habit.goals.filter((g) => !g.is_additive);
   if (nonAdditive.length === 0) return null;
-  const thresholdGoal = habit.goals.find((g) => g.tier === 'clear') ?? nonAdditive[0]!;
+  const thresholdGoal =
+    lowGritGoal(
+      habit.goals.filter((g) => g.tier === 'low'),
+      true,
+    ) ??
+    habit.goals.find((g) => g.tier === 'clear') ??
+    nonAdditive[0]!;
   return {
-    clearThreshold: thresholdGoal.target,
+    threshold: thresholdGoal.target,
     startDate: dayKeyInTZ(habit.start_date, tz),
   };
 };
@@ -748,7 +781,7 @@ export const computeCurrentStreak = (
           timestamp: c.local_day ?? c.timestamp,
           completed_units: c.completed_units,
         })),
-        clearThreshold: subtractive.clearThreshold,
+        threshold: subtractive.threshold,
         startDate: subtractive.startDate,
       },
       tz,

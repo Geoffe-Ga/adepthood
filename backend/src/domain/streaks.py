@@ -36,13 +36,14 @@ class SubtractiveContext:
 
     Bundles the two values a subtractive-habit streak walk needs into a single
     kwarg so streak functions stay under the project's ``PLR0913`` (max-5-args)
-    bar even after picking up the abstention code path.  ``clear_threshold`` is
-    the day's failure cutoff (sum > threshold = transgression); ``start_date``
+    bar even after picking up the abstention code path.  ``threshold`` is
+    the day's failure cutoff, the habit's Low Grit limit (sum > threshold =
+    transgression; see :func:`services.streaks.subtractive_context_for_goals`); ``start_date``
     is the habit's birth so the walk cannot accrue streak days before the habit
     existed.
     """
 
-    clear_threshold: float
+    threshold: float
     start_date: date
 
 
@@ -63,8 +64,9 @@ class PeriodCadence:
     A habit whose goals are ``per_week`` or ``per_month`` is scored in
     periods, not days (#2819): an ISO week starting Monday, or a calendar
     month, in the user's calendar. A period is *met* when its summed units
-    reach ``period_target`` (the clear tier's ``target * frequency``) for an
-    additive habit, or stay at or under it for a subtractive one.
+    reach ``period_target`` for an additive habit (the Low Grit floor's
+    ``target * frequency``), or stay at or under it for a subtractive one (the
+    Low Grit limit); :func:`services.streaks.period_cadence_for_goals` picks it.
     ``start_date`` is the habit's birth: a subtractive walk starts at the
     period *containing* it and never counts an earlier one, since an absent
     row there is not an abstention. A habit begun mid-period has that whole
@@ -109,7 +111,7 @@ def _period_totals(day_totals: dict[date, float], unit: PeriodUnit) -> dict[date
 
 
 def _period_met(total: float, cadence: PeriodCadence) -> bool:
-    """Whether a period's summed units satisfy the cadence's clear target."""
+    """Whether a period's summed units satisfy the cadence's period target."""
     if cadence.subtractive:
         return total <= cadence.period_target
     return total >= cadence.period_target
@@ -259,7 +261,7 @@ def subtractive_current_streak(
     """Count consecutive abstention days for a subtractive habit.
 
     Walks backwards from today; a day counts when its total is at most
-    ``ctx.clear_threshold`` (trivially true for a day with no row).  Stops on a
+    ``ctx.threshold`` (trivially true for a day with no row).  Stops on a
     transgression (total above the threshold) or when the cursor crosses
     ``ctx.start_date``.  Returns 0 when the habit has not begun yet.
     """
@@ -269,7 +271,7 @@ def subtractive_current_streak(
     streak = 0
     cursor = today
     while cursor >= ctx.start_date:
-        if day_totals.get(cursor, 0.0) > ctx.clear_threshold:
+        if day_totals.get(cursor, 0.0) > ctx.threshold:
             break
         streak += 1
         cursor -= timedelta(days=1)
@@ -296,7 +298,7 @@ def subtractive_longest_streak(
     run = 0
     cursor = ctx.start_date
     while cursor <= today:
-        if day_totals.get(cursor, 0.0) > ctx.clear_threshold:
+        if day_totals.get(cursor, 0.0) > ctx.threshold:
             run = 0
         else:
             run += 1
