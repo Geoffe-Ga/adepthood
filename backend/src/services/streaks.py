@@ -70,10 +70,19 @@ def subtractive_context_for_goals(
     non_additive = _non_additive_goals(goals)
     if not non_additive:
         return None
-    clear = _single_clear_goal(goals)
-    lows = [goal for goal in goals if goal.tier == "low"]
-    threshold_goal = _low_grit_goal(lows, subtractive=True) or clear or non_additive[0]
+    threshold_goal = _subtractive_threshold_goal(goals, non_additive)
     return SubtractiveContext(threshold=threshold_goal.target, start_date=start_date)
+
+
+def _subtractive_threshold_goal(goals: Sequence[Goal], non_additive: Sequence[Goal]) -> Goal:
+    """Low Grit, then the sole clear tier, then the first non-additive goal.
+
+    The clear tier is resolved first even when a low tier wins, so an
+    ambiguous ladder with two clear rows still raises.
+    """
+    clear = _single_clear_goal(goals)
+    low = _low_grit_goal(_tier_goals(goals, "low"), subtractive=True)
+    return low or clear or non_additive[0]
 
 
 def period_cadence_for_goals(goals: Sequence[Goal], start_date: date) -> PeriodCadence | None:
@@ -96,14 +105,24 @@ def period_cadence_for_goals(goals: Sequence[Goal], start_date: date) -> PeriodC
     if goal is None or goal.frequency_unit not in PERIOD_UNITS:
         return None
     subtractive = bool(_non_additive_goals(goals))
-    lows = [g for g in goals if g.tier == "low" and g.frequency_unit == goal.frequency_unit]
-    target_goal = _low_grit_goal(lows, subtractive=subtractive) or goal
+    target_goal = _period_target_goal(goals, goal, subtractive=subtractive)
     return PeriodCadence(
         unit=cast("PeriodUnit", goal.frequency_unit),
         period_target=target_goal.target * target_goal.frequency,
         start_date=start_date,
         subtractive=subtractive,
     )
+
+
+def _period_target_goal(goals: Sequence[Goal], cadence_goal: Goal, *, subtractive: bool) -> Goal:
+    """The Low Grit goal counted in the cadence's own period unit, else ``cadence_goal``."""
+    lows = [g for g in _tier_goals(goals, "low") if g.frequency_unit == cadence_goal.frequency_unit]
+    return _low_grit_goal(lows, subtractive=subtractive) or cadence_goal
+
+
+def _tier_goals(goals: Sequence[Goal], tier: str) -> list[Goal]:
+    """Return the goals on ``tier``, in their given order."""
+    return [goal for goal in goals if goal.tier == tier]
 
 
 def _low_grit_goal(lows: Sequence[Goal], *, subtractive: bool) -> Goal | None:
@@ -146,7 +165,7 @@ def _non_additive_goals(goals: Sequence[Goal]) -> list[Goal]:
 
 def _single_clear_goal(goals: Sequence[Goal]) -> Goal | None:
     """Return the sole clear tier, rejecting an ambiguous goal ladder."""
-    clear_goals = [goal for goal in goals if goal.tier == "clear"]
+    clear_goals = _tier_goals(goals, "clear")
     if len(clear_goals) > 1:
         raise MultipleResultsFound
     return clear_goals[0] if clear_goals else None
