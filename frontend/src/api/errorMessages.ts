@@ -55,6 +55,16 @@ export const INSUFFICIENT_OFFERINGS_COPY =
   "You're out of BotMason credits, so nothing was charged. Credits pay for readings and letters your vault answers; page reading needs your own OpenAI or Anthropic API key, which you can add in Settings.";
 // Owner-approved wording (ADR 0009 phase (a), #3067; #3262): says plainly that
 // credits no longer pay for cloud AI. No privacy promise; B24 (#3076) gates those.
+/**
+ * A vault-bound reading or letter whose vault relayed the writer's own API key
+ * and whose AI provider turned that key down (Creek contract 0.28). Unlike the
+ * retryable ``reflection_source_unavailable`` it never says to wait: the same
+ * key fails the same way, so the copy names who refused, what was spared and
+ * the one remedy. It names no status, never repeats the key or the provider's
+ * words, and matches the Settings key-rejected notice's voice.
+ */
+export const REFLECTION_KEY_REJECTED_COPY =
+  'Your AI provider turned down your own API key, so nothing was charged. Your entry is saved. Replace the key in Settings → API key, then try again.';
 export const LLM_KEY_REQUIRED_COPY =
   "BotMason's cloud AI needs an API key of your own — credits don't pay for it — so nothing was charged. Add your OpenAI or Anthropic key in Settings to continue.";
 // Owner-approved wording (#1938, B21 E1; #3262): a revoked entitlement -- a
@@ -272,6 +282,7 @@ export const USER_FACING_ERROR_MESSAGES: Readonly<Record<string, string>> = Obje
   // makes no claim about where writing is or is not processed.
   reflection_source_unavailable:
     "The reflection couldn't be prepared just now, and nothing was charged. Your entry is saved, so give it a moment and try again.",
+  reflection_key_rejected: REFLECTION_KEY_REJECTED_COPY,
   malformed_stream_frame: PROVIDER_TROUBLE,
   incomplete_stream:
     'The connection dropped before BotMason finished its reply. Tap retry to send the same message again.',
