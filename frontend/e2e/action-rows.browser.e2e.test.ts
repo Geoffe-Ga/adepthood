@@ -176,7 +176,7 @@ const EXTRA_ROUTES: readonly Route[] = [
   },
   {
     name: 'Progress',
-    label: 'Your progress',
+    label: 'Stats and progress',
     anchor: 'progress-screen',
     open: async (page) => {
       await page.goto(`${frontendUrl()}/map`);

@@ -59,7 +59,7 @@ test('a reader can promote a selected quote, reload it, and remove it over the r
   await page.getByTestId('promote-selection-fab').click();
 
   await expect(page.getByTestId('quote-promotion-success')).toHaveText(
-    'Promoted — find it any time under Promoted quotes',
+    'Promoted — find it any time under Write a review',
   );
   const promotions = await page.request.get(`${backendUrl()}/journal/${entryId}/promotions`, {
     headers: { Authorization: `Bearer ${token}` },

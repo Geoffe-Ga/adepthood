@@ -143,7 +143,7 @@ test('a writer checks several promoted quotes and folds them into the review at 
   // and folds the quote still waiting back into THIS review.
   const openPromotedQuotes = async (): Promise<void> => {
     await page.getByRole('button', { name: 'Open Journal menu' }).click();
-    await page.getByRole('dialog').getByRole('button', { name: 'Promoted quotes' }).click();
+    await page.getByRole('dialog').getByRole('button', { name: 'Write a review' }).click();
     await expect(page.getByTestId('promoted-quotes-screen')).toBeVisible();
   };
   await openPromotedQuotes();

@@ -48,7 +48,7 @@ const NEW_ENTRY_LABEL = 'New entry';
 /** Row that opens the photograph-a-page capture flow. */
 const PHOTOGRAPH_LABEL = 'Photograph a page';
 /** Permanent door to the writing corpus behind reflections. */
-const CORPUS_LABEL = "Everything you've written";
+const CORPUS_LABEL = 'Corpus upload';
 /**
  * Permanent door to the shelf of expanded margin notes.
  *
@@ -58,15 +58,20 @@ const CORPUS_LABEL = "Everything you've written";
  * §6 make invitations resonant and declinable, and a number beside a row is
  * neither. The shelf is retrieval, reached because someone went looking.
  */
-const VOICE_DRAFTS_LABEL = 'Voice drafts';
+const VOICE_DRAFTS_LABEL = 'Reflections';
 /**
  * Permanent door to every quote the writer has promoted, across entries (#2865).
  *
  * A door with no count, for the reason ``VOICE_DRAFTS_LABEL`` gives: the
  * listing's totals are spent on the screen's own section headers, reached
  * because the writer went looking, and never on a number beside this row.
+ *
+ * The door names what the writer goes there to do; the screen it opens keeps
+ * the title Promoted quotes, naming what is on it. The two differ on purpose:
+ * that screen carries its own Write a review button, and a stack title must
+ * never repeat as body text (#2962).
  */
-export const PROMOTED_QUOTES_LABEL = 'Promoted quotes';
+export const PROMOTED_QUOTES_LABEL = 'Write a review';
 const CORPUS_ERROR = "Couldn't open your writing just now. Check your connection and try again.";
 /** Row that fetches and appends the next page of older entries. */
 const LOAD_MORE_LABEL = 'Load older entries';
@@ -463,7 +468,7 @@ function DrawerActions({
   );
 }
 
-/** The count-free doors to whole-journal screens: Promoted quotes. */
+/** The count-free doors to whole-journal screens: Write a review, which opens Promoted quotes. */
 function DrawerDoors({
   onOpenPromotedQuotes,
 }: {
@@ -492,9 +497,9 @@ function CorpusDrawerAction({
   const { width } = useWindowDimensions();
   const accessibilityLabel =
     state === 'pending'
-      ? "Opening everything you've written"
+      ? 'Opening Corpus upload'
       : state === 'error'
-        ? "Everything you've written. It didn't open last time; try again"
+        ? "Corpus upload. It didn't open last time; try again"
         : CORPUS_LABEL;
   return (
     <>

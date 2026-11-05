@@ -10,7 +10,7 @@ const FILLER_LINES = 120;
 const MIN_SCREENS = 3;
 /** The body's last line, so the field's end is unmistakable. */
 const CLOSING_LINE = 'the heron lifted off the far bank at dusk';
-const PROMOTED_COPY = 'Promoted — find it any time under Promoted quotes';
+const PROMOTED_COPY = 'Promoted — find it any time under Write a review';
 /** How far below the field's first line the promoted sentence lies (#3134). */
 const DEEP_OFFSET_PX = 2000;
 /**

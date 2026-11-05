@@ -35,7 +35,7 @@ interface TitledRoute {
 /** Each walked screen whose body used to repeat its stack title, by route name. */
 const WALKED_TITLES: Readonly<Record<string, string>> = {
   Settings: 'Settings',
-  VoiceDrafts: 'Voice drafts',
+  VoiceDrafts: 'Reflections',
   TimezoneSettings: 'Time zone',
   ExportData: 'Export my data',
   DeleteAccount: 'Delete account',

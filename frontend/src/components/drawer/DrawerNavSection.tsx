@@ -8,12 +8,13 @@
 import { useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import React from 'react';
-import { StyleSheet, View } from 'react-native';
+import { View } from 'react-native';
 
+import DrawerDivider from './DrawerDivider';
 import DrawerItem from './DrawerItem';
 import { NAV_ICON_SIZE, NAV_ICON_STROKE } from './navIcon';
 
-import { accent, ink, SPACING, surface } from '@/design/tokens';
+import { accent, ink } from '@/design/tokens';
 import type { RootTabParamList } from '@/navigation/BottomTabs';
 import { NAV_DESTINATIONS, type NavDestinationRing } from '@/navigation/destinations';
 import type { RootStackParamList } from '@/navigation/RootStack';
@@ -104,15 +105,7 @@ export default function DrawerNavSection({
           />
         );
       })}
-      <View testID="drawer-nav-divider" style={styles.divider} />
+      <DrawerDivider testID="drawer-nav-divider" />
     </View>
   );
 }
-
-const styles = StyleSheet.create({
-  divider: {
-    height: StyleSheet.hairlineWidth,
-    backgroundColor: surface.hairline,
-    marginVertical: SPACING.sm,
-  },
-});

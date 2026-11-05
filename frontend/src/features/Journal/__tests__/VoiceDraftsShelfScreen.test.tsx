@@ -294,12 +294,12 @@ describe('the Voice Drafts shelf — letter source (#3062)', () => {
 });
 
 describe('the Voice Drafts shelf — navigation owns the title (#2962)', () => {
-  it('paints no "Voice drafts" title, keeps one header named by it, and moves no focus', async () => {
+  it('paints no "Reflections" title, keeps one header named by it, and moves no focus', async () => {
     mockList.mockResolvedValueOnce(page([]));
     const focus = watchFocusMoves();
     const screen = render(<VoiceDraftsShelfScreen />);
     await waitFor(() => expect(screen.getByTestId('voice-drafts-empty')).toBeTruthy());
-    expectNavigationOwnsTitle(screen, 'Voice drafts');
+    expectNavigationOwnsTitle(screen, 'Reflections');
     expect(screen.getByText('IN YOUR OWN WORDS')).toBeTruthy();
     focus.expectNone();
   });

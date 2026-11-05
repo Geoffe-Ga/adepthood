@@ -9,6 +9,8 @@ export { default as ScreenDrawer } from './ScreenDrawer';
 export type { ScreenDrawerProps } from './ScreenDrawer';
 export { default as DrawerToggle } from './DrawerToggle';
 export type { DrawerToggleProps } from './DrawerToggle';
+export { default as DrawerDivider } from './DrawerDivider';
+export type { DrawerDividerProps } from './DrawerDivider';
 export { default as DrawerItem } from './DrawerItem';
 export type { DrawerItemProps } from './DrawerItem';
 export { default as DrawerNavSection } from './DrawerNavSection';

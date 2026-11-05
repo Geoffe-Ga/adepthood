@@ -2,7 +2,7 @@
 
 ## Problem and reproduction
 
-Open Map → Your progress on a phone or a short desktop window. Try to scroll
+Open Map → Stats and progress on a phone or a short desktop window. Try to scroll
 to the energy section, then expand the arc's “Show as table” control and try
 again. Content below the viewport is unreachable. Habit births wrap into a
 dense emoji legend, and the arc table repeats `Weeks / week: 3` for stages.

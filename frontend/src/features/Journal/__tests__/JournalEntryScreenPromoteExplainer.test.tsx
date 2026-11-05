@@ -114,7 +114,7 @@ describe('JournalEntryScreen — the first promote explains itself', () => {
     expect(screen.getByRole('header', { name: 'Promote a quote' })).toBeTruthy();
     const body = screen.getByTestId('promote-explainer-body').props.children as string;
     expect(body).toMatch(/a review that covers the week you wrote it/);
-    expect(body).toMatch(/Promoted quotes in the Journal menu/);
+    expect(body).toMatch(/Write a review in the Journal menu/);
     const tick = screen.getByTestId('promote-explainer-dont-show');
     expect(tick.props.accessibilityRole).toBe('checkbox');
     expect(tick.props.accessibilityState.checked).toBe(false);
@@ -196,7 +196,7 @@ describe('JournalEntryScreen — "Don’t show this again" is remembered per acc
 });
 
 describe('JournalEntryScreen — the Promoted notice names where the quote went', () => {
-  it('announces "Promoted — find it any time under Promoted quotes" politely, then clears', async () => {
+  it('announces "Promoted — find it any time under Write a review" politely, then clears', async () => {
     await AsyncStorage.setItem(DISMISSED_KEY, 'true');
     mockPromote.mockResolvedValue({
       id: 90,
@@ -225,11 +225,11 @@ describe('JournalEntryScreen — the Promoted notice names where the quote went'
         fireEvent.press(screen.getByTestId('promote-selection-fab'));
       });
       const notice = screen.getByTestId('quote-promotion-success');
-      expect(notice).toHaveTextContent('Promoted — find it any time under Promoted quotes');
+      expect(notice).toHaveTextContent('Promoted — find it any time under Write a review');
       expect(notice.props.accessibilityLiveRegion).toBe('polite');
       // VoiceOver ignores live regions, so iOS is told in words.
       expect(Platform.OS).toBe('ios');
-      expect(announce).toHaveBeenCalledWith('Promoted — find it any time under Promoted quotes');
+      expect(announce).toHaveBeenCalledWith('Promoted — find it any time under Write a review');
 
       act(() => {
         jest.advanceTimersByTime(PROMOTED_NOTICE_MS);
