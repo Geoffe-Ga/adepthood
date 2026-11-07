@@ -223,6 +223,15 @@ describe('WritingSessionSurface', () => {
     expect(band.props['aria-hidden']).toBe(false);
   });
 
+  it('lets taps beside the timer fall through the full-width band content (#3694)', () => {
+    // RN Web's ``box-none`` turns only the element's own box off and resets its
+    // direct children to ``auto``; the scroll content container is such a child,
+    // edge to edge, so it must pass taps through itself rather than inherit.
+    const { getByTestId } = renderSurface();
+    const scroll = getByTestId('writing-session-band-content');
+    expect(StyleSheet.flatten(scroll.props.contentContainerStyle).pointerEvents).toBe('box-none');
+  });
+
   it('scrolls an untouched phone dock whose enlarged content exceeds the available height', () => {
     const rn = require('react-native');
     const dimensions = jest

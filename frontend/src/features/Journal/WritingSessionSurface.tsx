@@ -357,6 +357,7 @@ function writingScrollStyles(layout: ReturnType<typeof useWritingBandLayout>) {
       layout.idleDocked ? { maxHeight: layout.idleDockMaxHeight } : null,
     ],
     contentContainerStyle: [
+      styles.passThrough,
       styles.shadowClearance,
       (!layout.scrollWholeSurface || !roomForShadow) && styles.unclippedContent,
     ],
@@ -450,6 +451,16 @@ function WritingSessionSurface({
 }
 
 const styles = StyleSheet.create({
+  /**
+   * The scroll content spans the band edge to edge, but only the timer and the
+   * note inside it should catch a pointer. The ScrollView's own ``box-none``
+   * does not reach it: on RN Web that turns off only the scroller's own box and
+   * sets its direct children — this container — back to ``auto``, which left an
+   * invisible, unclickable strip across the writing beside the timer (#3694).
+   */
+  passThrough: {
+    pointerEvents: 'box-none',
+  },
   /**
    * A ScrollView clips even when scrolling is disabled. Keep the warm shadow
    * inside its viewport on every edge, and inset both notes and options from
