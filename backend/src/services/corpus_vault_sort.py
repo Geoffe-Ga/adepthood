@@ -50,7 +50,7 @@ from services.account_egress_barrier import ensure_account_live, hold_account
 from services.corpus_consent import load_consent
 from services.corpus_ingest import INGEST_SOURCE
 from services.creek_vault_pipeline import VaultPipelineTrigger, drive_vault_pipeline
-from services.creek_vault_write import VaultWriteStatus
+from services.creek_vault_write import VaultWriteOutcome
 from services.journal_vault_write import record_vault_outcome
 from services.journal_withdrawal_obligation import deletion_in_progress_clause
 from services.voice_draft_privacy import journal_vault_mutations
@@ -146,8 +146,12 @@ async def offer_to_vault(
     entry_id: int,
     *,
     drive_pipeline: bool = True,
-) -> VaultWriteStatus | None:
+) -> VaultWriteOutcome | None:
     """Offer one entry under the save path's own locks; ``None`` when nothing was offered.
+
+    The whole outcome rather than its status, so a caller can tell a send the
+    vault shed for a moment (:attr:`VaultWriteOutcome.retryable`) from one it
+    refused outright.
 
     ``drive_pipeline`` is passed to
     :func:`services.journal_vault_write.record_vault_outcome`: a caller sending
@@ -172,10 +176,9 @@ async def offer_to_vault(
         )
         if entry is None:
             return None
-        outcome = await record_vault_outcome(
+        return await record_vault_outcome(
             session, entry, target.client, drive_pipeline=drive_pipeline
         )
-        return None if outcome is None else outcome.status
 
 
 async def nudge_vault_pipeline(session: AsyncSession, target: VaultTarget) -> None:

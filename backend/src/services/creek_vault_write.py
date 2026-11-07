@@ -20,16 +20,20 @@ rather than an exception the router must special-case. Per-entry vault
 classification is deferred: the write path never calls a classify capability,
 so a successful write always carries an empty tag tuple.
 
-**A failed replication is dropped, not queued.** There is no retry, no
-dead-letter queue, and no backlog today: a write that degrades is logged with a
-countable :class:`VaultDegradeReason` and then forgotten, and the entry is never
-re-sent unless the user edits it again. That is a deliberate floor, not an
-oversight -- the local Postgres row is the system of record, the user's save
-already succeeded, and the vault holds a convenience copy. Nothing the user can
-see is lost by dropping it, whereas a queue would need durable storage of entry
-bodies outside Postgres, which is a privacy decision nobody has made. The logs
-exist so an operator can tell *why* replication is failing, and how often,
-before that decision is ever needed.
+**A failed replication is dropped, not queued.** This module never retries,
+and there is no dead-letter queue: a write that degrades is logged with a
+countable :class:`VaultDegradeReason` and then forgotten here, and the entry is
+re-sent only when the user edits it again or presses Sort, which offers every
+entry the vault has not stored (:mod:`services.corpus_sort_run`). What this
+module does say is whether sending again could help --
+:attr:`VaultWriteOutcome.retryable` -- so a caller sending many entries in a row
+can wait out a vault that is shedding load instead of moving past it. That is a
+deliberate floor, not an oversight -- the local Postgres row is the system of
+record, the user's save already succeeded, and the vault holds a convenience
+copy. Nothing the user can see is lost by dropping it, whereas a queue would
+need durable storage of entry bodies outside Postgres, which is a privacy
+decision nobody has made. The logs exist so an operator can tell *why*
+replication is failing, and how often, before that decision is ever needed.
 
 **Intimate content is deliberately not sent here.** An entry classified
 ``intimate`` short-circuits to :attr:`VaultWriteStatus.SKIPPED_INTIMATE` before
@@ -57,6 +61,8 @@ from domain.creek_vault import (
     CreekVaultClient,
     CreekVaultContractError,
     CreekVaultError,
+    CreekVaultUnavailableError,
+    VaultErrorCode,
     VaultIngestRequest,
     VaultIngestResult,
     VaultSendSuspendedError,
@@ -128,11 +134,19 @@ class VaultWriteOutcome:
     is always empty for now, since per-entry vault classification is deferred.
     Frozen so a recorded outcome cannot mutate between the write path and the
     caller that persists it.
+
+    ``retryable`` is ``True`` only on a :attr:`VaultWriteStatus.DEGRADED` write
+    whose ingest the vault refused for a passing reason (:func:`_passes`): Creek
+    publishes ``temporarily_unavailable`` as clearing with backoff, and its
+    managed edge sheds that way under load. Sending again is safe, because the
+    ingest is an upsert keyed by the entry id. The journal save ignores it; the
+    background sort waits and sends the same entry again.
     """
 
     status: VaultWriteStatus
     vault_ref: str | None
     tags: tuple[str, ...]
+    retryable: bool = False
 
 
 # The non-ingested outcomes are value-identical every time, so they are
@@ -144,6 +158,9 @@ _UNAVAILABLE_OUTCOME = VaultWriteOutcome(
     status=VaultWriteStatus.UNAVAILABLE, vault_ref=None, tags=()
 )
 _DEGRADED_OUTCOME = VaultWriteOutcome(status=VaultWriteStatus.DEGRADED, vault_ref=None, tags=())
+_RETRYABLE_DEGRADED_OUTCOME = VaultWriteOutcome(
+    status=VaultWriteStatus.DEGRADED, vault_ref=None, tags=(), retryable=True
+)
 _SUSPENDED_OUTCOME = VaultWriteOutcome(status=VaultWriteStatus.SUSPENDED, vault_ref=None, tags=())
 
 
@@ -171,6 +188,21 @@ def _degrade_reason_for(error: CreekVaultError) -> VaultDegradeReason:
     if isinstance(error, CreekCapabilityUnsupportedError):
         return VaultDegradeReason.UNSUPPORTED_CAPABILITY
     return VaultDegradeReason.UNAVAILABLE
+
+
+def _passes(error: CreekVaultError) -> bool:
+    """Return whether the vault refused for a reason that waiting clears.
+
+    An availability failure -- a shed (``temporarily_unavailable``), a rate
+    limit, a timeout, or no answer at all -- passes on its own, the same
+    judgement the pipeline's retry ladder makes. The vault's own
+    ``unavailable`` does not: Creek publishes it as needing an operator first,
+    so backing off would only hear it again.
+    """
+    return (
+        isinstance(error, CreekVaultUnavailableError)
+        and error.code is not VaultErrorCode.UNAVAILABLE
+    )
 
 
 def _degrade_fields(error: CreekVaultError) -> dict[str, object]:
@@ -248,7 +280,7 @@ async def _try_ingest(client: CreekVaultClient, request: VaultIngestRequest) -> 
         return _SUSPENDED_OUTCOME
     except CreekVaultError as error:
         _log_degraded(request, _degrade_fields(error))
-        return _DEGRADED_OUTCOME
+        return _RETRYABLE_DEGRADED_OUTCOME if _passes(error) else _DEGRADED_OUTCOME
     if not result.stored:
         _log_degraded(request, {"reason": VaultDegradeReason.NOT_STORED.value})
         return _DEGRADED_OUTCOME
