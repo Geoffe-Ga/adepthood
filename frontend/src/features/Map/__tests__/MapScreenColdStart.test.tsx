@@ -22,6 +22,9 @@ jest.mock('@react-navigation/bottom-tabs', () =>
 jest.mock('react-native-safe-area-context', () =>
   jest.requireActual('./mapTestHarness').mockSafeAreaModule(),
 );
+jest.mock('@/context/AuthContext', () =>
+  jest.requireActual('./mapTestHarness').mockAuthContextModule(),
+);
 jest.mock('../../../store/useProgramProgression', () =>
   jest.requireActual('./mapTestHarness').mockProgramProgressionModule(),
 );
@@ -127,6 +130,9 @@ describe('MapScreen — cold start and metadata edge cases', () => {
     expect(mockLoadStages).not.toHaveBeenCalled();
     act(() => retry.props.onPress());
     expect(mockLoadStages).toHaveBeenCalledTimes(1);
+    // An ordinary Map load passes no zone: only begin-again re-adopts the
+    // anchor day (#3702), so a first pick still held offline is not overwritten.
+    expect(mockLoadStages).toHaveBeenCalledWith();
 
     // Retrying puts the spinner back rather than leaving the dead end on screen.
     expect(tree.root.findByProps({ testID: 'map-loading' })).toBeTruthy();
@@ -170,6 +176,7 @@ describe('MapScreen — cold start and metadata edge cases', () => {
     expect(mockLoadStages).not.toHaveBeenCalled();
     act(() => retry.props.onPress());
     expect(mockLoadStages).toHaveBeenCalledTimes(1);
+    expect(mockLoadStages).toHaveBeenCalledWith();
   });
 
   it('omits the free-will description line for a stage that has none', () => {

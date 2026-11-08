@@ -87,7 +87,7 @@ const renderReorderModal = () =>
       visible
       habits={HABITS}
       onClose={jest.fn()}
-      onSaveOrder={() => Promise.resolve()}
+      onSaveOrder={() => Promise.resolve(true)}
     />,
   );
 

@@ -220,6 +220,26 @@ export interface OnboardingModalProps {
   userTimezone?: string;
 }
 
+/** How a reorder commit should report a refusal. */
+export interface SaveOrderOptions {
+  /**
+   * The start date was saved in this sitting, so the rows being committed are
+   * owed to it. A refused re-lay then restores the rows silently and leaves the
+   * caller to say the date saved but the habits did not move (#3707) -- the
+   * stock "your previous order was restored" alert would hide that the anchor
+   * already moved.
+   */
+  anchorSaved?: boolean;
+}
+
+/**
+ * Commit a reorder. Resolves whether the rows LANDED: ``true`` once every PUT
+ * did, ``false`` once a refusal has been rolled back. It resolves only when the
+ * act has settled and never rejects (#2755), so a caller can wait on it to
+ * close, and branch on it to stay open (#3707).
+ */
+export type SaveHabitOrder = (_habits: Habit[], _options?: SaveOrderOptions) => Promise<boolean>;
+
 export interface ReorderHabitsModalProps {
   visible: boolean;
   habits: Habit[];
@@ -229,9 +249,11 @@ export interface ReorderHabitsModalProps {
   /**
    * Commits the order. Resolves when the reorder has SETTLED -- persisted, or
    * refused and rolled back by the caller, which surfaces its own refusal --
-   * so the modal has something truthful to close on (#2755).
+   * so the modal has something truthful to close on (#2755), and says whether
+   * the rows landed, so the modal can stay open on a start date that saved
+   * when its rows did not (#3707).
    */
-  onSaveOrder: (_habits: Habit[]) => Promise<void>;
+  onSaveOrder: SaveHabitOrder;
 }
 
 /** Atomic goal ladder supplied when a timer link creates a habit. */
@@ -266,8 +288,8 @@ export interface HabitsActions {
   deleteHabit: (_habitId: number) => void;
   /** ``isCarryover`` slots the new habit onto the negative laps; defaults to a program add. */
   addHabit: (_input: AddHabitInput, _isCarryover?: boolean) => Promise<void>;
-  /** Resolves once the reorder is durably persisted, or rolled back (#2755). */
-  saveHabitOrder: (_orderedHabits: Habit[]) => Promise<void>;
+  /** Resolves whether the reorder landed, once persisted or rolled back (#2755, #3707). */
+  saveHabitOrder: SaveHabitOrder;
   /** Mirrors ``OnboardingModalProps.onSaveHabits``: the screen passes this straight through. */
   onboardingSave: (
     _input: readonly OnboardingHabit[] | HabitMergePlan,

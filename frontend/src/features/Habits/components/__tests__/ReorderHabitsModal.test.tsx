@@ -3,7 +3,7 @@
 import { describe, expect, it, jest, beforeEach, afterEach } from '@jest/globals';
 import { fireEvent, render, act, within } from '@testing-library/react-native';
 import React from 'react';
-import { StyleSheet } from 'react-native';
+import { Modal, StyleSheet } from 'react-native';
 
 import { messageForCode } from '../../../../api/errorMessages';
 import { accent, STAGE_COLORS } from '../../../../design/tokens';
@@ -11,6 +11,7 @@ import { useProgramStore } from '../../../../store/useProgramStore';
 import { dayKeyInTZ, todayInUserTZ } from '../../../../utils/dateUtils';
 import type { ProgramStartOutcome } from '../../../Program/programAnchor';
 import type { Habit } from '../../Habits.types';
+import { HABIT_ROWS_NOT_MOVED_COPY } from '../../services/habitManager';
 import { REORDER_HABITS_CLOSE_LABEL } from '../modalCloseLabels';
 
 jest.mock('@react-native-async-storage/async-storage', () => ({
@@ -366,7 +367,7 @@ describe('ReorderHabitsModal — date picker visibility (BUG: picker invisible i
 
   it('restamps reorder writes on the selected day in the account timezone', async () => {
     const accountZone = 'Pacific/Honolulu';
-    const onSaveOrder = jest.fn((_habits: Habit[]) => Promise.resolve());
+    const onSaveOrder = jest.fn((_habits: Habit[]) => Promise.resolve(true));
     const result = render(
       <ReorderHabitsModal
         visible
@@ -510,21 +511,21 @@ describe('ReorderHabitsModal — empty habit list', () => {
 describe('ReorderHabitsModal — save flow', () => {
   /** A save whose completion the test controls, standing in for writes on the wire. */
   const heldSave = (): {
-    onSave: jest.Mock<(_habits: Habit[]) => Promise<void>>;
+    onSave: jest.Mock<(_habits: Habit[]) => Promise<boolean>>;
     release: () => void;
   } => {
     let release = (): void => {};
     const onSave = jest.fn(
       (_habits: Habit[]) =>
-        new Promise<void>((resolve) => {
-          release = resolve;
+        new Promise<boolean>((resolve) => {
+          release = () => resolve(true);
         }),
     );
     return { onSave, release: () => release() };
   };
 
   it('calls onSaveOrder with the current order and closes once it has landed', async () => {
-    const onSave = jest.fn((_habits: Habit[]) => Promise.resolve());
+    const onSave = jest.fn((_habits: Habit[]) => Promise.resolve(true));
     const onClose = jest.fn();
     const result = render(
       <ReorderHabitsModal visible habits={HABITS} onClose={onClose} onSaveOrder={onSave} />,
@@ -599,6 +600,24 @@ describe('ReorderHabitsModal — save flow', () => {
     });
 
     expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
+  it('closes on a refused order with no date saved, leaving the alert to the caller (#3707)', async () => {
+    // Order-only: nothing moved the start date in this sitting, so the caller's
+    // own "order not saved" alert is the one honest message and the modal goes.
+    const onSave = jest.fn((_habits: Habit[]) => Promise.resolve(false));
+    const onClose = jest.fn();
+    const result = render(
+      <ReorderHabitsModal visible habits={HABITS} onClose={onClose} onSaveOrder={onSave} />,
+    );
+
+    await act(async () => {
+      fireEvent.press(result.getByText('Save Order'));
+    });
+
+    expect(onSave).toHaveBeenCalledWith(expect.any(Array), { anchorSaved: false });
+    expect(onClose).toHaveBeenCalledTimes(1);
+    expect(result.queryByTestId('reorder-start-date-notice')).toBeNull();
   });
 
   it('settles the control and closes even when the save is refused', async () => {
@@ -1176,7 +1195,7 @@ describe('ReorderHabitsModal — the server decides the start date (#3097)', () 
   const STORED_PICK = new Date(2026, 2, 10);
 
   const openAndPick = (
-    onSaveOrder: (_habits: Habit[]) => Promise<void>,
+    onSaveOrder: (_habits: Habit[]) => Promise<boolean>,
     onClose: () => void = jest.fn(),
   ) => {
     act(() =>
@@ -1195,7 +1214,7 @@ describe('ReorderHabitsModal — the server decides the start date (#3097)', () 
   };
 
   it('sends the picked day in the account zone, then the re-laid rows', async () => {
-    const onSaveOrder = jest.fn((_habits: Habit[]) => Promise.resolve());
+    const onSaveOrder = jest.fn((_habits: Habit[]) => Promise.resolve(true));
     const result = openAndPick(onSaveOrder);
 
     await act(async () => {
@@ -1210,7 +1229,7 @@ describe('ReorderHabitsModal — the server decides the start date (#3097)', () 
 
   it('sends no PUT when the date was not changed', async () => {
     act(() => useProgramStore.getState().hydrateProgramStartDate(STORED_PICK));
-    const onSaveOrder = jest.fn((_habits: Habit[]) => Promise.resolve());
+    const onSaveOrder = jest.fn((_habits: Habit[]) => Promise.resolve(true));
     const result = render(
       <ReorderHabitsModal visible habits={HABITS} onClose={jest.fn()} onSaveOrder={onSaveOrder} />,
     );
@@ -1227,7 +1246,7 @@ describe('ReorderHabitsModal — the server decides the start date (#3097)', () 
     // No anchor held (before the session reconcile lands, or after a log-out
     // wipe): the picker opens on today, which is not the held day. Only a pick
     // made in this sitting may be sent.
-    const onSaveOrder = jest.fn((_habits: Habit[]) => Promise.resolve());
+    const onSaveOrder = jest.fn((_habits: Habit[]) => Promise.resolve(true));
     const result = render(
       <ReorderHabitsModal visible habits={HABITS} onClose={jest.fn()} onSaveOrder={onSaveOrder} />,
     );
@@ -1243,7 +1262,7 @@ describe('ReorderHabitsModal — the server decides the start date (#3097)', () 
 
   it('nor when the held anchor changes under an open modal', async () => {
     act(() => useProgramStore.getState().hydrateProgramStartDate(STORED_PICK));
-    const onSaveOrder = jest.fn((_habits: Habit[]) => Promise.resolve());
+    const onSaveOrder = jest.fn((_habits: Habit[]) => Promise.resolve(true));
     const result = render(
       <ReorderHabitsModal visible habits={HABITS} onClose={jest.fn()} onSaveOrder={onSaveOrder} />,
     );
@@ -1273,7 +1292,7 @@ describe('ReorderHabitsModal — the server decides the start date (#3097)', () 
       mockCommitProgramStart.mockImplementationOnce(() =>
         Promise.resolve({ kind: 'refused', message }),
       );
-      const onSaveOrder = jest.fn((_habits: Habit[]) => Promise.resolve());
+      const onSaveOrder = jest.fn((_habits: Habit[]) => Promise.resolve(true));
       const onClose = jest.fn();
       const result = openAndPick(onSaveOrder, onClose);
 
@@ -1295,7 +1314,7 @@ describe('ReorderHabitsModal — the server decides the start date (#3097)', () 
     mockCommitProgramStart.mockImplementationOnce(() =>
       Promise.resolve({ kind: 'unsaved', message: "Your start date didn't save." }),
     );
-    const onSaveOrder = jest.fn((_habits: Habit[]) => Promise.resolve());
+    const onSaveOrder = jest.fn((_habits: Habit[]) => Promise.resolve(true));
     const result = openAndPick(onSaveOrder);
 
     await act(async () => {
@@ -1317,7 +1336,7 @@ describe('ReorderHabitsModal — the server decides the start date (#3097)', () 
         locked: true,
       }),
     );
-    const onSaveOrder = jest.fn((_habits: Habit[]) => Promise.resolve());
+    const onSaveOrder = jest.fn((_habits: Habit[]) => Promise.resolve(true));
     const result = render(
       <ReorderHabitsModal visible habits={HABITS} onClose={jest.fn()} onSaveOrder={onSaveOrder} />,
     );
@@ -1331,5 +1350,187 @@ describe('ReorderHabitsModal — the server decides the start date (#3097)', () 
     });
     expect(mockCommitProgramStart).not.toHaveBeenCalled();
     expect(onSaveOrder).toHaveBeenCalledTimes(1);
+  });
+
+  /** The first program row's start day, as the modal or a save handed it. */
+  const firstRowDay = (rows: Habit[]): string =>
+    new Date(rows[0]!.start_date).toISOString().slice(0, 10);
+
+  it('when the date saves but the habits do not move, it stays open on the saved date and says so (#3707)', async () => {
+    const onSaveOrder = jest.fn((_habits: Habit[]) => Promise.resolve(false));
+    const onClose = jest.fn();
+    const result = openAndPick(onSaveOrder, onClose);
+
+    await act(async () => {
+      fireEvent.press(result.getByText('Save Order'));
+    });
+
+    expect(mockCommitProgramStart).toHaveBeenCalledTimes(1);
+    expect(onClose).not.toHaveBeenCalled();
+    expect(result.getByTestId('reorder-start-date-notice')).toHaveTextContent(
+      HABIT_ROWS_NOT_MOVED_COPY,
+    );
+    expect(onSaveOrder).toHaveBeenCalledWith(expect.any(Array), { anchorSaved: true });
+    expect(result.getByTestId('reorder-start-date')).toHaveTextContent('Jun 1, 2026');
+    expect(firstRowDay(onSaveOrder.mock.calls[0]![0])).toBe('2026-06-01');
+    expect(firstRowDay(getOrderedHabits(result))).toBe('2026-06-01');
+    expect(useProgramStore.getState().programStartDay).toBe('2026-06-01');
+
+    // Saving again re-lays the rows from the date that already saved: no second
+    // date PUT, and a second failure says the same thing rather than closing.
+    await act(async () => {
+      fireEvent.press(result.getByText('Save Order'));
+    });
+
+    expect(mockCommitProgramStart).toHaveBeenCalledTimes(1);
+    expect(onSaveOrder).toHaveBeenCalledTimes(2);
+    expect(onSaveOrder).toHaveBeenLastCalledWith(expect.any(Array), { anchorSaved: true });
+    expect(firstRowDay(onSaveOrder.mock.calls[1]![0])).toBe('2026-06-01');
+    expect(result.getByTestId('reorder-start-date-notice')).toHaveTextContent(
+      HABIT_ROWS_NOT_MOVED_COPY,
+    );
+    expect(onClose).not.toHaveBeenCalled();
+  });
+
+  it('closes once the retried habits land on the saved date (#3707)', async () => {
+    const onSaveOrder = jest
+      .fn((_habits: Habit[]) => Promise.resolve(true))
+      .mockImplementationOnce(() => Promise.resolve(false));
+    const onClose = jest.fn();
+    const result = openAndPick(onSaveOrder, onClose);
+
+    await act(async () => {
+      fireEvent.press(result.getByText('Save Order'));
+    });
+    expect(onClose).not.toHaveBeenCalled();
+
+    await act(async () => {
+      fireEvent.press(result.getByText('Save Order'));
+    });
+
+    expect(mockCommitProgramStart).toHaveBeenCalledTimes(1);
+    expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
+  it('cannot be dismissed while the habits are saving after a saved date (#3707)', async () => {
+    // The rows-unsaved notice is the only report once the date has saved
+    // (``habitManager`` drops its own alert for that case), so a dismissal
+    // mid-save would leave the person with no message at all while the Map
+    // counted from the new day and the rows stayed on the old one.
+    let settle: (landed: boolean) => void = () => undefined;
+    const onSaveOrder = jest.fn(
+      (_habits: Habit[]) =>
+        new Promise<boolean>((resolve) => {
+          settle = resolve;
+        }),
+    );
+    const onClose = jest.fn();
+    const result = openAndPick(onSaveOrder, onClose);
+
+    await act(async () => {
+      fireEvent.press(result.getByText('Save Order'));
+    });
+    expect(onSaveOrder).toHaveBeenCalledWith(expect.any(Array), { anchorSaved: true });
+
+    fireEvent.press(result.getByRole('button', { name: REORDER_HABITS_CLOSE_LABEL }));
+    act(() => {
+      result.UNSAFE_getByType(Modal).props.onRequestClose();
+    });
+    expect(onClose).not.toHaveBeenCalled();
+
+    await act(async () => {
+      settle(false);
+    });
+
+    expect(onClose).not.toHaveBeenCalled();
+    expect(result.getByTestId('reorder-start-date-notice')).toHaveTextContent(
+      HABIT_ROWS_NOT_MOVED_COPY,
+    );
+  });
+
+  it('can be dismissed again once the save has settled (#3707)', async () => {
+    const onSaveOrder = jest.fn((_habits: Habit[]) => Promise.resolve(false));
+    const onClose = jest.fn();
+    const result = openAndPick(onSaveOrder, onClose);
+
+    await act(async () => {
+      fireEvent.press(result.getByText('Save Order'));
+    });
+    fireEvent.press(result.getByRole('button', { name: REORDER_HABITS_CLOSE_LABEL }));
+
+    expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
+  it('a rejecting save after a saved date also stays open with the rows-unsaved notice (#3707)', async () => {
+    const onSaveOrder = jest.fn((_habits: Habit[]) => Promise.reject(new Error('offline')));
+    const onClose = jest.fn();
+    const result = openAndPick(onSaveOrder, onClose);
+
+    await act(async () => {
+      fireEvent.press(result.getByText('Save Order'));
+    });
+
+    expect(onClose).not.toHaveBeenCalled();
+    expect(result.getByTestId('reorder-start-date-notice')).toHaveTextContent(
+      HABIT_ROWS_NOT_MOVED_COPY,
+    );
+    expect(result.getByText('Save Order')).toBeTruthy();
+  });
+
+  it('a date equal to the held anchor, then a failed re-lay, closes as an order-only failure (#3707)', async () => {
+    // Nothing was saved in this sitting, so "your new start date saved" would
+    // be false: the caller's own alert is the message, and the modal closes.
+    act(() =>
+      useProgramStore.getState().adoptServerProgramStart({
+        day: '2026-06-01',
+        window: null,
+        locked: false,
+      }),
+    );
+    const onSaveOrder = jest.fn((_habits: Habit[]) => Promise.resolve(false));
+    const onClose = jest.fn();
+    const result = render(
+      <ReorderHabitsModal visible habits={HABITS} onClose={onClose} onSaveOrder={onSaveOrder} />,
+    );
+    fireEvent.press(result.getByTestId('reorder-start-date'));
+    fireEvent.press(result.getByTestId('modal-datetime-confirm'));
+
+    await act(async () => {
+      fireEvent.press(result.getByText('Save Order'));
+    });
+
+    expect(mockCommitProgramStart).not.toHaveBeenCalled();
+    expect(onClose).toHaveBeenCalledTimes(1);
+    expect(result.queryByTestId('reorder-start-date-notice')).toBeNull();
+    expect(onSaveOrder).toHaveBeenCalledWith(expect.any(Array), { anchorSaved: false });
+  });
+
+  it('forgets a saved date once the modal is closed and opened again (#3707)', async () => {
+    const onSaveOrder = jest.fn((_habits: Habit[]) => Promise.resolve(false));
+    const onClose = jest.fn();
+    const result = openAndPick(onSaveOrder, onClose);
+    await act(async () => {
+      fireEvent.press(result.getByText('Save Order'));
+    });
+    expect(result.getByTestId('reorder-start-date-notice')).toBeTruthy();
+
+    result.rerender(
+      <ReorderHabitsModal
+        visible={false}
+        habits={HABITS}
+        onClose={onClose}
+        onSaveOrder={onSaveOrder}
+      />,
+    );
+    result.rerender(
+      <ReorderHabitsModal visible habits={HABITS} onClose={onClose} onSaveOrder={onSaveOrder} />,
+    );
+    await act(async () => {
+      fireEvent.press(result.getByText('Save Order'));
+    });
+
+    // A new sitting owes nothing to the last one: an order-only failure closes.
+    expect(onSaveOrder).toHaveBeenLastCalledWith(expect.any(Array), { anchorSaved: false });
+    expect(onClose).toHaveBeenCalledTimes(1);
   });
 });
