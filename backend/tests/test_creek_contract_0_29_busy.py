@@ -26,16 +26,18 @@ import jsonschema
 import pytest
 
 from domain.creek_vault import (
-    BUSY_FAILURE_CODE_SINCE_MINOR,
     CONTRACT_VERSION,
     JOB_FAILURE_CODE_SINCE_MINOR,
-    JOB_FAILURE_CODE_SINCE_MINOR_BY_CODE,
-    TRANSIENT_JOB_FAILURE_CODES,
     VaultJobFailureCode,
     VaultLinkStage,
     VaultPipelineJob,
     VaultPipelineJobState,
     VaultPipelineStage,
+)
+from domain.vault_job_failure import (
+    BUSY_FAILURE_CODE_SINCE_MINOR,
+    JOB_FAILURE_CODE_SINCE_MINOR_BY_CODE,
+    TRANSIENT_JOB_FAILURE_CODES,
     failure_code_is_final,
 )
 from services.creek_vault_client import HttpCreekVaultClient

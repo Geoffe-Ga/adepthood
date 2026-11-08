@@ -38,11 +38,8 @@ from sqlalchemy import ColumnElement, or_
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import col, select
 
-from domain.creek_vault import (
-    TRANSIENT_JOB_FAILURE_CODES,
-    VaultJobFailureCode,
-    VaultPipelineStage,
-)
+from domain.creek_vault import VaultJobFailureCode, VaultPipelineStage
+from domain.vault_job_failure import TRANSIENT_JOB_FAILURE_CODES
 from models.vault_pipeline_run import VaultPipelineOutcome, VaultPipelineRun
 from schemas.vault_config import VaultClassificationState
 

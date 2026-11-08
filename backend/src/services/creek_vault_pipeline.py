@@ -90,7 +90,6 @@ from domain.creek_vault import (
     VaultPipelineJob,
     VaultPipelineStage,
     VaultSendSuspendedError,
-    failure_code_is_final,
 )
 from domain.dates import ensure_aware
 from models.vault_pipeline_follow_up import VaultPipelineFollowUp
@@ -115,6 +114,7 @@ from services.creek_vault_pipeline_results import (
 from services.creek_vault_pipeline_results import counts_from_result as _counts_from_result
 from services.creek_vault_pipeline_results import failed_job as _failed_job
 from services.creek_vault_pipeline_results import job_from_run as _job_from_run
+from services.creek_vault_pipeline_results import lands_polled_job as _lands_polled_job
 from services.creek_vault_pipeline_results import (
     pending_admission_event as _pending_admission_event,
 )
@@ -1222,31 +1222,6 @@ def _continue_after_retry(
     return retried[0]
 
 
-async def _retire_retryable_failure(
-    session: AsyncSession,
-    run: VaultPipelineRun,
-    polled: VaultPipelineJob,
-    *,
-    ambiguous: bool,
-) -> VaultPipelineOutcome | None:
-    """Hand a retryable failed job to the bounded retry, or close a run it has spent.
-
-    Usually the handle is forgotten and ``None`` lets the retry re-admit. Once a
-    failure naming a *transient* reason (``busy``) arrives on the last allowed
-    admission, the run is closed here instead, because only here is the reason
-    still known: ``failed`` with it recorded when every admission answered, and
-    ``ambiguous`` with none when an earlier admission went unanswered -- that one
-    may have landed labels, which a later busy pass says nothing about.
-    """
-    spent = polled.failure_code is not None and run.attempt_count >= _MAX_STAGE_ATTEMPTS
-    if not spent:
-        await _clear_job(session, run)
-        return None
-    if ambiguous:
-        return await _finish_exhausted_run(session, run, ambiguous=True)
-    return await _land_result(session, run, polled)
-
-
 async def _reconcile_existing_job(
     session: AsyncSession,
     client: CreekVaultPipelineClient,
@@ -1266,10 +1241,11 @@ async def _reconcile_existing_job(
     polled = await _poll_until_terminal(client, job)
     if polled is None:
         return await _finish_exhausted_run(session, run, ambiguous=True)
-    # A failed job naming a final reason (a refused writer key) is landed too.
-    if not isinstance(polled, VaultPipelineJob) or failure_code_is_final(polled.failure_code):
+    spent = run.attempt_count >= _MAX_STAGE_ATTEMPTS
+    if _lands_polled_job(polled, attempts_spent=spent, ambiguous=ambiguous):
         return await _land_result(session, run, polled)
-    return await _retire_retryable_failure(session, run, polled, ambiguous=ambiguous)
+    await _clear_job(session, run)
+    return None
 
 
 async def _reconciliation_step(

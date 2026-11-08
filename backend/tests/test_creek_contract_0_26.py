@@ -32,12 +32,12 @@ import pytest
 from domain.creek_vault import (
     CONTRACT_VERSION,
     JOB_FAILURE_CODE_SINCE_MINOR,
-    JOB_FAILURE_CODE_SINCE_MINOR_BY_CODE,
     VaultJobFailureCode,
     VaultPipelineJob,
     VaultPipelineJobState,
     VaultPipelineStage,
 )
+from domain.vault_job_failure import JOB_FAILURE_CODE_SINCE_MINOR_BY_CODE
 from services.creek_vault_client import HttpCreekVaultClient
 
 #: The reviewed Creek-Vault commit the snapshot was copied from (a git SHA, not a secret).

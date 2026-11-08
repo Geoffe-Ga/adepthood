@@ -90,11 +90,8 @@ from domain.vault_export import VaultExportPage
 #    `request_key_rejected` (Creek-Vault#1877, #3595) -- only to a vault whose
 #    handshake lists 0.26 (`JOB_FAILURE_CODE_SINCE_MINOR`); an older vault keeps
 #    hearing 0.22. `tests/test_creek_contract_0_26.py` pins that negotiation.
-#    The same poll declares 0.29 instead -- whose failed job can also name
-#    `busy`, content-lock contention, which is retried rather than final
-#    (Creek-Vault#2090, #3710) -- only to a vault whose handshake lists 0.29
-#    (`BUSY_FAILURE_CODE_SINCE_MINOR`); `tests/test_creek_contract_0_29_busy.py`
-#    pins it, and the admissions it follows stay on 0.22.
+#    It declares 0.29 instead -- whose failed job can also name a transient
+#    `busy` -- to a vault listing 0.29 (#3710, `test_creek_contract_0_29_busy.py`).
 #    The owner export (`GET /v1/export`, Creek-Vault#2033, #3579) declares 0.27
 #    the same way (`VAULT_EXPORT_SINCE_MINOR`), and only to a vault that both
 #    advertises `export` and lists 0.27; `tests/test_creek_contract_0_27_export.py`
@@ -1267,66 +1264,29 @@ class VaultPipelineJobState(enum.StrEnum):
 #: (Creek-Vault#1877, ``JOB_FAILURE_CODE_SINCE_MINOR`` upstream). Declared on the
 #: job-status poll only, and only to a vault whose handshake lists it: the pin
 #: above stays where the deployed vaults are, and Creek refuses an unlisted minor.
-#: It governs whether the *key* is present; each code has its own minor below.
 JOB_FAILURE_CODE_SINCE_MINOR: Final = "0.26"
-
-#: The Creek minor that published ``busy`` (Creek-Vault#2090, #2075). A caller
-#: declaring 0.26-0.28 is served ``null`` for the same failure, so the job poll
-#: declares this minor -- again only to a vault whose handshake lists it -- to
-#: learn that a failed pass met content-lock contention rather than some fault.
-BUSY_FAILURE_CODE_SINCE_MINOR: Final = "0.29"
 
 
 class VaultJobFailureCode(enum.StrEnum):
-    """Why a ``failed`` pipeline job failed, when the vault publishes a reason (contract 0.26+).
+    """Why a ``failed`` pipeline job failed, when the vault publishes a reason (contract 0.26).
 
-    Creek's closed ``JobFailureCode`` vocabulary, member for member. Creek
-    publishes a code only for a failure the *caller* can act on -- by replacing
-    a key, or simply by resubmitting -- so not every code is the writer's to
-    remedy; :func:`failure_code_is_final` says which ones settle a run. Any
-    other failure, and every answer from a vault below 0.26, carries no code.
-    Each member is served only to a caller declaring at least its own minor
-    (:data:`JOB_FAILURE_CODE_SINCE_MINOR_BY_CODE`). Values are persisted on
-    :class:`~models.vault_pipeline_run.VaultPipelineRun`, so they must not be
-    reworded without a migration, and a new member needs one that widens the
-    row's ``failure_code`` CHECK.
+    Creek's closed ``JobFailureCode`` vocabulary, member for member; not every
+    code is final (:mod:`domain.vault_job_failure`). Any other failure, and
+    every answer from a vault below 0.26, carries no code. Values are persisted
+    on :class:`~models.vault_pipeline_run.VaultPipelineRun`: rewording one, or
+    adding one, needs a migration of its ``failure_code`` CHECK.
 
     Attributes:
         REQUEST_KEY_REJECTED: The writer's own provider key, relayed for the
             pass, was refused by its vendor with ``401``/``403``. Retrying with
             the same key fails the same way: the writer has to replace it.
-            Since contract 0.26.
-        BUSY: Another writer held the vault's content-mutation lock past the
-            pass's bounded wait. The pass takes that lock before touching any
-            fragment, so nothing was written. The condition is transient: the
-            same request is resubmitted with backoff, and the writer has
-            nothing to change. Since contract 0.29.
+        BUSY: Another writer held the vault content-mutation lock past its
+            bounded wait, so nothing was written. Transient: the same request
+            is resubmitted with backoff. Since contract 0.29.
     """
 
     REQUEST_KEY_REJECTED = "request_key_rejected"
     BUSY = "busy"
-
-
-#: The minor Creek published each code at -- total over :class:`VaultJobFailureCode`.
-JOB_FAILURE_CODE_SINCE_MINOR_BY_CODE: Final[Mapping[VaultJobFailureCode, str]] = {
-    VaultJobFailureCode.REQUEST_KEY_REJECTED: JOB_FAILURE_CODE_SINCE_MINOR,
-    VaultJobFailureCode.BUSY: BUSY_FAILURE_CODE_SINCE_MINOR,
-}
-
-#: Published reasons a later attempt may clear on its own. A failed job naming
-#: one joins the bounded retry, exactly as an unnamed failure does.
-TRANSIENT_JOB_FAILURE_CODES: Final = frozenset({VaultJobFailureCode.BUSY})
-
-
-def failure_code_is_final(code: VaultJobFailureCode | None) -> bool:
-    """Whether a failed job's reason settles its run now, instead of joining the bounded retry.
-
-    Only a reason that would meet every resubmit unchanged is final -- a refused
-    writer key is refused again. ``None`` (no reason, or one this build cannot
-    name) and a transient reason such as ``busy`` say time may change the
-    answer, so the pass is retried with backoff.
-    """
-    return code is not None and code not in TRANSIENT_JOB_FAILURE_CODES
 
 
 @dataclass(frozen=True)

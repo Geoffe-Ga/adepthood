@@ -20,8 +20,8 @@ from domain.creek_vault import (
     VaultPipelineJob,
     VaultPipelineJobState,
     VaultPipelineStage,
-    failure_code_is_final,
 )
+from domain.vault_job_failure import failure_code_is_final
 from models.vault_pipeline_run import VaultPipelineOutcome, VaultPipelineRun
 
 _LOGGER = logging.getLogger(__name__)
@@ -159,6 +159,26 @@ def poll_needs_reconciliation(
         and run.outcome == VaultPipelineOutcome.ATTEMPTED.value
         and not final
     )
+
+
+def lands_polled_job(
+    polled: VaultClassificationPass | VaultLinkPass | VaultPipelineJob,
+    *,
+    attempts_spent: bool,
+    ambiguous: bool,
+) -> bool:
+    """Whether a continuation lands a terminal poll now rather than handing it to the retry.
+
+    Counts land, and so does a failure naming a final reason. A failure naming a
+    *transient* reason (``busy``) is retried -- unless it arrived on the last
+    allowed admission of a run whose every admission answered, the one point
+    where the reason is still known and worth recording. An ambiguous run is
+    never landed this way: an earlier admission went unanswered and may have
+    landed labels, so the spent retry closes it ``ambiguous`` and uncoded.
+    """
+    if not isinstance(polled, VaultPipelineJob) or failure_code_is_final(polled.failure_code):
+        return True
+    return polled.failure_code is not None and attempts_spent and not ambiguous
 
 
 def job_from_run(run: VaultPipelineRun, stage: VaultPipelineStage) -> VaultPipelineJob | None:
