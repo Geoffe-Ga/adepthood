@@ -1,4 +1,4 @@
-import { describe, expect, it } from '@jest/globals';
+import { afterEach, describe, expect, it } from '@jest/globals';
 
 import {
   datedMilestones,
@@ -19,12 +19,18 @@ import {
   unknownTimeNote,
 } from '../habitStoryPresentation';
 
+import { STAGE_COLORS } from '@/design/tokens';
 import { habitStoryFixture, storyDays } from '@/features/Habits/testSupport/habitStoryFixture';
+import { clearServedStages, serveStageColors } from '@/testing/servedStageColors';
 
 const withDaysWith = (days_with: number) => {
   const story = habitStoryFixture();
   return habitStoryFixture({ continuity: { ...story.continuity, days_with } });
 };
+
+afterEach(() => {
+  clearServedStages();
+});
 
 describe('Glance', () => {
   it('names the four figures in the habit cadence unit, with the denominator on Days with', () => {
@@ -96,6 +102,13 @@ describe('early days (D09)', () => {
 });
 
 describe('heat grid', () => {
+  it('labels and colours a stage marker by the colour the server served (#2666)', () => {
+    serveStageColors({ 1: 'Teal' });
+    const [first] = heatGrid(habitStoryFixture()).markers;
+    expect(first?.label).toBe('Teal');
+    expect(first?.color).toBe(STAGE_COLORS.Teal);
+  });
+
   it('lays days into Monday-start columns with stage markers', () => {
     const grid = heatGrid(habitStoryFixture());
     expect(grid.weeks).toHaveLength(8);
@@ -191,6 +204,14 @@ describe('tiers and patterns', () => {
 });
 
 describe('milestones and logs', () => {
+  it('words a completed stage by the colour the server served it (#2666)', () => {
+    serveStageColors({ 2: 'Teal' });
+    const story = habitStoryFixture({
+      milestones: [{ kind: 'stage_complete', reached_on: '2026-10-05', value: 2 }],
+    });
+    expect(datedMilestones(story)).toEqual([{ date: 'Oct 5', text: 'Kept through Teal' }]);
+  });
+
   it('dates the milestones it can word and leaves unknown kinds out', () => {
     const story = habitStoryFixture({
       milestones: [

@@ -20,9 +20,10 @@ import { Text, TouchableOpacity, View } from 'react-native';
 import styles from './JournalEntry.styles';
 
 import { RadioGroup } from '@/components/RadioOption';
-import { STAGE_ORDER, readableGlyphOn, resolveStageColor } from '@/design/tokens';
+import { readableGlyphOn, resolveStageColor } from '@/design/tokens';
 import { STAGE_COUNT } from '@/domain/stageProgression';
 import { stageFallbackName } from '@/features/Map/stageVocabulary';
+import { storedStageColorName } from '@/store/stageColorName';
 
 /** The controlled chord value: a primary Aspect and an optional secondary. */
 export interface AspectChordValue {
@@ -99,7 +100,7 @@ function labelFor(options: readonly AspectOption[], stage: number): string {
  * outside the Map should read.
  */
 function stageFill(stage: number): string {
-  return resolveStageColor(STAGE_ORDER[stage - 1]);
+  return resolveStageColor(storedStageColorName(stage));
 }
 
 interface AspectChipProps {

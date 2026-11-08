@@ -2,6 +2,7 @@ import { describe, expect, it, beforeEach, jest } from '@jest/globals';
 import { act } from '@testing-library/react-native';
 
 import type { Stage, StageProgressRecord } from '../../../../api';
+import { STAGE_COLORS, STAGE_ORDER, colors } from '../../../../design/tokens';
 import {
   BEGIN_AGAIN_FAILED_MESSAGE,
   MAP_LOAD_FAILED_MESSAGE,
@@ -41,7 +42,7 @@ function makeApiStage(stageNumber: number, overrides: Partial<Stage> = {}): Stag
     overview_url: '',
     category: 'Test',
     aspect: 'Aspect',
-    spiral_dynamics_color: 'Beige',
+    spiral_dynamics_color: STAGE_ORDER[stageNumber - 1] ?? 'Beige',
     growing_up_stage: 'Growing',
     divine_gender_polarity: 'Polarity',
     relationship_to_free_will: 'Free Will',
@@ -638,6 +639,39 @@ describe('stageService', () => {
 
       expect(result.mode).toBeNull();
       expect(result.chord).toEqual([]);
+    });
+  });
+
+  describe('toStageData colour (#2666)', () => {
+    it('colours a stage from its served spiral_dynamics_color', () => {
+      const { toStageData } = require('../stageService');
+      // Stage 1 served as Teal: the offline fallback would say Beige, so only
+      // a colour read from the served row lands on the Teal swatch.
+      const result = toStageData(makeApiStage(1, { spiral_dynamics_color: 'Teal' }));
+
+      expect(STAGE_ORDER[0]).not.toBe('Teal');
+      expect(result.color).toBe(STAGE_COLORS.Teal);
+    });
+
+    it('resolves the legacy Turquoise alias to the Teal swatch', () => {
+      const { toStageData } = require('../stageService');
+      const result = toStageData(makeApiStage(8, { spiral_dynamics_color: 'Turquoise' }));
+
+      expect(result.color).toBe(STAGE_COLORS.Teal);
+    });
+
+    it('falls back to the stage position when the served colour is blank', () => {
+      const { toStageData } = require('../stageService');
+      const result = toStageData(makeApiStage(2, { spiral_dynamics_color: '' }));
+
+      expect(result.color).toBe(STAGE_COLORS.Purple);
+    });
+
+    it('takes the neutral token for a served colour the palette does not know', () => {
+      const { toStageData } = require('../stageService');
+      const result = toStageData(makeApiStage(2, { spiral_dynamics_color: 'Chartreuse' }));
+
+      expect(result.color).toBe(colors.neutral);
     });
   });
 

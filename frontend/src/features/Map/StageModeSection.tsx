@@ -4,7 +4,6 @@ import { StyleSheet, Text, View } from 'react-native';
 import type { StageChordNote, StageMode, StagePhaseChord } from '../../api';
 import {
   STAGE_COLORS,
-  STAGE_ORDER,
   editorialType,
   onShowcase,
   radius,
@@ -12,6 +11,7 @@ import {
   spacing,
   uiType,
 } from '../../design/tokens';
+import { useStageColorName } from '../../store/stageColorName';
 
 // A stage's Mode of the Wavelength, as served. Today only Clear Light states
 // one: the Neither/Both Mode, which holds the healthy expression of every other
@@ -25,20 +25,23 @@ const CHORD_LABEL = 'The chord in each phase';
 /** Slug a phase for a testID: lowercased, spaces collapsed to hyphens. */
 const phaseSlug = (phase: string): string => phase.toLowerCase().replace(/\s+/g, '-');
 
-/** The colour of the stage a note comes from, so the chord reads as its Frequencies. */
-const noteColor = (stageNumber: number): string | undefined =>
-  STAGE_COLORS[STAGE_ORDER[stageNumber - 1] ?? ''];
+/**
+ * The colour of the stage a note comes from, so the chord reads as its
+ * Frequencies: its served colour, following the store as the stages arrive.
+ */
+const useNoteColor = (stageNumber: number): string | undefined =>
+  STAGE_COLORS[useStageColorName(stageNumber) ?? ''];
 
 /** One note of a chord: its stage's colour dot beside the stage's healthy expression. */
-const ChordNote = ({ note, testID }: { note: StageChordNote; testID: string }) => (
-  <View style={styles.note} testID={testID}>
-    <View
-      style={[styles.noteDot, { backgroundColor: noteColor(note.stage_number) }]}
-      testID={`${testID}-dot`}
-    />
-    <Text style={styles.noteName}>{note.name}</Text>
-  </View>
-);
+const ChordNote = ({ note, testID }: { note: StageChordNote; testID: string }) => {
+  const color = useNoteColor(note.stage_number);
+  return (
+    <View style={styles.note} testID={testID}>
+      <View style={[styles.noteDot, { backgroundColor: color }]} testID={`${testID}-dot`} />
+      <Text style={styles.noteName}>{note.name}</Text>
+    </View>
+  );
+};
 
 /** One Wavelength phase: a caption eyebrow over its chord of notes. */
 const PhaseChord = ({ chord }: { chord: StagePhaseChord }): React.JSX.Element => {

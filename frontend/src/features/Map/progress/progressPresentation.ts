@@ -7,7 +7,8 @@
 import type { ApiProgressOverview } from '@/api';
 import type { ChartPoint, Dumbbell, RibbonBlock, RibbonMarker } from '@/components/charts';
 import { formatHistoryValue } from '@/components/charts/HistoryPlot';
-import { chart, STAGE_COLORS, STAGE_ORDER } from '@/design/tokens';
+import { chart, STAGE_COLORS } from '@/design/tokens';
+import { storedStageColorName } from '@/store/stageColorName';
 import { dayKeyToInstant } from '@/utils/dateUtils';
 
 /** The rhythm has no shape to show before four weeks of days (D09). */
@@ -22,7 +23,7 @@ const format = (date: string, options: Intl.DateTimeFormatOptions): string =>
   new Intl.DateTimeFormat('en-GB', { timeZone: 'UTC', ...options }).format(instant(date));
 
 export const stageName = (stageNumber: number): string =>
-  STAGE_ORDER[stageNumber - 1] ?? `Stage ${stageNumber}`;
+  storedStageColorName(stageNumber) ?? `Stage ${stageNumber}`;
 export const stageColor = (stageNumber: number): string =>
   STAGE_COLORS[stageName(stageNumber)] ?? chart.dim;
 export const percent = (rate: number): string => `${Math.round(rate * PERCENT)}%`;

@@ -1,5 +1,6 @@
 /* eslint-env jest */
 /* global jest */
+import { STAGE_ORDER } from '../../../design/tokens';
 import { FULLY_COMPLETE } from '../../../domain/stageProgression';
 import type { StageData } from '../stageData';
 
@@ -63,7 +64,9 @@ export function mockMakeStage(stageNumber: number, overrides: Partial<StageData>
     isUnlocked: stageNumber <= 2,
     category: 'Test',
     aspect: 'Aspect',
-    spiralDynamicsColor: 'Beige',
+    // The stage's real colour, so a served-first reader of this fixture says
+    // what a seeded server would (#2666).
+    spiralDynamicsColor: STAGE_ORDER[stageNumber - 1] ?? 'Beige',
     growingUpStage: 'Growing',
     // Stage-specific modal metadata; the lens pill itself shows the stage title + subtitle.
     divineGenderPolarity: stageNumber % 2 === 0 ? 'Divine Feminine' : 'Divine Masculine',

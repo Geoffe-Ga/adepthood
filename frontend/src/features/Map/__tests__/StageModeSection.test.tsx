@@ -3,13 +3,15 @@
 // Gate 1 contract for Clear Light's stage-detail surface: the Neither/Both Mode
 // statement over a chord of every other stage's healthy expression per phase.
 import React from 'react';
-import { create } from 'react-test-renderer';
+import { act, create } from 'react-test-renderer';
 
 import type { StageMode, StagePhaseChord } from '../../../api';
 import { STAGE_COLORS, STAGE_ORDER } from '../../../design/tokens';
 import { StageModeSection } from '../StageModeSection';
 
 import { ranksOrShames } from './copyIntentRule';
+
+import { clearServedStages, serveStageColors } from '@/testing/servedStageColors';
 
 type TestInstance = ReturnType<typeof create>['root'];
 type TestNode = { props: Record<string, unknown> };
@@ -84,6 +86,18 @@ describe('StageModeSection', () => {
       const style = [dot.props.style].flat() as Array<Record<string, unknown>>;
       const colour = STAGE_COLORS[STAGE_ORDER[stageNumber - 1] ?? ''];
       expect(style.some((entry) => entry.backgroundColor === colour)).toBe(true);
+    }
+  });
+
+  it("follows a note's served stage colour once the stages arrive (#2666)", () => {
+    const tree = create(<StageModeSection mode={NEITHER_BOTH} chord={CHORD} />);
+    act(() => serveStageColors({ 1: 'Teal' }));
+    try {
+      const dot = tree.root.findByProps({ testID: 'stage-chord-rising-note-1-dot' });
+      const style = [dot.props.style].flat() as Array<Record<string, unknown>>;
+      expect(style.some((entry) => entry.backgroundColor === STAGE_COLORS.Teal)).toBe(true);
+    } finally {
+      act(() => clearServedStages());
     }
   });
 

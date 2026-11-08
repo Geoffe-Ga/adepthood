@@ -63,6 +63,12 @@ describe('getStageColor', () => {
     expect(getStageColor(2, stageById)).toBe(resolveStageColor(STAGE_ORDER[1]));
   });
 
+  it('falls back to the STAGE_ORDER position when the served colour is blank (#2666)', () => {
+    const stage = makeStage({ stage_number: 2, spiral_dynamics_color: '' });
+    const stageById = new Map([[2, stage]]);
+    expect(getStageColor(2, stageById)).toBe(resolveStageColor(STAGE_ORDER[1]));
+  });
+
   it('falls back to the neutral color for an unrecognized color name', () => {
     const stage = makeStage({ stage_number: 1, spiral_dynamics_color: 'Mauve' });
     const stageById = new Map([[1, stage]]);

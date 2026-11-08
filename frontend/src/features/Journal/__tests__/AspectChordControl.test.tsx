@@ -23,6 +23,7 @@ import {
   touchTarget,
 } from '@/design/tokens';
 import { GOLDEN_STAGE_NUMBERS, goldenStage } from '@/features/Map/__tests__/stageVocabularyGolden';
+import { clearServedStages, serveStageColors } from '@/testing/servedStageColors';
 
 /** The controlled value shape the control reports back via onChange. */
 interface AspectChordValue {
@@ -584,6 +585,18 @@ describe('AspectChordControl — stage colour', () => {
     expect(flatViewStyle(getByTestId('aspect-primary-5')).backgroundColor).toBe(
       resolveStageColor('Orange'),
     );
+  });
+
+  it("fills a chosen chip with its stage's served colour (#2666)", () => {
+    serveStageColors({ 5: 'Teal' });
+    try {
+      const { getByTestId } = renderControl({ primary: 5, secondary: null });
+      expect(flatViewStyle(getByTestId('aspect-primary-5')).backgroundColor).toBe(
+        resolveStageColor('Teal'),
+      );
+    } finally {
+      clearServedStages();
+    }
   });
 
   it('carries the stage colour on an unchosen chip without filling it', () => {

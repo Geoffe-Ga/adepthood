@@ -40,7 +40,8 @@ import { manualSessionPayload } from '@/features/Practice/utils/sessionWindow';
 /**
  * Green, as a stage number.
  *
- * Six on both sides of the wire (``backend/src/domain/frequencies.py`` and
+ * Six on both sides of the wire (``backend/src/domain/frequencies.py`` and the
+ * ``coursestage`` row ``GET /stages`` serves, whose offline fallback is
  * ``design/tokens.ts::STAGE_ORDER``), and the stage the seeded ``Journaling``
  * catalogue row sits at. The server refuses a selection whose ``stage_number``
  * disagrees with the catalogue row's (400 ``stage_number_mismatch``), so this

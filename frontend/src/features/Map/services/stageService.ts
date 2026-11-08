@@ -10,8 +10,9 @@
 import { stages as stagesApi } from '../../../api';
 import type { Stage } from '../../../api';
 import { formatApiError } from '../../../api/errorMessages';
-import { STAGE_COLORS, STAGE_ORDER } from '../../../design/tokens';
+import { resolveStageColor } from '../../../design/tokens';
 import { FULLY_COMPLETE } from '../../../domain/stageProgression';
+import { stageColorName } from '../../../store/stageColorName';
 import { useStageStore } from '../../../store/useStageStore';
 import { STAGE_COUNT } from '../stageData';
 import type { StageData } from '../stageData';
@@ -43,7 +44,9 @@ export const clampProgress = (raw: number | null | undefined): number => {
 
 /** Convert a backend Stage response into a frontend StageData with layout. */
 export const toStageData = (apiStage: Stage): StageData => {
-  const colorName = STAGE_ORDER[apiStage.stage_number - 1] ?? 'Beige';
+  // #2666: the served row's own colour, its position's offline name only
+  // when the row leaves it blank; an unknown name lands on the neutral token.
+  const colorName = stageColorName(apiStage.stage_number, apiStage.spiral_dynamics_color);
   return {
     id: apiStage.id,
     title: apiStage.title,
@@ -53,7 +56,7 @@ export const toStageData = (apiStage: Stage): StageData => {
     // missing values to 0.  Without this guard a bad payload renders
     // as "NaN%" or overflows the progress bar (width: 110%).
     progress: clampProgress(apiStage.progress),
-    color: STAGE_COLORS[colorName] ?? '#888',
+    color: resolveStageColor(colorName),
     isUnlocked: apiStage.is_unlocked,
     category: apiStage.category,
     aspect: apiStage.aspect,

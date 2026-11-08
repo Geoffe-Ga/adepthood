@@ -1,14 +1,13 @@
-import { STAGE_ORDER } from '@/design/tokens';
+import { storedStageColorName } from '@/store/stageColorName';
 
 /**
  * Resolve a 1-based stage number to its Spiral-Dynamics color name (e.g. stage
- * 2 -> "Purple"), falling back to ``Stage {n}`` when the number falls outside
- * the ten named stages. The index guard also satisfies
- * ``noUncheckedIndexedAccess`` (out-of-range reads are ``undefined``).
+ * 2 -> "Purple") -- the one the stage store was served, else the offline name
+ * (#2666) -- falling back to ``Stage {n}`` when the number falls outside the
+ * ten named stages.
  */
 export function stageDisplayName(n: number): string {
-  const name = STAGE_ORDER[n - 1];
-  return name ?? `Stage ${n}`;
+  return storedStageColorName(n) ?? `Stage ${n}`;
 }
 
 /** Combine the stage's name with its number, e.g. ``Purple (stage 2)``. */

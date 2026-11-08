@@ -5,7 +5,8 @@
  * side redefining them.
  */
 import type { Stage } from '../../api';
-import { STAGE_ORDER, mixColors, resolveStageColor, surface } from '../../design/tokens';
+import { mixColors, resolveStageColor, surface } from '../../design/tokens';
+import { stageColorName } from '../../store/stageColorName';
 
 /** Progress value at which a stage counts as fully completed. */
 const COMPLETE_PROGRESS = 1;
@@ -50,10 +51,11 @@ export function totalStageCount(stages: Stage[]): number {
 export function getStageColor(stageNumber: number, stageById: Map<number, Stage>): string {
   if (stageNumber === START_HERE) return surface.sunken;
   // Prefer the stage's own API color; fall back to its progression-order name
-  // when the API omits that stage number. The shared resolver handles the
-  // neutral fallback for missing or unrecognized names.
-  const name = stageById.get(stageNumber)?.spiral_dynamics_color ?? STAGE_ORDER[stageNumber - 1];
-  return resolveStageColor(name);
+  // when the API omits that stage number or leaves its colour blank (#2666).
+  // The shared resolver handles the neutral fallback for unrecognized names.
+  return resolveStageColor(
+    stageColorName(stageNumber, stageById.get(stageNumber)?.spiral_dynamics_color),
+  );
 }
 
 /** Determine whether a stage is unlocked based on API data. */

@@ -323,8 +323,9 @@ const buildAddedGoals = (name: string, tempId: number, input: AddHabitInput): Go
 
 /**
  * Build a brand-new habit row from a minimal user input. Stage cycles through
- * STAGE_ORDER so habits added after the original ten still pick up an
- * aptitude color; the ids are placeholders replaced when the server round-trip
+ * the ring of ``HabitUtils.stageAtIndex`` (the ten colour names as persisted
+ * habit identity keys, not a served-stage lookup) so habits added after the
+ * original ten still pick up an aptitude color; the ids are placeholders replaced when the server round-trip
  * succeeds and `loadHabits` rehydrates from the API.
  *
  * `hasClientMintedIds` — not the negative sign — is what keeps those ids off

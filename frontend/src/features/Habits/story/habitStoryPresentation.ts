@@ -8,7 +8,8 @@
  */
 import type { ApiHabitStory } from '@/api';
 import type { ChartColumn, HeatCell, HeatStageMarker } from '@/components/charts';
-import { STAGE_COLORS, STAGE_ORDER } from '@/design/tokens';
+import { STAGE_COLORS } from '@/design/tokens';
+import { storedStageColorName } from '@/store/stageColorName';
 import { dayKeyToInstant } from '@/utils/dateUtils';
 
 type StoryDay = ApiHabitStory['days'][number];
@@ -170,7 +171,7 @@ export function heatGrid(story: ApiHabitStory): StoryHeatGrid {
     }
   }
   const markers = story.stages.flatMap((stage) => {
-    const name = STAGE_ORDER[stage.stage_number - 1];
+    const name = storedStageColorName(stage.stage_number);
     const column = weekStarts.filter((start) => start <= stage.opens_on).length - 1;
     if (!name || column < 0) return [];
     return [{ label: name, color: STAGE_COLORS[name] ?? '', columnIndex: column }];
@@ -284,7 +285,7 @@ export function milestoneText(milestone: StoryMilestone, story: ApiHabitStory): 
     case 'return':
       return `Back after ${countIn(milestone.value, 'days')}. The record kept your place.`;
     case 'stage_complete': {
-      const stage = STAGE_ORDER[milestone.value - 1];
+      const stage = storedStageColorName(milestone.value);
       return stage ? `Kept through ${stage}` : null;
     }
     default:

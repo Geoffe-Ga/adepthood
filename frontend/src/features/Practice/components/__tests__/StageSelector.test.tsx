@@ -1,6 +1,6 @@
 /* eslint-env jest */
 import { describe, expect, it, jest } from '@jest/globals';
-import { fireEvent, render } from '@testing-library/react-native';
+import { act, fireEvent, render } from '@testing-library/react-native';
 import React from 'react';
 import { StyleSheet } from 'react-native';
 
@@ -16,6 +16,7 @@ import {
   STAGE_ORDER,
   surface,
 } from '@/design/tokens';
+import { clearServedStages, serveStageColors } from '@/testing/servedStageColors';
 
 const flatten = (style: unknown): Record<string, unknown> =>
   StyleSheet.flatten(style as never) as Record<string, unknown>;
@@ -372,6 +373,20 @@ describe('StageSelector — picker grid layout and frequency colour', () => {
       // The paired text colour is what carries the AA guarantee; colorPalette's
       // own suite proves the ratio, so this only has to prove we use the pair.
       expect(flatten(getByText(String(n)).props.style).color).toBe(swatch.text);
+    }
+  });
+
+  it("tints a chip with its stage's served colour once the stages arrive (#2666)", () => {
+    const { getByTestId } = render(
+      <StageSelector variant="picker" onSelect={jest.fn()} testIDPrefix="picker" />,
+    );
+    act(() => serveStageColors({ 1: 'Teal' }));
+    try {
+      expect(flatten(getByTestId('picker-1').props.style).backgroundColor).toBe(
+        COLOR_PALETTE.Teal.bg,
+      );
+    } finally {
+      act(() => clearServedStages());
     }
   });
 

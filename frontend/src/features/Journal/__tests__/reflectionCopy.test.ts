@@ -1,4 +1,4 @@
-import { describe, it, expect } from '@jest/globals';
+import { afterEach, describe, it, expect } from '@jest/globals';
 
 import {
   reflectionTitle,
@@ -12,6 +12,7 @@ import {
 } from '../reflectionCopy';
 
 import type { ReflectionSourceItem } from '@/api';
+import { clearServedStages, serveStageColors } from '@/testing/servedStageColors';
 
 function sourceItem(overrides: Partial<ReflectionSourceItem> = {}): ReflectionSourceItem {
   return {
@@ -27,6 +28,10 @@ function sourceItem(overrides: Partial<ReflectionSourceItem> = {}): ReflectionSo
 }
 
 describe('reflectionTitle', () => {
+  afterEach(() => {
+    clearServedStages();
+  });
+
   it('titles a weekly review from its week-number scope key', () => {
     expect(reflectionTitle('week', 'c1:w14')).toBe('Weekly Review — Week 14');
   });
@@ -43,9 +48,10 @@ describe('reflectionTitle', () => {
     expect(reflectionTitle('stage', 'c1:s1')).toBe('Stage Review');
   });
 
-  // The colour is derived from STAGE_ORDER at the section's closing stage
-  // (3n), so these three cases also pin that the derivation walks the
-  // curriculum rather than a hand-written list of three names.
+  // The colour is derived from the section's closing stage (3n) -- its served
+  // colour, else the offline STAGE_ORDER -- so these three cases also pin that
+  // the derivation walks the curriculum rather than a hand-written list of
+  // three names.
   it('names section one after the Wavelength turn it closes', () => {
     expect(reflectionTitle('section', 'c1:x1')).toBe('Section Review — Red');
   });
@@ -56,6 +62,11 @@ describe('reflectionTitle', () => {
 
   it('names section three after the Wavelength turn it closes', () => {
     expect(reflectionTitle('section', 'c1:x3')).toBe('Section Review — Ultraviolet');
+  });
+
+  it('names a section after the colour the server served its closing stage (#2666)', () => {
+    serveStageColors({ 3: 'Teal' });
+    expect(reflectionTitle('section', 'c1:x1')).toBe('Section Review — Teal');
   });
 
   it('falls back to a bare section label for a section the curriculum has no stage for', () => {

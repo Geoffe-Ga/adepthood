@@ -6,9 +6,9 @@ import { Animated, Pressable, Text } from 'react-native';
 import { journalHeroStyles as s } from './JournalHero.styles';
 
 import { ShowcaseCard } from '@/components/layout/ShowcaseCard';
-import { STAGE_ORDER } from '@/design/tokens';
 import { useEntrance } from '@/hooks/useEntrance';
 import type { RootTabParamList } from '@/navigation/BottomTabs';
+import { useStageColorName } from '@/store/stageColorName';
 import {
   TOTAL_PROGRAM_WEEKS,
   programStage,
@@ -33,11 +33,9 @@ function withMapHint(text: string): HeroPosition {
 }
 
 /** The reader's place in the 36-week journey, as display text + a11y label. */
-function heroPosition(week: number | null, stage: number | null): HeroPosition {
+function heroPosition(week: number | null, stageName: string | undefined): HeroPosition {
   if (week === null) return withMapHint('Your journey awaits');
   const base = `Week ${week} of ${TOTAL_PROGRAM_WEEKS}`;
-  if (stage === null) return withMapHint(base);
-  const stageName = STAGE_ORDER[stage - 1];
   if (stageName === undefined) return withMapHint(base);
   return withMapHint(`${base} · ${stageName}`);
 }
@@ -47,9 +45,10 @@ const JournalHero = (): React.JSX.Element => {
   const navigation = useNavigation<JournalHeroNav>();
   const anchor = useProgramStore(selectProgramStartDate);
   const week = programWeek(anchor);
-  const stage = programStage(anchor);
+  // The stage's served colour name, following the store as the stages arrive.
+  const stageName = useStageColorName(programStage(anchor));
   const entrance = useEntrance(0);
-  const { text, label } = heroPosition(week, stage);
+  const { text, label } = heroPosition(week, stageName);
   return (
     <Animated.View style={entrance}>
       <ShowcaseCard testID="journal-hero">
