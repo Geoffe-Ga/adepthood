@@ -19,7 +19,7 @@ import {
   unknownTimeNote,
 } from '../habitStoryPresentation';
 
-import { STAGE_COLORS } from '@/design/tokens';
+import { STAGE_COLORS, chart } from '@/design/tokens';
 import { habitStoryFixture, storyDays } from '@/features/Habits/testSupport/habitStoryFixture';
 import { clearServedStages, serveStageColors } from '@/testing/servedStageColors';
 
@@ -107,6 +107,13 @@ describe('heat grid', () => {
     const [first] = heatGrid(habitStoryFixture()).markers;
     expect(first?.label).toBe('Teal');
     expect(first?.color).toBe(STAGE_COLORS.Teal);
+  });
+
+  it('paints a marker with the dim chart colour when the served name is not in the palette', () => {
+    serveStageColors({ 1: 'Chartreuse' });
+    const [first] = heatGrid(habitStoryFixture()).markers;
+    expect(first?.label).toBe('Chartreuse');
+    expect(first?.color).toBe(chart.dim);
   });
 
   it('lays days into Monday-start columns with stage markers', () => {

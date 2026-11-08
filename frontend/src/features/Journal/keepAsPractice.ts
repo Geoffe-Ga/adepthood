@@ -33,9 +33,9 @@ import { JOURNALING_PRACTICE_NAME } from './saveAsPracticeCopy';
 import type { WritingSessionResult } from './writingSession';
 
 import { practiceSessions, practices, stages, userPractices } from '@/api';
-import { stageAtIndex } from '@/features/Habits/HabitUtils';
 import { MS_PER_MINUTE } from '@/features/Practice/engine/types';
 import { manualSessionPayload } from '@/features/Practice/utils/sessionWindow';
+import { storedStageColorName } from '@/store/stageColorName';
 
 /**
  * Green, as a stage number.
@@ -114,10 +114,12 @@ export async function planKeepAsPractice(): Promise<PracticeOfferPlan | null> {
       // ``current_stage`` is the server's own union of what the calendar has
       // opened and what the record has entered, so it is the same answer the
       // session-logging gate will give — not a second derivation of it.
+      // The stage is named by the colour the server serves for it, with the
+      // pinned list only offline (#2666).
       waitingAt:
         calendar.current_stage >= GREEN_STAGE_NUMBER
           ? null
-          : stageAtIndex(calendar.current_stage - 1),
+          : (storedStageColorName(calendar.current_stage) ?? null),
     };
   } catch {
     return null;

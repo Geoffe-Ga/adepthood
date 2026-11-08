@@ -8,7 +8,7 @@
  */
 import type { ApiHabitStory } from '@/api';
 import type { ChartColumn, HeatCell, HeatStageMarker } from '@/components/charts';
-import { STAGE_COLORS } from '@/design/tokens';
+import { STAGE_COLORS, chart } from '@/design/tokens';
 import { storedStageColorName } from '@/store/stageColorName';
 import { dayKeyToInstant } from '@/utils/dateUtils';
 
@@ -174,7 +174,7 @@ export function heatGrid(story: ApiHabitStory): StoryHeatGrid {
     const name = storedStageColorName(stage.stage_number);
     const column = weekStarts.filter((start) => start <= stage.opens_on).length - 1;
     if (!name || column < 0) return [];
-    return [{ label: name, color: STAGE_COLORS[name] ?? '', columnIndex: column }];
+    return [{ label: name, color: STAGE_COLORS[name] ?? chart.dim, columnIndex: column }];
   });
   const firstStart = weekStarts[0];
   const lastStart = weekStarts.at(-1);
