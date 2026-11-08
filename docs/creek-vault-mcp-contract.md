@@ -213,10 +213,10 @@ Creek's canonical Frequency names are `Agency`, `Receptivity`,
 `Self-Love / Power`, `Community Love / Conformity`, `Achievism`,
 `Pluralism`, `Integration`, `True Self / Transcendence`, `Unity`, and
 `Emptiness`. Adepthood's seeded `CourseStage.aspect` labels for stages
-1–10 (`backend/src/curriculum/archetypal_wavelength.json`) are `Agency`,
-`Receptivity`, `Self-Love`, `Community Love`, `Intellectual
+1–10 (reconciled from `backend/src/curriculum/stage_correspondence.json`)
+are `Agency`, `Receptivity`, `Self-Love`, `Community Love`, `Intellectual
 Understanding`, `Embodied Understanding`, `Systems Wisdom`, `True Self
-Connection`, `Unity`, and `Emptiness`. Same APTITUDE ontology, different
+Wisdom`, `Unity`, and `Emptiness`. Same APTITUDE ontology, different
 wording for stages 5 through 8 — Creek's "Achievism" and "Pluralism"
 where adepthood says "Intellectual Understanding" and "Embodied
 Understanding", for instance.

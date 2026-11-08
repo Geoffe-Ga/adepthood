@@ -6,7 +6,8 @@ polarity, relationship to free will and its description) used to be
 hand-transcribed from the course's Complete Map spreadsheet into
 ``src/curriculum/archetypal_wavelength.json``. Hand transcription is how
 stage 2 kept a free-will archetype upstream had already retired (#2915).
-This script replaces transcription with generation:
+This script replaces transcription with generation, and since #2666 the
+curriculum dataset carries no copy of the seven fields at all:
 
     python -m scripts.build_stage_correspondence           # (re)write the artifact
     python -m scripts.build_stage_correspondence --check   # CI drift gate
@@ -36,9 +37,12 @@ normalised with ``str.strip()`` only; the pinned CSV carries edge
 whitespace (``"Whole Adept "``) but no internal runs worth collapsing.
 
 The script deliberately imports nothing from ``src/``: the CI drift-check job
-installs only ``httpx`` and ``jsonschema`` and sets no ``PYTHONPATH``. Parity
-between the artifact and ``archetypal_wavelength.json`` is gated in the
-pytest suite instead (``tests/test_stage_correspondence.py``).
+installs only ``httpx`` and ``jsonschema`` and sets no ``PYTHONPATH``. That the
+artifact stays the only copy is gated in the pytest suite instead:
+``tests/test_stage_correspondence.py`` asserts ``archetypal_wavelength.json``
+carries none of the seven fields, and
+``tests/architecture/test_stage_correspondence_single_source.py`` that only the
+seeder imports the artifact loader.
 
 Exit codes: 0 when the artifact was written or is current, 1 on drift or on
 any input the generator refuses.

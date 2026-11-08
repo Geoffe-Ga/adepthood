@@ -1,9 +1,14 @@
 # The Archetypal Wavelength curriculum dataset
 
 The per-Stage and per-phase copy of *The Archetypal Wavelength* — the ten
-APTITUDE Stages and their six-phase manifestations (integrated `Rx` and shadow
-`OD` expressions) — is **vendored** into this repo as a single source of truth
-at `backend/src/curriculum/archetypal_wavelength.json`. Every consumer reads it
+APTITUDE Stages' titles, subtitles and Modes, and their six-phase manifestations
+(integrated `Rx` and shadow `OD` expressions) — is **vendored** into this repo
+as a single source of truth at
+`backend/src/curriculum/archetypal_wavelength.json`. The seven per-Stage
+correspondence fields are not in it: they are generated into
+`backend/src/curriculum/stage_correspondence.json`, reconciled into the
+`coursestage` table and served from there (see
+[Updating stage correspondences](#updating-stage-correspondences)). Every consumer reads it
 through the typed loader in `backend/src/curriculum/__init__.py`; nothing
 hand-duplicates the prose. This mirrors the vendoring precedent set for course
 content (ADR 0001, `docs/content.md`): a checked-in, diff-reviewable data file
@@ -27,12 +32,14 @@ credentials surface.)
 
 | What | File |
 | ---- | ---- |
-| Vendored dataset (10 Stages × 6 phases, integrated + shadow) | `backend/src/curriculum/archetypal_wavelength.json` |
+| Vendored dataset (10 Stages × 6 phases, integrated + shadow; titles, subtitles, Modes) | `backend/src/curriculum/archetypal_wavelength.json` |
 | Typed loader (validated, frozen dataclasses) | `backend/src/curriculum/__init__.py` |
-| Stage-correspondence artifact (generated, #2664) | `backend/src/curriculum/stage_correspondence.json` |
+| Stage-correspondence artifact (generated, #2664; the only copy of the seven fields, #2666) | `backend/src/curriculum/stage_correspondence.json` |
 | Artifact loader | `backend/src/curriculum/stage_correspondence.py` |
 | Stage seeder (artifact + dataset titles) | `backend/src/seed_stages.py` |
 | Loader + dataset tests | `backend/tests/test_curriculum.py` |
+| No-copy gate + #1637 pins | `backend/tests/test_stage_correspondence.py` |
+| Single-reader architecture guard | `backend/tests/architecture/test_stage_correspondence_single_source.py` |
 | Seeder golden-value tests | `backend/tests/test_seed_stages.py` |
 | Course-copy pins + archetype drift guard | `backend/tests/test_vendored_course_copy_pins.py` |
 | Course completeness gate + inventory generator (#3070) | `backend/scripts/content_completeness.py` |
@@ -42,24 +49,21 @@ credentials surface.)
 
 ## Provenance
 
-The dataset's top-level `provenance` block records where its copy came from,
-split into two keys because the Stage-identifying attributes and the
-per-phase manifestation copy are pulled from two different sources:
+The dataset's top-level `provenance` block records where its copy came from.
+It no longer describes the seven correspondence fields: since `dataset_version`
+`3.0.0` the dataset carries none of them, and their provenance lives with the
+generated artifact (its `source` block and echoed `supersessions`) and with
+`backend/src/curriculum/stage_correspondence_supersessions.json`. The keys that
+remain:
 
-- `stage_attributes_source` — the seven per-Stage identifying fields
-  (`category`, `aspect`, `spiral_dynamics_color`, `growing_up_stage`,
-  `divine_gender_polarity`, `relationship_to_free_will`,
-  `free_will_description`) come from `APTITUDE Complete Map.csv` in the
-  `aptitude-course` repository's `database_of_course_curriculum`, including
-  the December 2025 supersessions recorded in that repository's `CLAUDE.md`
-  (Stage 4 aspect "Community Love"; Stage 8 color "Teal" and free-will
-  archetype "True Self Embodier"). Stage 8's aspect is "True Self Wisdom", the
-  CSV's own cell (owner ruling 2026-10-13, #2664). This is the
-  canonical APTITUDE ontology, not the *Archetypal Wavelength* spreadsheet.
 - `manifestations_source` — the titles and six-phase `Rx` (integrated) / `OD`
   (shadow) manifestation copy come from *The Archetypal Wavelength*
   spreadsheet, "Expanded List" sheet (the same sheet `wavelength-demo` and
   `WavelengthWatch` quote verbatim). It does **not** source the subtitles.
+- `manifestation_names_source` — stages 1–9's `Rx`/`OD` names equal the
+  vendored Modes of the Wavelength CSV, gated by
+  `scripts/check_wavelength_terms.py` (#3135); Clear Light is the Neither/Both
+  Mode and carries no pairs of its own.
 - `subtitles_source` — the per-Stage `subtitle` comes from the `aptitude-course`
   repository's resource copy: the `#### ` stage headings in
   `markdown/resources/04-aptitude-stages.md` and the numbered item list in
@@ -72,37 +76,6 @@ per-phase manifestation copy are pulled from two different sources:
   (2026-07-31) ahead of the content pin; the re-pin to `9d0f896` (issue
   #2706) closed that gap, so the About page now reads "True Self Wisdom"
   too.
-- `supersessions` — the ratified December 2025 supersessions above, as a
-  machine-readable list of `{stage_number, field, value}` entries. Each
-  `value` must equal what the dataset ships for that `(stage_number, field)`.
-  `backend/tests/test_vendored_course_copy_pins.py` validates every entry
-  (exact keys; an integer stage in 1–10; `field` one of the seven stage
-  attributes; `value` equal to the dataset) and reads the list to decide which
-  stages' `relationship_to_free_will` may differ from the archetype named in
-  the vendored `aptitude-stages.md` `#### ` headings. Every other stage must
-  match its heading (after dropping a leading "The "). Recording a new
-  supersession is a one-line JSON change; there is no exception table in the
-  tests.
-- `stage_2_free_will_source` — Stage 2's `relationship_to_free_will`
-  ("Pleasure Seeker") follows the vendored course at the `9d0f896` pin, not
-  the stale value carried over from `backup/2.PURPLE.md` (issue #2915). The
-  archetype is the course's own name in
-  `markdown/02-purple/04-the-relationship-to-free-will-at-purple-pleasure-seeker.md`
-  and in the `aptitude-stages.md` heading. Its `free_will_description` is the
-  vendored `APTITUDE Complete Map.csv` sentence carried by the generated
-  `stage_correspondence.json` (#2664), which replaced the earlier chapter
-  paraphrase (dataset 2.2.1). The database reads the seven fields from that
-  artifact (see "Consumers"); this dataset's copy of them is held equal to it,
-  field by field for every stage, by `backend/tests/test_stage_correspondence.py`
-  (#2667) until #2666 retires it.
-- `free_will_descriptions_source` — Stages 1, 3, 4, 6, 7, 8 and 10 carry the
-  `free_will_description` (and Stage 8 the `growing_up_stage`) that the
-  generated `stage_correspondence.json` ships: verbatim spans of the vendored
-  relationship-to-free-will chapters, recorded as supersessions of the Complete
-  Map CSV in `stage_correspondence_supersessions.json`. The CSV sentences read
-  as textbook third person on the Map, and Stage 8's named Teal as nonduality,
-  which the course says Teal is not (Teal is True Self connection); chapter
-  text wins over the CSV (owner ruling 2026-09-16).
 - `extracted_from` — the in-repo vendored course markdown
   (`backend/content/markdown/backup/*` and the per-stage
   full-6-phase-wavelength-breakdown chapters), which already carries the
@@ -113,18 +86,20 @@ The `Rx`/`OD` copy in the JSON is quoted from that vendored markdown so the
 three apps stay in sync with the sheet without adepthood needing live access to
 the spreadsheet (privacy posture, #893).
 
-`dataset_version` is `2.2.0`. The `1.x` series shipped with a wrong,
+`dataset_version` is `3.0.0`. The `1.x` series shipped with a wrong,
 non-canonical vocabulary for the seven stage-attribute fields; correcting
-them to the `stage_attributes_source` above is a breaking data change, hence
-the major bump to `2.0.0` rather than a patch or minor. The `2.0.0` → `2.1.0`
-minor is the Stage 8 subtitle correction: it adds the `subtitles_source`
-provenance key and moves the subtitles out of `manifestations_source`'s remit,
-so a consumer reading provenance gets different *semantics*, not just a
-different character — which is more than a patch, and less than a shape change. The
-`2.1.0` → `2.2.0` minor follows that precedent: it corrects Stage 2's free-will
-archetype and description to the course (#2915) and adds the `supersessions`
-and `stage_2_free_will_source` provenance keys, with no change to the Stage or
-phase shape.
+them to the Complete Map CSV was a breaking data change, hence the major bump
+to `2.0.0` rather than a patch or minor. The `2.0.0` → `2.1.0` minor is the
+Stage 8 subtitle correction: it added the `subtitles_source` provenance key
+and moved the subtitles out of `manifestations_source`'s remit, so a consumer
+reading provenance got different *semantics*, not just a different character.
+The `2.1.0` → `2.2.0` minor corrected Stage 2's free-will archetype and
+description to the course (#2915). The later `2.x` releases up to `2.5.0`
+changed manifestation copy (for example #3685) and added Clear Light's `mode`
+(#3688), without touching the Stage shape. The `2.5.0` → `3.0.0` major is #2666: the seven correspondence fields and the
+`stage_attributes_source`, `stage_2_free_will_source`,
+`free_will_descriptions_source` and `supersessions` provenance keys are
+removed. Dropping fields is a shape change, so it is a major.
 
 ## What the loader guarantees
 
@@ -136,7 +111,10 @@ duplicates), each carrying **exactly the six canonical phases in order** (Rising
 → Peaking → Withdrawal → Diminishing → Bottoming Out → Restoration), with every
 required string non-empty and each phase carrying a populated integrated and
 shadow expression. `stage_curriculum(n)` and `manifestation(n, phase)` resolve a
-single record; both raise `CurriculumDataError` for unknown keys.
+single record; both raise `CurriculumDataError` for unknown keys. A Stage's
+record carries its `title`, `subtitle`, `manifestations` and optional `mode`
+only; a correspondence key left in the JSON is ignored, never surfaced as an
+attribute.
 
 ## Refreshing the dataset from the sheet (manual)
 
@@ -148,14 +126,20 @@ The refresh is a deliberate, reviewable edit — there is no live pull:
    under `backend/content/markdown/` so the wording matches what the reader
    ships.
 2. Edit `backend/src/curriculum/archetypal_wavelength.json` in place, keeping
-   the shape: each Stage carries its identifying attributes plus a
-   `manifestations` array with the six phases **in canonical order**, each entry
+   the shape: each Stage carries its `stage_number`, `title` and `subtitle`
+   plus a `manifestations` array with the six phases **in canonical order**,
+   each entry
    `{ "phase", "integrated": {name, description}, "shadow": {name, description} }`.
+   Do **not** add a correspondence field (category, aspect, colour, Growing Up
+   stage, polarity, free-will archetype or description) here: those are
+   generated, and `backend/tests/test_stage_correspondence.py` fails on any
+   copy of them. Change them through
+   [Updating stage correspondences](#updating-stage-correspondences).
 3. Bump `dataset_version` (semver: additive copy edits are a patch/minor;
    changing the Stage/phase shape is a major) and, if the extraction source
    changed, update the `provenance` block.
-4. Run the dataset tests — they enforce the shape, the golden Stage attributes,
-   and this doc's presence:
+4. Run the dataset tests — they enforce the shape, the golden Stage attributes
+   (read from the artifact), and this doc's presence:
 
    ```bash
    cd backend && pytest tests/test_curriculum.py tests/test_seed_stages.py \
@@ -167,12 +151,13 @@ The refresh is a deliberate, reviewable edit — there is no live pull:
    `backend/tests/test_vendored_course_copy_pins.py`. It pins the course's own
    curriculum wording — the ten `aptitude-stages.md` stage headings and the ten
    `about.md` list items — as literals, so a re-pin cannot change curriculum
-   copy silently, and it compares each stage's `relationship_to_free_will`
-   to its heading's archetype unless `provenance.supersessions` records the
-   divergence. **A failure there is a decision, not a typo:** read the
-   upstream diff and decide whether this dataset follows the new wording, or
-   record the divergence deliberately (as `subtitles_source` does for Stage 8
-   today). Never hand-edit `backend/content/**` to make it match — that tree is
+   copy silently, and it compares every stage's `relationship_to_free_will`,
+   as the generated `stage_correspondence.json` ships it, to its heading's
+   archetype with no exemptions. **A failure there is a decision, not a
+   typo:** read the upstream diff and decide whether this dataset (for the
+   subtitles) or the artifact (for the archetype, through a regeneration or a
+   chapter-cited supersession) follows the new wording, or record the
+   divergence deliberately (as `subtitles_source` does for Stage 8 today). Never hand-edit `backend/content/**` to make it match — that tree is
    excluded from every pre-commit hook and its drift gate,
    `python -m scripts.sync_content --check`, runs only in CI.
 6. Commit the JSON diff. The seeder reads titles and subtitles from this
@@ -185,8 +170,8 @@ The refresh is a deliberate, reviewable edit — there is no live pull:
    migration. The
    seeder-owned `overview_url` is never touched by reconciliation and rows are
    never deleted. The golden-value test in `test_seed_stages.py` still flags
-   any unintended change to a Stage's identifying attributes, so a copy
-   refresh cannot silently alter seeded rows.
+   any unintended change to a Stage's title, subtitle or correspondence
+   fields, so a copy refresh cannot silently alter seeded rows.
 
 ## Updating stage correspondences
 
@@ -243,23 +228,29 @@ running database.
 
    It runs in the same `content-drift` job. A failure names each stage, phase
    and expression whose name in `archetypal_wavelength.json` differs from the
-   CSV. Fix it by carrying the CSV term into the mirror and rewriting that
-   phase's description. Never fix it by editing the CSV. A stage with no CSV
+   CSV. It joins each stage to its CSV row by the colour
+   `stage_correspondence.json` gives that stage (`--correspondence`, defaulting
+   to the committed artifact), since the dataset carries no colour of its own.
+   Fix a failure by carrying the CSV term into `archetypal_wavelength.json` and
+   rewriting that phase's description. Never fix it by editing the CSV. A stage with no CSV
    row must mark each manifestation `"source": "app-authored"`. Clear Light
    has no row and carries no manifestations at all: it is the Neither/Both
    Mode (`"mode": {"holds_all_modes": true}`), and `GET /stages` serves its
    phases as a `chord` of stages 1-9's integrated names, composed by
    `curriculum.phase_chords`.
-4. **Run the parity and consumer tests.** `backend/tests/test_stage_correspondence.py`
-   holds `archetypal_wavelength.json`'s copy of the seven fields equal to the
-   artifact, stage by stage, and pins the #1637 stages literally.
+4. **Run the single-source and consumer tests.**
+   `backend/tests/test_stage_correspondence.py` asserts that
+   `archetypal_wavelength.json` carries no copy of the seven fields (#2666) and
+   pins the #1637 stages literally; a red pin after a re-pin is a decision:
+   update the literal or record a supersession.
+   `backend/tests/architecture/test_stage_correspondence_single_source.py`
+   asserts that `seed_stages.py` is the only backend module importing the
+   artifact loader, so every other reader goes through `CourseStage`.
    `frontend/src/features/Map/__tests__/stageCanonDrift.test.ts` (run by
    backend CI through `scripts/frontend/cross-boundary-drift.sh`) holds the Map
-   copy to it. A red parity test after a re-pin is a decision: carry the new
-   value into the mirror (bumping its `dataset_version`) or record a
-   supersession.
+   copy to the artifact.
 5. **Commit** the `CONTENT_VERSION` bump, the vendored tree, the regenerated
-   artifact and any mirror change together, so that `--check` holds at every
+   artifact and any dataset change together, so that `--check` holds at every
    commit.
 
 ### Supersessions
@@ -319,6 +310,34 @@ Re-pin the previous upstream SHA (step 2 with the old `REF`), regenerate
 and stamps a fresh `reconciled_at` on each one that changed. Because no
 migration is involved, there is nothing to downgrade. A supersession added or
 removed in the bad change is reverted in the same commit.
+
+### Correspondence consumers
+
+Every reader of the seven fields, and which copy it reads. "Server" is the
+`coursestage` table (via the ORM or `GET /stages` / `GET /stages/correspondence`);
+"artifact" is `stage_correspondence.json` read directly; "pinned fallback" is a
+literal held equal to the artifact by a test.
+
+| Consumer | Reads | Path |
+| -------- | ----- | ---- |
+| `backend/src/seed_stages.py` | artifact (the only `src` reader) | `stage_correspondence()` → reconciles `coursestage` |
+| `backend/src/routers/stages.py` (`GET /stages`, `GET /stages/correspondence`) | server | `CourseStage` columns |
+| `backend/src/routers/user_practices.py` (frequency banner) | server | `CourseStage.spiral_dynamics_color`, `.aspect` |
+| `backend/src/domain/wheel.py` (`aspect_labels_by_stage`) | server | `CourseStage.aspect` |
+| `backend/src/services/corpus_store.py` (stage → frequency) | server | `CourseStage.spiral_dynamics_color` → `frequency_for_color` |
+| `backend/src/domain/frequencies.py` `FREQUENCY_COLORS` | pinned fallback | literal; held to the artifact by `tests/services/test_frequency_classification.py` |
+| `backend/scripts/check_wavelength_terms.py` | artifact (plain JSON) | `--correspondence`, colour per stage for the Modes CSV join |
+| `backend/scripts/build_stage_correspondence.py` | writes the artifact | Complete Map CSV + supersessions |
+| `backend/tests/e2e/stage_copy.py` (test-only) | server | reads and rewrites whitelisted `coursestage` columns for browser specs |
+| `frontend/src/features/Map/stageVocabulary.ts` | server | `GET /stages` rows (stage store) |
+| `frontend/src/features/Journal/useAspectOptions.ts` | server, then pinned fallback | stage store, then `GET /stages/correspondence`, then the stage colour name |
+| `frontend/src/features/Course/stageDisplay.ts` | server, then pinned fallback | the stage's `spiral_dynamics_color`, else `STAGE_ORDER` |
+| Frontend stage_number → colour-name sites (`Map/services/stageService.ts` and the other `STAGE_ORDER[n - 1]` lookups) | pinned fallback | `frontend/src/design/tokens.ts` `STAGE_ORDER` (held to `FREQUENCY_COLORS`, and so to the artifact, by `stageOntologyDrift.test.ts`); moving these to served-first is the frontend half of #2666 |
+
+`FREQUENCY_NAMES` (`domain/frequencies.py`) is not a consumer: it is Creek's
+wire vocabulary (see "The vocabulary decision" in
+`docs/creek-vault-mcp-contract.md`) and deliberately differs from the served
+aspect at F5–F8.
 
 ## Course content completeness gate (#3070)
 
@@ -386,7 +405,9 @@ this dataset, and since #2665 its seven correspondence fields from the
 generated stage-correspondence artifact, stamping every `CourseStage` row with
 that artifact's provenance (source repo, commit, CSV path and sha256, schema
 version). `GET /stages/correspondence` serves those rows as the stable read
-contract. Downstream features that describe per-phase manifestations — medicinal
+contract. Since #2666 the dataset carries no copy of those fields, so the
+seeded rows are their only runtime source; the full list of readers is in
+[Correspondence consumers](#correspondence-consumers). Downstream features that describe per-phase manifestations — medicinal
 / toxic expressions (#1018), chord-journal Aspect labels (#1020), and the
 explainer (#948) — pull their copy from `curriculum` rather than re-authoring
 it, so the manifestation prose lives in exactly one place.
