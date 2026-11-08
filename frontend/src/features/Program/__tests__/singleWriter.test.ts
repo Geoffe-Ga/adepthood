@@ -13,11 +13,18 @@ import { describe, expect, it } from '@jest/globals';
  * either; the habit-derived fallback in ``habitManager`` is the one other
  * writer of the store's anchor, and only for the offline / no-server-row case.
  *
- * The scan matches any REFERENCE to a writer, not one spelling of a call, so an
- * aliased client (``stagesApi.setProgramStart``), a selector-bound setter
- * (``useProgramStore((s) => s.setProgramStartDay)``), a destructured
- * ``getState()`` and a raw ``setState`` are all caught (#3097 review). Comments
- * are stripped first, so naming a writer in prose is not a write.
+ * The scan matches any REFERENCE to a named writer, not one spelling of a call,
+ * so an aliased client (``stagesApi.setProgramStart``), a selector-bound or
+ * destructured setter (``useProgramStore((s) => s.setProgramStartDay)``,
+ * ``const { hydrateProgramStartDate: w } = useProgramStore.getState()``) are
+ * caught (#3097 review). The store's raw ``setState`` has no name of its own,
+ * so it is matched on every name the file binds the store to: the import, an
+ * ``as`` alias, or a ``const`` that takes the store itself (#3097 re-review).
+ * Comments are stripped first, so naming a writer in prose is not a write.
+ *
+ * What it does not claim: a writer reached through a computed key
+ * (``stages['setProgram' + 'Start']``) or a store handed in from another
+ * module under a name this file never binds is beyond a text scan.
  */
 
 const SRC = path.resolve(__dirname, '..', '..', '..');
@@ -52,31 +59,65 @@ const inProgram = (file: string): boolean => file.startsWith(PROGRAM_DIR + path.
 
 interface WriterRule {
   readonly name: string;
-  readonly pattern: RegExp;
+  /** Whether comment-free ``code`` references the writer. */
+  readonly matches: (_code: string) => boolean;
   /** Files (relative to ``src``) that may reference the writer. */
   readonly allowed: (_file: string) => boolean;
 }
+
+const STORE_NAME = 'useProgramStore';
+/** ``import { useProgramStore as ps }`` -- the alias, when there is one. */
+const STORE_IMPORT_RE = /\buseProgramStore\b(?:\s+as\s+([A-Za-z_$][\w$]*))?/gu;
+/** ``const ps = useProgramStore;`` -- the store itself, not a selector call on it. */
+const STORE_BINDING_RE =
+  /\b(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*useProgramStore\b(?!\s*[(.])/gu;
+
+/** Every name ``code`` can reach the program store by. */
+const storeNames = (code: string): Set<string> => {
+  const names = new Set<string>();
+  if (!code.includes(STORE_NAME)) return names;
+  names.add(STORE_NAME);
+  for (const match of code.matchAll(STORE_IMPORT_RE)) if (match[1]) names.add(match[1]);
+  for (const match of code.matchAll(STORE_BINDING_RE)) if (match[1]) names.add(match[1]);
+  return names;
+};
+
+const referencesRawStoreWrite = (code: string): boolean =>
+  [...storeNames(code)].some((name) =>
+    new RegExp(`(?<![\\w$])${name.replace(/\$/gu, '\\$')}\\.setState\\b`, 'u').test(code),
+  );
+
+const pattern =
+  (re: RegExp) =>
+  (code: string): boolean =>
+    re.test(code);
 
 const RULES: readonly WriterRule[] = [
   {
     name: 'PUT /stages/program-calendar',
     // The client method, under any receiver or alias; not the store setters.
-    pattern: /\bsetProgramStart\b(?!Date|Day)/u,
+    matches: pattern(/\bsetProgramStart\b(?!Date|Day)/u),
     allowed: (file) => inProgram(file) || file === API_CLIENT_FILE,
   },
   {
     name: 'server anchor adoption',
-    pattern: /\badoptServerProgramStart\b/u,
+    matches: pattern(/\badoptServerProgramStart\b/u),
     allowed: (file) => inProgram(file) || file === STORE_FILE,
   },
   {
     name: 'client-side anchor write',
-    pattern: /\bsetProgramStart(?:Date|Day)\b/u,
+    matches: pattern(/\bsetProgramStart(?:Date|Day)\b/u),
     allowed: (file) => file === HABIT_FALLBACK_FILE || file === STORE_FILE,
   },
   {
+    // The cold-start restore; only the store's own hydrate hook may run it.
+    name: 'cached anchor restore',
+    matches: pattern(/\bhydrateProgramStartDate\b/u),
+    allowed: (file) => file === STORE_FILE,
+  },
+  {
     name: 'raw program store write',
-    pattern: /\buseProgramStore\.setState\b/u,
+    matches: referencesRawStoreWrite,
     allowed: (file) => file === STORE_FILE,
   },
 ];
@@ -85,7 +126,7 @@ const RULES: readonly WriterRule[] = [
 const violationsIn = (sources: ReadonlyArray<readonly [string, string]>): string[] =>
   sources.flatMap(([file, source]) => {
     const code = withoutComments(source);
-    return RULES.filter((rule) => !rule.allowed(file) && rule.pattern.test(code)).map(
+    return RULES.filter((rule) => !rule.allowed(file) && rule.matches(code)).map(
       (rule) => `${rule.name}: ${file}`,
     );
   });
@@ -134,6 +175,27 @@ describe('the scan catches every spelling of a second writer', () => {
       "useProgramStore.setState({ programStartDay: day, anchorSource: 'server' });",
     ],
     ['a literal client call', MAP_SERVICE, 'await stages.setProgramStart(day, token);'],
+    [
+      "an aliased store's setState",
+      MAP_SERVICE,
+      "import { useProgramStore as ps } from '../../../store/useProgramStore';\n" +
+        "ps.setState({ programStartDay: day, anchorSource: 'server' });",
+    ],
+    [
+      "a store bound to a local name's setState",
+      MAP_SCREEN,
+      'const program = useProgramStore;\nprogram.setState({ programStartDay: day });',
+    ],
+    [
+      'a destructured, renamed hydrate',
+      MAP_SERVICE,
+      'const { hydrateProgramStartDate: w } = useProgramStore.getState();\nw(date);',
+    ],
+    [
+      'a selector-bound hydrate',
+      MAP_SCREEN,
+      'const hydrate = useProgramStore((s) => s.hydrateProgramStartDate);\nhydrate(date);',
+    ],
   ])('flags %s', (_shape, file, source) => {
     expect(violationsIn([[file, source]])).not.toEqual([]);
   });
@@ -142,6 +204,21 @@ describe('the scan catches every spelling of a second writer', () => {
     const source = '// adoptServerProgramStart is the seam\n/** setProgramStartDay(...) */\n';
 
     expect(violationsIn([[MAP_SCREEN, source]])).toEqual([]);
+  });
+
+  it("does not flag a component's own React setState beside a program store read", () => {
+    const source =
+      "import { useProgramStore } from '../../store/useProgramStore';\n" +
+      'const anchor = useProgramStore((s) => s.programStartDate);\n' +
+      'const [state, setState] = useState(0);\nsetState(1);';
+
+    expect(violationsIn([[MAP_SCREEN, source]])).toEqual([]);
+  });
+
+  it('lets the store restore its own cached anchor', () => {
+    const source = 'const hydrate = useProgramStore((s) => s.hydrateProgramStartDate);';
+
+    expect(violationsIn([[STORE_FILE, source]])).toEqual([]);
   });
 
   it('lets the seam itself through', () => {
