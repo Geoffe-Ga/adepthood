@@ -115,6 +115,8 @@ describe('ReflectionSourcesPanel -- the centred modal owns Escape and back (#313
     );
   }
 
+  const ESCAPE_EVENT_TYPES = ['keydown', 'keyup'] as const;
+
   it('arms no document Escape listener of its own on web; the Modal request closes it once', () => {
     const globalRef = globalThis as { document?: Document };
     const original = Platform.OS;
@@ -126,11 +128,15 @@ describe('ReflectionSourcesPanel -- the centred modal owns Escape and back (#313
     try {
       Platform.OS = 'web';
       const screen = renderModal(onClose);
-      const escape = new Event('keydown');
-      Object.defineProperty(escape, 'key', { value: 'Escape' });
-      act(() => {
-        target.dispatchEvent(escape);
-      });
+      // react-native-web's Modal itself closes on a document `keyup`, so a
+      // listener of the panel's own on either key event would double-close.
+      for (const type of ESCAPE_EVENT_TYPES) {
+        const escape = new Event(type);
+        Object.defineProperty(escape, 'key', { value: 'Escape' });
+        act(() => {
+          target.dispatchEvent(escape);
+        });
+      }
       expect(onClose).not.toHaveBeenCalled();
       act(() => {
         screen.getByTestId('reflection-sources-modal').props.onRequestClose();
