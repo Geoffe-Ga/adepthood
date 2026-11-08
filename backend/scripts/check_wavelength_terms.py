@@ -20,7 +20,13 @@ removed, reordered or disarmed.
 
 Rules, all read-only:
 
-* Every phase of a stage whose ``spiral_dynamics_color`` has a CSV row must
+* Each dataset stage is joined to its CSV row by the ``spiral_dynamics_color``
+  that ``src/curriculum/stage_correspondence.json`` gives its
+  ``stage_number``. The dataset carries no colour of its own since #2666
+  retired its copy of the correspondence fields, so the generated artifact is
+  the one place the join can come from. A dataset stage the artifact lacks is
+  drift.
+* Every phase of a stage whose colour has a CSV row must
   carry exactly the CSV's Medicine (``integrated``) and Toxic (``shadow``)
   terms, compared case-insensitively with whitespace collapsed (the CSV has
   edge spaces such as ``"Overwhelm "``).
@@ -31,8 +37,8 @@ Rules, all read-only:
 
 Like the other drift scripts it imports nothing from ``src/``: the CI job
 installs only ``httpx`` and ``jsonschema`` and sets no ``PYTHONPATH``, so the
-dataset is read as plain JSON. Exit codes: 0 when the names match, 1 on any
-drift or unreadable input.
+dataset and the correspondence artifact are read as plain JSON. Exit codes: 0
+when the names match, 1 on any drift or unreadable input.
 """
 
 from __future__ import annotations
@@ -54,6 +60,12 @@ MODES_CSV_PATH = _BACKEND_DIR / "content" / WAVELENGTH_MODES_CSV_VENDORED
 
 #: The dataset whose phase names ``GET /stages`` serves.
 DATASET_PATH = _BACKEND_DIR / "src" / "curriculum" / "archetypal_wavelength.json"
+
+#: The generated artifact that owns each stage's colour (the join key).
+CORRESPONDENCE_PATH = _BACKEND_DIR / "src" / "curriculum" / "stage_correspondence.json"
+
+#: The artifact field the join reads.
+_COLOUR_FIELD = "spiral_dynamics_color"
 
 #: The marker a manifestation with no canonical CSV row must carry.
 APP_AUTHORED = "app-authored"
@@ -163,8 +175,8 @@ def read_canonical_terms(path: Path) -> dict[str, StageTerms]:
     return terms
 
 
-def _read_stages(path: Path) -> list[dict[str, Any]]:
-    """Read the dataset's ``stages`` array as plain JSON."""
+def _read_stages(path: Path) -> list[Any]:
+    """Read a curriculum JSON file's ``stages`` array as plain JSON."""
     try:
         payload: Any = json.loads(path.read_text(encoding="utf-8"))
     except json.JSONDecodeError as exc:
@@ -175,6 +187,29 @@ def _read_stages(path: Path) -> list[dict[str, Any]]:
         msg = f"{path} must hold a 'stages' array"
         raise WavelengthTermsError(msg)
     return stages
+
+
+def _stage_colour(path: Path, stage: object) -> tuple[int, str]:
+    """Return one artifact stage's ``(stage_number, normalised colour)``, or refuse it."""
+    entry = stage if isinstance(stage, dict) else {}
+    number, colour = entry.get("stage_number"), entry.get(_COLOUR_FIELD)
+    if not isinstance(number, int) or isinstance(number, bool):
+        msg = f"{path} has a stage without an integer stage_number: {stage!r}"
+        raise WavelengthTermsError(msg)
+    if not isinstance(colour, str) or not colour.strip():
+        msg = f"{path} stage {number} has no {_COLOUR_FIELD}"
+        raise WavelengthTermsError(msg)
+    return number, normalise(colour)
+
+
+def read_stage_colours(path: Path) -> dict[int, str]:
+    """Read ``{stage_number: normalised colour}`` from the stage-correspondence artifact."""
+    if not path.is_file():
+        msg = (
+            f"{path} is missing — regenerate it with `python -m scripts.build_stage_correspondence`"
+        )
+        raise WavelengthTermsError(msg)
+    return dict(_stage_colour(path, stage) for stage in _read_stages(path))
 
 
 def _app_authored_problem(stage_number: object, manifestation: dict[str, Any]) -> list[str]:
@@ -205,10 +240,21 @@ def _canonical_problems(
     return problems
 
 
-def _stage_problems(stage: dict[str, Any], canonical: dict[str, StageTerms]) -> list[str]:
+def _colour_of(stage: dict[str, Any], colours: dict[int, str]) -> str | None:
+    """The artifact's colour for a dataset stage, or ``None`` when it has none."""
+    number = stage.get("stage_number")
+    return colours.get(number) if isinstance(number, int) else None
+
+
+def _stage_problems(
+    stage: dict[str, Any], canonical: dict[str, StageTerms], colours: dict[int, str]
+) -> list[str]:
     """Every problem with one stage's six manifestations."""
     number = stage.get("stage_number")
-    terms = canonical.get(normalise(str(stage.get("spiral_dynamics_color", ""))))
+    colour = _colour_of(stage, colours)
+    if colour is None:
+        return [f"stage {number} has no {_COLOUR_FIELD} in the stage-correspondence artifact"]
+    terms = canonical.get(colour)
     problems: list[str] = []
     for manifestation in stage.get("manifestations", []):
         if terms is None:
@@ -218,18 +264,26 @@ def _stage_problems(stage: dict[str, Any], canonical: dict[str, StageTerms]) -> 
     return problems
 
 
-def find_drift(canonical: dict[str, StageTerms], dataset_path: Path) -> list[str]:
-    """Return every disagreement between the dataset and the canonical terms."""
+def find_drift(
+    canonical: dict[str, StageTerms], dataset_path: Path, colours: dict[int, str]
+) -> list[str]:
+    """Return every disagreement between the dataset and the canonical terms.
+
+    ``colours`` maps each ``stage_number`` to its normalised colour, as
+    :func:`read_stage_colours` reads it from the correspondence artifact.
+    """
     stages = _read_stages(dataset_path)
-    problems = [problem for stage in stages for problem in _stage_problems(stage, canonical)]
-    return problems + _missing_stage_problems(canonical, stages)
+    problems = [
+        problem for stage in stages for problem in _stage_problems(stage, canonical, colours)
+    ]
+    return problems + _missing_stage_problems(canonical, stages, colours)
 
 
 def _missing_stage_problems(
-    canonical: dict[str, StageTerms], stages: list[dict[str, Any]]
+    canonical: dict[str, StageTerms], stages: list[dict[str, Any]], colours: dict[int, str]
 ) -> list[str]:
     """Every CSV stage that no dataset stage carries."""
-    seen = {normalise(str(stage.get("spiral_dynamics_color", ""))) for stage in stages}
+    seen = {_colour_of(stage, colours) for stage in stages}
     return [
         f"the Modes CSV has a row for {key!r} but no dataset stage carries it"
         for key in sorted(set(canonical) - seen)
@@ -241,9 +295,14 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--modes-csv", type=Path, default=MODES_CSV_PATH)
     parser.add_argument("--dataset", type=Path, default=DATASET_PATH)
+    parser.add_argument("--correspondence", type=Path, default=CORRESPONDENCE_PATH)
     args = parser.parse_args(argv)
     try:
-        problems = find_drift(read_canonical_terms(args.modes_csv), args.dataset)
+        problems = find_drift(
+            read_canonical_terms(args.modes_csv),
+            args.dataset,
+            read_stage_colours(args.correspondence),
+        )
     except WavelengthTermsError as exc:
         sys.stderr.write(f"{exc}\n")
         return 1
