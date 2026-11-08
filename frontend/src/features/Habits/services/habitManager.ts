@@ -25,7 +25,13 @@ import type {
   GoalUpdatePayload,
 } from '../../../api';
 import { formatApiError } from '../../../api/errorMessages';
-import { captureSessionToken, getAuthSession } from '../../../api/sessionToken';
+import {
+  captureAuthScope,
+  captureSessionToken,
+  getAuthSession,
+  isAuthScopeCurrent,
+  type AuthScope,
+} from '../../../api/sessionToken';
 import type { ToastConfig } from '../../../components/Toast';
 import { HABIT_DEMO_MODE } from '../../../config';
 import { colors } from '../../../design/tokens';
@@ -67,8 +73,15 @@ import {
   dayKeyInTZ,
   dayKeyToInstant,
   detectDeviceTimezone,
+  MS_PER_DAY,
   todayInUserTZ,
 } from '../../../utils/dateUtils';
+import {
+  commitProgramStart,
+  holdPendingProgramStart,
+  PROGRAM_START_PENDING_COPY,
+  type ProgramStartOutcome,
+} from '../../Program/programAnchor';
 import { HABIT_DEFAULTS } from '../HabitDefaults';
 import type { AddHabitInput, Goal, Habit, HabitMergePlan, OnboardingHabit } from '../Habits.types';
 import {
@@ -94,7 +107,7 @@ import {
   planHabitMerge,
   toApiPayload,
 } from './habitMerge';
-import { clampPosition, insertAt, stampPositionalOrder } from './habitOrdering';
+import { clampPosition, insertAt, layProgramRows, stampPositionalOrder } from './habitOrdering';
 import { habitSyncScopeKey } from './habitSyncScope';
 import {
   clearLogUnitRollbackBaseline,
@@ -284,7 +297,7 @@ const buildLogConfirmationToast = (habitName: string, amount: number): ToastConf
 
 /**
  * Where the program's ladder starts, for a row about to be laid on it. The
- * stored anchor when there is one; otherwise the same lossy inverse
+ * held anchor -- the server's, mirrored (#3097) -- when there is one; otherwise the same lossy inverse
  * ``syncProgramAnchorFromHabits`` would take at the next load, so an add made
  * with no anchor stored lands AFTER the rows that already exist rather than
  * becoming a new, earlier minimum — which is the whole defect. ``null`` only
@@ -422,54 +435,171 @@ const deriveProgramAnchor = (
 
 /**
  * Fill a MISSING universal program anchor by re-deriving it from the live
- * habits. Map, Practice, Course and Journal all read this anchor to compute the
- * current week/stage, and only ``loadHabits`` runs on every session, so without
- * this a returning user — whose persisted anchor was wiped on logout, or who
- * onboarded before the anchor existed — keeps a calendar-correct Habits screen
- * while every other screen falls back to a divergent server value.
+ * habits -- the offline / no-server-row fallback, and nothing more.
  *
- * Three writers set this anchor, and they are not equal. Two are EXPLICIT and
- * authoritative, because each records a day the user chose: the scaffolding
- * date at ``onboardingSave``, and the reorder modal's date picker. This one is
- * DERIVED and subordinate, and it writes only when no anchor is stored at all.
+ * The anchor is the SERVER's (#3097): ``program_started_at`` on
+ * ``backend/src/models/stage_progress.py``, which the person picks through
+ * ``PUT /stages/program-calendar`` and every reader -- habit reveal, Course
+ * drip, prompts, the Map -- counts from. The client store is its cached mirror,
+ * written from the server only by ``src/features/Program`` (the session
+ * reconcile, the PUT's echo after the scaffolding pick, the reorder modal's
+ * date and the Settings edit), so Map, Practice, Course and Journal agree with
+ * the server rather than with a second, client-only anchor.
  *
- * The ordering is not a tie-break, it is the direction of the data. Program
- * habit dates are laid out FROM the anchor by both explicit writers, so the
- * anchor is the input and those dates are its output. Deriving it back out of
- * them is a lossy inverse, worth doing only when the input is lost. When a
- * stored anchor and the rows disagree, it is therefore the ROWS that are wrong
- * — and a derived value that overwrote the stored one would silently discard a
- * date the user actually picked, durably, since it persists to disk.
+ * This one is DERIVED and subordinate: it writes only when no anchor is held
+ * at all -- a returning user whose cached anchor was wiped on logout and whose
+ * reconcile has not answered (offline, or no server row yet). A server-adopted
+ * anchor is never null, so this can never overwrite one.
+ *
+ * Program habit dates are laid out FROM the anchor, so the anchor is the input
+ * and those dates are its output; deriving it back out of them is a lossy
+ * inverse, worth doing only when the input is lost.
  *
  * Demo FALLBACK seeds and carryover habits are filtered out inside
  * ``deriveProgramAnchor``, so a store holding only those yields no anchor and
  * nothing is written.
  *
- * A fourth function touches the anchor without writing one: ``useHydrateProgramStore``
- * (``src/store/useProgramStore.ts``) seeds it from AsyncStorage on cold start.
- * It is a restorer, not a writer, and it is what makes the "no anchor stored"
- * case here mean "genuinely lost" rather than "not read yet".
+ * ``useHydrateProgramStore`` (``src/store/useProgramStore.ts``) restores the
+ * cached anchor from AsyncStorage on cold start -- a no-op once the server's
+ * answer has landed -- which is what makes "no anchor held" here mean
+ * "genuinely lost" rather than "not read yet".
  *
  * The ROWS the inverse reads from have three writers of their own, and all
  * three must lay a program row on the cadence for the inverse to be a fixed
- * point: ``OnboardingModal``'s scaffold layout, ``updateStartDates`` in
- * ``ReorderHabitsModal``, and ``buildAddedHabit`` above -- which was the one
- * that did not, stamping the wall clock and so undercutting the minimum
- * whenever the stored anchor was in the future and had been wiped.
- *
- * This is the client's anchor only. The server keeps its own --
- * ``program_started_at`` on ``backend/src/models/stage_progress.py``, stamped
- * when the progress row is created and read by ``resolve_program_anchor`` in
- * ``backend/src/domain/program_calendar.py`` -- and the two are not reconciled
- * here: a user who picks a future start date will have a client anchor on that
- * date and a server anchor on the day they first arrived. Reconciling them is a
- * separate change.
+ * point: ``OnboardingModal``'s scaffold layout, ``layProgramRows`` (the reorder
+ * modal and the Settings edit), and ``buildAddedHabit`` above.
  */
 const syncProgramAnchorFromHabits = (tz: string): void => {
   if (useProgramStore.getState().programStartDate !== null) return;
   const anchor = deriveProgramAnchor(getHabits());
   if (anchor === null) return;
   useProgramStore.getState().setProgramStartDay(dayKeyInTZ(anchor, tz));
+};
+
+/**
+ * The day a scaffolding pass lays its new program rows from, as a
+ * ``YYYY-MM-DD`` in the account zone -- or null when it lays none.
+ *
+ * The picked day is the source of truth: the modal hands over the very
+ * ``YYYY-MM-DD`` its picker showed, exactly as the Reorder modal and Settings
+ * do, so no instant is ever converted back into a day. A caller that hands
+ * over none gets the earliest laid pick read on the DEVICE calendar it was
+ * built on (the modal lays from a device midnight) -- never in the account
+ * zone, which would read a device-east-of-account pick as the day before and
+ * move it back again on every re-scaffold (#3097 review). Seeding the picker
+ * from the held anchor and keying the pick are then exact inverses.
+ */
+const laidStartDay = (
+  picks: readonly OnboardingHabit[],
+  pickedDay: string | undefined,
+): string | null => {
+  // ``deriveProgramAnchor`` drops carryover picks, whose dates predate the program.
+  const laidAnchor = deriveProgramAnchor(picks.filter((p) => p.keepsOwnBeginning !== true));
+  if (laidAnchor === null) return null;
+  return pickedDay ?? dayKeyInTZ(laidAnchor, detectDeviceTimezone());
+};
+
+/**
+ * The day a scaffolding pass starts the program on: the day its new rows are
+ * laid from, unless a habit whose beginning is kept began earlier. Such a habit
+ * carries the server's own date, an account-zone midnight, so it is read in the
+ * account zone; an earlier one still anchors the program, as the earliest pick
+ * always has.
+ */
+const scaffoldStartDay = (
+  picks: readonly OnboardingHabit[],
+  laidDay: string | null,
+  zone: string,
+): string | null => {
+  const days = picks
+    .filter((p) => p.keepsOwnBeginning === true)
+    .map((p) => deriveProgramAnchor([p]))
+    .filter((anchor): anchor is Date => anchor !== null)
+    .map((anchor) => dayKeyInTZ(anchor, zone));
+  if (laidDay !== null) days.push(laidDay);
+  return days.reduce<string | null>(
+    (earliest, day) => (earliest === null || day < earliest ? day : earliest),
+    null,
+  );
+};
+
+/**
+ * Re-lay the pass's new rows from the account-zone instant of ``laidDay``, the
+ * way ``layProgramRows`` lays them for the reorder modal and Settings (#3097
+ * re-review). The modal lays its picks from the DEVICE midnight of that day;
+ * keyed in the account zone, a device east of the account would post every row
+ * a day before the anchor the PUT just fixed. Each row keeps its whole-day
+ * place on the cadence -- only the base instant moves. A habit whose beginning
+ * is kept is left exactly as it is.
+ */
+const layFromAccountDay = (plan: HabitMergePlan, laidDay: string, zone: string): HabitMergePlan => {
+  const deviceStart = new Date(`${laidDay}T00:00:00`).getTime();
+  const accountStart = dayKeyToInstant(laidDay, zone).getTime();
+  const relay = (start: Date): Date => {
+    const days = Math.floor((new Date(start).getTime() - deviceStart) / MS_PER_DAY);
+    return new Date(accountStart + days * MS_PER_DAY);
+  };
+  return plan.map((disposition) =>
+    'habit' in disposition && disposition.habit.keepsOwnBeginning !== true
+      ? {
+          ...disposition,
+          habit: { ...disposition.habit, start_date: relay(disposition.habit.start_date) },
+        }
+      : disposition,
+  );
+};
+
+/**
+ * Send the scaffolding pass's start date to the server before any row is
+ * created (#3097), so the anchor every reader counts from is the day the person
+ * picked rather than the day the server would otherwise stamp. Skipped once
+ * begin-again has fixed the date, and when the server already holds this day.
+ * A refusal or a dropped connection keeps the prior anchor and says so; the
+ * habits themselves still save.
+ *
+ * A FIRST pick that could not be sent has no prior anchor to keep: it is held
+ * for the next session's reconcile to send again, the device counts from it
+ * meanwhile, and the copy says so rather than promising an earlier date that
+ * does not exist.
+ *
+ * Resolves ``false`` when the session that made the pick ended while the PUT
+ * was out (#3097 re-review): nothing is held, written or said, because the
+ * device -- and the pending key -- may now belong to someone else, and the
+ * caller writes nothing further for an account that is no longer here.
+ */
+const commitScaffoldStart = async (day: string | null, zone: string): Promise<boolean> => {
+  if (day === null || !needsScaffoldPut(day)) return true;
+  const firstPick = useProgramStore.getState().programStartDay === null;
+  const scope = captureAuthScope();
+  const outcome = await commitProgramStart(day, { tz: zone });
+  if (!isAuthScopeCurrent(scope)) return false;
+  if (outcome.kind === 'saved') return true;
+  if (outcome.kind === 'unsaved' && firstPick) return holdFirstPick(day, scope);
+  Alert.alert(SYNC_FAILURE_TITLE, outcome.message);
+  return true;
+};
+
+/** Whether ``day`` needs sending: not once begin-again fixed it, nor when the server holds it. */
+const needsScaffoldPut = (day: string): boolean => {
+  const { programStartLocked, programStartDay, anchorSource } = useProgramStore.getState();
+  return !programStartLocked && !(anchorSource === 'server' && day === programStartDay);
+};
+
+/**
+ * Hold an unsent first pick for the account that made it, and count from it
+ * meanwhile. ``false`` when that session ended while the hold was written.
+ */
+const holdFirstPick = async (day: string, scope: AuthScope): Promise<boolean> => {
+  const held = useProgramStore.getState();
+  await holdPendingProgramStart({
+    owner: scope.owner,
+    day,
+    priorServerDay: held.anchorSource === 'server' ? held.programStartDay : null,
+  });
+  if (!isAuthScopeCurrent(scope)) return false;
+  useProgramStore.getState().setProgramStartDay(day);
+  Alert.alert(SYNC_FAILURE_TITLE, PROGRAM_START_PENDING_COPY);
+  return true;
 };
 
 const syncOnboardingHabits = async (fullHabits: readonly Habit[], tz: string): Promise<void> => {
@@ -1089,12 +1219,75 @@ const revertOnFailure = (
   fallback: string,
   scope = captureHabitMutationScope(),
 ): ((err: unknown) => void) => {
+  const restore = restoreRows(prev, scope);
   return (err: unknown) => {
-    if (!scope.current()) return;
-    setHabits(prev);
-    void persistHabits(prev);
+    if (!restore()) return;
     Alert.alert(SYNC_FAILURE_TITLE, formatApiError(err, { fallback }));
   };
+};
+
+/**
+ * The silent half of ``revertOnFailure``: put ``prev`` back in the store and on
+ * disk, for a caller that tells the person itself. The returned function says
+ * whether it ran -- a write from a lifecycle that has since ended restores
+ * nothing.
+ */
+function restoreRows(prev: Habit[], scope = captureHabitMutationScope()): () => boolean {
+  return () => {
+    if (!scope.current()) return false;
+    setHabits(prev);
+    void persistHabits(prev);
+    return true;
+  };
+}
+
+const HABIT_ORDER_NOT_SAVED_COPY =
+  "We couldn't save the new habit order. Your previous order was restored — check your connection and try again.";
+
+/**
+ * Copy for a start date the server took whose habit rows could not be moved to
+ * match. Saving the same date again is safe: the anchor PUT is idempotent and
+ * the rows are re-laid from it.
+ */
+export const HABIT_ROWS_NOT_MOVED_COPY =
+  "Your new start date saved, but your habits' start dates didn't move to match. Check your connection and save the date again.";
+
+/**
+ * What a Settings start-date change came to: the anchor's own outcome, or --
+ * when the server took the date but the program rows could not follow --
+ * ``rows_unsaved``, so the screen never reports a plain "saved" over rows still
+ * laid from the old day (#3097 review).
+ */
+export type ProgramStartChangeOutcome =
+  ProgramStartOutcome | { kind: 'rows_unsaved'; message: string };
+
+/**
+ * Stamp ``ordered`` into the store and on disk, then PUT every server-backed
+ * row. Resolves whether every PUT landed; on a refusal ``onFailure`` runs once
+ * (one deterministic rollback, never one per failed PUT) and it resolves
+ * false. Never rejects.
+ */
+const commitOrderedRows = async (
+  ordered: Habit[],
+  zone: string,
+  onFailure: (_err: unknown) => unknown,
+): Promise<boolean> => {
+  const stamped = stampPositionalOrder(ordered);
+  setHabits(stamped);
+  void persistHabits(stamped);
+  const updates: Array<Promise<unknown>> = [];
+  for (const habit of stamped) {
+    if (!isServerBackedHabit(habit)) continue;
+    updates.push(habitsApi.update(habit.id, toApiPayload(habit, zone)));
+  }
+  if (updates.length === 0) return true;
+  return Promise.all(updates).then(
+    () => true,
+    (err: unknown) => {
+      onFailure(err);
+      return false;
+    },
+  );
 };
 
 /**
@@ -2100,22 +2293,10 @@ export const habitManager = {
    * the browser journey) to have anything truthful to wait on.
    */
   saveHabitOrder: async (ordered: Habit[], tz?: string): Promise<void> => {
-    const prev = getHabits();
-    const stamped = stampPositionalOrder(ordered);
-    setHabits(stamped);
-    void persistHabits(stamped);
-    const updates: Array<Promise<unknown>> = [];
-    const zone = tz ?? detectDeviceTimezone();
-    for (const habit of stamped) {
-      if (!isServerBackedHabit(habit)) continue;
-      updates.push(habitsApi.update(habit.id, toApiPayload(habit, zone)));
-    }
-    if (updates.length === 0) return;
-    await Promise.all(updates).catch(
-      revertOnFailure(
-        prev,
-        "We couldn't save the new habit order. Your previous order was restored — check your connection and try again.",
-      ),
+    await commitOrderedRows(
+      ordered,
+      tz ?? detectDeviceTimezone(),
+      revertOnFailure(getHabits(), HABIT_ORDER_NOT_SAVED_COPY),
     );
   },
 
@@ -2358,33 +2539,40 @@ export const habitManager = {
    * showed the user their current habits and asked would state a release.
    * Picks are read against the store here so the fix is reachable through the
    * screen that exists rather than waiting on the one that does not.
+   *
+   * ``programStartDay`` is the ``YYYY-MM-DD`` the modal's start-date picker
+   * showed: the day the program is anchored to, sent as picked (#3097).
    */
   onboardingSave: async (
     input: readonly OnboardingHabit[] | HabitMergePlan,
     showToast?: ShowToast,
     tz?: string,
+    programStartDay?: string,
   ): Promise<void> => {
     const existing = getHabits();
-    const plan = asMergePlan(input, existing);
-    const ops = planHabitMerge(plan, existing);
-    setHabits(ops.nextStore);
-    // Anchor the universal course calendar to the first picked habit's start
-    // date so the Map, Practice, Course, Journal and habit-unlock logic all
-    // derive the same stage/week from one source. Without this a freshly-
-    // onboarded user has a null anchor and every screen silently falls back to
-    // divergent server/position values.
-    //
+    const zone = tz ?? detectDeviceTimezone();
+    const picked = asMergePlan(input, existing);
     // Read from the picks, not from the merged store: the picks are the dates
     // the user just chose, while a kept row carries a date this pass did not
     // ask about — a carryover's is from before the program began at all.
-    const anchor = deriveProgramAnchor(pickedHabits(plan));
-    if (anchor) useProgramStore.getState().setProgramStartDate(anchor);
+    const laidDay = laidStartDay(pickedHabits(picked), programStartDay);
+    const plan = laidDay === null ? picked : layFromAccountDay(picked, laidDay, zone);
+    const ops = planHabitMerge(plan, existing);
+    setHabits(ops.nextStore);
     showToast?.({
       message: 'Tap a habit tile to edit its goals.',
       icon: '\u{1F449}',
       duration: INSTRUCTIONAL_TOAST_DURATION_MS,
     });
-    const zone = tz ?? detectDeviceTimezone();
+    // The picked start date becomes the server's program anchor before any row
+    // is created, so the Map, Practice, Course, Journal and habit reveal all
+    // count from the day the person chose (#3097). A session that ended while
+    // it was out writes nothing more under whoever holds the device now.
+    const anchored = await commitScaffoldStart(
+      scaffoldStartDay(pickedHabits(plan), laidDay, zone),
+      zone,
+    );
+    if (!anchored) return;
     const stillHere = await commitHabitMerge(ops, zone);
     if (stillHere.length > 0) setHabits([...getHabits(), ...stillHere]);
     // Persist BEFORE the reload, which is the only order that survives a pass
@@ -2396,6 +2584,32 @@ export const habitManager = {
     // Round-trip server-assigned ids — synthetic goal ids would 404 on log.
     // If this GET fails, synthetic ids survive until the next launch — see #282.
     await loadHabits(zone);
+  },
+
+  /**
+   * Change the program start date from outside the scaffolding pass -- the
+   * Settings edit (#3097). The server moves the anchor first; only once it has
+   * agreed are the program rows re-laid from the new day and committed through
+   * ``saveHabitOrder``, the same commit the reorder modal uses. No row is
+   * re-POSTed, carryover rows keep their own dates, and a ring already revealed
+   * stays revealed (the server guarantees that). A refusal or a dropped
+   * connection changes nothing and is returned for the caller to show. When
+   * the anchor moved but the row PUTs failed, the rows are put back as the
+   * server holds them and ``rows_unsaved`` is returned -- never ``saved`` --
+   * with no alert of its own, so the screen says one honest thing.
+   */
+  changeProgramStart: async (day: string, tz?: string): Promise<ProgramStartChangeOutcome> => {
+    const zone = tz ?? detectDeviceTimezone();
+    const outcome = await commitProgramStart(day, { tz: zone });
+    if (outcome.kind !== 'saved') return outcome;
+    const current = getHabits();
+    if (current.length === 0) return outcome;
+    const moved = await commitOrderedRows(
+      layProgramRows(current, day, zone),
+      zone,
+      restoreRows(current),
+    );
+    return moved ? outcome : { kind: 'rows_unsaved', message: HABIT_ROWS_NOT_MOVED_COPY };
   },
 
   revealAllHabits: (tz?: string): void => {

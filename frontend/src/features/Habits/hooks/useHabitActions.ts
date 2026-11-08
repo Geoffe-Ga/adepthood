@@ -258,8 +258,8 @@ export const useHabitActions = (
   // which has no row to name) or a plan it derived from the habits it just
   // showed the user, and the merge already speaks both.
   const onboardingSave = useCallback(
-    (input: readonly OnboardingHabit[] | HabitMergePlan) =>
-      habitManager.onboardingSave(input, showToast, tz),
+    (input: readonly OnboardingHabit[] | HabitMergePlan, programStartDay?: string) =>
+      habitManager.onboardingSave(input, showToast, tz, programStartDay),
     [showToast, tz],
   );
 

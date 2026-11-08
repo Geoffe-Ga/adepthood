@@ -32,6 +32,7 @@ import LoginScreen from './features/Auth/LoginScreen';
 import { ReauthSheet } from './features/Auth/ReauthSheet';
 import ResetPasswordScreen from './features/Auth/ResetPasswordScreen';
 import SignupScreen from './features/Auth/SignupScreen';
+import { useProgramAnchorSync } from './features/Program/useProgramAnchorSync';
 import { WelcomeScreen } from './features/Welcome/WelcomeScreen';
 import { useLockPortraitUp } from './hooks/useLockPortraitUp';
 import { linking } from './navigation/linking';
@@ -172,6 +173,8 @@ function AppShell(): React.JSX.Element {
   // dead end anyway, so it has nothing to rotate.
   useLockPortraitUp();
   useHydrateProgramStore();
+  // Once per signed-in session the server's anchor overrides the cached one (#3097).
+  useProgramAnchorSync();
   const { mode } = useTheme();
   return (
     <NavigationContainer theme={navThemeFor(mode)} linking={linking}>

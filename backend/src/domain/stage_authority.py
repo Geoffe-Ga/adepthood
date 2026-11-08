@@ -35,7 +35,9 @@ That is the one piece of calendar state a client may assert, and it is the
 *input* to the calendar, not either of its answers: the stage offered is still
 derived from it, and the stage entered is still derived from the offer. A
 request carries a date and nothing else, so there is still no payload that names
-a stage.
+a stage. Both program-calendar responses offer that range as
+``program_start_window`` (null after begin-again), so a client picker is clamped
+to exactly the dates the PUT accepts.
 
 **Nothing gates on the gap, and that is the load-bearing constraint.**
 ``NORTH-STAR.md`` line 18 -- nothing is gated behind anything else. A record that
