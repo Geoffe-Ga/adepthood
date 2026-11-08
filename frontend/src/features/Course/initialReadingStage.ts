@@ -2,6 +2,7 @@ import type { CourseSession } from './courseSession';
 import { START_HERE } from './stageDisplay';
 
 import { stages, uiFlags, type CourseProgress, type Stage } from '@/api';
+import { adoptProgramCalendar } from '@/features/Program/adoptProgramCalendar';
 import { programStage } from '@/store/useProgramStore';
 
 /**
@@ -31,5 +32,8 @@ export async function loadInitialReadingStage(
   if (selected !== null && selected !== undefined) return selected;
   const calendar = await stages.programCalendar(session.token);
   assertCurrent();
+  // The server is the anchor's authority (#3097): mirror what it said so the
+  // picker window and the Map's stage agree with the stage opened here.
+  adoptProgramCalendar(calendar, null);
   return calendar.current_stage;
 }

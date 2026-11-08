@@ -21,6 +21,7 @@ import CorpusSweepScreen from '../features/Settings/CorpusSweepScreen';
 import DeleteAccountScreen from '../features/Settings/DeleteAccountScreen';
 import ExportDataScreen from '../features/Settings/ExportDataScreen';
 import PrivateVaultActivationScreen from '../features/Settings/PrivateVaultActivationScreen';
+import ProgramStartSettingsScreen from '../features/Settings/ProgramStartSettingsScreen';
 import SettingsHubScreen from '../features/Settings/SettingsHubScreen';
 import SupportCareScreen from '../features/Settings/SupportCareScreen';
 import TimezoneSettingsScreen from '../features/Settings/TimezoneSettingsScreen';
@@ -56,6 +57,7 @@ export type RootStackParamList = {
   CorpusSweep: undefined;
   ApiKeySettings: undefined;
   TimezoneSettings: undefined;
+  ProgramStartSettings: undefined;
   DeleteAccount: undefined;
   ExportData: undefined;
   SupportCare: undefined;
@@ -259,6 +261,11 @@ const SettingsScreens = (): React.JSX.Element => (
       name="TimezoneSettings"
       component={TimezoneSettingsScreen}
       options={{ title: 'Time zone' }}
+    />
+    <Stack.Screen
+      name="ProgramStartSettings"
+      component={ProgramStartSettingsScreen}
+      options={{ title: 'Program start date' }}
     />
     <Stack.Screen
       name="ExportData"

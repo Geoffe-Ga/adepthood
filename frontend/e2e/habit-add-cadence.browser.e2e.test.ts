@@ -27,11 +27,12 @@ import { instantAt } from './zonedClock';
  *
  *  - on the wire: the add sheet's POST /habits/ carries the rung date for its
  *    slot, not today, and GET /habits/ echoes it back as a program row;
- *  - on the Map: with an anchor set in the future by the rows already there,
- *    a real log-out and log-in wipes the stored anchor and the app re-derives
- *    it from the rows -- and stage 2 still unlocks a future anchor's distance
- *    away. A today-stamped add would win that minimum and the Map would read
- *    stage 2 as one stage window from today.
+ *  - on the Map: the program anchor is the server's (#3097), picked ten days
+ *    back through PUT /stages/program-calendar before the rows are laid on its
+ *    rungs. A real log-out wipes the stored anchor; the log-in adopts the
+ *    server's again, and stage 2 still unlocks eleven days out -- the add
+ *    moved no screen's calendar. A today-stamped add could only ever have won
+ *    the habit-derived minimum, which is now the offline fallback alone.
  *
  * The zone is pinned to UTC and checked against the server's record, and the
  * page's clock is installed at midday on the host's today before the app
@@ -42,7 +43,8 @@ import { instantAt } from './zonedClock';
  * run is minutes long, so it cannot leave the pinned day. Only the browser's
  * clock is moved: nothing asserted here is a day the server stamps (each
  * start_date is the client's, stored verbatim), so the server running on real
- * time cannot disagree with it.
+ * time cannot disagree with it -- the one server-stamped day, the anchor, is a
+ * past date the spec picks itself.
  *
  * The oracle is plain calendar arithmetic over the stage windows, deliberately
  * not the app's own `calculateHabitStartDate`.
@@ -51,8 +53,8 @@ import { instantAt } from './zonedClock';
 const PINNED_ZONE = 'UTC';
 /** Midday: as far from either midnight as the pinned day allows. */
 const PINNED_WALL = '12:00';
-/** How far ahead of today the seeded rows put the program's start. */
-const FUTURE_ANCHOR_DAYS = 30;
+/** How far before today the person says their program began. */
+const ANCHOR_DAYS_BACK = 10;
 /** Program rows already on the ladder before the add; the add takes the next slot. */
 const SEEDED_NAMES = ['Dawn sit', 'Cold water'];
 const ADDED_SLOT = SEEDED_NAMES.length;
@@ -61,7 +63,8 @@ const OBSERVED_STAGE = 2;
 const HABITS_PATH = '/habits/';
 const PROGRAM_ANCHOR_KEY = '@adepthood/program_start_date';
 const FIRST_STAGE_DAYS = STAGE_DURATIONS_DAYS[0];
-const EXPECTED_COUNTDOWN = `Opens in ${FIRST_STAGE_DAYS + FUTURE_ANCHOR_DAYS} days`;
+const EXPECTED_COUNTDOWN = `Opens in ${FIRST_STAGE_DAYS - ANCHOR_DAYS_BACK} days`;
+const PROGRAM_CALENDAR_PATH = '/stages/program-calendar';
 /** Length of the `YYYY-MM-DD` prefix of an ISO-8601 instant. */
 const ISO_DATE_LENGTH = 10;
 
@@ -113,12 +116,17 @@ test('an added habit takes its rung on the cadence and does not undercut the pro
   const email = await signUp(page, 'habit-add-cadence');
   const { token, timezone } = await sessionFor(page.request, email);
   expect(timezone, 'the account did not take the pinned zone').toBe(PINNED_ZONE);
-  const anchorKey = addDaysToKey(todayKey, FUTURE_ANCHOR_DAYS);
+  const anchorKey = addDaysToKey(todayKey, -ANCHOR_DAYS_BACK);
+  const picked = await page.request.put(`${backendUrl()}${PROGRAM_CALENDAR_PATH}`, {
+    headers: bearer(token),
+    data: { program_start_date: anchorKey },
+  });
+  expect(picked.ok(), 'arranging the program start date failed').toBe(true);
   for (const [slot, name] of SEEDED_NAMES.entries()) {
     await seedHabit(page.request, token, name, rungKey(anchorKey, slot));
   }
 
-  // The journal's habit load derives the anchor from the seeded rows.
+  // The reload re-adopts the server's anchor for the resumed session.
   await page.reload();
   await expectPinnedDay(page, todayKey);
   await openMapFromJournal(page);
@@ -173,7 +181,7 @@ test('an added habit takes its rung on the cadence and does not undercut the pro
   await logIn(page, email);
   await expectPinnedDay(page, todayKey);
 
-  // The anchor is re-derived from the rows -- the added one among them.
+  // The log-in adopts the server's anchor again; the add moved nothing.
   await openMapFromJournal(page);
   await expect(page.getByTestId(`stage-unlock-${OBSERVED_STAGE}`)).toHaveText(EXPECTED_COUNTDOWN);
 });

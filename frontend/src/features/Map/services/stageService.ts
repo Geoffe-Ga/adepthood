@@ -13,6 +13,7 @@ import { formatApiError } from '../../../api/errorMessages';
 import { STAGE_COLORS, STAGE_ORDER } from '../../../design/tokens';
 import { FULLY_COMPLETE } from '../../../domain/stageProgression';
 import { useStageStore } from '../../../store/useStageStore';
+import { adoptProgramCalendar } from '../../Program/adoptProgramCalendar';
 import { STAGE_COUNT } from '../stageData';
 import type { StageData } from '../stageData';
 
@@ -123,9 +124,10 @@ const seedFromProgramCalendar = async (
   try {
     const calendar = await stagesApi.programCalendar(token);
     if (isStale(generation)) return;
-    const store = useStageStore.getState();
-    store.setCurrentStage(calendar.current_stage);
-    store.setCycleNumber(calendar.cycle_number);
+    // Through the one adopter, so the start-date picker's window and lock stay
+    // in step with the stage this seed writes. No zone here: the anchor's day
+    // comes from the session reconcile and the PUT echo (#3097).
+    adoptProgramCalendar(calendar, null);
   } catch {
     // Non-fatal: cold-start seeding is best-effort; keep the current values.
   }

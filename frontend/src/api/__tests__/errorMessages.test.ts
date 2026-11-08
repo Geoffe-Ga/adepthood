@@ -585,3 +585,15 @@ describe('payer refusals say how to proceed (#3096)', () => {
     expect(copy).toMatch(/nothing was charged/iu);
   });
 });
+
+describe('program start refusals say what to do instead (#3097)', () => {
+  it.each([
+    ['program_start_in_future', 422, /today or earlier/i],
+    ['program_start_too_early', 422, /earliest/i],
+    ['program_start_fixed_after_first_cycle', 409, /begin again/i],
+  ])('maps %s to plain copy', (code, status, pattern) => {
+    const message = formatApiError(new ApiError(status, code));
+    expect(message).toMatch(pattern);
+    expect(message).not.toMatch(/_/);
+  });
+});

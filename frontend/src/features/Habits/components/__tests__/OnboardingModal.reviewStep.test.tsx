@@ -532,6 +532,8 @@ describe('OnboardingModal start-date seed', () => {
     advanceToReorder(result);
 
     expect(result.getByText('Beige begins on:')).toBeTruthy();
+    // The picker can always give back the day it is showing, even below the
+    // offline fallback floor.
     expect(result.UNSAFE_getByProps({ value: '2026-01-15' }).props.minDate).toBe('2026-01-15');
   });
 
@@ -550,6 +552,11 @@ describe('OnboardingModal start-date seed', () => {
     fireEvent(input, 'onKeyPress', { nativeEvent: { key: 'Enter' } });
     advanceToReorder(result);
 
-    expect(result.UNSAFE_getByProps({ value: iso }).props.minDate).toBe(iso);
+    // Today is the ceiling now, not the floor: a program cannot start on a day
+    // that has not come, but it may have started before the person signed up
+    // (#3097).
+    const picker = result.UNSAFE_getByProps({ value: iso }).props;
+    expect(picker.maxDate).toBe(iso);
+    expect(picker.minDate < iso).toBe(true);
   });
 });

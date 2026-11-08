@@ -188,6 +188,7 @@ describe('OnboardingModal close behaviour', () => {
   });
 
   it('uses selected start date for first habit', async () => {
+    const PICKED_DAYS_BACK = 30;
     const originalTZ = process.env.TZ;
     process.env.TZ = 'America/Los_Angeles';
     const onSave = jest.fn((_habits: { start_date: Date }[]) => undefined);
@@ -216,14 +217,22 @@ describe('OnboardingModal close behaviour', () => {
     pressContinue();
     advanceRevealAnimation(); // complete the reveal
 
-    // Use a date guaranteed to be in the future so the DatePicker minDate
-    // constraint doesn't reject it.
-    const futureYear = new Date().getFullYear() + 1;
-    const futureDate = `${futureYear}-09-10`;
+    // A past date inside the window: the picker refuses any day after today,
+    // because the server does (#3097).
+    const picked = new Date();
+    picked.setDate(picked.getDate() - PICKED_DAYS_BACK);
+    const pickedYear = picked.getFullYear();
+    const pickedMonth = picked.getMonth();
+    const pickedDay = picked.getDate();
+    const pickedIso = [
+      pickedYear,
+      String(pickedMonth + 1).padStart(2, '0'),
+      String(pickedDay).padStart(2, '0'),
+    ].join('-');
 
     const dateInput = root.findByProps({ accessibilityLabel: 'Date' });
     renderer.act(() => {
-      dateInput.props.onChangeText(futureDate);
+      dateInput.props.onChangeText(pickedIso);
     });
 
     const continueToTemplates = root.findByProps({ testID: 'continue-to-templates' });
@@ -239,9 +248,9 @@ describe('OnboardingModal close behaviour', () => {
 
     const saved = (onSave.mock.calls[0]?.[0] as { start_date: Date }[] | undefined)?.[0];
     expect(saved).toBeDefined();
-    expect(saved!.start_date.getFullYear()).toBe(futureYear);
-    expect(saved!.start_date.getMonth()).toBe(8);
-    expect(saved!.start_date.getDate()).toBe(10);
+    expect(saved!.start_date.getFullYear()).toBe(pickedYear);
+    expect(saved!.start_date.getMonth()).toBe(pickedMonth);
+    expect(saved!.start_date.getDate()).toBe(pickedDay);
     process.env.TZ = originalTZ;
   });
 });
