@@ -2315,6 +2315,18 @@
     "coveredBy": "frontend/e2e/map-stage-persona.browser.e2e.test.ts"
   },
   {
+    "id": "map.stage-colour-follows-the-coursestage-row",
+    "description": "A traveller sees each stage's Spiral colour -- the Map tile's fill and the colour named in its spoken label, and the same name on the Journal hero, the Practice stage picker and story, the Course pills, the Habits story and ledger and the Progress ribbon -- and it is the colour the coursestage row holds, not a frontend copy. Since #2666 stageService.toStageData colours a stage from the served spiral_dynamics_color through resolveStageColor (the legacy Turquoise reads as Teal), and every stage-number-to-colour-name reader goes through store/stageColorName.ts: the served row first, the pinned offline STAGE_ORDER only when no served row is in hand. GET /stages/correspondence carries the same field for the visit-free Journal chord. Uncovered in a browser because tests.e2e.stage_copy set-field cannot yet rewrite spiral_dynamics_color (SETTABLE_FIELDS is subtitle and relationship_to_free_will); the linked issue widens it and adds the spec that rewrites a row's colour out of band, reloads, and requires the Map tile and its aria-label to follow. Pinned meanwhile by stageService.test.ts, store/__tests__/stageColorName.test.ts, the served-first cases in each reader's suite, stageOntologyDrift.test.ts (the fallback equals stage_correspondence.json) and stageCanonDrift.test.ts (no second colour list, no STAGE_ORDER lookup outside its readers).",
+    "crosses": {
+      "screen": "frontend/src/features/Map/MapScreen.tsx",
+      "client": ["stages"],
+      "routes": ["GET /stages", "GET /stages/correspondence"],
+      "tables": ["coursestage"]
+    },
+    "status": "uncovered",
+    "issue": 3697
+  },
+  {
     "id": "journal.higher-self-does-not-repeat-itself",
     "description": "A writer who has asked for reflections before asks for another one, and the Higher Self does not say a thing it has already said: at most two of the letters it wrote them earlier ride along with the pass as content-only context, under a pinned instruction never to imitate their wording or treat them as a voice sample. A letter about an entry they deleted, or one they later marked Intimate, is never among them, and neither is a letter about the page being read. Uncovered for the same reason as journal.ask-for-resonance and journal.see-related-vault-pages: what changes here is generated prose rather than a screen or a new seam, and the real-wire lane has no deterministic language-model provider, so it cannot make POST /journal/{entry_id}/resonance return notes it could read back and compare across two passes. #2408 tracks that missing provider seam. The exclusions are pinned end-to-end at the endpoint by backend/tests/test_intimate_privacy_guard.py::test_only_eligible_prior_letters_reach_the_cloud_prompt, and the query that decides them by backend/tests/test_prior_letters_grounding.py.",
     "crosses": {
