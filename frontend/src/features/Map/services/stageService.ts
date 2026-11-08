@@ -119,18 +119,25 @@ const isStale = (generation: number): boolean =>
  *
  * A failure here must never break the stage list, so it is swallowed and the
  * values already in the store stand.
+ *
+ * ``tz`` is the account zone to count the anchor's day in, or null to leave the
+ * day alone. Only begin-again passes one (#3702): it is the one load that
+ * follows the server resetting ``program_started_at``, and no reconcile runs
+ * again this session to bring the new day. Every other load passes null, so an
+ * ordinary Map visit never overwrites a first pick still held offline -- the
+ * day comes from the session reconcile and the PUT echo (#3097).
  */
 const seedFromProgramCalendar = async (
   token: string | undefined,
   generation: number,
+  tz: string | null,
 ): Promise<void> => {
   try {
     const calendar = await stagesApi.programCalendar(token);
     if (isStale(generation)) return;
     // Through the one adopter, so the start-date picker's window and lock stay
-    // in step with the stage this seed writes. No zone here: the anchor's day
-    // comes from the session reconcile and the PUT echo (#3097).
-    adoptProgramCalendar(calendar, null);
+    // in step with the stage this seed writes.
+    adoptProgramCalendar(calendar, tz);
   } catch {
     // Non-fatal: cold-start seeding is best-effort; keep the current values.
   }
@@ -140,8 +147,9 @@ export const stageService = {
   /**
    * Fetch the stage list, map to StageData, and write it into the store. On
    * failure, leaves existing state in place and records an error message.
+   * ``tz`` adopts the anchor's day too; only begin-again supplies it (#3702).
    */
-  loadStages: async (token?: string): Promise<void> => {
+  loadStages: async (token?: string, tz: string | null = null): Promise<void> => {
     const store = useStageStore.getState();
     const generation = store.beginLoad();
     store.setLoading(true);
@@ -166,7 +174,7 @@ export const stageService = {
     }
     // Awaited before the load settles so the first painted grid already carries
     // the server's stage, rather than flashing a stale one.
-    await seedFromProgramCalendar(token, generation);
+    await seedFromProgramCalendar(token, generation, tz);
     if (isStale(generation)) return;
     useStageStore.getState().setLoading(false);
   },
@@ -176,8 +184,14 @@ export const stageService = {
    * stages so state resets from server truth. Mirrors `loadStages`'s
    * error handling — a failed begin-again POST routes to `useStageStore.error`
    * rather than rejecting unhandled, since the call site discards the promise.
+   *
+   * ``tz`` is the account zone. The server restarts ``program_started_at`` now,
+   * so the reload adopts the new cycle's start day in that zone (#3702) --
+   * without it the Map, Course and habit reveal went on counting from the old
+   * cycle's day until the next session's reconcile. A failed or overtaken
+   * begin-again returns before the reload, so it never moves the day.
    */
-  beginAgain: async (token?: string): Promise<void> => {
+  beginAgain: async (token?: string, tz: string | null = null): Promise<void> => {
     const generation = useStageStore.getState().beginLoad();
     try {
       const record = await stagesApi.beginAgain(token);
@@ -190,6 +204,6 @@ export const stageService = {
       useStageStore.getState().setError(message);
       return;
     }
-    await stageService.loadStages(token);
+    await stageService.loadStages(token, tz);
   },
 };

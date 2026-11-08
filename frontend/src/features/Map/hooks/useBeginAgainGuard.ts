@@ -4,6 +4,7 @@ import { useCallback, useRef, useState } from 'react';
 
 import { stageService } from '../services/stageService';
 
+import { useAuth } from '@/context/AuthContext';
 import { useMountedRef } from '@/hooks/useMountedRef';
 
 /** Returns { beginning, handleBeginAgain } — one POST /stages/begin-again per in-flight window. */
@@ -19,17 +20,23 @@ export function useBeginAgainGuard(): { beginning: boolean; handleBeginAgain: ()
   // useMountedRef, without changing the happy-path behaviour.
   const isMountedRef = useMountedRef();
 
+  // The new cycle's start day is counted in the account zone (#3702). While
+  // that zone is still the provisional default it is not the person's, so no
+  // zone is passed and the day waits for the next reconcile.
+  const { userTimezone, userTimezoneReady } = useAuth();
+  const zone = userTimezoneReady ? userTimezone : null;
+
   const handleBeginAgain = useCallback(() => {
     // Ref guard blocks a same-tick double-press; state drives the disabled UI.
     if (beginningRef.current) return;
     beginningRef.current = true;
     setBeginning(true);
-    void stageService.beginAgain().finally(() => {
+    void stageService.beginAgain(undefined, zone).finally(() => {
       beginningRef.current = false;
       if (!isMountedRef.current) return;
       setBeginning(false);
     });
-  }, [isMountedRef]);
+  }, [isMountedRef, zone]);
 
   return { beginning, handleBeginAgain };
 }

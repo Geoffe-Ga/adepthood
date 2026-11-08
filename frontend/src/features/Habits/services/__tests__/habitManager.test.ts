@@ -162,7 +162,12 @@ import {
   stageAtIndex,
 } from '../../HabitUtils';
 import { cancelForHabit } from '../../hooks/useHabitNotifications';
-import { applyGoalUpdate, HABIT_ROWS_NOT_MOVED_COPY, habitManager } from '../habitManager';
+import {
+  applyGoalUpdate,
+  HABIT_ORDER_NOT_SAVED_COPY,
+  HABIT_ROWS_NOT_MOVED_COPY,
+  habitManager,
+} from '../habitManager';
 import { habitSyncScopeKey } from '../habitSyncScope';
 import { MAX_CHECK_IN_REPLAY_ATTEMPTS, MIN_POISON_AGE_MS, checkInIdentity } from '../replayPolicy';
 
@@ -2145,9 +2150,52 @@ describe('habitManager', () => {
         .mockImplementationOnce(() => Promise.reject(new Error('boom')) as never)
         .mockImplementationOnce(() => Promise.reject(new Error('boom')) as never);
 
-      await expect(habitManager.saveHabitOrder([h2, h1])).resolves.toBeUndefined();
+      const { Alert } = jest.requireMock('react-native') as { Alert: { alert: jest.Mock } };
+      Alert.alert.mockClear();
+
+      // ``false``: the rows did not land. The refusal is still surfaced here,
+      // exactly once, so a caller with nothing to add only has to settle.
+      await expect(habitManager.saveHabitOrder([h2, h1])).resolves.toBe(false);
 
       expect(useHabitStore.getState().habits.map((h) => h.name)).toEqual(['First', 'Second']);
+      expect(Alert.alert).toHaveBeenCalledTimes(1);
+      expect(String(Alert.alert.mock.calls[0]![1])).toContain(HABIT_ORDER_NOT_SAVED_COPY);
+    });
+
+    it('a re-lay that follows a saved anchor restores silently and reports false (#3707)', async () => {
+      // The start date already moved this sitting, so "your previous order was
+      // restored" would hide it. The caller says the one honest thing
+      // (HABIT_ROWS_NOT_MOVED_COPY); this restores the rows and stays quiet.
+      const h1 = makeHabit({ id: 1, name: 'First' });
+      const h2 = makeHabit({ id: 2, name: 'Second' });
+      useHabitStore.setState({ habits: [h1, h2] });
+      (habitsApi.update as jest.Mock)
+        .mockImplementationOnce(() => Promise.reject(new Error('boom')) as never)
+        .mockImplementationOnce(() => Promise.reject(new Error('boom')) as never);
+      const { Alert } = jest.requireMock('react-native') as { Alert: { alert: jest.Mock } };
+      Alert.alert.mockClear();
+
+      await expect(
+        habitManager.saveHabitOrder([h2, h1], 'UTC', { anchorSaved: true }),
+      ).resolves.toBe(false);
+
+      expect(Alert.alert).not.toHaveBeenCalled();
+      expect(useHabitStore.getState().habits.map((h) => h.name)).toEqual(['First', 'Second']);
+      expect(saveHabits).toHaveBeenLastCalledWith([
+        expect.objectContaining({ id: 1, name: 'First' }),
+        expect.objectContaining({ id: 2, name: 'Second' }),
+      ]);
+    });
+
+    it('reports true once every row has landed, saved anchor or not (#3707)', async () => {
+      const h1 = makeHabit({ id: 1, name: 'First' });
+      const h2 = makeHabit({ id: 2, name: 'Second' });
+      useHabitStore.setState({ habits: [h1, h2] });
+
+      await expect(habitManager.saveHabitOrder([h2, h1])).resolves.toBe(true);
+      await expect(
+        habitManager.saveHabitOrder([h1, h2], 'UTC', { anchorSaved: true }),
+      ).resolves.toBe(true);
     });
 
     it('resolves without a round trip when no row is server-backed', async () => {
@@ -2155,7 +2203,7 @@ describe('habitManager', () => {
       const d2 = makeHabit({ id: 2, name: 'Second', isDemoSeed: true });
       useHabitStore.setState({ habits: [d1, d2] });
 
-      await expect(habitManager.saveHabitOrder([d2, d1])).resolves.toBeUndefined();
+      await expect(habitManager.saveHabitOrder([d2, d1])).resolves.toBe(true);
 
       expect(habitsApi.update).not.toHaveBeenCalled();
     });

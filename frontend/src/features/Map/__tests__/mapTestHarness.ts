@@ -261,6 +261,15 @@ export function mockProgramProgressionModule() {
   };
 }
 
+/**
+ * ``@/context/AuthContext`` — a settled account zone. The Map's begin-again
+ * reads it (#3702), and ``useAuth`` throws outside an ``AuthProvider``, which
+ * none of the MapScreen suites mount.
+ */
+export function mockAuthContextModule() {
+  return { useAuth: () => ({ userTimezone: 'UTC', userTimezoneReady: true }) };
+}
+
 /** ``services/stageService`` — spies plus the shared unlock/end-of-cycle logic. */
 export function mockStageServiceModule() {
   return {

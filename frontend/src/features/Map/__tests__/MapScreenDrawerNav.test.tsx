@@ -29,6 +29,9 @@ jest.mock('@react-navigation/bottom-tabs', () =>
 jest.mock('react-native-safe-area-context', () =>
   jest.requireActual('./mapTestHarness').mockSafeAreaModule(),
 );
+jest.mock('@/context/AuthContext', () =>
+  jest.requireActual('./mapTestHarness').mockAuthContextModule(),
+);
 jest.mock('../hooks/useWheelBalance', () =>
   jest.requireActual('./mapTestHarness').mockWheelBalanceModule(),
 );
