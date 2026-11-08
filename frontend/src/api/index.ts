@@ -3256,6 +3256,21 @@ export const stages = {
     });
   },
   /**
+   * Pick, or change, the day the person's program starts (#3097). The body is a
+   * local calendar date and nothing else -- the server stores its local midnight
+   * in the account zone and derives both stage answers from it, so no stage
+   * field can ride along. Refused with 422 outside ``program_start_window`` and
+   * with 409 once begin-again has fixed the anchor.
+   */
+  setProgramStart(programStartDate: string, token?: string): Promise<ProgramCalendarT> {
+    return request<ProgramCalendarT>('/stages/program-calendar', {
+      method: 'PUT',
+      body: { program_start_date: programStartDate },
+      token,
+      schema: programCalendarSchema,
+    });
+  },
+  /**
    * Every stage's canonical correspondences (category, aspect, persona and the
    * rest), unpaginated. Global and visit-free: unlike ``listAll`` it records no
    * program visit, so a screen that only needs the vocabulary -- the Journal
@@ -3283,6 +3298,7 @@ export type { StageProgressRecordT as StageProgressRecord } from './schemas';
 
 /** Public alias of the zod-inferred program-calendar type so consumers avoid a duplicate shape. */
 export type { ProgramCalendarT as ProgramCalendar } from './schemas';
+export type { ProgramStartWindowT as ProgramStartWindow } from './schemas';
 
 // Wheel-of-wholeness balance types and client (Map balance reading)
 

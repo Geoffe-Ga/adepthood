@@ -238,6 +238,16 @@ export const USER_FACING_ERROR_MESSAGES: Readonly<Record<string, string>> = Obje
   quote_source_restricted:
     "Passages from a page marked Intimate stay on that page, so this one can't be quoted or folded into a review. Nothing was changed.",
 
+  // --- Program start date (#3097) --------------------------------------
+  // The person picks the day their program began. Each refusal names the
+  // range, or why there is none, and says the earlier date still stands.
+  program_start_in_future:
+    'Your program can start today or earlier, not on a future day. Pick another date; your earlier start date still stands.',
+  program_start_too_early:
+    "That's before the earliest start date we can offer. Pick a later date; your earlier start date still stands.",
+  program_start_fixed_after_first_cycle:
+    "Your start date is set once you begin again, because each cycle starts where the last one ended. It can't be changed now.",
+
   // --- Wallet / BotMason quota -----------------------------------------
   payment_required: MONTHLY_FREE_MESSAGES_USED,
   // The wallet is one pool, so the copy names what shares it rather than any

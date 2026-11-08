@@ -113,7 +113,7 @@ for (const width of [390, 1280]) {
     await page.screenshot({ path: info.outputPath(`photo-${width}-2x.png`) });
   });
 
-  test(`onboarding date shortcuts remain distinct keyboard actions at ${width}px`, async ({
+  test(`onboarding date shortcuts reflow and offer only days already begun at ${width}px`, async ({
     page,
     request,
   }, info) => {
@@ -138,33 +138,24 @@ for (const width of [390, 1280]) {
     await page.screenshot({ path: info.outputPath(`onboarding-${width}-normal.png`) });
     await enlargeShortcuts(page);
     await assertShortcuts(page);
-    const first = page.getByRole('button', { name: CHOICES[0], exact: true });
-    await first.focus();
-    await page.keyboard.press('Tab');
-    await expect(page.getByRole('button', { name: CHOICES[1], exact: true })).toBeFocused();
-    await page.keyboard.press('Tab');
-    await expect(page.getByRole('button', { name: CHOICES[2], exact: true })).toBeFocused();
-    const dates = await page.evaluate(() => {
-      const today = new Date();
-      const monday = new Date(today);
-      monday.setDate(today.getDate() + ((8 - today.getDay()) % 7 || 7));
-      const month = new Date(today.getFullYear(), today.getMonth() + 1, 1);
-      return [today, monday, month].map(
-        (d) =>
-          `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`,
-      );
+    // The start date is a day the program already began (#3097): the server
+    // refuses a future one, so the picker offers nothing after today and both
+    // future shortcuts are range-disabled here exactly as they are on the
+    // photograph date. Today stays a distinct keyboard action, here on Space.
+    await expect(page.getByRole('button', { name: CHOICES[1], exact: true })).toBeDisabled();
+    await expect(page.getByRole('button', { name: CHOICES[2], exact: true })).toBeDisabled();
+    const today = page.getByRole('button', { name: CHOICES[0], exact: true });
+    await expect(today).toBeEnabled();
+    await today.focus();
+    await expect(today).toBeFocused();
+    await page.keyboard.press('Space');
+    const todayKey = await page.evaluate(() => {
+      const d = new Date();
+      return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
     });
-    for (const [index, name] of CHOICES.entries()) {
-      const button = page.getByRole('button', { name, exact: true });
-      await expect(button).toBeEnabled();
-      await button.focus();
-      await expect(button).toBeFocused();
-      await page.keyboard.press(index === 1 ? 'Space' : 'Enter');
-      await expect(page.getByLabel('Date', { exact: true })).toHaveValue(dates[index]!);
-    }
-    const last = page.getByRole('button', { name: CHOICES[2], exact: true });
+    await expect(page.getByLabel('Date', { exact: true })).toHaveValue(todayKey);
     await expect
-      .poll(() => last.evaluate((node) => Number(getComputedStyle(node).opacity)))
+      .poll(() => today.evaluate((node) => Number(getComputedStyle(node).opacity)))
       .toBe(1);
     await page.screenshot({ path: info.outputPath(`onboarding-${width}-2x.png`) });
   });

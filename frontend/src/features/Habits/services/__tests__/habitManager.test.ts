@@ -31,6 +31,22 @@ jest.mock('../../../../api', () => ({
   goalGroups: {
     list: jest.fn(() => Promise.resolve([])),
   },
+  // The program-start seam (#3097): by default the server accepts the picked
+  // day and echoes it back as the local midnight it stored.
+  stages: {
+    setProgramStart: jest.fn((day: string) =>
+      Promise.resolve({
+        program_started_at: `${day}T12:00:00Z`,
+        calendar_stage: 1,
+        calendar_week: 1,
+        current_stage: 1,
+        cycle_number: 1,
+        program_start_window: { earliest: '2025-01-01', latest: '2026-12-31' },
+      }),
+    ),
+    programCalendar: jest.fn(() => Promise.reject(new Error('not stubbed'))),
+    listAll: jest.fn(() => Promise.resolve([])),
+  },
 }));
 
 jest.mock('../../../../storage/habitStorage', () => {
@@ -110,6 +126,7 @@ import {
   goalCompletions as goalCompletionsApi,
   goalGroups as goalGroupsApi,
   goals as goalsApi,
+  stages as stagesApi,
 } from '../../../../api';
 import { beginAuthSession } from '../../../../api/sessionToken';
 import type * as HabitStorageModule from '../../../../storage/habitStorage';
@@ -293,7 +310,14 @@ const resetStore = () => {
   useHabitStore.setState({ habits: [], loading: false, error: null, serverSync: null });
   // ``buildAddedHabit`` now reads the program anchor, so an anchor derived by an
   // earlier test would leak forward and make every add test order-dependent.
-  useProgramStore.getState().hydrateProgramStartDate(null);
+  // Set directly: a storage hydrate is a no-op once a server anchor is adopted.
+  useProgramStore.setState({
+    programStartDay: null,
+    programStartDate: null,
+    anchorSource: null,
+    programStartWindow: null,
+    programStartLocked: false,
+  });
 };
 
 beforeEach(() => {
@@ -5768,5 +5792,141 @@ describe('dismissDroppedCheckIns', () => {
     const { entries } = droppedStore().getState();
     expect(entries).toHaveLength(1);
     expect(entries[0]!.goal_id).toBe(31);
+  });
+});
+
+describe("the program start date is the server's (#3097)", () => {
+  const ZONE = 'America/New_York';
+  const DAYS_BACK = 10;
+  const { Alert } = jest.requireMock('react-native') as { Alert: { alert: jest.Mock } };
+
+  const daysAgo = (days: number): Date => {
+    const d = new Date();
+    d.setDate(d.getDate() - days);
+    return d;
+  };
+
+  const pick = (start: Date, name = 'Meditate'): OnboardingHabit => ({
+    id: name,
+    name,
+    icon: '\u{1F9D8}',
+    energy_cost: 1,
+    energy_return: 3,
+    stage: 'Beige',
+    start_date: start,
+  });
+
+  it("onboardingSave sends the picked start date to PUT /stages/program-calendar and adopts the server's anchor", async () => {
+    const start = daysAgo(DAYS_BACK);
+    const expectedDay = dayKeyInTZ(start, ZONE);
+
+    await habitManager.onboardingSave([pick(start)], undefined, ZONE);
+
+    const put = stagesApi.setProgramStart as jest.Mock;
+    expect(put).toHaveBeenCalledTimes(1);
+    expect(put.mock.calls[0]![0]).toBe(expectedDay);
+    const create = habitsApi.create as jest.Mock;
+    expect(put.mock.invocationCallOrder[0]).toBeLessThan(create.mock.invocationCallOrder[0]!);
+    expect(useProgramStore.getState().programStartDay).toBe(expectedDay);
+    expect(useProgramStore.getState().anchorSource).toBe('server');
+  });
+
+  it('a refused pick still saves the habits, keeps the prior anchor and says so', async () => {
+    useProgramStore.getState().setProgramStartDay('2026-01-05');
+    (stagesApi.setProgramStart as jest.Mock).mockRejectedValueOnce(
+      new ApiError(422, 'program_start_in_future') as never,
+    );
+
+    await habitManager.onboardingSave([pick(daysAgo(DAYS_BACK))], undefined, ZONE);
+
+    expect(habitsApi.create).toHaveBeenCalled();
+    expect(useProgramStore.getState().programStartDay).toBe('2026-01-05');
+    expect(Alert.alert).toHaveBeenCalledWith(
+      expect.any(String),
+      expect.stringMatching(/today or earlier/i),
+    );
+  });
+
+  it('an offline pick keeps the prior anchor and says the date did not save', async () => {
+    useProgramStore.getState().setProgramStartDay('2026-01-05');
+    (stagesApi.setProgramStart as jest.Mock).mockRejectedValueOnce(
+      new TypeError('Failed to fetch') as never,
+    );
+
+    await habitManager.onboardingSave([pick(daysAgo(DAYS_BACK))], undefined, ZONE);
+
+    expect(useProgramStore.getState().programStartDay).toBe('2026-01-05');
+    expect(Alert.alert).toHaveBeenCalledWith(
+      expect.any(String),
+      expect.stringMatching(/didn.t save/i),
+    );
+  });
+
+  it('sends no PUT once begin-again has fixed the date', async () => {
+    useProgramStore.setState({ programStartLocked: true });
+
+    await habitManager.onboardingSave([pick(daysAgo(DAYS_BACK))], undefined, ZONE);
+
+    expect(stagesApi.setProgramStart).not.toHaveBeenCalled();
+    expect(habitsApi.create).toHaveBeenCalled();
+  });
+
+  it('sends no PUT when the pick is the anchor the server already holds', async () => {
+    const start = daysAgo(DAYS_BACK);
+    useProgramStore.getState().adoptServerProgramStart({
+      day: dayKeyInTZ(start, ZONE),
+      window: null,
+      locked: false,
+    });
+
+    await habitManager.onboardingSave([pick(start)], undefined, ZONE);
+
+    expect(stagesApi.setProgramStart).not.toHaveBeenCalled();
+  });
+
+  describe('changeProgramStart', () => {
+    const DAY = '2026-03-02';
+
+    it('PUTs the day and re-lays the program rows through the reorder commit, never a create', async () => {
+      useHabitStore.setState({
+        habits: [
+          makeHabit({ id: 1, name: 'First', start_date: new Date('2026-05-01') }),
+          makeHabit({ id: 2, name: 'Second', start_date: new Date('2026-05-22') }),
+          makeHabit({
+            id: 3,
+            name: 'Before',
+            is_carryover: true,
+            start_date: new Date('2025-01-01'),
+          }),
+        ],
+      });
+
+      const outcome = await habitManager.changeProgramStart(DAY, 'UTC');
+
+      expect(outcome).toEqual({ kind: 'saved' });
+      expect(stagesApi.setProgramStart).toHaveBeenCalledWith(DAY, undefined);
+      expect(habitsApi.create).not.toHaveBeenCalled();
+      const byName = new Map(useHabitStore.getState().habits.map((h) => [h.name, h]));
+      expect(dayKeyInTZ(byName.get('First')!.start_date, 'UTC')).toBe(DAY);
+      expect(dayKeyInTZ(byName.get('Second')!.start_date, 'UTC')).toBe('2026-03-23');
+      // A carryover row's date is its own history, not a rung on the ladder.
+      expect(dayKeyInTZ(byName.get('Before')!.start_date, 'UTC')).toBe('2025-01-01');
+      expect(habitsApi.update).toHaveBeenCalledTimes(3);
+    });
+
+    it('re-lays nothing when the server refuses', async () => {
+      useHabitStore.setState({
+        habits: [makeHabit({ id: 1, start_date: new Date('2026-05-01') })],
+      });
+      (stagesApi.setProgramStart as jest.Mock).mockRejectedValueOnce(
+        new ApiError(409, 'program_start_fixed_after_first_cycle') as never,
+      );
+
+      const outcome = await habitManager.changeProgramStart(DAY, 'UTC');
+
+      expect(outcome.kind).toBe('refused');
+      expect(habitsApi.update).not.toHaveBeenCalled();
+      expect(dayKeyInTZ(useHabitStore.getState().habits[0]!.start_date, 'UTC')).toBe('2026-05-01');
+    });
   });
 });

@@ -251,27 +251,40 @@
   },
   {
     "id": "habits.added-habit-joins-the-program-cadence",
-    "description": "A habit added after onboarding takes the next rung on the program cadence rather than the day it was added, so the row sits where a reorder pass would put it and carries the date its stage badge has always implied. The second half is the one that moved other screens: a row stamped today could undercut a start date the user picked in the future, because when no anchor is stored -- after a logout wipes it, or for an account that onboarded before the anchor existed -- the universal anchor Map, Practice, Course and Journal all read is re-derived as the minimum over program rows, and a today-stamped add won that minimum. The covering Playwright spec pins the browser to UTC, signs up through the UI and seeds two program rows over POST /habits/ on the rungs of an anchor thirty days in the future, then reloads so the journal derives that anchor -- which the Map confirms before anything is added: stage 2 reads Opens in 51 days. It adds a habit through the Habits drawer's Add Habit sheet and reads two things that can fail. On the wire, the sheet's POST /habits/ carries the third rung (anchor + 42 days), not today, and GET /habits/ echoes that start_date on a program row. On screen, after a real log-out from Settings -- the spec checks the stored anchor is gone -- and a log-in through POST /auth/login, the anchor is re-derived from the rows, the added one among them, and the Map still reads Opens in 51 days; a today-stamped add would make it read 21. No habit tile renders a date, the reorder modal re-lays every program row on the cadence the moment it opens, and the web date picker in habit settings renders nothing, so none of those is the observation. Pinned in process as well by src/features/Habits/services/__tests__/habitManager.test.ts (the \"addHabit lays a program row on the cadence\" block, which covers the stored anchor, the absent-anchor fallback, the day-one case, the carryover partition, the reload that follows the add, and the saturation past ten stages that this deliberately shares with the reorder modal).",
+    "description": "A habit added after onboarding takes the next rung on the program cadence rather than the day it was added, so the row sits where a reorder pass would put it and carries the date its stage badge has always implied. The program anchor that cadence is laid from is the server's (#3097): the covering Playwright spec pins the browser to UTC, signs up through the UI, picks a start date ten days back over PUT /stages/program-calendar and seeds two program rows over POST /habits/ on that anchor's rungs, then reloads so the resumed session adopts the server anchor -- which the Map confirms before anything is added: stage 2 reads Opens in 11 days. It adds a habit through the Habits drawer's Add Habit sheet and reads two things that can fail. On the wire, the sheet's POST /habits/ carries the third rung (anchor + 42 days), not today, and GET /habits/ echoes that start_date on a program row. On screen, after a real log-out from Settings -- the spec checks the stored anchor is gone -- and a log-in through POST /auth/login, the session adopts the server anchor again over GET /stages/program-calendar and the Map still reads Opens in 11 days. The habit-derived minimum a today-stamped add could once undercut is now only the offline / no-server-row fallback, pinned in process by src/features/Habits/services/__tests__/habitManager.test.ts (the \"addHabit lays a program row on the cadence\" block, which covers the stored anchor, the absent-anchor fallback, the day-one case, the carryover partition, the reload that follows the add, and the saturation past ten stages that this deliberately shares with the reorder modal). No habit tile renders a date, the reorder modal re-lays every program row on the cadence the moment it opens, and the web date picker in habit settings renders nothing, so none of those is the observation.",
     "crosses": {
       "screen": "frontend/src/features/Habits/HabitsScreen.tsx",
-      "client": ["auth", "habits"],
-      "routes": ["POST /auth/signup", "POST /auth/login", "POST /habits/", "GET /habits/"],
-      "tables": ["user", "habit", "goal"]
+      "client": ["auth", "habits", "stages"],
+      "routes": [
+        "POST /auth/signup",
+        "POST /auth/login",
+        "PUT /stages/program-calendar",
+        "GET /stages/program-calendar",
+        "POST /habits/",
+        "GET /habits/"
+      ],
+      "tables": ["user", "habit", "goal", "stageprogress"]
     },
     "status": "covered",
     "coveredBy": "frontend/e2e/habit-add-cadence.browser.e2e.test.ts"
   },
   {
     "id": "habits.scaffolding-start-date-anchors-the-program",
-    "description": "The date the user picks in Energy Scaffolding is the day their program begins, and it stays that day. They choose it in the reorder step, the scaffold rows POST with dates laid out from it, and the reload that follows re-derives the universal anchor that Map, Practice, Course and Journal all read for the current stage and week. A habit the user brought along from before the program carries the date they actually started it, which is usually earlier than the date they picked, and it must not become the program's beginning -- otherwise bringing one habit along on day one moves every other screen back to a day the program had not started. Uncovered because this lane runs on the node environment with node_modules untransformed and cannot mount a screen at all, the same constraint already recorded on welcome.first-run-walkthrough-to-journal: driving this journey means opening the scaffolding modal, operating its date picker, and adding a habit from the carryover lap, none of which a lane that cannot render can do. Pinned meanwhile by unit tests in src/features/Habits/services/__tests__/habitManager.test.ts (the \"program anchor ignores carryover habits\" block, which covers the live load, the offline cache, and the reload that follows onboardingSave) and by the picker's own label in src/features/Habits/components/__tests__/OnboardingModal.step4.test.tsx. Two anchors exist and this journey watches only the client's: the server stamps its own when the progress row is created, so a user who picks a future date has one of each and they disagree until they are reconciled.",
+    "description": "A habits-only person picks the day their program began, and every reader counts from that one server-owned anchor (#3097). The Energy Scaffolding picker is clamped to the range the server accepts (nothing after today in the account zone, back to account creation minus one whole program, from program_start_window on the program-calendar read) and refuses tomorrow; saving the pass sends exactly one PUT /stages/program-calendar carrying only the date, before any habit write, and a real GET /stages/program-calendar reads that anchor back. The Settings \"Program start date\" row, reachable with or without habits, changes it afterwards: a second PUT moves the anchor, the program habit is re-laid from the new day through the existing reorder commit (PUT /habits/{habit_id}, no row re-POSTed), and the Map's countdown re-paces without a reload. The client store is the server anchor's cached mirror, adopted once per signed-in session and from every PUT echo; the habit-derived anchor survives only as the offline / no-server-row fallback, and a carryover habit's own date never becomes the program's beginning. Mounted coverage: refusal copy and rollback for 422 program_start_in_future / program_start_too_early and 409 program_start_fixed_after_first_cycle, the read-only date on cycle 2 and later, the Reorder modal's PUT-then-commit and stay-open-on-refusal, and the single-writer guard live in Jest (src/features/Program, ReorderHabitsModal.test.tsx, OnboardingModal.step4.test.tsx, ProgramStartSettingsScreen.test.tsx). Course is paced by the same store value the Map reads; the browser observes the Map.",
     "crosses": {
       "screen": "frontend/src/features/Habits/components/OnboardingModal.tsx",
-      "client": ["habits"],
-      "routes": ["POST /habits/", "GET /habits/"],
-      "tables": ["habit"]
+      "client": ["habits", "stages"],
+      "routes": [
+        "PUT /stages/program-calendar",
+        "GET /stages/program-calendar",
+        "POST /habits/",
+        "GET /habits/",
+        "PUT /habits/{habit_id}"
+      ],
+      "tables": ["habit", "stageprogress"]
     },
-    "status": "uncovered",
-    "issue": 2399
+    "status": "covered",
+    "coveredBy": "frontend/e2e/habits-program-start-date.browser.e2e.test.ts"
   },
   {
     "id": "habits.reorder-across-signed-laps",
@@ -2991,7 +3004,7 @@
   },
   {
     "id": "shared.date-shortcuts-reflow-and-keyboard",
-    "description": "A reader signs up through the real client and checks the shared local date shortcuts in photograph capture and Habits onboarding. Real account/habit reads supply the application surfaces; date selection itself is a local draft, not a claimed saved program-date mutation or transcription request. Phone and desktop normal/doubled shortcut text retain complete labels, separate 44px targets, range-disabled future choices and distinct Tab/Enter/Space actions. The browser measures DOM glyph/parent/viewport bounds and inspects saved frames. Targeted text doubling does not establish physical OS zoom or native certification.",
+    "description": "A reader signs up through the real client and checks the shared local date shortcuts in photograph capture and Habits onboarding. Real account/habit reads supply the application surfaces; date selection itself is a local draft, not a claimed saved program-date mutation or transcription request. Phone and desktop normal/doubled shortcut text retain complete labels, separate 44px targets, range-disabled future choices and distinct keyboard actions: Enter commits today on the photograph date and Space on the Habits onboarding start date, where both future choices are range-disabled because a program start date cannot lie ahead (#3097). The browser measures DOM glyph/parent/viewport bounds and inspects saved frames. Targeted text doubling does not establish physical OS zoom or native certification.",
     "crosses": {
       "screen": "frontend/src/components/DatePicker.tsx",
       "client": ["auth", "habits"],
@@ -3003,7 +3016,7 @@
   },
   {
     "id": "shared.date-shortcuts-follow-the-local-day",
-    "description": "A user leaves the shared date picker open across local midnight and the quick choices answer for the day it now is, not the day the picker mounted (#3381). The covering spec signs up through the real client in America/Los_Angeles, seeds one habit, moves the page clock to 23:59 on the next Sunday and opens the Energy Scaffolding date step, then moves the wall clock past midnight with setSystemTime so no timer fires and nothing re-renders the picker. Pressing next monday commits the following week's Monday, today commits Monday, and first of next month commits the first of the month after Monday's, at 390px and 1280px. Unmounted-clock edge cases stay in Jest (src/components/__tests__/DatePicker.test.tsx): the month boundary, maxDate/minDate/disabledDate re-evaluated on the next render, a stale-rendered enabled button that now falls outside maxDate committing nothing, and first of next month anchored to local midnight so a maxDate on that day keeps it enabled. Date selection here is a local draft, not a saved program-date mutation.",
+    "description": "A user leaves the shared date picker open across local midnight and the quick choices answer for the day it now is, not the day the picker mounted (#3381). The covering spec signs up through the real client in America/Los_Angeles, seeds one habit, moves the page clock to 23:59 on the next Sunday and opens the Energy Scaffolding date step, then runs the clock past midnight so the shared day-rollover timer re-renders, without remounting, the picker. That host is a program start date, capped at today in the account zone (#3097), so next monday and first of next month stay range-disabled on both sides of midnight and today commits Monday, at 390px and 1280px; a per-mount memo would still answer Sunday. Unmounted-clock edge cases stay in Jest (src/components/__tests__/DatePicker.test.tsx): the month boundary, maxDate/minDate/disabledDate re-evaluated on the next render, a stale-rendered enabled button that now falls outside maxDate committing nothing, and first of next month anchored to local midnight so a maxDate on that day keeps it enabled. Date selection here is a local draft, not a saved program-date mutation.",
     "crosses": {
       "screen": "frontend/src/components/DatePicker.tsx",
       "client": ["auth", "habits"],

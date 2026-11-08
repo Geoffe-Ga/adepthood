@@ -34,8 +34,14 @@
  * paint, so stamping it makes the stored field agree with the visible one
  * instead of introducing a third answer.
  */
+import { dayKeyToInstant } from '../../../utils/dateUtils';
 import type { Habit } from '../Habits.types';
-import { carryoverSlot, isCarryoverHabit, stageAtIndex } from '../HabitUtils';
+import {
+  calculateHabitStartDate,
+  carryoverSlot,
+  isCarryoverHabit,
+  stageAtIndex,
+} from '../HabitUtils';
 
 /**
  * All a row has to say about itself for its lap to be known.
@@ -115,6 +121,23 @@ export const insertAt = <T>(rows: readonly T[], row: T, position: number): T[] =
  * Returns new rows; the input array and its objects are left alone, so a caller
  * can hold the pre-write snapshot for a rollback.
  */
+/**
+ * Lay the program cadence out from ``dayKey`` (``YYYY-MM-DD`` in the account
+ * zone) -- over the program habits only, counted by their own position among
+ * program habits. A carryover habit's date is history, not a slot on the
+ * cadence, so it is left alone. Shared by the reorder modal's preview and the
+ * Settings start-date edit, so both re-lay rows exactly alike (#3097).
+ */
+export const layProgramRows = (habits: readonly Habit[], dayKey: string, tz: string): Habit[] => {
+  const accountAnchor = dayKeyToInstant(dayKey, tz);
+  const slots = displaySlots(habits);
+  return habits.map((habit, index) => {
+    const slot = slots[index] ?? 0;
+    if (slot < 0) return habit;
+    return { ...habit, start_date: calculateHabitStartDate(accountAnchor, slot) };
+  });
+};
+
 export const stampPositionalOrder = (ordered: readonly Habit[]): Habit[] => {
   const stages = stagePreview(ordered);
   return ordered.map((habit, index) => ({

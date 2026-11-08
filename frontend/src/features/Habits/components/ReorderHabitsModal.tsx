@@ -9,12 +9,18 @@ import { parseISODate, toISODate } from '../../../components/DatePicker';
 import { useTheme } from '../../../design/ThemeContext';
 import { SPACING } from '../../../design/tokens';
 import { useProgramStore } from '../../../store/useProgramStore';
-import { dayKeyToInstant, detectDeviceTimezone } from '../../../utils/dateUtils';
+import { detectDeviceTimezone } from '../../../utils/dateUtils';
+import { commitProgramStart } from '../../Program/programAnchor';
+import { ProgramStartFixed } from '../../Program/ProgramStartFixed';
+import {
+  pickerFloor,
+  useProgramStartRange,
+  type ProgramStartRange,
+} from '../../Program/programStartRange';
 import { MAX_HABITS } from '../constants';
 import styles from '../Habits.styles';
 import type { Habit, ReorderHabitsModalProps } from '../Habits.types';
 import {
-  calculateHabitStartDate,
   carryoverSlot,
   formatStageRange,
   habitColorAtSlot,
@@ -22,7 +28,7 @@ import {
   stageAtIndex,
   stageRangeForPage,
 } from '../HabitUtils';
-import { displaySlots } from '../services/habitOrdering';
+import { layProgramRows } from '../services/habitOrdering';
 
 import { REORDER_HABITS_CLOSE_LABEL } from './modalCloseLabels';
 import ModalHeader from './ModalHeader';
@@ -45,27 +51,16 @@ const formatDate = (date: Date): string =>
 
 /**
  * Lay the program cadence out from ``startDate`` -- over the program habits
- * only, counted by their own position among program habits.
+ * only (``layProgramRows``), so a carryover habit keeps the date it actually
+ * began on and the first program habit starts on the picked day.
  *
- * Stamping by raw row index gave the first carryover habit the date the user
- * picked and pushed the real first program habit a whole stage later, which
- * both destroyed the date the carryover habit actually began on and moved the
- * program's own start away from the picked day. A carryover habit's date is
- * history, not a slot on the cadence, so it is left alone.
+ * The picker Date represents a device-calendar selection, not an instant, so
+ * its day key is read on the device calendar and re-anchored in the account
+ * zone; one Date cannot otherwise preserve the same day across unlike
+ * device/account offsets.
  */
-const updateStartDates = (habits: Habit[], startDate: Date, userTimezone: string): Habit[] => {
-  // The picker Date represents a device-calendar selection, not an instant.
-  // Reconstruct that day inside the account zone before it reaches
-  // ``toApiPayload``; one Date cannot otherwise preserve the same day across
-  // unlike device/account offsets.
-  const accountAnchor = dayKeyToInstant(toISODate(startDate), userTimezone);
-  const slots = displaySlots(habits);
-  return habits.map((habit, index) => {
-    const slot = slots[index] ?? 0;
-    if (slot < 0) return habit;
-    return { ...habit, start_date: calculateHabitStartDate(accountAnchor, slot) };
-  });
-};
+const updateStartDates = (habits: Habit[], startDate: Date, userTimezone: string): Habit[] =>
+  layProgramRows(habits, toISODate(startDate), userTimezone);
 
 const groupBySignedRange = (habits: Habit[]): Habit[] => [
   ...habits.filter(isCarryoverHabit),
@@ -229,15 +224,20 @@ const ReorderPageMarker = ({ page }: { page: number }) => {
 
 interface ReorderDateButtonProps {
   startDate: Date;
+  range: ProgramStartRange;
+  notice: string | null;
   onOpenPicker: () => void;
   onSelectDate: (_date: Date) => void;
 }
 
+const START_DATE_LABEL = 'First Habit Start Date:';
+
 // Web fallback: react-native-modal-datetime-picker is a no-op on web.
 const WebDateButton = ({
   startDate,
+  range,
   onSelectDate,
-}: Pick<ReorderDateButtonProps, 'startDate' | 'onSelectDate'>) => (
+}: Pick<ReorderDateButtonProps, 'startDate' | 'range' | 'onSelectDate'>) => (
   <View style={[styles.datePickerButton, { position: 'relative' }]} testID="reorder-start-date">
     <Text style={styles.datePickerButtonText}>{formatDate(startDate)}</Text>
     <input
@@ -245,6 +245,8 @@ const WebDateButton = ({
       data-testid="reorder-start-date-input"
       type="date"
       value={toISODate(startDate)}
+      min={pickerFloor(range, toISODate(startDate))}
+      max={range.maxDay}
       onChange={(e) => {
         if (e.target.value) onSelectDate(parseISODate(e.target.value));
       }}
@@ -264,22 +266,43 @@ const WebDateButton = ({
   </View>
 );
 
-const ReorderDateButton = ({ startDate, onOpenPicker, onSelectDate }: ReorderDateButtonProps) => (
-  <View style={styles.datePickerContainer}>
-    <Text style={styles.datePickerLabel}>First Habit Start Date:</Text>
-    {Platform.OS === 'web' ? (
-      <WebDateButton startDate={startDate} onSelectDate={onSelectDate} />
-    ) : (
-      <TouchableOpacity
-        testID="reorder-start-date"
-        style={styles.datePickerButton}
-        onPress={onOpenPicker}
-      >
-        <Text style={styles.datePickerButtonText}>{formatDate(startDate)}</Text>
-      </TouchableOpacity>
-    )}
-  </View>
-);
+const ReorderDateButton = ({
+  startDate,
+  range,
+  notice,
+  onOpenPicker,
+  onSelectDate,
+}: ReorderDateButtonProps) => {
+  if (range.locked) return <ProgramStartFixed label={START_DATE_LABEL} date={startDate} />;
+  return (
+    <>
+      <View style={styles.datePickerContainer}>
+        <Text style={styles.datePickerLabel}>{START_DATE_LABEL}</Text>
+        {Platform.OS === 'web' ? (
+          <WebDateButton startDate={startDate} range={range} onSelectDate={onSelectDate} />
+        ) : (
+          <TouchableOpacity
+            testID="reorder-start-date"
+            style={styles.datePickerButton}
+            onPress={onOpenPicker}
+          >
+            <Text style={styles.datePickerButtonText}>{formatDate(startDate)}</Text>
+          </TouchableOpacity>
+        )}
+      </View>
+      {notice !== null && (
+        <Text
+          style={styles.habitError}
+          accessibilityRole="alert"
+          accessibilityLiveRegion="polite"
+          testID="reorder-start-date-notice"
+        >
+          {notice}
+        </Text>
+      )}
+    </>
+  );
+};
 
 interface ReorderListProps {
   orderedHabits: Habit[];
@@ -518,6 +541,10 @@ interface ReorderState {
   /** True while the commit is on the wire; drives the busy control. */
   saving: boolean;
   handleSave: () => Promise<void>;
+  /** What the start-date picker may offer, or that it is fixed (#3097). */
+  range: ProgramStartRange;
+  /** Why the last picked date did not save, shown beside the picker. */
+  notice: string | null;
 }
 
 interface ReorderHookInput {
@@ -547,30 +574,123 @@ interface ReorderHookInput {
  * check before the re-render, which the ref settles synchronously. Mirrors
  * ``CopyToStageDialog``, whose confirm is inert while busy for the same reason.
  */
+/** May the order be sent? Synchronous when there is no start date to send first. */
+type StartDateGate = () => boolean | Promise<boolean>;
+
 const useOrderCommit = (
   onSaveOrder: (_habits: Habit[]) => Promise<void>,
   onClose: () => void,
-): { saving: boolean; commit: (_ordered: Habit[]) => Promise<void> } => {
+): {
+  saving: boolean;
+  commit: (_ordered: Habit[], _before: StartDateGate) => Promise<void>;
+} => {
   const [saving, setSaving] = useState(false);
   const savingRef = useRef(false);
-  const commit = async (ordered: Habit[]): Promise<void> => {
+  const commit = async (ordered: Habit[], before: StartDateGate): Promise<void> => {
     if (savingRef.current) return;
     savingRef.current = true;
     setSaving(true);
+    // ``before`` is the start date's own commit. When the server refuses it the
+    // modal stays open on the date that still stands, so the person can pick
+    // again rather than lose the chance (#3097); nothing of the order is sent.
+    // A gate with nothing to send answers synchronously, so the order is sent
+    // in the same tick as the press, exactly as it was before the gate existed.
+    let proceed = false;
     try {
-      await onSaveOrder(ordered);
+      const verdict = before();
+      proceed = typeof verdict === 'boolean' ? verdict : await verdict;
+      if (proceed) await onSaveOrder(ordered);
     } finally {
       savingRef.current = false;
       setSaving(false);
-      // Close either way. ``onSaveOrder`` settles rather than failing: a refusal
-      // has already alerted and rolled the store back, and the order this modal
-      // is still holding is the one that did not take -- staying open would show
-      // the person an arrangement the app no longer has.
-      onClose();
+      // Close either way once the order was sent. ``onSaveOrder`` settles rather
+      // than failing: a refusal has already alerted and rolled the store back,
+      // and the order this modal is still holding is the one that did not take
+      // -- staying open would show the person an arrangement the app no longer
+      // has.
+      if (proceed) onClose();
     }
   };
   return { saving, commit };
 };
+
+interface StartDateGateInput {
+  startDate: Date;
+  userTimezone: string;
+  range: ProgramStartRange;
+  /** Put the picker and the previewed rows back on the date that still stands. */
+  restore: (_prior: Date) => void;
+}
+
+/**
+ * The start date commits with the order it describes: one explicit act (#3097).
+ * The server moves the anchor first, pessimistically; only once it agrees are
+ * the re-laid rows sent. A date the person did not pick in this sitting, an
+ * unchanged one, or one fixed by begin-again has nothing to send -- a reorder
+ * alone must never re-answer the start date with whatever the picker opened on.
+ * A refusal or a dropped connection restores the date that still stands and
+ * says why, and the rows are not sent.
+ */
+const useStartDateGate = ({ startDate, userTimezone, range, restore }: StartDateGateInput) => {
+  const programStartDay = useProgramStore((s) => s.programStartDay);
+  const programStartDate = useProgramStore((s) => s.programStartDate);
+  const [notice, setNotice] = useState<string | null>(null);
+  // Whether the person picked a date in this sitting; only then is one sent.
+  const [picked, setPicked] = useState(false);
+  const gate: StartDateGate = () => {
+    const day = toISODate(startDate);
+    if (!picked || range.locked || day === programStartDay) return true;
+    return commitProgramStart(day, { tz: userTimezone }).then((outcome) => {
+      if (outcome.kind === 'saved') return true;
+      restore(programStartDate ?? new Date());
+      setNotice(outcome.message);
+      return false;
+    });
+  };
+  /** A new pick: it will be sent, and the last refusal no longer applies. */
+  const markPicked = () => {
+    setPicked(true);
+    setNotice(null);
+  };
+  /** The sitting is over: nothing picked, nothing to say. */
+  const endSitting = () => {
+    setPicked(false);
+    setNotice(null);
+  };
+  return { notice, gate, markPicked, endSitting };
+};
+
+/**
+ * While the modal is closed, put its sitting back: the picker on the held
+ * anchor, no pick made, no stale notice. Resetting the picker flag here is what
+ * keeps an ``onRequestClose`` dismissal (Android back button) from leaving
+ * ``pickerVisible=true`` and springing the picker open on re-render.
+ */
+const useClosedReset = (visible: boolean, reset: () => void): void => {
+  const latest = useRef(reset);
+  latest.current = reset;
+  const anchor = useProgramStore((s) => s.programStartDate);
+  useEffect(() => {
+    if (!visible) latest.current();
+  }, [visible, anchor]);
+};
+
+/** Seed only on the open transition; preserve parent order (sort_order). */
+const useOpenSeed = (visible: boolean, habits: Habit[], seed: (_grouped: Habit[]) => void) => {
+  const wasVisibleRef = useRef(false);
+  const latest = useRef(seed);
+  latest.current = seed;
+  useEffect(() => {
+    const justOpened = visible && !wasVisibleRef.current;
+    wasVisibleRef.current = visible;
+    if (!justOpened || habits.length === 0) return;
+    latest.current(groupBySignedRange(habits));
+  }, [visible, habits]);
+};
+
+/** The rows a drag left behind, whichever shape the list handed back. */
+const droppedHabits = (data: Array<Habit | ReorderEntry>): Habit[] =>
+  data.some(isReorderEntry) ? habitsFromEntries(data.filter(isReorderEntry)) : (data as Habit[]);
 
 const useReorderState = ({
   habits,
@@ -580,61 +700,52 @@ const useReorderState = ({
   onSaveOrder,
 }: ReorderHookInput): ReorderState => {
   const programStartDate = useProgramStore((s) => s.programStartDate);
-  const setProgramStartDate = useProgramStore((s) => s.setProgramStartDate);
+  const range = useProgramStartRange(userTimezone);
   const { saving, commit } = useOrderCommit(onSaveOrder, onClose);
   const [orderedHabits, setOrderedHabits] = useState<Habit[]>([]);
   const [startDate, setStartDate] = useState<Date>(() => programStartDate ?? new Date());
   const [pickerVisible, setPickerVisible] = useState(false);
-  const wasVisibleRef = useRef(false);
+  const restartFrom = (date: Date) => {
+    setStartDate(date);
+    setOrderedHabits((prev) => updateStartDates(prev, date, userTimezone));
+  };
+  const { notice, gate, markPicked, endSitting } = useStartDateGate({
+    startDate,
+    userTimezone,
+    range,
+    restore: restartFrom,
+  });
 
-  useEffect(() => {
-    if (!visible && programStartDate) setStartDate(programStartDate);
-  }, [visible, programStartDate]);
+  useClosedReset(visible, () => {
+    if (programStartDate) setStartDate(programStartDate);
+    setPickerVisible(false);
+    endSitting();
+  });
 
-  // Reset the picker flag when the parent modal closes so that an
-  // ``onRequestClose`` dismissal (Android back button) doesn't leave
-  // ``pickerVisible=true`` and spring the picker open on re-render.
-  useEffect(() => {
-    if (!visible) setPickerVisible(false);
-  }, [visible]);
-
-  // Seed only on the open transition; preserve parent order (sort_order).
-  useEffect(() => {
-    const justOpened = visible && !wasVisibleRef.current;
-    wasVisibleRef.current = visible;
-    if (!justOpened || habits.length === 0) return;
-    setOrderedHabits(updateStartDates(groupBySignedRange(habits), startDate, userTimezone));
-  }, [visible, habits, startDate, userTimezone]);
+  useOpenSeed(visible, habits, (seed) =>
+    setOrderedHabits(updateStartDates(seed, startDate, userTimezone)),
+  );
 
   return {
     orderedHabits,
     startDate,
     pickerVisible,
     setPickerVisible,
-    handleDragEnd: ({ data }) => {
-      const nextHabits = data.some(isReorderEntry)
-        ? habitsFromEntries(data.filter(isReorderEntry))
-        : (data as Habit[]);
-      setOrderedHabits(updateStartDates(nextHabits, startDate, userTimezone));
-    },
+    handleDragEnd: ({ data }) =>
+      setOrderedHabits(updateStartDates(droppedHabits(data), startDate, userTimezone)),
     // Preview only. The restamped rows live here until Save Order, so writing
     // the global anchor now would let a date the user previewed and then
     // abandoned outlive the modal, with no row on disk agreeing with it.
     handleConfirmDate: (selectedDate) => {
       setPickerVisible(false);
-      setStartDate(selectedDate);
-      setOrderedHabits((prev) => updateStartDates(prev, selectedDate, userTimezone));
+      markPicked();
+      restartFrom(selectedDate);
     },
     handleCancelDate: () => setPickerVisible(false),
     saving,
-    handleSave: () => {
-      // The anchor commits with the order it describes: one explicit,
-      // authoritative act, outranking anything the load-time self-heal would
-      // derive from the rows. Splitting the two is what let an abandoned pick
-      // strand every other screen on a date no habit agreed with.
-      setProgramStartDate(startDate);
-      return commit(orderedHabits);
-    },
+    handleSave: () => commit(orderedHabits, gate),
+    range,
+    notice,
   };
 };
 
@@ -642,6 +753,8 @@ interface ReorderBodyProps {
   onClose: () => void;
   orderedHabits: Habit[];
   startDate: Date;
+  range: ProgramStartRange;
+  notice: string | null;
   onOpenPicker: () => void;
   onSelectDate: (_d: Date) => void;
   onDragEnd: ReorderListProps['onDragEnd'];
@@ -653,6 +766,8 @@ const ReorderBody = ({
   onClose,
   orderedHabits,
   startDate,
+  range,
+  notice,
   onOpenPicker,
   onSelectDate,
   onDragEnd,
@@ -663,6 +778,8 @@ const ReorderBody = ({
     <ModalHeader title="Reorder Habits" onClose={onClose} closeLabel={REORDER_HABITS_CLOSE_LABEL} />
     <ReorderDateButton
       startDate={startDate}
+      range={range}
+      notice={notice}
       onOpenPicker={onOpenPicker}
       onSelectDate={onSelectDate}
     />
@@ -703,6 +820,8 @@ export const ReorderHabitsModal = ({
             onClose={onClose}
             orderedHabits={state.orderedHabits}
             startDate={state.startDate}
+            range={state.range}
+            notice={state.notice}
             onOpenPicker={() => state.setPickerVisible(true)}
             onSelectDate={state.handleConfirmDate}
             onDragEnd={state.handleDragEnd}
@@ -721,7 +840,10 @@ export const ReorderHabitsModal = ({
         isVisible={visible && state.pickerVisible}
         mode="date"
         date={state.startDate}
-        // No ``minimumDate``: the master anchor must accept past dates.
+        // Clamped to what the server accepts (#3097): nothing after today, and
+        // back to the server's floor -- or to the date on display, if earlier.
+        minimumDate={parseISODate(pickerFloor(state.range, toISODate(state.startDate)))}
+        maximumDate={parseISODate(state.range.maxDay)}
         onConfirm={state.handleConfirmDate}
         onCancel={state.handleCancelDate}
       />

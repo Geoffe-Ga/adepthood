@@ -5,9 +5,11 @@ import { fireEvent, render, act, within } from '@testing-library/react-native';
 import React from 'react';
 import { StyleSheet } from 'react-native';
 
+import { messageForCode } from '../../../../api/errorMessages';
 import { accent, STAGE_COLORS } from '../../../../design/tokens';
 import { useProgramStore } from '../../../../store/useProgramStore';
-import { dayKeyInTZ } from '../../../../utils/dateUtils';
+import { dayKeyInTZ, todayInUserTZ } from '../../../../utils/dateUtils';
+import type { ProgramStartOutcome } from '../../../Program/programAnchor';
 import type { Habit } from '../../Habits.types';
 import { REORDER_HABITS_CLOSE_LABEL } from '../modalCloseLabels';
 
@@ -36,6 +38,19 @@ jest.mock('react-native-draggable-flatlist', () => {
 });
 
 jest.mock('@react-native-community/datetimepicker', () => 'DateTimePicker');
+
+// The start date's own commit (#3097). By default the server accepts the day and
+// its echo is adopted, exactly as the real seam does on success.
+const mockCommitProgramStart = jest.fn(
+  (day: string, _options: { tz: string }): Promise<ProgramStartOutcome> => {
+    useProgramStore.getState().adoptServerProgramStart({ day, window: null, locked: false });
+    return Promise.resolve({ kind: 'saved' });
+  },
+);
+jest.mock('../../../Program/programAnchor', () => ({
+  commitProgramStart: (day: string, options: { tz: string }) =>
+    mockCommitProgramStart(day, options),
+}));
 
 // Captured picker props so structural / prop tests can introspect them.
 const lastModalDatePickerProps: { current: Record<string, unknown> | null } = { current: null };
@@ -121,9 +136,19 @@ const getOrderedHabits = (list: ReturnType<typeof render>): Habit[] =>
 const getOrderedIds = (list: ReturnType<typeof render>): number[] =>
   getOrderedHabits(list).map((habit) => habit.id);
 
+const resetProgramStore = () =>
+  useProgramStore.setState({
+    programStartDay: null,
+    programStartDate: null,
+    anchorSource: null,
+    programStartWindow: null,
+    programStartLocked: false,
+  });
+
 beforeEach(() => {
   lastModalDatePickerProps.current = null;
-  act(() => useProgramStore.getState().hydrateProgramStartDate(null));
+  mockCommitProgramStart.mockClear();
+  act(() => resetProgramStore());
 });
 
 describe('ReorderHabitsModal — the drag handle glyph (#3009)', () => {
@@ -294,7 +319,12 @@ describe('ReorderHabitsModal — date picker visibility (BUG: picker invisible i
     expect(result.getByTestId('modal-datetime-picker-root')).toBeTruthy();
   });
 
-  it('does not pass a minimumDate so past dates are selectable', () => {
+  it('clamps the native picker to what the server accepts (#3097)', () => {
+    act(() =>
+      useProgramStore.setState({
+        programStartWindow: { earliest: '2026-01-02', latest: '2026-01-02' },
+      }),
+    );
     const result = render(
       <ReorderHabitsModal visible habits={HABITS} onClose={jest.fn()} onSaveOrder={jest.fn()} />,
     );
@@ -302,19 +332,32 @@ describe('ReorderHabitsModal — date picker visibility (BUG: picker invisible i
     fireEvent.press(result.getByTestId('reorder-start-date'));
 
     const props = lastModalDatePickerProps.current!;
-    expect(props).not.toBeNull();
-    expect(props.minimumDate).toBeUndefined();
+    const today = todayInUserTZ(Intl.DateTimeFormat().resolvedOptions().timeZone);
+    const asDay = (d: unknown) => {
+      const date = d as Date;
+      return [
+        date.getFullYear(),
+        String(date.getMonth() + 1).padStart(2, '0'),
+        String(date.getDate()).padStart(2, '0'),
+      ].join('-');
+    };
+    expect(asDay(props.maximumDate)).toBe(today);
+    expect(asDay(props.minimumDate)).toBe('2026-01-02');
   });
 
-  it('accepts a confirmed past date and updates the master program start date on save', () => {
+  it('accepts a confirmed past date and sends it to the server on save', async () => {
     const result = render(
       <ReorderHabitsModal visible habits={HABITS} onClose={jest.fn()} onSaveOrder={jest.fn()} />,
     );
 
     fireEvent.press(result.getByTestId('reorder-start-date'));
     fireEvent.press(result.getByTestId('modal-datetime-confirm-past'));
-    fireEvent.press(result.getByText('Save Order'));
+    await act(async () => {
+      fireEvent.press(result.getByText('Save Order'));
+    });
 
+    expect(mockCommitProgramStart).toHaveBeenCalledTimes(1);
+    expect(mockCommitProgramStart.mock.calls[0]![0]).toBe('2020-01-01');
     const stored = useProgramStore.getState().programStartDate!;
     expect(stored.getFullYear()).toBe(2020);
     expect(stored.getMonth()).toBe(0);
@@ -363,7 +406,7 @@ describe('ReorderHabitsModal — date picker visibility (BUG: picker invisible i
     expect(getOrderedIds(result)).toEqual([1, 2, 3]);
   });
 
-  it('persists the chosen date, recomputes start_date offsets, and writes the master anchor', () => {
+  it('persists the chosen date, recomputes start_date offsets, and writes the master anchor', async () => {
     const result = render(
       <ReorderHabitsModal visible habits={HABITS} onClose={jest.fn()} onSaveOrder={jest.fn()} />,
     );
@@ -375,7 +418,9 @@ describe('ReorderHabitsModal — date picker visibility (BUG: picker invisible i
     expect(new Date(data[0]!.start_date).toISOString().slice(0, 10)).toBe('2026-06-01');
     expect(new Date(data[1]!.start_date).toISOString().slice(0, 10)).toBe('2026-06-22');
 
-    fireEvent.press(result.getByText('Save Order'));
+    await act(async () => {
+      fireEvent.press(result.getByText('Save Order'));
+    });
 
     const stored = useProgramStore.getState().programStartDate!;
     expect(stored.getFullYear()).toBe(2026);
@@ -874,7 +919,7 @@ describe('ReorderHabitsModal — date picker on web', () => {
     expect(currentTarget.scrollTop).toBeGreaterThan(100);
   });
 
-  it('renders an HTML date input on web that updates the master program anchor on save', () => {
+  it('renders an HTML date input on web that updates the master program anchor on save', async () => {
     const result = render(
       <ReorderHabitsModal visible habits={HABITS} onClose={jest.fn()} onSaveOrder={jest.fn()} />,
     );
@@ -886,12 +931,31 @@ describe('ReorderHabitsModal — date picker on web', () => {
     act(() => {
       input.props.onChange({ target: { value: '2026-09-01' } });
     });
-    fireEvent.press(result.getByText('Save Order'));
+    await act(async () => {
+      fireEvent.press(result.getByText('Save Order'));
+    });
 
     const stored = useProgramStore.getState().programStartDate!;
     expect(stored.getFullYear()).toBe(2026);
     expect(stored.getMonth()).toBe(8);
     expect(stored.getDate()).toBe(1);
+  });
+
+  it('bounds the web date input to the server window and today (#3097)', () => {
+    act(() =>
+      useProgramStore.setState({
+        programStartWindow: { earliest: '2026-01-02', latest: '2026-01-02' },
+      }),
+    );
+    act(() => useProgramStore.getState().hydrateProgramStartDate(new Date(2026, 2, 10)));
+    const result = render(
+      <ReorderHabitsModal visible habits={HABITS} onClose={jest.fn()} onSaveOrder={jest.fn()} />,
+    );
+
+    const input = result.UNSAFE_root.findByProps({ type: 'date' });
+
+    expect(input.props.min).toBe('2026-01-02');
+    expect(input.props.max).toBe(todayInUserTZ(Intl.DateTimeFormat().resolvedOptions().timeZone));
   });
 
   it('ignores an empty web date-input change and leaves the anchor where it was', () => {
@@ -1057,7 +1121,7 @@ describe('ReorderHabitsModal — the anchor commits when the order commits', () 
     expect(storedDay()).toBe('2026-03-10');
   });
 
-  it('writes the anchor once the user commits the order', () => {
+  it('writes the anchor once the user commits the order', async () => {
     act(() => useProgramStore.getState().hydrateProgramStartDate(STORED_PICK));
     const result = render(
       <ReorderHabitsModal visible habits={HABITS} onClose={jest.fn()} onSaveOrder={jest.fn()} />,
@@ -1065,7 +1129,9 @@ describe('ReorderHabitsModal — the anchor commits when the order commits', () 
 
     fireEvent.press(result.getByTestId('reorder-start-date'));
     fireEvent.press(result.getByTestId('modal-datetime-confirm'));
-    fireEvent.press(result.getByText('Save Order'));
+    await act(async () => {
+      fireEvent.press(result.getByText('Save Order'));
+    });
 
     expect(storedDay()).toBe('2026-06-01');
   });
@@ -1103,5 +1169,127 @@ describe('ReorderHabitsModal — the anchor commits when the order commits', () 
     expect(
       StyleSheet.flatten(result.getByTestId('reorder-habit-1').props.style).borderLeftColor,
     ).toBe(STAGE_COLORS.Beige);
+  });
+});
+
+describe('ReorderHabitsModal — the server decides the start date (#3097)', () => {
+  const STORED_PICK = new Date(2026, 2, 10);
+
+  const openAndPick = (
+    onSaveOrder: (_habits: Habit[]) => Promise<void>,
+    onClose: () => void = jest.fn(),
+  ) => {
+    act(() =>
+      useProgramStore.getState().adoptServerProgramStart({
+        day: '2026-03-10',
+        window: null,
+        locked: false,
+      }),
+    );
+    const result = render(
+      <ReorderHabitsModal visible habits={HABITS} onClose={onClose} onSaveOrder={onSaveOrder} />,
+    );
+    fireEvent.press(result.getByTestId('reorder-start-date'));
+    fireEvent.press(result.getByTestId('modal-datetime-confirm'));
+    return result;
+  };
+
+  it('sends the picked day in the account zone, then the re-laid rows', async () => {
+    const onSaveOrder = jest.fn((_habits: Habit[]) => Promise.resolve());
+    const result = openAndPick(onSaveOrder);
+
+    await act(async () => {
+      fireEvent.press(result.getByText('Save Order'));
+    });
+
+    expect(mockCommitProgramStart).toHaveBeenCalledWith('2026-06-01', expect.anything());
+    expect(mockCommitProgramStart.mock.invocationCallOrder[0]).toBeLessThan(
+      onSaveOrder.mock.invocationCallOrder[0]!,
+    );
+  });
+
+  it('sends no PUT when the date was not changed', async () => {
+    act(() => useProgramStore.getState().hydrateProgramStartDate(STORED_PICK));
+    const onSaveOrder = jest.fn((_habits: Habit[]) => Promise.resolve());
+    const result = render(
+      <ReorderHabitsModal visible habits={HABITS} onClose={jest.fn()} onSaveOrder={onSaveOrder} />,
+    );
+
+    await act(async () => {
+      fireEvent.press(result.getByText('Save Order'));
+    });
+
+    expect(mockCommitProgramStart).not.toHaveBeenCalled();
+    expect(onSaveOrder).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([
+    [422, 'program_start_too_early'],
+    [409, 'program_start_fixed_after_first_cycle'],
+  ])(
+    'on a %i %s it stays open on the date that still stands and says why',
+    async (_status, code) => {
+      const message = messageForCode(code)!;
+      mockCommitProgramStart.mockImplementationOnce(() =>
+        Promise.resolve({ kind: 'refused', message }),
+      );
+      const onSaveOrder = jest.fn((_habits: Habit[]) => Promise.resolve());
+      const onClose = jest.fn();
+      const result = openAndPick(onSaveOrder, onClose);
+
+      await act(async () => {
+        fireEvent.press(result.getByText('Save Order'));
+      });
+
+      expect(onSaveOrder).not.toHaveBeenCalled();
+      expect(onClose).not.toHaveBeenCalled();
+      expect(result.getByTestId('reorder-start-date')).toHaveTextContent('Mar 10, 2026');
+      expect(result.getByTestId('reorder-start-date-notice')).toHaveTextContent(message);
+      const rows = getOrderedHabits(result);
+      expect(new Date(rows[0]!.start_date).toISOString().slice(0, 10)).toBe('2026-03-10');
+      expect(useProgramStore.getState().programStartDay).toBe('2026-03-10');
+    },
+  );
+
+  it('keeps the modal open on a dropped connection too, and clears the notice on a new pick', async () => {
+    mockCommitProgramStart.mockImplementationOnce(() =>
+      Promise.resolve({ kind: 'unsaved', message: "Your start date didn't save." }),
+    );
+    const onSaveOrder = jest.fn((_habits: Habit[]) => Promise.resolve());
+    const result = openAndPick(onSaveOrder);
+
+    await act(async () => {
+      fireEvent.press(result.getByText('Save Order'));
+    });
+    expect(result.getByTestId('reorder-start-date-notice')).toBeTruthy();
+
+    fireEvent.press(result.getByTestId('reorder-start-date'));
+    fireEvent.press(result.getByTestId('modal-datetime-confirm'));
+
+    expect(result.queryByTestId('reorder-start-date-notice')).toBeNull();
+  });
+
+  it('shows a fixed date, not a picker, once begin-again has run', async () => {
+    act(() =>
+      useProgramStore.getState().adoptServerProgramStart({
+        day: '2026-03-10',
+        window: null,
+        locked: true,
+      }),
+    );
+    const onSaveOrder = jest.fn((_habits: Habit[]) => Promise.resolve());
+    const result = render(
+      <ReorderHabitsModal visible habits={HABITS} onClose={jest.fn()} onSaveOrder={onSaveOrder} />,
+    );
+
+    expect(result.queryByTestId('reorder-start-date')).toBeNull();
+    expect(result.getByTestId('program-start-fixed')).toBeTruthy();
+    expect(result.getByText(/begin again/i)).toBeTruthy();
+
+    await act(async () => {
+      fireEvent.press(result.getByText('Save Order'));
+    });
+    expect(mockCommitProgramStart).not.toHaveBeenCalled();
+    expect(onSaveOrder).toHaveBeenCalledTimes(1);
   });
 });

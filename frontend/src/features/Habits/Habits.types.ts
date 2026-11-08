@@ -210,6 +210,8 @@ export interface OnboardingModalProps {
    * and the whole five-step flow below is unchanged when the list is empty.
    */
   existingHabits?: readonly Habit[];
+  /** Account timezone: "today", the start-date picker's ceiling, is counted in it (#3097). */
+  userTimezone?: string;
 }
 
 export interface ReorderHabitsModalProps {

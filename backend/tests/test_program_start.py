@@ -22,7 +22,7 @@ from sqlmodel import col, select
 
 from domain.constants import PROGRAM_START_BACKDATE_WINDOW_DAYS, TOTAL_PROGRAM_DAYS
 from domain.dates import ensure_aware
-from domain.program_start import program_start_verdict
+from domain.program_start import ProgramStartBounds, program_start_bounds, program_start_verdict
 from models.habit import Habit
 from models.stage_progress import StageProgress
 from models.user import User
@@ -131,6 +131,29 @@ def test_the_past_limit_counts_back_from_account_creation_not_today() -> None:
     assert program_start_verdict(earliest, today=today, account_created=created) == "ok"
     before = earliest - timedelta(days=1)
     assert program_start_verdict(before, today=today, account_created=created) == "too_early"
+
+
+def test_program_start_bounds_name_the_range_the_verdict_enforces() -> None:
+    """One rule: the window the client is offered is the window the PUT accepts."""
+    today = date(2026, 10, 14)
+    created = today - timedelta(days=30)
+
+    bounds = program_start_bounds(today=today, account_created=created)
+
+    assert bounds == ProgramStartBounds(
+        earliest=created - timedelta(days=PROGRAM_START_BACKDATE_WINDOW_DAYS), latest=today
+    )
+    one_day = timedelta(days=1)
+    verdicts = [
+        program_start_verdict(chosen, today=today, account_created=created)
+        for chosen in (
+            bounds.earliest - one_day,
+            bounds.earliest,
+            bounds.latest,
+            bounds.latest + one_day,
+        )
+    ]
+    assert verdicts == ["too_early", "ok", "ok", "future"]
 
 
 # -- Picking a date ------------------------------------------------------
@@ -352,3 +375,79 @@ async def test_picking_requires_authentication(async_client: AsyncClient) -> Non
     resp = await async_client.put(_PATH, json={"program_start_date": "2026-01-01"})
 
     assert resp.status_code == HTTPStatus.UNAUTHORIZED
+
+
+# -- The window the client is offered ------------------------------------
+
+
+def _window(body: dict[str, object]) -> object:
+    return body["program_start_window"]
+
+
+@pytest.mark.asyncio
+async def test_a_person_with_no_progress_row_is_offered_the_window(
+    async_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """The picker is clamped before any anchor exists -- the habits-only first pick."""
+    account = await _account(db_session, "window-new@example.com", created_days_ago=5)
+    created = _today() - timedelta(days=5)
+
+    resp = await async_client.get(_PATH, headers=account.headers)
+
+    assert resp.status_code == HTTPStatus.OK
+    body = resp.json()
+    assert body["program_started_at"] is None
+    assert _window(body) == {
+        "earliest": (created - timedelta(days=PROGRAM_START_BACKDATE_WINDOW_DAYS)).isoformat(),
+        "latest": _today().isoformat(),
+    }
+
+
+@pytest.mark.asyncio
+async def test_the_window_counts_today_in_the_persons_zone(
+    async_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """``latest`` is today where the person lives, never the server's UTC date."""
+    account = await _account(db_session, "window-zone@example.com")
+
+    body = await _pick(async_client, account, _today())
+
+    window = _window(body)
+    assert isinstance(window, dict)
+    assert window["latest"] == _today().isoformat()
+
+
+@pytest.mark.asyncio
+async def test_the_pick_echoes_the_window_and_the_read_agrees(
+    async_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    account = await _account(db_session, "window-echo@example.com")
+
+    put_body = await _pick(async_client, account, _today() - timedelta(days=_SIXTY_DAYS))
+    resp = await async_client.get(_PATH, headers=account.headers)
+
+    assert _window(put_body) is not None
+    assert _window(resp.json()) == _window(put_body)
+
+
+@pytest.mark.asyncio
+async def test_a_later_cycle_is_offered_no_window(
+    async_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """After begin-again the date is fixed, so there is no range to offer."""
+    account = await _account(db_session, "window-looper@example.com")
+    db_session.add(
+        StageProgress(
+            user_id=account.user_id,
+            current_stage=1,
+            completed_stages=[],
+            cycle_number=2,
+            past_cycle_anchors=[datetime(2025, 1, 1, tzinfo=UTC).isoformat()],
+        )
+    )
+    await db_session.commit()
+
+    resp = await async_client.get(_PATH, headers=account.headers)
+
+    assert resp.status_code == HTTPStatus.OK
+    assert _window(resp.json()) is None

@@ -145,6 +145,7 @@ const HabitWriteModals = ({
       onClose={() => modals.close('onboarding')}
       onSaveHabits={actions.onboardingSave}
       existingHabits={habits}
+      userTimezone={userTimezone}
     />
     <AddHabitModal
       visible={modals.addHabit}

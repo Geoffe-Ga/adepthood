@@ -69,6 +69,7 @@ import {
   detectDeviceTimezone,
   todayInUserTZ,
 } from '../../../utils/dateUtils';
+import { commitProgramStart, type ProgramStartOutcome } from '../../Program/programAnchor';
 import { HABIT_DEFAULTS } from '../HabitDefaults';
 import type { AddHabitInput, Goal, Habit, HabitMergePlan, OnboardingHabit } from '../Habits.types';
 import {
@@ -94,7 +95,7 @@ import {
   planHabitMerge,
   toApiPayload,
 } from './habitMerge';
-import { clampPosition, insertAt, stampPositionalOrder } from './habitOrdering';
+import { clampPosition, insertAt, layProgramRows, stampPositionalOrder } from './habitOrdering';
 import { habitSyncScopeKey } from './habitSyncScope';
 import {
   clearLogUnitRollbackBaseline,
@@ -284,7 +285,7 @@ const buildLogConfirmationToast = (habitName: string, amount: number): ToastConf
 
 /**
  * Where the program's ladder starts, for a row about to be laid on it. The
- * stored anchor when there is one; otherwise the same lossy inverse
+ * held anchor -- the server's, mirrored (#3097) -- when there is one; otherwise the same lossy inverse
  * ``syncProgramAnchorFromHabits`` would take at the next load, so an add made
  * with no anchor stored lands AFTER the rows that already exist rather than
  * becoming a new, earlier minimum — which is the whole defect. ``null`` only
@@ -422,54 +423,63 @@ const deriveProgramAnchor = (
 
 /**
  * Fill a MISSING universal program anchor by re-deriving it from the live
- * habits. Map, Practice, Course and Journal all read this anchor to compute the
- * current week/stage, and only ``loadHabits`` runs on every session, so without
- * this a returning user — whose persisted anchor was wiped on logout, or who
- * onboarded before the anchor existed — keeps a calendar-correct Habits screen
- * while every other screen falls back to a divergent server value.
+ * habits -- the offline / no-server-row fallback, and nothing more.
  *
- * Three writers set this anchor, and they are not equal. Two are EXPLICIT and
- * authoritative, because each records a day the user chose: the scaffolding
- * date at ``onboardingSave``, and the reorder modal's date picker. This one is
- * DERIVED and subordinate, and it writes only when no anchor is stored at all.
+ * The anchor is the SERVER's (#3097): ``program_started_at`` on
+ * ``backend/src/models/stage_progress.py``, which the person picks through
+ * ``PUT /stages/program-calendar`` and every reader -- habit reveal, Course
+ * drip, prompts, the Map -- counts from. The client store is its cached mirror,
+ * written from the server only by ``src/features/Program`` (the session
+ * reconcile, the PUT's echo after the scaffolding pick, the reorder modal's
+ * date and the Settings edit), so Map, Practice, Course and Journal agree with
+ * the server rather than with a second, client-only anchor.
  *
- * The ordering is not a tie-break, it is the direction of the data. Program
- * habit dates are laid out FROM the anchor by both explicit writers, so the
- * anchor is the input and those dates are its output. Deriving it back out of
- * them is a lossy inverse, worth doing only when the input is lost. When a
- * stored anchor and the rows disagree, it is therefore the ROWS that are wrong
- * — and a derived value that overwrote the stored one would silently discard a
- * date the user actually picked, durably, since it persists to disk.
+ * This one is DERIVED and subordinate: it writes only when no anchor is held
+ * at all -- a returning user whose cached anchor was wiped on logout and whose
+ * reconcile has not answered (offline, or no server row yet). A server-adopted
+ * anchor is never null, so this can never overwrite one.
+ *
+ * Program habit dates are laid out FROM the anchor, so the anchor is the input
+ * and those dates are its output; deriving it back out of them is a lossy
+ * inverse, worth doing only when the input is lost.
  *
  * Demo FALLBACK seeds and carryover habits are filtered out inside
  * ``deriveProgramAnchor``, so a store holding only those yields no anchor and
  * nothing is written.
  *
- * A fourth function touches the anchor without writing one: ``useHydrateProgramStore``
- * (``src/store/useProgramStore.ts``) seeds it from AsyncStorage on cold start.
- * It is a restorer, not a writer, and it is what makes the "no anchor stored"
- * case here mean "genuinely lost" rather than "not read yet".
+ * ``useHydrateProgramStore`` (``src/store/useProgramStore.ts``) restores the
+ * cached anchor from AsyncStorage on cold start -- a no-op once the server's
+ * answer has landed -- which is what makes "no anchor held" here mean
+ * "genuinely lost" rather than "not read yet".
  *
  * The ROWS the inverse reads from have three writers of their own, and all
  * three must lay a program row on the cadence for the inverse to be a fixed
- * point: ``OnboardingModal``'s scaffold layout, ``updateStartDates`` in
- * ``ReorderHabitsModal``, and ``buildAddedHabit`` above -- which was the one
- * that did not, stamping the wall clock and so undercutting the minimum
- * whenever the stored anchor was in the future and had been wiped.
- *
- * This is the client's anchor only. The server keeps its own --
- * ``program_started_at`` on ``backend/src/models/stage_progress.py``, stamped
- * when the progress row is created and read by ``resolve_program_anchor`` in
- * ``backend/src/domain/program_calendar.py`` -- and the two are not reconciled
- * here: a user who picks a future start date will have a client anchor on that
- * date and a server anchor on the day they first arrived. Reconciling them is a
- * separate change.
+ * point: ``OnboardingModal``'s scaffold layout, ``layProgramRows`` (the reorder
+ * modal and the Settings edit), and ``buildAddedHabit`` above.
  */
 const syncProgramAnchorFromHabits = (tz: string): void => {
   if (useProgramStore.getState().programStartDate !== null) return;
   const anchor = deriveProgramAnchor(getHabits());
   if (anchor === null) return;
   useProgramStore.getState().setProgramStartDay(dayKeyInTZ(anchor, tz));
+};
+
+/**
+ * Send the scaffolding pass's start date to the server before any row is
+ * created (#3097), so the anchor every reader counts from is the day the person
+ * picked rather than the day the server would otherwise stamp. Skipped once
+ * begin-again has fixed the date, and when the server already holds this day.
+ * A refusal or a dropped connection keeps the prior anchor and says so; the
+ * habits themselves still save.
+ */
+const commitScaffoldStart = async (anchor: Date | null, zone: string): Promise<void> => {
+  if (anchor === null) return;
+  const { programStartLocked, programStartDay, anchorSource } = useProgramStore.getState();
+  if (programStartLocked) return;
+  const day = dayKeyInTZ(anchor, zone);
+  if (anchorSource === 'server' && day === programStartDay) return;
+  const outcome = await commitProgramStart(day, { tz: zone });
+  if (outcome.kind !== 'saved') Alert.alert(SYNC_FAILURE_TITLE, outcome.message);
 };
 
 const syncOnboardingHabits = async (fullHabits: readonly Habit[], tz: string): Promise<void> => {
@@ -2368,23 +2378,20 @@ export const habitManager = {
     const plan = asMergePlan(input, existing);
     const ops = planHabitMerge(plan, existing);
     setHabits(ops.nextStore);
-    // Anchor the universal course calendar to the first picked habit's start
-    // date so the Map, Practice, Course, Journal and habit-unlock logic all
-    // derive the same stage/week from one source. Without this a freshly-
-    // onboarded user has a null anchor and every screen silently falls back to
-    // divergent server/position values.
-    //
-    // Read from the picks, not from the merged store: the picks are the dates
-    // the user just chose, while a kept row carries a date this pass did not
-    // ask about — a carryover's is from before the program began at all.
-    const anchor = deriveProgramAnchor(pickedHabits(plan));
-    if (anchor) useProgramStore.getState().setProgramStartDate(anchor);
     showToast?.({
       message: 'Tap a habit tile to edit its goals.',
       icon: '\u{1F449}',
       duration: INSTRUCTIONAL_TOAST_DURATION_MS,
     });
     const zone = tz ?? detectDeviceTimezone();
+    // The picked start date becomes the server's program anchor before any row
+    // is created, so the Map, Practice, Course, Journal and habit reveal all
+    // count from the day the person chose (#3097).
+    //
+    // Read from the picks, not from the merged store: the picks are the dates
+    // the user just chose, while a kept row carries a date this pass did not
+    // ask about — a carryover's is from before the program began at all.
+    await commitScaffoldStart(deriveProgramAnchor(pickedHabits(plan)), zone);
     const stillHere = await commitHabitMerge(ops, zone);
     if (stillHere.length > 0) setHabits([...getHabits(), ...stillHere]);
     // Persist BEFORE the reload, which is the only order that survives a pass
@@ -2396,6 +2403,26 @@ export const habitManager = {
     // Round-trip server-assigned ids — synthetic goal ids would 404 on log.
     // If this GET fails, synthetic ids survive until the next launch — see #282.
     await loadHabits(zone);
+  },
+
+  /**
+   * Change the program start date from outside the scaffolding pass -- the
+   * Settings edit (#3097). The server moves the anchor first; only once it has
+   * agreed are the program rows re-laid from the new day and committed through
+   * ``saveHabitOrder``, the same commit the reorder modal uses. No row is
+   * re-POSTed, carryover rows keep their own dates, and a ring already revealed
+   * stays revealed (the server guarantees that). A refusal or a dropped
+   * connection changes nothing and is returned for the caller to show.
+   */
+  changeProgramStart: async (day: string, tz?: string): Promise<ProgramStartOutcome> => {
+    const zone = tz ?? detectDeviceTimezone();
+    const outcome = await commitProgramStart(day, { tz: zone });
+    if (outcome.kind !== 'saved') return outcome;
+    const current = getHabits();
+    if (current.length > 0) {
+      await habitManager.saveHabitOrder(layProgramRows(current, day, zone), zone);
+    }
+    return outcome;
   },
 
   revealAllHabits: (tz?: string): void => {

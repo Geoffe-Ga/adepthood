@@ -1,8 +1,15 @@
 // Master clock for the 36-week journey: drives BotMason week, active practice, course unlock, and map stage.
+//
+// The SERVER owns the anchor (#3097): ``program_started_at`` on the progress row,
+// which the person picks through ``PUT /stages/program-calendar``. This store is
+// its cached mirror -- written from the server by ``adoptServerProgramStart``
+// (only via ``src/features/Program``), restored from AsyncStorage on cold start,
+// and derived from the habit rows only as the offline / no-server-row fallback.
 import { useEffect } from 'react';
 import { create } from 'zustand';
 
-import { STAGE_DURATIONS_DAYS } from '../constants/program';
+import type { ProgramStartWindow } from '../api';
+import { STAGE_DURATIONS_DAYS, TOTAL_PROGRAM_DAYS } from '../constants/program';
 import {
   clearProgramStartDate,
   loadProgramStartDate,
@@ -16,19 +23,39 @@ import { reportDiagnostic } from '@/observability/diagnostics';
 
 const DAYS_PER_WEEK = 7;
 const STAGE_COUNT = STAGE_DURATIONS_DAYS.length;
-const TOTAL_PROGRAM_DAYS = STAGE_DURATIONS_DAYS.reduce((sum, d) => sum + d, 0);
 // Integer-pinned so a future non-7-multiple change to STAGE_DURATIONS_DAYS can't silently leak fractional weeks.
 export const TOTAL_PROGRAM_WEEKS = Math.floor(TOTAL_PROGRAM_DAYS / DAYS_PER_WEEK);
+
+/**
+ * Where the anchor on hand came from. ``server`` outranks the others: once the
+ * server's answer has been adopted, a late storage hydrate must not undo it.
+ */
+export type ProgramAnchorSource = 'server' | 'storage' | 'local';
+
+/** The server's view of the start-date picker, adopted with the anchor. */
+export interface ServerProgramStart {
+  /** The anchor as a YYYY-MM-DD in the account zone, or null when the server has none. */
+  day: string | null;
+  /** The pickable range, or null when unknown (or locked). */
+  window: ProgramStartWindow | null;
+  /** Cycle 2 and later: the start date is fixed. */
+  locked: boolean;
+}
 
 export interface ProgramStoreState {
   /** Canonical calendar identity; Dates cannot preserve this across unlike account/device zones. */
   programStartDay: string | null;
   programStartDate: Date | null;
+  anchorSource: ProgramAnchorSource | null;
+  programStartWindow: ProgramStartWindow | null;
+  programStartLocked: boolean;
   setProgramStartDate: (_date: Date | null) => void;
   /** Set an already-zoned YYYY-MM-DD received or derived at an API boundary. */
   setProgramStartDay: (_day: string | null) => void;
-  // Seed from storage on boot without re-writing it.
+  // Seed from storage on boot without re-writing it. A no-op once the server's anchor is adopted.
   hydrateProgramStartDate: (_date: Date | null) => void;
+  /** Mirror the server's anchor and window (#3097). Called only from ``src/features/Program``. */
+  adoptServerProgramStart: (_server: ServerProgramStart) => void;
   // BUG-FE-STATE-001: wipe on logout. Also clears persisted storage.
   reset: () => void;
 }
@@ -36,6 +63,9 @@ export interface ProgramStoreState {
 const INITIAL_STATE = {
   programStartDay: null as string | null,
   programStartDate: null as Date | null,
+  anchorSource: null as ProgramAnchorSource | null,
+  programStartWindow: null as ProgramStartWindow | null,
+  programStartLocked: false,
 };
 
 const normalize = (date: Date): Date => {
@@ -76,7 +106,12 @@ const persistAsync = (date: Date | null): void => {
   });
 };
 
-export const useProgramStore = create<ProgramStoreState>((set) => ({
+const dayState = (day: string | null) => {
+  const normalized = day === null ? null : localDateFromDayKey(day);
+  return { programStartDay: normalized === null ? null : day, programStartDate: normalized };
+};
+
+export const useProgramStore = create<ProgramStoreState>((set, get) => ({
   ...INITIAL_STATE,
 
   setProgramStartDate: (date) => {
@@ -84,23 +119,31 @@ export const useProgramStore = create<ProgramStoreState>((set) => ({
     set({
       programStartDay: normalized === null ? null : localDayKey(normalized),
       programStartDate: normalized,
+      anchorSource: 'local',
     });
     persistAsync(normalized);
   },
   setProgramStartDay: (day) => {
-    const normalized = day === null ? null : localDateFromDayKey(day);
-    set({
-      programStartDay: normalized === null ? null : day,
-      programStartDate: normalized,
-    });
-    persistAsync(normalized);
+    const next = dayState(day);
+    set({ ...next, anchorSource: 'local' });
+    persistAsync(next.programStartDate);
   },
   hydrateProgramStartDate: (date) => {
+    if (get().anchorSource === 'server') return;
     const normalized = date === null ? null : normalize(date);
     set({
       programStartDay: normalized === null ? null : localDayKey(normalized),
       programStartDate: normalized,
+      anchorSource: normalized === null ? null : 'storage',
     });
+  },
+  adoptServerProgramStart: ({ day, window, locked }) => {
+    set({ programStartWindow: window, programStartLocked: locked });
+    if (day === null) return;
+    const next = dayState(day);
+    if (next.programStartDate === null) return;
+    set({ ...next, anchorSource: 'server' });
+    persistAsync(next.programStartDate);
   },
   reset: () => {
     set({ ...INITIAL_STATE });

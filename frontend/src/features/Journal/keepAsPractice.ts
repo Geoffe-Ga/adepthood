@@ -35,6 +35,7 @@ import type { WritingSessionResult } from './writingSession';
 import { practiceSessions, practices, stages, userPractices } from '@/api';
 import { MS_PER_MINUTE } from '@/features/Practice/engine/types';
 import { manualSessionPayload } from '@/features/Practice/utils/sessionWindow';
+import { adoptProgramCalendar } from '@/features/Program/adoptProgramCalendar';
 import { storedStageColorName } from '@/store/stageColorName';
 
 /**
@@ -106,6 +107,7 @@ export async function planKeepAsPractice(): Promise<PracticeOfferPlan | null> {
       userPractices.list(),
       stages.programCalendar(),
     ]);
+    adoptProgramCalendar(calendar, null);
     const row = catalogue.find((item) => item.name === JOURNALING_PRACTICE_NAME);
     if (row === undefined) return null;
     return {

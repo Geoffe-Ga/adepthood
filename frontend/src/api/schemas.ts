@@ -576,6 +576,19 @@ export const stageProgressRecordSchema = z.object({
 
 export type StageProgressRecordT = z.infer<typeof stageProgressRecordSchema>;
 
+/**
+ * The inclusive range of start dates the person may pick, as local ``YYYY-MM-DD``
+ * days in their zone (mirrors ``ProgramStartWindow``; #3097). Computed server-side
+ * by the same rule the PUT enforces, so a picker clamped to it never offers a date
+ * the server would refuse.
+ */
+export const programStartWindowSchema = z.object({
+  earliest: z.string(),
+  latest: z.string(),
+});
+
+export type ProgramStartWindowT = z.infer<typeof programStartWindowSchema>;
+
 /** The server's date-derived program calendar (mirrors ``ProgramCalendarResponse``). */
 export const programCalendarSchema = z.object({
   program_started_at: z.string().nullable(),
@@ -583,6 +596,10 @@ export const programCalendarSchema = z.object({
   calendar_week: z.number().int(),
   current_stage: z.number().int(),
   cycle_number: z.number().int(),
+  // Null once begin-again has fixed the anchor (cycle 2 and later). Optional so
+  // a fixture written before the field existed still validates; the live
+  // backend always sends it.
+  program_start_window: programStartWindowSchema.nullable().optional(),
 });
 
 export type ProgramCalendarT = z.infer<typeof programCalendarSchema>;

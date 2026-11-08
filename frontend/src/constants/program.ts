@@ -1,6 +1,16 @@
 // Days per APTITUDE stage: 8x21-day stages + 2x42-day stages = 36 weeks total.
 export const STAGE_DURATIONS_DAYS = [21, 21, 21, 21, 21, 21, 21, 21, 42, 42] as const;
 
+// The whole 36-week program, in days.
+export const TOTAL_PROGRAM_DAYS = STAGE_DURATIONS_DAYS.reduce((sum, d) => sum + d, 0);
+
+// How far before account creation a person may say their program began (#3097).
+// CROSS-STACK CONTRACT: mirrors ``PROGRAM_START_BACKDATE_WINDOW_DAYS`` in
+// ``backend/src/domain/constants.py``. The client prefers the exact window the
+// server sends on ``program_start_window`` and uses this only for the
+// conservative offline fallback (today minus the window).
+export const PROGRAM_START_BACKDATE_WINDOW_DAYS = TOTAL_PROGRAM_DAYS;
+
 // Stages per SECTION of the course — the Red, Green and Ultraviolet turns of
 // the Archetypal Wavelength (issue #2866). CROSS-STACK CONTRACT: mirrors
 // ``STAGES_PER_SECTION`` in ``backend/src/domain/constants.py`` literal-for-

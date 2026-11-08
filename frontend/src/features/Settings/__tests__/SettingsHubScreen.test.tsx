@@ -153,6 +153,14 @@ describe('SettingsHubScreen', () => {
     expect(getByText(BYOK_HUB_DISCLOSURE)).toBeTruthy();
   });
 
+  test('tapping the program start date row navigates to ProgramStartSettings (#3097)', () => {
+    const { getByTestId } = render(<SettingsHubScreen />);
+
+    fireEvent.press(getByTestId('settings-row-program-start'));
+
+    expect(mockNavigate).toHaveBeenCalledWith('ProgramStartSettings');
+  });
+
   test('tapping the time zone row navigates to TimezoneSettings', () => {
     const { getByTestId } = render(<SettingsHubScreen />);
 
