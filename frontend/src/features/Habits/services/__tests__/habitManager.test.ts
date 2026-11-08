@@ -144,6 +144,7 @@ import {
   replacePendingCheckIns,
 } from '../../../../storage/habitStorage';
 import { loadPendingProgramStart } from '../../../../storage/pendingProgramStart';
+import { setActiveUser } from '../../../../storage/userScope';
 import type { DroppedCheckInState } from '../../../../store/useDroppedCheckInStore';
 import { useHabitStore } from '../../../../store/useHabitStore';
 import { programStage, programWeek, useProgramStore } from '../../../../store/useProgramStore';
@@ -5965,6 +5966,44 @@ describe("the program start date is the server's (#3097)", () => {
 
       expect((stagesApi.setProgramStart as jest.Mock).mock.calls[0]![0]).toBe('2026-10-20');
     });
+
+    it('a kept habit is read in an account zone EAST of the device, never on the device calendar', async () => {
+      // Local midnight of 2026-10-20 in Tokyo is still 2026-10-19 on this UTC
+      // device, so only an account-zone read gives the day the habit began.
+      const begun: OnboardingHabit = {
+        ...pick(new Date('2026-10-19T15:00:00Z'), 'Begun'),
+        keepsOwnBeginning: true,
+      };
+
+      await habitManager.onboardingSave(
+        [begun, pick(parseISODate(PICKED))],
+        undefined,
+        'Asia/Tokyo',
+        PICKED,
+      );
+
+      expect((stagesApi.setProgramStart as jest.Mock).mock.calls[0]![0]).toBe('2026-10-20');
+    });
+
+    it('lays the new habit rows from the very day that is PUT (#3097 re-review)', async () => {
+      const deviceStart = parseISODate(PICKED);
+
+      await habitManager.onboardingSave(
+        [
+          pick(calculateHabitStartDate(deviceStart, 0), 'Meditate'),
+          pick(calculateHabitStartDate(deviceStart, 1), 'Journal'),
+        ],
+        undefined,
+        WEST_ZONE,
+        PICKED,
+      );
+
+      const posted = (habitsApi.create as jest.Mock).mock.calls.map(
+        (call) => (call[0] as { start_date: string }).start_date,
+      );
+      expect((stagesApi.setProgramStart as jest.Mock).mock.calls[0]![0]).toBe('2026-10-29');
+      expect(posted).toEqual(['2026-10-29', '2026-11-19']);
+    });
   });
 
   it('a refused pick still saves the habits, keeps the prior anchor and says so', async () => {
@@ -6024,10 +6063,87 @@ describe("the program start date is the server's (#3097)", () => {
         PICKED,
       );
 
-      await expect(loadPendingProgramStart()).resolves.toBe(PICKED);
+      await expect(loadPendingProgramStart()).resolves.toEqual({
+        owner: null,
+        day: PICKED,
+        priorServerDay: null,
+      });
       expect(useProgramStore.getState().programStartDay).toBe(PICKED);
       expect(useProgramStore.getState().anchorSource).toBe('local');
       expect(habitsApi.create).toHaveBeenCalled();
+    });
+  });
+
+  describe('a first pick whose PUT outlives the session that made it (#3097 re-review)', () => {
+    const PICKED = '2026-10-29';
+    const OWNER = 41;
+    const NEXT_ACCOUNT = 42;
+
+    afterEach(() => {
+      setActiveUser(null);
+    });
+
+    /** Start an onboarding save whose PUT hangs until ``fail`` drops the connection. */
+    const startHangingSave = async () => {
+      const answer = deferred<unknown>();
+      (stagesApi.setProgramStart as jest.Mock).mockReturnValueOnce(
+        answer.promise.then(() => {
+          throw new TypeError('Failed to fetch');
+        }) as never,
+      );
+      const saving = habitManager.onboardingSave(
+        [pick(parseISODate(PICKED))],
+        undefined,
+        ZONE,
+        PICKED,
+      );
+      await flushMicrotasks();
+      expect(stagesApi.setProgramStart).toHaveBeenCalledTimes(1);
+      return { saving, fail: () => answer.resolve(undefined) };
+    };
+
+    const expectNothingLeftForTheNextSession = async () => {
+      await expect(loadPendingProgramStart()).resolves.toBeNull();
+      expect(useProgramStore.getState().programStartDay).toBeNull();
+      expect(Alert.alert).not.toHaveBeenCalled();
+      expect(habitsApi.create).not.toHaveBeenCalled();
+    };
+
+    it('a log-out while the PUT hangs holds nothing for whoever signs in next', async () => {
+      const { saving, fail } = await startHangingSave();
+
+      useProgramStore.getState().reset();
+      beginAuthSession();
+      fail();
+      await saving;
+
+      await expectNothingLeftForTheNextSession();
+    });
+
+    it('an account change while the PUT hangs holds nothing for the new account', async () => {
+      setActiveUser(OWNER);
+      const { saving, fail } = await startHangingSave();
+
+      setActiveUser(NEXT_ACCOUNT);
+      fail();
+      await saving;
+
+      await expectNothingLeftForTheNextSession();
+    });
+
+    it('the same session still holds its own pick, under its own account', async () => {
+      setActiveUser(OWNER);
+      const { saving, fail } = await startHangingSave();
+
+      fail();
+      await saving;
+
+      await expect(loadPendingProgramStart()).resolves.toEqual({
+        owner: OWNER,
+        day: PICKED,
+        priorServerDay: null,
+      });
+      expect(Alert.alert).toHaveBeenCalledWith(expect.any(String), PROGRAM_START_PENDING_COPY);
     });
   });
 

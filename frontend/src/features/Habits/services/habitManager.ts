@@ -25,7 +25,13 @@ import type {
   GoalUpdatePayload,
 } from '../../../api';
 import { formatApiError } from '../../../api/errorMessages';
-import { captureSessionToken, getAuthSession } from '../../../api/sessionToken';
+import {
+  captureAuthScope,
+  captureSessionToken,
+  getAuthSession,
+  isAuthScopeCurrent,
+  type AuthScope,
+} from '../../../api/sessionToken';
 import type { ToastConfig } from '../../../components/Toast';
 import { HABIT_DEMO_MODE } from '../../../config';
 import { colors } from '../../../design/tokens';
@@ -67,6 +73,7 @@ import {
   dayKeyInTZ,
   dayKeyToInstant,
   detectDeviceTimezone,
+  MS_PER_DAY,
   todayInUserTZ,
 } from '../../../utils/dateUtils';
 import {
@@ -470,40 +477,75 @@ const syncProgramAnchorFromHabits = (tz: string): void => {
 };
 
 /**
- * The day a scaffolding pass starts the program on, as a ``YYYY-MM-DD`` in the
- * account zone -- or null when the pass lays no program row at all.
+ * The day a scaffolding pass lays its new program rows from, as a
+ * ``YYYY-MM-DD`` in the account zone -- or null when it lays none.
  *
  * The picked day is the source of truth: the modal hands over the very
  * ``YYYY-MM-DD`` its picker showed, exactly as the Reorder modal and Settings
  * do, so no instant is ever converted back into a day. A caller that hands
  * over none gets the earliest laid pick read on the DEVICE calendar it was
- * built on (``parseISODate`` is a device midnight) -- never in the account
+ * built on (the modal lays from a device midnight) -- never in the account
  * zone, which would read a device-east-of-account pick as the day before and
  * move it back again on every re-scaffold (#3097 review). Seeding the picker
  * from the held anchor and keying the pick are then exact inverses.
- *
- * A habit whose beginning is kept carries the server's own date, an
- * account-zone midnight, so it is read in the account zone; an earlier one of
- * those still anchors the program, as the earliest pick always has.
  */
-const scaffoldStartDay = (
+const laidStartDay = (
   picks: readonly OnboardingHabit[],
   pickedDay: string | undefined,
-  zone: string,
 ): string | null => {
   // ``deriveProgramAnchor`` drops carryover picks, whose dates predate the program.
   const laidAnchor = deriveProgramAnchor(picks.filter((p) => p.keepsOwnBeginning !== true));
-  const keptAnchors = picks
+  if (laidAnchor === null) return null;
+  return pickedDay ?? dayKeyInTZ(laidAnchor, detectDeviceTimezone());
+};
+
+/**
+ * The day a scaffolding pass starts the program on: the day its new rows are
+ * laid from, unless a habit whose beginning is kept began earlier. Such a habit
+ * carries the server's own date, an account-zone midnight, so it is read in the
+ * account zone; an earlier one still anchors the program, as the earliest pick
+ * always has.
+ */
+const scaffoldStartDay = (
+  picks: readonly OnboardingHabit[],
+  laidDay: string | null,
+  zone: string,
+): string | null => {
+  const days = picks
     .filter((p) => p.keepsOwnBeginning === true)
     .map((p) => deriveProgramAnchor([p]))
-    .filter((anchor): anchor is Date => anchor !== null);
-  const days = keptAnchors.map((anchor) => dayKeyInTZ(anchor, zone));
-  if (laidAnchor !== null) {
-    days.push(pickedDay ?? dayKeyInTZ(laidAnchor, detectDeviceTimezone()));
-  }
+    .filter((anchor): anchor is Date => anchor !== null)
+    .map((anchor) => dayKeyInTZ(anchor, zone));
+  if (laidDay !== null) days.push(laidDay);
   return days.reduce<string | null>(
     (earliest, day) => (earliest === null || day < earliest ? day : earliest),
     null,
+  );
+};
+
+/**
+ * Re-lay the pass's new rows from the account-zone instant of ``laidDay``, the
+ * way ``layProgramRows`` lays them for the reorder modal and Settings (#3097
+ * re-review). The modal lays its picks from the DEVICE midnight of that day;
+ * keyed in the account zone, a device east of the account would post every row
+ * a day before the anchor the PUT just fixed. Each row keeps its whole-day
+ * place on the cadence -- only the base instant moves. A habit whose beginning
+ * is kept is left exactly as it is.
+ */
+const layFromAccountDay = (plan: HabitMergePlan, laidDay: string, zone: string): HabitMergePlan => {
+  const deviceStart = new Date(`${laidDay}T00:00:00`).getTime();
+  const accountStart = dayKeyToInstant(laidDay, zone).getTime();
+  const relay = (start: Date): Date => {
+    const days = Math.floor((new Date(start).getTime() - deviceStart) / MS_PER_DAY);
+    return new Date(accountStart + days * MS_PER_DAY);
+  };
+  return plan.map((disposition) =>
+    'habit' in disposition && disposition.habit.keepsOwnBeginning !== true
+      ? {
+          ...disposition,
+          habit: { ...disposition.habit, start_date: relay(disposition.habit.start_date) },
+        }
+      : disposition,
   );
 };
 
@@ -519,21 +561,45 @@ const scaffoldStartDay = (
  * for the next session's reconcile to send again, the device counts from it
  * meanwhile, and the copy says so rather than promising an earlier date that
  * does not exist.
+ *
+ * Resolves ``false`` when the session that made the pick ended while the PUT
+ * was out (#3097 re-review): nothing is held, written or said, because the
+ * device -- and the pending key -- may now belong to someone else, and the
+ * caller writes nothing further for an account that is no longer here.
  */
-const commitScaffoldStart = async (day: string | null, zone: string): Promise<void> => {
-  if (day === null) return;
-  const { programStartLocked, programStartDay, anchorSource } = useProgramStore.getState();
-  if (programStartLocked) return;
-  if (anchorSource === 'server' && day === programStartDay) return;
+const commitScaffoldStart = async (day: string | null, zone: string): Promise<boolean> => {
+  if (day === null || !needsScaffoldPut(day)) return true;
+  const firstPick = useProgramStore.getState().programStartDay === null;
+  const scope = captureAuthScope();
   const outcome = await commitProgramStart(day, { tz: zone });
-  if (outcome.kind === 'saved') return;
-  if (outcome.kind === 'unsaved' && programStartDay === null) {
-    await holdPendingProgramStart(day);
-    useProgramStore.getState().setProgramStartDay(day);
-    Alert.alert(SYNC_FAILURE_TITLE, PROGRAM_START_PENDING_COPY);
-    return;
-  }
+  if (!isAuthScopeCurrent(scope)) return false;
+  if (outcome.kind === 'saved') return true;
+  if (outcome.kind === 'unsaved' && firstPick) return holdFirstPick(day, scope);
   Alert.alert(SYNC_FAILURE_TITLE, outcome.message);
+  return true;
+};
+
+/** Whether ``day`` needs sending: not once begin-again fixed it, nor when the server holds it. */
+const needsScaffoldPut = (day: string): boolean => {
+  const { programStartLocked, programStartDay, anchorSource } = useProgramStore.getState();
+  return !programStartLocked && !(anchorSource === 'server' && day === programStartDay);
+};
+
+/**
+ * Hold an unsent first pick for the account that made it, and count from it
+ * meanwhile. ``false`` when that session ended while the hold was written.
+ */
+const holdFirstPick = async (day: string, scope: AuthScope): Promise<boolean> => {
+  const held = useProgramStore.getState();
+  await holdPendingProgramStart({
+    owner: scope.owner,
+    day,
+    priorServerDay: held.anchorSource === 'server' ? held.programStartDay : null,
+  });
+  if (!isAuthScopeCurrent(scope)) return false;
+  useProgramStore.getState().setProgramStartDay(day);
+  Alert.alert(SYNC_FAILURE_TITLE, PROGRAM_START_PENDING_COPY);
+  return true;
 };
 
 const syncOnboardingHabits = async (fullHabits: readonly Habit[], tz: string): Promise<void> => {
@@ -2484,7 +2550,13 @@ export const habitManager = {
     programStartDay?: string,
   ): Promise<void> => {
     const existing = getHabits();
-    const plan = asMergePlan(input, existing);
+    const zone = tz ?? detectDeviceTimezone();
+    const picked = asMergePlan(input, existing);
+    // Read from the picks, not from the merged store: the picks are the dates
+    // the user just chose, while a kept row carries a date this pass did not
+    // ask about — a carryover's is from before the program began at all.
+    const laidDay = laidStartDay(pickedHabits(picked), programStartDay);
+    const plan = laidDay === null ? picked : layFromAccountDay(picked, laidDay, zone);
     const ops = planHabitMerge(plan, existing);
     setHabits(ops.nextStore);
     showToast?.({
@@ -2492,15 +2564,15 @@ export const habitManager = {
       icon: '\u{1F449}',
       duration: INSTRUCTIONAL_TOAST_DURATION_MS,
     });
-    const zone = tz ?? detectDeviceTimezone();
     // The picked start date becomes the server's program anchor before any row
     // is created, so the Map, Practice, Course, Journal and habit reveal all
-    // count from the day the person chose (#3097).
-    //
-    // Read from the picks, not from the merged store: the picks are the dates
-    // the user just chose, while a kept row carries a date this pass did not
-    // ask about — a carryover's is from before the program began at all.
-    await commitScaffoldStart(scaffoldStartDay(pickedHabits(plan), programStartDay, zone), zone);
+    // count from the day the person chose (#3097). A session that ended while
+    // it was out writes nothing more under whoever holds the device now.
+    const anchored = await commitScaffoldStart(
+      scaffoldStartDay(pickedHabits(plan), laidDay, zone),
+      zone,
+    );
+    if (!anchored) return;
     const stillHere = await commitHabitMerge(ops, zone);
     if (stillHere.length > 0) setHabits([...getHabits(), ...stillHere]);
     // Persist BEFORE the reload, which is the only order that survives a pass
