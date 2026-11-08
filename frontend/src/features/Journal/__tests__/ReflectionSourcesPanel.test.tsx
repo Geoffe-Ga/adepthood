@@ -16,18 +16,19 @@
 // testID `source-body-<id>` with the full body. A pending quote is testID
 // `pending-quote-<id>`; tapping it fires `onInsertQuote` and marks the quote
 // included (dimmed / `accessibilityState.disabled`) without removing it.
-// Layout is responsive on `useWindowDimensions().width`: < 600 wraps the
-// panel in a bottom-sheet `Modal` (testID `reflection-sources-sheet`); >= 600
-// renders an inline side pane (testID `reflection-sources-pane`).
+// Layout is responsive on `useWindowDimensions().width`, and a `Modal` at every
+// width: below `CENTRED_MODAL_BREAKPOINT` a bottom sheet (testID
+// `reflection-sources-sheet`); from it up a centred card (testID
+// `reflection-sources-modal`, #3133).
 import { jest, describe, it, expect, afterEach } from '@jest/globals';
 import { act, fireEvent, render, waitFor, within } from '@testing-library/react-native';
 import { X } from 'lucide-react-native';
 import React from 'react';
-import { StyleSheet } from 'react-native';
+import { Modal, StyleSheet, type StyleProp, type ViewStyle } from 'react-native';
 
 import type { PromotedQuoteSummary, ReflectionSourceItem } from '@/api';
 import { decorativeHidden } from '@/components/a11yHidden';
-import { editorialType, ink, touchTarget } from '@/design/tokens';
+import { colors, editorialType, ink, journalLayout, touchTarget } from '@/design/tokens';
 
 const ReflectionSourcesPanel = require('../ReflectionSourcesPanel').default;
 
@@ -188,13 +189,13 @@ describe('ReflectionSourcesPanel -- responsive layout', () => {
         <ReflectionSourcesPanel items={[item()]} onInsertQuote={jest.fn()} />,
       );
       expect(getByTestId('reflection-sources-sheet')).toBeTruthy();
-      expect(queryByTestId('reflection-sources-pane')).toBeNull();
+      expect(queryByTestId('reflection-sources-modal')).toBeNull();
     } finally {
       spy.mockRestore();
     }
   });
 
-  it('renders as an inline side pane on a wide viewport', () => {
+  it('renders as a centred Modal card on a wide viewport', () => {
     const rn = require('react-native');
     const spy = jest
       .spyOn(rn, 'useWindowDimensions')
@@ -203,7 +204,7 @@ describe('ReflectionSourcesPanel -- responsive layout', () => {
       const { getByTestId, queryByTestId } = render(
         <ReflectionSourcesPanel items={[item()]} onInsertQuote={jest.fn()} />,
       );
-      expect(getByTestId('reflection-sources-pane')).toBeTruthy();
+      expect(getByTestId('reflection-sources-modal')).toBeTruthy();
       expect(queryByTestId('reflection-sources-sheet')).toBeNull();
     } finally {
       spy.mockRestore();
@@ -212,7 +213,7 @@ describe('ReflectionSourcesPanel -- responsive layout', () => {
 
   // #2883: the heading (title, period, X) is the panel's navigation. It sits
   // above the scroll so browsing a long feed can never carry the way out away.
-  it('keeps the Sources heading and close control fixed outside the scrolling feed (narrow sheet and wide pane)', () => {
+  it('keeps the Sources heading and close control fixed outside the scrolling feed (narrow sheet and wide modal)', () => {
     const rn = require('react-native');
     const items = [1, 2, 3, 4, 5].map((id) => item({ id, timestamp: `2026-06-0${id}T00:00:00Z` }));
     for (const width of [390, 1280]) {
@@ -228,7 +229,7 @@ describe('ReflectionSourcesPanel -- responsive layout', () => {
         expect(within(scroll).queryByTestId('reflection-sources-heading')).toBeNull();
         expect(within(scroll).getByTestId('entry-source-5')).toBeTruthy();
         const frame = getByTestId(
-          width < 600 ? 'reflection-sources-sheet' : 'reflection-sources-pane',
+          width < 600 ? 'reflection-sources-sheet' : 'reflection-sources-modal',
         );
         expect(within(frame).getByTestId('reflection-sources-close')).toBeTruthy();
       } finally {
@@ -702,11 +703,12 @@ describe('ReflectionSourcesPanel -- one eyebrow face', () => {
   });
 });
 
-// #2883: below the width where the page, its margin column and a side pane all
-// fit, an inline pane crushes the writing column -- so it is a bounded sheet.
-describe('ReflectionSourcesPanel -- side-pane breakpoint and sheet dismissal (#2883)', () => {
-  const { SIDE_PANE_BREAKPOINT } = require('../ReflectionSourcesPanel') as {
-    SIDE_PANE_BREAKPOINT: number;
+// #2883 / #3133: below the breakpoint the panel is a bounded sheet as wide as
+// the page; from it up, a card centred over the desk. Both are Modals that a
+// backdrop tap, Escape, back or the X close -- and nothing else.
+describe('ReflectionSourcesPanel -- centred-modal breakpoint and dismissal (#2883, #3133)', () => {
+  const { CENTRED_MODAL_BREAKPOINT } = require('../ReflectionSourcesPanel') as {
+    CENTRED_MODAL_BREAKPOINT: number;
   };
 
   function renderAt(width: number, props: Record<string, unknown> = {}) {
@@ -723,16 +725,16 @@ describe('ReflectionSourcesPanel -- side-pane breakpoint and sheet dismissal (#2
     jest.restoreAllMocks();
   });
 
-  it('derives the breakpoint from the page, its margin column and the pane', () => {
-    // contentLayout.maxWidth (680 + 220) + the pane (680 / 2).
-    expect(SIDE_PANE_BREAKPOINT).toBe(1240);
+  it('keeps the breakpoint where the page plus half a reading measure fits, so no narrower width changes', () => {
+    // contentLayout.maxWidth (680 + 220) + half the reading measure (680 / 2).
+    expect(CENTRED_MODAL_BREAKPOINT).toBe(1240);
   });
 
   it.each([
-    [768, 'reflection-sources-sheet', 'reflection-sources-pane'],
-    [1024, 'reflection-sources-sheet', 'reflection-sources-pane'],
-    [1239, 'reflection-sources-sheet', 'reflection-sources-pane'],
-    [1240, 'reflection-sources-pane', 'reflection-sources-sheet'],
+    [768, 'reflection-sources-sheet', 'reflection-sources-modal'],
+    [1024, 'reflection-sources-sheet', 'reflection-sources-modal'],
+    [1239, 'reflection-sources-sheet', 'reflection-sources-modal'],
+    [1240, 'reflection-sources-modal', 'reflection-sources-sheet'],
   ])('at %ipx renders %s, not %s', (width, shown, absent) => {
     const { getByTestId, queryByTestId } = renderAt(width);
     expect(getByTestId(shown)).toBeTruthy();
@@ -784,30 +786,81 @@ describe('ReflectionSourcesPanel -- side-pane breakpoint and sheet dismissal (#2
     expect(style.alignSelf).toBe('center');
   });
 
-  it('lets the platform back button close the wide pane, and only the pane', () => {
-    const rn = require('react-native');
-    let back: (() => boolean | null | undefined) | undefined;
-    const add = jest.spyOn(rn.BackHandler, 'addEventListener').mockImplementation((...args) => {
-      back = args[1] as () => boolean;
-      return { remove: jest.fn() };
-    });
+  it.each([
+    [390, 'reflection-sources-sheet'],
+    [1280, 'reflection-sources-modal'],
+  ])(
+    'at %ipx leaves Escape and back to the Modal alone: one request, one close',
+    (width, modalId) => {
+      const rn = require('react-native');
+      const add = jest.spyOn(rn.BackHandler, 'addEventListener');
+      const onClose = jest.fn();
+      const { getByTestId } = renderAt(width, { onClose });
+      const modal = getByTestId(modalId);
+      expect(modal.props.onRequestClose).toBe(onClose);
+      act(() => {
+        modal.props.onRequestClose();
+      });
+      expect(onClose).toHaveBeenCalledTimes(1);
+      expect(add).not.toHaveBeenCalled();
+    },
+  );
+
+  it('closes the centred modal on a backdrop tap', () => {
     const onClose = jest.fn();
-    renderAt(1280, { onClose });
-    expect(add).toHaveBeenCalledWith('hardwareBackPress', expect.any(Function));
-    let consumed: boolean | null | undefined;
-    act(() => {
-      consumed = back?.();
-    });
+    const { getByTestId } = renderAt(1280, { onClose });
+    fireEvent.press(getByTestId('reflection-sources-backdrop'));
     expect(onClose).toHaveBeenCalledTimes(1);
-    expect(consumed).toBe(true);
   });
 
-  it('leaves back to the Modal on the sheet, and registers nothing for a pane with no close', () => {
-    const rn = require('react-native');
-    const add = jest.spyOn(rn.BackHandler, 'addEventListener');
-    renderAt(390, { onClose: jest.fn() });
-    renderAt(1280);
-    expect(add).not.toHaveBeenCalled();
+  it('keeps the centred modal backdrop out of the accessibility tree and the focus order', () => {
+    const { getByTestId } = renderAt(1280, { onClose: jest.fn() });
+    const backdrop = getByTestId('reflection-sources-backdrop');
+    expect(backdrop.props.accessible).toBe(false);
+    expect(backdrop.props.importantForAccessibility).toBe('no');
+    expect(backdrop.props.focusable).toBe(false);
+  });
+
+  it('does not close when the centred card or a row inside it is pressed', () => {
+    const onClose = jest.fn();
+    const { getByTestId } = renderAt(1280, { onClose });
+    // The card is the backdrop's sibling, never its child: a press inside it
+    // cannot bubble to the backdrop's handler.
+    expect(
+      within(getByTestId('reflection-sources-backdrop')).queryByTestId(
+        'reflection-sources-modal-body',
+      ),
+    ).toBeNull();
+    fireEvent.press(getByTestId('reflection-sources-modal-body'));
+    fireEvent.press(getByTestId('entry-source-3'));
+    expect(onClose).not.toHaveBeenCalled();
+    expect(getByTestId('source-body-3')).toBeTruthy();
+  });
+
+  it.each([
+    [390, 'reflection-sources-sheet', 'slide'],
+    [1280, 'reflection-sources-modal', 'fade'],
+  ])('at %ipx the %s arrives with a %s', (width, modalId, animation) => {
+    const { getByTestId } = renderAt(width, { onClose: jest.fn() });
+    expect(getByTestId(modalId).props.animationType).toBe(animation);
+  });
+
+  it.each([
+    [390, 'reflection-sources-sheet'],
+    [1280, 'reflection-sources-modal'],
+  ])('at %ipx the %s does not move when the reader asks for reduced motion', (width, modalId) => {
+    const motion = require('@/hooks/useReducedMotion');
+    jest.spyOn(motion, 'useReducedMotion').mockReturnValue(true);
+    const { getByTestId } = renderAt(width, { onClose: jest.fn() });
+    expect(getByTestId(modalId).props.animationType).toBe('none');
+  });
+
+  it.each([
+    [390, 'reflection-sources-sheet'],
+    [1280, 'reflection-sources-modal'],
+  ])('at %ipx names the %s dialog "Sources"', (width, modalId) => {
+    const { getByTestId } = renderAt(width, { onClose: jest.fn() });
+    expect(getByTestId(modalId).props['aria-label']).toBe('Sources');
   });
 
   function openSelection(width: number) {
@@ -842,20 +895,13 @@ describe('ReflectionSourcesPanel -- side-pane breakpoint and sheet dismissal (#2
       Platform.OS = original;
     }
   });
-
-  it('gives the wide pane a fixed width instead of the full row', () => {
-    const { getByTestId } = renderAt(1280, { onClose: jest.fn() });
-    const style = StyleSheet.flatten(getByTestId('reflection-sources-pane').props.style);
-    expect(style.width).toBe(340);
-    expect(style.alignSelf).toBe('stretch');
-  });
 });
 
-// #2883: the sheet and the pane are different containers, so crossing the
-// breakpoint (a tablet rotating, a window resized) remounts the content. What
-// the reader was doing -- an expanded row, a folded quote's dim, a passage
-// mid-selection -- lives above that switch and survives it.
-describe('ReflectionSourcesPanel -- crossing the side-pane breakpoint while open (#2883)', () => {
+// #2883 / #3133: crossing the breakpoint (a tablet rotating, a window resized)
+// swaps the sheet for the centred card. What the reader was doing -- an
+// expanded row, a folded quote's dim, a passage mid-selection -- survives it,
+// and the content is not even remounted: only the one Modal's props change.
+describe('ReflectionSourcesPanel -- crossing the centred-modal breakpoint while open (#2883, #3133)', () => {
   afterEach(() => {
     jest.restoreAllMocks();
   });
@@ -868,8 +914,8 @@ describe('ReflectionSourcesPanel -- crossing the side-pane breakpoint while open
   }
 
   it.each([
-    [1280, 390, 'reflection-sources-sheet'],
-    [390, 1280, 'reflection-sources-pane'],
+    [1280, 390, 'reflection-sources-sheet-body'],
+    [390, 1280, 'reflection-sources-modal-body'],
   ])(
     'keeps the expanded row, the folded dim and the selection from %ipx to %ipx',
     async (from, to, frame) => {
@@ -899,11 +945,14 @@ describe('ReflectionSourcesPanel -- crossing the side-pane breakpoint while open
       fireEvent(screen.getByTestId('source-select-entry-3-input'), 'selectionChange', {
         nativeEvent: { selection: { start: 2, end: 8 } },
       });
+      const scrollBefore = screen.getByTestId('reflection-sources-scroll');
 
       mockWidth(to);
       screen.rerender(element());
 
-      expect(screen.getByTestId(frame)).toBeTruthy();
+      expect(within(screen.getByTestId(frame)).getByTestId('reflection-sources-scroll')).toBe(
+        scrollBefore,
+      );
       expect(screen.getByTestId('source-body-4')).toBeTruthy();
       expect(screen.getByTestId('pending-quote-90').props.accessibilityState?.disabled).toBe(true);
       expect(screen.getByTestId('source-select-entry-3-preview').props.children).toBe('steady');
@@ -911,6 +960,57 @@ describe('ReflectionSourcesPanel -- crossing the side-pane breakpoint while open
         fireEvent.press(screen.getByTestId('promote-selection-fab'));
       });
       expect(onPromoteSpan).toHaveBeenCalledWith(selecting, { anchor_start: 2, anchor_end: 8 });
+    },
+  );
+});
+
+/** The retired inline side pane's width (#3133): half the reading measure. */
+const RETIRED_PANE_WIDTH = journalLayout.pageMaxWidth / 2;
+
+/** A rendered node, read only for its style. */
+type StyledNode = { props: { style?: StyleProp<ViewStyle> } };
+
+// #3133: on a laptop a 340px column beside the page stranded the sources in a
+// sliver. From the breakpoint up the panel opens as a centred modal card at the
+// page's own reading measure, over a dimmed desk.
+describe('ReflectionSourcesPanel -- centred modal at laptop widths (#3133)', () => {
+  afterEach(() => {
+    jest.restoreAllMocks();
+  });
+
+  it.each([1240, 1440])(
+    'at %ipx renders the panel in a centred Modal card at the reading measure, with no 340px pane',
+    (width) => {
+      const rn = require('react-native');
+      jest
+        .spyOn(rn, 'useWindowDimensions')
+        .mockReturnValue({ width, height: 900, scale: 1, fontScale: 1 });
+      const { getByTestId, queryByTestId, UNSAFE_getByType, UNSAFE_root } = render(
+        <ReflectionSourcesPanel
+          items={[item({ id: 3 })]}
+          onInsertQuote={jest.fn()}
+          onClose={jest.fn()}
+        />,
+      );
+      const modal = UNSAFE_getByType(Modal);
+      expect(modal.props.testID).toBe('reflection-sources-modal');
+      expect(modal.props.transparent).toBe(true);
+      const card = StyleSheet.flatten(getByTestId('reflection-sources-modal-body').props.style);
+      expect(card.maxWidth).toBe(journalLayout.pageMaxWidth);
+      expect(card.width).toBe('100%');
+      expect(card.alignSelf).toBe('center');
+      expect(card.maxHeight).toBe('90%');
+      const scrimNode = getByTestId('reflection-sources-scrim');
+      expect(within(scrimNode).getByTestId('reflection-sources-backdrop')).toBeTruthy();
+      const scrim = StyleSheet.flatten(scrimNode.props.style);
+      expect(scrim.justifyContent).toBe('center');
+      expect(scrim.backgroundColor).toBe(colors.mystical.overlay);
+      expect(queryByTestId('reflection-sources-pane')).toBeNull();
+      expect(queryByTestId('reflection-sources-sheet')).toBeNull();
+      const paneWide = UNSAFE_root.findAll(
+        (node: StyledNode) => StyleSheet.flatten(node.props.style)?.width === RETIRED_PANE_WIDTH,
+      );
+      expect(paneWide).toHaveLength(0);
     },
   );
 });
