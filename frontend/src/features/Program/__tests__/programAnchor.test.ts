@@ -405,8 +405,11 @@ describe('a pick that never reached the server is sent again (#3097 review)', ()
   });
 
   describe('a held record this device never wrote is never sent (#3708)', () => {
-    // The corrupt rows name this account, and the server holds only its own
-    // default stamp, so a record that slipped past the read would be replayed.
+    // The day and prior-server-day rows name this account, and the server
+    // holds only its own default stamp, so ``parseHeld`` alone stands between
+    // them and a replay. The owner rows are also refused by
+    // ``loadOwnHeldPick``'s owner comparison, so for those this table pins the
+    // pair of guards, not ``parseHeld`` alone; the storage suite pins that half.
     const ROW_OWNER = 7;
 
     afterEach(() => {

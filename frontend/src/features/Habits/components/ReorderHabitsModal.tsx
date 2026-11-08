@@ -811,7 +811,12 @@ const ReorderBody = ({
   onSave,
 }: ReorderBodyProps) => (
   <View testID="reorder-modal-card" style={styles.reorderModalContent}>
-    <ModalHeader title="Reorder Habits" onClose={onClose} closeLabel={REORDER_HABITS_CLOSE_LABEL} />
+    <ModalHeader
+      title="Reorder Habits"
+      onClose={onClose}
+      closeLabel={REORDER_HABITS_CLOSE_LABEL}
+      closeDisabled={saving}
+    />
     <ReorderDateButton
       startDate={startDate}
       range={range}
@@ -848,12 +853,19 @@ export const ReorderHabitsModal = ({
   onSaveOrder,
 }: ReorderHabitsModalProps) => {
   const state = useReorderState({ habits, visible, userTimezone, onClose, onSaveOrder });
+  // Not while a save is in flight: once a start date has saved this sitting,
+  // the rows-unsaved notice is the only report of a failed re-lay
+  // (``habitManager`` drops its own alert), so a dismissal mid-save would leave
+  // the anchor moved and the rows on the old day with no message (#3707).
+  const closeUnlessSaving = () => {
+    if (!state.saving) onClose();
+  };
   return (
     <>
-      <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
+      <Modal visible={visible} transparent animationType="slide" onRequestClose={closeUnlessSaving}>
         <View testID="reorder-modal-overlay" style={styles.modalOverlay}>
           <ReorderBody
-            onClose={onClose}
+            onClose={closeUnlessSaving}
             orderedHabits={state.orderedHabits}
             startDate={state.startDate}
             range={state.range}

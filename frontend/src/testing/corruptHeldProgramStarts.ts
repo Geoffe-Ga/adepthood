@@ -74,6 +74,21 @@ export const CORRUPT_HELD_PROGRAM_STARTS: ReadonlyArray<CorruptHeldProgramStart>
     unreadable: false,
   },
   {
+    label: 'a day with a time attached',
+    raw: record({ owner: OWNER, day: '2026-06-01T00:00:00Z', priorServerDay: null }),
+    unreadable: false,
+  },
+  {
+    label: 'a day with leading junk',
+    raw: record({ owner: OWNER, day: 'x2026-06-01', priorServerDay: null }),
+    unreadable: false,
+  },
+  {
+    label: 'a prior server day with a time attached',
+    raw: record({ owner: OWNER, day: DAY, priorServerDay: '2026-03-01T00:00:00Z' }),
+    unreadable: false,
+  },
+  {
     label: 'a prior server day in another format',
     raw: record({ owner: OWNER, day: DAY, priorServerDay: '03/10/2026' }),
     unreadable: false,

@@ -3,7 +3,7 @@
 import { describe, expect, it, jest, beforeEach, afterEach } from '@jest/globals';
 import { fireEvent, render, act, within } from '@testing-library/react-native';
 import React from 'react';
-import { StyleSheet } from 'react-native';
+import { Modal, StyleSheet } from 'react-native';
 
 import { messageForCode } from '../../../../api/errorMessages';
 import { accent, STAGE_COLORS } from '../../../../design/tokens';
@@ -1409,6 +1409,55 @@ describe('ReorderHabitsModal — the server decides the start date (#3097)', () 
     });
 
     expect(mockCommitProgramStart).toHaveBeenCalledTimes(1);
+    expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
+  it('cannot be dismissed while the habits are saving after a saved date (#3707)', async () => {
+    // The rows-unsaved notice is the only report once the date has saved
+    // (``habitManager`` drops its own alert for that case), so a dismissal
+    // mid-save would leave the person with no message at all while the Map
+    // counted from the new day and the rows stayed on the old one.
+    let settle: (landed: boolean) => void = () => undefined;
+    const onSaveOrder = jest.fn(
+      (_habits: Habit[]) =>
+        new Promise<boolean>((resolve) => {
+          settle = resolve;
+        }),
+    );
+    const onClose = jest.fn();
+    const result = openAndPick(onSaveOrder, onClose);
+
+    await act(async () => {
+      fireEvent.press(result.getByText('Save Order'));
+    });
+    expect(onSaveOrder).toHaveBeenCalledWith(expect.any(Array), { anchorSaved: true });
+
+    fireEvent.press(result.getByRole('button', { name: REORDER_HABITS_CLOSE_LABEL }));
+    act(() => {
+      result.UNSAFE_getByType(Modal).props.onRequestClose();
+    });
+    expect(onClose).not.toHaveBeenCalled();
+
+    await act(async () => {
+      settle(false);
+    });
+
+    expect(onClose).not.toHaveBeenCalled();
+    expect(result.getByTestId('reorder-start-date-notice')).toHaveTextContent(
+      HABIT_ROWS_NOT_MOVED_COPY,
+    );
+  });
+
+  it('can be dismissed again once the save has settled (#3707)', async () => {
+    const onSaveOrder = jest.fn((_habits: Habit[]) => Promise.resolve(false));
+    const onClose = jest.fn();
+    const result = openAndPick(onSaveOrder, onClose);
+
+    await act(async () => {
+      fireEvent.press(result.getByText('Save Order'));
+    });
+    fireEvent.press(result.getByRole('button', { name: REORDER_HABITS_CLOSE_LABEL }));
+
     expect(onClose).toHaveBeenCalledTimes(1);
   });
 

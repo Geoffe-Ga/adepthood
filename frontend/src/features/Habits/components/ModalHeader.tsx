@@ -16,6 +16,11 @@ interface ModalHeaderProps {
    */
   closeLabel?: string;
   closeTestID?: string;
+  /**
+   * Make the close button inert, and announce it as disabled, while the modal
+   * cannot be dismissed (for example while a save it owns is in flight).
+   */
+  closeDisabled?: boolean;
   children?: React.ReactNode;
 }
 
@@ -30,6 +35,7 @@ const ModalHeader = ({
   onClose,
   closeLabel = MODAL_CLOSE_LABEL,
   closeTestID,
+  closeDisabled = false,
   children,
 }: ModalHeaderProps) => (
   <View style={styles.modalHeader}>
@@ -37,10 +43,12 @@ const ModalHeader = ({
     {children}
     <TouchableOpacity
       onPress={onClose}
+      disabled={closeDisabled}
       style={styles.closeButton}
       testID={closeTestID}
       accessibilityRole="button"
       accessibilityLabel={closeLabel}
+      accessibilityState={{ disabled: closeDisabled }}
     >
       <Text style={styles.closeButtonText} {...decorativeHidden()}>
         ×
