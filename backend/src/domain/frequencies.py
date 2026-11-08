@@ -22,7 +22,8 @@ the set of ten.
 identifier across every surface: the ``NN-colour`` content directories, the
 ``STAGE_COLORS`` design tokens, the habit ring, and the vault's wire codes. The
 names drift between contexts — F3 is "Self-Love / Power" upstream, ``aspect``
-"Self-Love" plus ``title`` "Power" in ``archetypal_wavelength.json``, and the
+"Self-Love" (``CourseStage``, seeded from ``curriculum/stage_correspondence.json``)
+plus ``title`` "Power" (``curriculum/archetypal_wavelength.json``), and the
 composite is literally those two joined — but the colour does not.
 
 ======  ============  ============================  ====================  ==================
@@ -50,9 +51,14 @@ bump, not a code change.
 
 The vocabulary is vendored rather than imported because Creek's classifier
 lives in another repository and is coupled to the vault's on-disk fragment
-layout. This module is the backend's single spelling of the table; the
-curriculum's own copy is ``curriculum/archetypal_wavelength.json``, and the two
-must agree row for row.
+layout. ``FREQUENCY_NAMES`` is that wire vocabulary (see "The vocabulary
+decision" in ``docs/creek-vault-mcp-contract.md``) and is deliberately not
+derived from the curriculum. ``FREQUENCY_COLORS`` is the join key: a literal,
+not read from ``curriculum/stage_correspondence.json`` at import time (that
+loader is lazy on purpose), and held equal to the artifact's
+``spiral_dynamics_color`` row for row by
+``tests/services/test_frequency_classification.py``. The artifact, reconciled
+into ``CourseStage``, is the one source of each position's aspect and colour.
 """
 
 from __future__ import annotations

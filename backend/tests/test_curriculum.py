@@ -1,4 +1,10 @@
-"""Tests for the vendored Archetypal Wavelength curriculum dataset."""
+"""Tests for the vendored Archetypal Wavelength curriculum dataset.
+
+The dataset owns each Stage's title, subtitle, Mode and phase manifestations.
+The seven correspondence fields are owned by the generated
+``stage_correspondence.json`` (#2666), so the ontology pins and the Modes-CSV
+colour join below read them from :func:`stage_correspondence`.
+"""
 
 from __future__ import annotations
 
@@ -17,6 +23,11 @@ from curriculum import (
     manifestation,
     phase_chords,
     stage_curriculum,
+)
+from curriculum.stage_correspondence import (
+    CORRESPONDENCE_FIELDS,
+    StageCorrespondenceRecord,
+    stage_correspondence,
 )
 from scripts.check_wavelength_terms import APP_AUTHORED, read_canonical_terms
 
@@ -123,6 +134,11 @@ def test_wavelength_phase_values_are_human_strings() -> None:
     assert WavelengthPhase.RESTORATION.value == "Restoration"
 
 
+def _correspondence(stage_number: int) -> StageCorrespondenceRecord:
+    """Return one Stage's correspondence record from the generated artifact."""
+    return next(s for s in stage_correspondence().stages if s.stage_number == stage_number)
+
+
 def test_all_stages_returns_ten_stages_in_order() -> None:
     """all_stages() resolves exactly stage_numbers 1..10, in order."""
     stages = all_stages()
@@ -179,13 +195,15 @@ def test_manifestation_of_clear_light_raises() -> None:
 
 
 def test_stage_curriculum_returns_beige_survival() -> None:
-    """stage_curriculum(1) is Survival/Beige with known Rising Rx/OD values."""
+    """stage_curriculum(1) is Survival with known Rising Rx/OD values; the artifact says Beige."""
     stage = stage_curriculum(1)
     assert stage.stage_number == 1
     assert stage.title == "Survival"
     assert stage.subtitle == "Active Yes-And-Ness"
-    assert stage.aspect == "Agency"
-    assert stage.spiral_dynamics_color == "Beige"
+    correspondence = _correspondence(1)
+    assert correspondence.stage_number == 1
+    assert correspondence.aspect == "Agency"
+    assert correspondence.spiral_dynamics_color == "Beige"
 
     rising = stage.manifestations[0]
     assert rising.phase == WavelengthPhase.RISING
@@ -194,7 +212,11 @@ def test_stage_curriculum_returns_beige_survival() -> None:
 
 
 def test_stage_attributes_match_canonical_ontology() -> None:
-    """Every stage's short attribute fields match the canonical APTITUDE ontology."""
+    """Every stage's short attribute fields match the canonical APTITUDE ontology.
+
+    Read from the generated correspondence artifact, the one source of these
+    fields since #2666.
+    """
     fields = (
         "category",
         "aspect",
@@ -203,7 +225,9 @@ def test_stage_attributes_match_canonical_ontology() -> None:
         "divine_gender_polarity",
         "relationship_to_free_will",
     )
-    for stage in all_stages():
+    stages = stage_correspondence().stages
+    assert [stage.stage_number for stage in stages] == sorted(_CANONICAL_STAGE_ONTOLOGY)
+    for stage in stages:
         canonical = _CANONICAL_STAGE_ONTOLOGY[stage.stage_number]
         for field in fields:
             msg = f"stage {stage.stage_number} field {field!r} mismatch"
@@ -253,15 +277,22 @@ def _valid_stage(stage_number: int) -> dict[str, object]:
         "stage_number": stage_number,
         "title": f"Stage {stage_number}",
         "subtitle": "Subtitle",
-        "category": "Category",
-        "aspect": "Aspect",
-        "spiral_dynamics_color": "Color",
-        "growing_up_stage": "Growing",
-        "divine_gender_polarity": "Polarity",
-        "relationship_to_free_will": "Relationship",
-        "free_will_description": "Description",
         "manifestations": _valid_manifestations(),
     }
+
+
+def test_load_curriculum_ignores_a_stray_correspondence_field(tmp_path: Path) -> None:
+    """A correspondence key left on a stage loads without error and is not an attribute.
+
+    With the committed-file test in ``test_stage_correspondence.py`` this keeps
+    the retired copy from quietly coming back: the loader never surfaces it,
+    so nothing can start reading it again.
+    """
+    payload = [_valid_stage(n) for n in range(1, 11)]
+    payload[0].update(dict.fromkeys(CORRESPONDENCE_FIELDS, "Stray"))
+    stages = load_curriculum(path=_write_json(tmp_path, "stray.json", payload))
+    assert stages[0].title == "Stage 1"
+    assert not any(hasattr(stages[0], field) for field in CORRESPONDENCE_FIELDS)
 
 
 def test_load_curriculum_rejects_wrong_stage_count(tmp_path: Path) -> None:
@@ -391,7 +422,6 @@ def _require_nonempty_str(value: object) -> None:
 def test_dataset_carries_provenance_pointer() -> None:
     """The vendored dataset records where its copy came from (sources + extraction)."""
     provenance = _provenance()
-    _require_nonempty_str(provenance["stage_attributes_source"])
     _require_nonempty_str(provenance["manifestations_source"])
     _require_nonempty_str(provenance["subtitles_source"])
     _require_nonempty_str(provenance["extracted_from"])
@@ -477,7 +507,7 @@ def test_phase_names_match_the_canonical_modes_csv(stage_number: int) -> None:
     """Every Rx/OD name the Map shows equals the Modes CSV's Medicine/Toxic cell."""
     canonical = read_canonical_terms(_MODES_CSV_PATH)
     stage = stage_curriculum(stage_number)
-    terms = canonical[_normalised(stage.spiral_dynamics_color)]
+    terms = canonical[_normalised(_correspondence(stage_number).spiral_dynamics_color)]
     for phase_manifestation in stage.manifestations:
         phase = phase_manifestation.phase.value
         rx, od = terms[(phase, "integrated")], terms[(phase, "shadow")]
@@ -512,7 +542,9 @@ def test_clear_light_has_no_modes_csv_row_and_no_pairs_of_its_own() -> None:
     """Clear Light has no Modes CSV row, and carries no app-authored stand-in pairs."""
     canonical = read_canonical_terms(_MODES_CSV_PATH)
     clear_light = _raw_stage(_NEITHER_BOTH_STAGE)
-    assert _normalised(clear_light["spiral_dynamics_color"]) not in canonical
+    colour = _correspondence(_NEITHER_BOTH_STAGE).spiral_dynamics_color
+    assert colour == "Clear Light"
+    assert _normalised(colour) not in canonical
     assert clear_light["manifestations"] == []
     assert APP_AUTHORED not in json.dumps(clear_light)
 

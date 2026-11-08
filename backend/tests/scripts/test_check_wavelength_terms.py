@@ -2,15 +2,19 @@
 
 The gate compares every stage's six Rx/OD phase names in
 ``archetypal_wavelength.json`` against the vendored Modes of the Wavelength
-CSV. Each test builds its own CSV and dataset under ``tmp_path`` so the rules
-are exercised without depending on the real vendored bytes; one test also
-runs the gate over the committed inputs, which is what CI does.
+CSV, joining each stage to its CSV row by the colour the generated
+``stage_correspondence.json`` gives it (#2666: the dataset no longer carries a
+colour of its own). Each test builds its own CSV, dataset and correspondence
+artifact under ``tmp_path`` so the rules are exercised without depending on the
+real vendored bytes; one test also runs the gate over the committed inputs,
+which is what CI does.
 """
 
 from __future__ import annotations
 
 import copy
 import json
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -25,6 +29,7 @@ from scripts.check_wavelength_terms import (
     find_drift,
     main,
     read_canonical_terms,
+    read_stage_colours,
 )
 
 _BACKEND = Path(__file__).resolve().parents[2]
@@ -87,37 +92,42 @@ def _app_authored() -> list[dict[str, Any]]:
 
 
 def _dataset() -> dict[str, Any]:
-    """A dataset agreeing with the fixture CSV, plus one app-authored stage."""
+    """A dataset agreeing with the fixture CSV, plus one app-authored stage.
+
+    Like the committed dataset it names no colour: the join goes through the
+    correspondence artifact.
+    """
     return {
         "stages": [
-            {
-                "stage_number": 1,
-                "spiral_dynamics_color": "Beige",
-                "manifestations": _manifestations("Beige"),
-            },
-            {
-                "stage_number": 8,
-                "spiral_dynamics_color": "Teal",
-                "manifestations": _manifestations("Teal"),
-            },
-            {
-                "stage_number": 10,
-                "spiral_dynamics_color": "Clear Light",
-                "manifestations": _app_authored(),
-            },
+            {"stage_number": 1, "manifestations": _manifestations("Beige")},
+            {"stage_number": 8, "manifestations": _manifestations("Teal")},
+            {"stage_number": 10, "manifestations": _app_authored()},
+        ]
+    }
+
+
+def _correspondence() -> dict[str, Any]:
+    """A correspondence artifact giving each fixture stage its colour."""
+    return {
+        "stages": [
+            {"id": "beige", "stage_number": 1, "spiral_dynamics_color": "Beige"},
+            {"id": "teal", "stage_number": 8, "spiral_dynamics_color": "Teal"},
+            {"id": "clearlight", "stage_number": 10, "spiral_dynamics_color": "Clear Light"},
         ]
     }
 
 
 class Workspace:
-    """A modes CSV and dataset pair under ``tmp_path``."""
+    """A modes CSV, dataset and correspondence artifact under ``tmp_path``."""
 
     def __init__(self, root: Path) -> None:
-        """Write a valid, agreeing CSV and dataset."""
+        """Write a valid, agreeing CSV, dataset and correspondence artifact."""
         self.csv_path = root / "modes.csv"
         self.dataset_path = root / "dataset.json"
+        self.correspondence_path = root / "correspondence.json"
         self.write_csv(_csv_text(_RX, _OD))
         self.write_dataset(_dataset())
+        self.write_correspondence(_correspondence())
 
     def write_csv(self, text: str) -> None:
         """Replace the CSV text."""
@@ -127,13 +137,28 @@ class Workspace:
         """Replace the dataset JSON."""
         self.dataset_path.write_text(json.dumps(payload), encoding="utf-8")
 
+    def write_correspondence(self, payload: object) -> None:
+        """Replace the correspondence artifact JSON."""
+        self.correspondence_path.write_text(json.dumps(payload), encoding="utf-8")
+
     def argv(self) -> list[str]:
         """CLI arguments pointing at this workspace."""
-        return ["--modes-csv", str(self.csv_path), "--dataset", str(self.dataset_path)]
+        return [
+            "--modes-csv",
+            str(self.csv_path),
+            "--dataset",
+            str(self.dataset_path),
+            "--correspondence",
+            str(self.correspondence_path),
+        ]
 
     def drift(self) -> list[str]:
         """Run the pure comparison over this workspace."""
-        return find_drift(read_canonical_terms(self.csv_path), self.dataset_path)
+        return find_drift(
+            read_canonical_terms(self.csv_path),
+            self.dataset_path,
+            read_stage_colours(self.correspondence_path),
+        )
 
 
 @pytest.fixture
@@ -280,6 +305,93 @@ def test_a_dataset_without_stages_is_refused(workspace: Workspace) -> None:
         workspace.drift()
 
 
+def test_the_colour_join_follows_the_correspondence_artifact(workspace: Workspace) -> None:
+    """Swapping two stages' colours in the artifact swaps the canonical rows they meet.
+
+    The dataset is unchanged, so every one of the twelve names at stages 1 and
+    8 is now compared against the other stage's row: the artifact, not the
+    dataset, decides the join (#2666).
+    """
+    payload = _correspondence()
+    payload["stages"][0]["spiral_dynamics_color"] = "Teal"
+    payload["stages"][1]["spiral_dynamics_color"] = "Beige"
+    workspace.write_correspondence(payload)
+
+    problems = workspace.drift()
+
+    phase_pairs = len(_PHASES) * 2
+    assert len(problems) == 2 * phase_pairs
+    assert sum("stage 1 " in problem for problem in problems) == phase_pairs
+    assert sum("stage 8 " in problem for problem in problems) == phase_pairs
+    assert "the Modes CSV says 'Epiphany'" in problems[0]
+
+
+def test_a_dataset_stage_the_artifact_lacks_is_drift(workspace: Workspace) -> None:
+    """A stage with no colour in the artifact is reported, not raised as a KeyError."""
+    payload = _correspondence()
+    del payload["stages"][1]
+    workspace.write_correspondence(payload)
+
+    problems = workspace.drift()
+
+    assert problems == [
+        "stage 8 has no spiral_dynamics_color in the stage-correspondence artifact",
+        "the Modes CSV has a row for 'teal' but no dataset stage carries it",
+    ]
+
+
+# ── read_stage_colours ──────────────────────────────────────────────────
+
+
+def test_reads_each_stage_colour_normalised(workspace: Workspace) -> None:
+    payload = _correspondence()
+    payload["stages"][2]["spiral_dynamics_color"] = "  Clear   LIGHT "
+    workspace.write_correspondence(payload)
+
+    assert read_stage_colours(workspace.correspondence_path) == {
+        1: "beige",
+        8: "teal",
+        10: "clear light",
+    }
+
+
+def test_rejects_a_missing_correspondence_artifact(tmp_path: Path) -> None:
+    with pytest.raises(WavelengthTermsError, match="build_stage_correspondence"):
+        read_stage_colours(tmp_path / "absent.json")
+
+
+def test_rejects_a_correspondence_artifact_that_is_not_json(workspace: Workspace) -> None:
+    workspace.correspondence_path.write_text("{not json", encoding="utf-8")
+    with pytest.raises(WavelengthTermsError, match="not valid JSON"):
+        read_stage_colours(workspace.correspondence_path)
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        pytest.param({"stages": "nope"}, id="stages_not_a_list"),
+        pytest.param(["not", "an", "object"], id="not_an_object"),
+        pytest.param({"stages": ["beige"]}, id="stage_not_an_object"),
+        pytest.param(
+            {"stages": [{"stage_number": "1", "spiral_dynamics_color": "Beige"}]},
+            id="number_is_str",
+        ),
+        pytest.param(
+            {"stages": [{"stage_number": True, "spiral_dynamics_color": "Beige"}]},
+            id="number_is_bool",
+        ),
+        pytest.param({"stages": [{"stage_number": 1}]}, id="no_colour"),
+        pytest.param(
+            {"stages": [{"stage_number": 1, "spiral_dynamics_color": " "}]}, id="blank_colour"
+        ),
+    ],
+)
+def test_rejects_a_malformed_correspondence_artifact(workspace: Workspace, payload: object) -> None:
+    workspace.write_correspondence(payload)
+    with pytest.raises(WavelengthTermsError, match=re.escape(str(workspace.correspondence_path))):
+        read_stage_colours(workspace.correspondence_path)
+
+
 # ── main / CLI ──────────────────────────────────────────────────────────
 
 
@@ -313,6 +425,34 @@ def test_main_fails_on_an_unreadable_input(
     assert "sync_content" in capsys.readouterr().err
 
 
+def test_main_fails_on_a_missing_correspondence_artifact(
+    workspace: Workspace, capsys: pytest.CaptureFixture[str]
+) -> None:
+    workspace.correspondence_path.unlink()
+    assert main(workspace.argv()) == 1
+    assert "build_stage_correspondence" in capsys.readouterr().err
+
+
+def test_main_fails_on_a_malformed_correspondence_artifact(
+    workspace: Workspace, capsys: pytest.CaptureFixture[str]
+) -> None:
+    workspace.correspondence_path.write_text("{not json", encoding="utf-8")
+    assert main(workspace.argv()) == 1
+    assert "not valid JSON" in capsys.readouterr().err
+
+
+def test_main_fails_when_the_artifact_moves_a_colour(
+    workspace: Workspace, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A violating correspondence fixture turns the gate red with an untouched dataset."""
+    payload = _correspondence()
+    payload["stages"][1]["spiral_dynamics_color"] = "Beige"
+    workspace.write_correspondence(payload)
+
+    assert main(workspace.argv()) == 1
+    assert "stage 8 Rising integrated is 'Epiphany'" in capsys.readouterr().err
+
+
 def test_the_committed_dataset_matches_the_vendored_csv() -> None:
     """What CI runs: the real inputs agree (this is the #3135 drift gate)."""
     assert main([]) == 0
@@ -323,6 +463,7 @@ def test_the_default_inputs_are_the_committed_files() -> None:
         gate.MODES_CSV_PATH == _BACKEND / "content" / "curriculum" / "modes_of_the_wavelength.csv"
     )
     assert gate.DATASET_PATH == _BACKEND / "src" / "curriculum" / "archetypal_wavelength.json"
+    assert gate.CORRESPONDENCE_PATH == _BACKEND / "src" / "curriculum" / "stage_correspondence.json"
 
 
 def test_the_module_runs_as_a_cli_without_src_on_the_path() -> None:

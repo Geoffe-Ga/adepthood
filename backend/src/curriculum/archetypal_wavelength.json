@@ -1,20 +1,11 @@
 {
-  "dataset_version": "2.5.0",
+  "dataset_version": "3.0.0",
   "provenance": {
-    "stage_attributes_source": "APTITUDE Complete Map.csv (aptitude-course repository, database_of_course_curriculum), with the December 2025 supersessions recorded in that repository's CLAUDE.md: stage 4 aspect 'Community Love'; stage 8 color 'Teal' and free-will archetype 'True Self Embodier'. Stage 8's aspect 'True Self Wisdom' is the CSV's own cell (owner ruling 2026-10-13, #2664)",
     "manifestations_source": "Archetypal Wavelength spreadsheet, 'Expanded List' sheet (the six-phase Rx/OD manifestation copy and the Stage titles; the subtitles are sourced separately, see subtitles_source)",
     "manifestation_names_source": "Stages 1-9: every integrated (Rx) and shadow (OD) name equals the aptitude-course 'The Archetypal Wavelength - Modes of the Wavelength.csv' Medicine/Toxic cell, vendored by scripts/sync_content.py to backend/content/curriculum/modes_of_the_wavelength.csv and gated by scripts/check_wavelength_terms.py (issue #3135); descriptions are app-authored summaries of the vendored full-6-phase-wavelength-breakdown chapters. Stage 10 (Clear Light) has no CSV row and no pairs of its own: it is the Neither/Both Mode (its \"mode\" holds_all_modes), and GET /stages serves its phases as a chord of stages 1-9's integrated names, composed by curriculum.phase_chords.",
     "subtitles_source": "aptitude-course repository (Geoffe-Ga/aptitude-course) resource copy: markdown/resources/04-aptitude-stages.md headings and the markdown/resources/02-about.md item list. Stage 8 follows commit 3bf0df5 (2026-07-31), carried by the vendored pin at backend/content/CONTENT_VERSION since the re-pin to 9d0f896",
     "extracted_from": "in-repo vendored course markdown (backend/content/markdown/backup/ and *full-6-phase-wavelength-breakdown chapters)",
-    "stage_2_free_will_source": "Stage 2's relationship_to_free_will 'Pleasure Seeker' follows the vendored course at the CONTENT_VERSION pin 9d0f896: the chapter backend/content/markdown/02-purple/04-the-relationship-to-free-will-at-purple-pleasure-seeker.md and the markdown/resources/aptitude-stages.md heading, superseding the stale archetype carried over from backup/2.PURPLE.md (issue #2915). Its free_will_description is the vendored APTITUDE Complete Map.csv sentence carried by src/curriculum/stage_correspondence.json (#2664), replacing the earlier chapter paraphrase; tests/test_stage_correspondence.py holds it equal to the artifact (#2667) until #2666 retires this copy of the correspondence fields",
-    "free_will_descriptions_source": "Stages 1, 3, 4, 6, 7, 8 and 10 carry the free_will_description (and Stage 8 the growing_up_stage) that the generated stage_correspondence.json ships: verbatim spans of the vendored relationship-to-free-will chapters, recorded as supersessions of the Complete Map CSV in stage_correspondence_supersessions.json, since the CSV sentences read as textbook third person and Stage 8's named Teal as nonduality (chapter text wins over the CSV, owner ruling 2026-09-16)",
-    "refresh_doc": "docs/curriculum.md",
-    "supersessions": [
-      {"stage_number": 4, "field": "aspect", "value": "Community Love"},
-      {"stage_number": 8, "field": "spiral_dynamics_color", "value": "Teal"},
-      {"stage_number": 8, "field": "relationship_to_free_will", "value": "True Self Embodier"},
-      {"stage_number": 8, "field": "growing_up_stage", "value": "True Self Connection"}
-    ]
+    "refresh_doc": "docs/curriculum.md"
   },
   "phases": ["Rising", "Peaking", "Withdrawal", "Diminishing", "Bottoming Out", "Restoration"],
   "stages": [
@@ -22,13 +13,6 @@
       "stage_number": 1,
       "title": "Survival",
       "subtitle": "Active Yes-And-Ness",
-      "category": "Yes-And-Ness",
-      "aspect": "Agency",
-      "spiral_dynamics_color": "Beige",
-      "growing_up_stage": "Survival",
-      "divine_gender_polarity": "Divine Masculine",
-      "relationship_to_free_will": "Biological Machine",
-      "free_will_description": "When we first move through Beige we operate like a Biological Machine—a bundle of reflexes, needs, cravings, and instincts. Basically, a baby. An addict deep in the territory of abuse. A victim of trauma, deprivation, or circumstance struggling to survive. It’s not something to feel guilty about.",
       "manifestations": [
         {
           "phase": "Rising",
@@ -66,13 +50,6 @@
       "stage_number": 2,
       "title": "Magick",
       "subtitle": "Receptive Yes-And-Ness",
-      "category": "Yes-And-Ness",
-      "aspect": "Receptivity",
-      "spiral_dynamics_color": "Purple",
-      "growing_up_stage": "Magic",
-      "divine_gender_polarity": "Divine Feminine",
-      "relationship_to_free_will": "Pleasure Seeker",
-      "free_will_description": "Behavior is steered from the Sacral: toward what feels nice and away from what doesn't, before any argument has been made. Much of what feels nice was installed by inherited stories and by people with an interest in what you reach for, so pleasure is at once real information and an easy leash. Free Will here is not renouncing pleasure or obeying it, but learning to tell the yes that widens you from the yes that narrows you.",
       "manifestations": [
         {
           "phase": "Rising",
@@ -110,13 +87,6 @@
       "stage_number": 3,
       "title": "Power",
       "subtitle": "Self-Love",
-      "category": "Love",
-      "aspect": "Self-Love",
-      "spiral_dynamics_color": "Red",
-      "growing_up_stage": "Ego-centrism",
-      "divine_gender_polarity": "Divine Masculine",
-      "relationship_to_free_will": "Dominator",
-      "free_will_description": "APTITUDE teaches that Free Will only becomes real when you learn to express power differently. The Dominator believes they are acting freely, but in truth, they are ruled by fear and shame. Their \"choices\" are reactions. Their \"power\" is armor.",
       "manifestations": [
         {
           "phase": "Rising",
@@ -154,13 +124,6 @@
       "stage_number": 4,
       "title": "Conformity",
       "subtitle": "Community Love",
-      "category": "Love",
-      "aspect": "Community Love",
-      "spiral_dynamics_color": "Blue",
-      "growing_up_stage": "Conformity",
-      "divine_gender_polarity": "Divine Feminine",
-      "relationship_to_free_will": "Victim",
-      "free_will_description": "At Blue, you do what you're told. You follow the rules. You meet the expectations.",
       "manifestations": [
         {
           "phase": "Rising",
@@ -198,13 +161,6 @@
       "stage_number": 5,
       "title": "Achievist",
       "subtitle": "Intellectual Understanding",
-      "category": "Understanding",
-      "aspect": "Intellectual Understanding",
-      "spiral_dynamics_color": "Orange",
-      "growing_up_stage": "Achievest",
-      "divine_gender_polarity": "Divine Masculine",
-      "relationship_to_free_will": "Status Seeker",
-      "free_will_description": "Behavior is based on chasing things valued by the culture: money, wealth, status, privilege, fame… in short, achievement. Although the question may arise, Free Will is still uninteresting and left largely unconsidered",
       "manifestations": [
         {
           "phase": "Rising",
@@ -242,13 +198,6 @@
       "stage_number": 6,
       "title": "Pluralist",
       "subtitle": "Embodied Understanding",
-      "category": "Understanding",
-      "aspect": "Embodied Understanding",
-      "spiral_dynamics_color": "Green",
-      "growing_up_stage": "Pluralistic",
-      "divine_gender_polarity": "Divine Feminine",
-      "relationship_to_free_will": "Shadow Glorifier",
-      "free_will_description": "Here's the truth: recognizing that you've been conditioned is not the same as freeing yourself from that conditioning. Naming your trauma is not the same as healing it. Understanding why you're afraid doesn't make you brave.",
       "manifestations": [
         {
           "phase": "Rising",
@@ -286,13 +235,6 @@
       "stage_number": 7,
       "title": "Integrative",
       "subtitle": "Systems Wisdom",
-      "category": "Wisdom",
-      "aspect": "Systems Wisdom",
-      "spiral_dynamics_color": "Yellow",
-      "growing_up_stage": "Integrative",
-      "divine_gender_polarity": "Divine Masculine",
-      "relationship_to_free_will": "Despairing Analyst",
-      "free_will_description": "Yellow is where you start to see the forces. Where you develop enough metacognitive capacity to observe your own patterns as they arise. And from that observation, you gain the smallest sliver of space—the gap between impulse and action. And in that gap, choice becomes possible.",
       "manifestations": [
         {
           "phase": "Rising",
@@ -330,13 +272,6 @@
       "stage_number": 8,
       "title": "True Self Connection",
       "subtitle": "True Self Wisdom",
-      "category": "Wisdom",
-      "aspect": "True Self Wisdom",
-      "spiral_dynamics_color": "Teal",
-      "growing_up_stage": "True Self Connection",
-      "divine_gender_polarity": "Divine Feminine",
-      "relationship_to_free_will": "True Self Embodier",
-      "free_will_description": "The part of you that chose to incarnate into these conditions. The part that has a purpose, a mission, a knowing that the personality cannot access through effort alone.",
       "manifestations": [
         {
           "phase": "Rising",
@@ -374,13 +309,6 @@
       "stage_number": 9,
       "title": "Effortless Being",
       "subtitle": "Unity of Being",
-      "category": "Being",
-      "aspect": "Unity",
-      "spiral_dynamics_color": "Ultraviolet",
-      "growing_up_stage": "Effortless Being",
-      "divine_gender_polarity": "Divine Hermaphrodite",
-      "relationship_to_free_will": "Blissy Adept",
-      "free_will_description": "The obsession with \"Free\" Will of the previous two stages grows less all consuming and the goal becomes to subsume individual Will into alignment with the Will of Source. Blissful Union of Atman and Brahman.",
       "manifestations": [
         {
           "phase": "Rising",
@@ -418,13 +346,6 @@
       "stage_number": 10,
       "title": "Pure Awareness",
       "subtitle": "Emptiness and Awareness",
-      "category": "Awareness",
-      "aspect": "Emptiness",
-      "spiral_dynamics_color": "Clear Light",
-      "growing_up_stage": "Pure Awareness",
-      "divine_gender_polarity": "Divine Hermaphrodite",
-      "relationship_to_free_will": "Whole Adept",
-      "free_will_description": "At Clear Light, the question of Free Will dissolves. Not because it's been answered, but because it's been seen through.",
       "mode": {
         "name": "Be (Neither/Both)",
         "description": "Clear Light is the Neither/Both Mode. It is not one more scale beside the others: it contains within it the healthy expression of all the other Modes, Inhabit, Express, Collaborate, Integrate and Absorb, and is reducible to none of them. Employing healthy chords of Frequencies from Clear Light is like playing jazz instead of scales.",

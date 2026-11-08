@@ -1,16 +1,18 @@
-"""The curriculum mirror agrees with the generated stage-correspondence artifact.
+"""The curriculum dataset carries no copy of the stage correspondences.
 
-Issue #2667. ``src/curriculum/stage_correspondence.json`` is generated from the
-vendored Complete Map CSV and the ratified supersessions, and its ``--check``
-gate runs in CI. ``src/curriculum/archetypal_wavelength.json`` still carries a
-hand-kept copy of the same seven correspondence fields per stage, and the
-backend curriculum loader still serves it to whatever reads that dataset. Two
-copies of one fact with nothing holding them
-equal is how stage 2 kept a stale free-will sentence after the CSV it was meant
-to follow had been vendored. This module is the parity gate the generator's
-docstring promises: every shared field, every stage, no exemption list. When
-#2666 retires the mirror's copy, the parity test flips to asserting the fields
-are gone rather than gaining an allowlist.
+Issue #2667 added a parity gate here: ``src/curriculum/stage_correspondence.json``
+is generated from the vendored Complete Map CSV and the ratified supersessions
+(its ``--check`` gate runs in CI), while ``src/curriculum/archetypal_wavelength.json``
+still carried a hand-kept copy of the same seven correspondence fields per stage.
+Two copies of one fact with nothing holding them equal is how stage 2 kept a
+stale free-will sentence after the CSV it was meant to follow had been vendored.
+
+That gate promised to flip when #2666 retired the copy, rather than gain an
+allowlist. It has: the dataset now owns the per-Stage titles, subtitles, Modes
+and phase manifestations only, and :func:`curriculum.stage_correspondence.stage_correspondence`
+(seeded into ``CourseStage`` and served by ``GET /stages``) is the one source of
+the seven fields. The test below asserts the copy is gone from the committed
+file and from the loader's record, so it cannot quietly come back.
 
 It also pins the #1637 values as literals, so an upstream re-pin or a new
 supersession that moves them is a visible decision in a diff rather than a
@@ -19,96 +21,47 @@ silent regeneration.
 
 from __future__ import annotations
 
-import copy
 import json
 from pathlib import Path
 from typing import Any, ClassVar
 
+import curriculum
 import scripts.build_stage_correspondence as generator
 from curriculum.stage_correspondence import CORRESPONDENCE_FIELDS
 from domain.constants import TOTAL_STAGES
 from scripts.build_stage_correspondence import load_supersessions
 
-_MIRROR_PATH = (
+_DATASET_PATH = (
     Path(__file__).resolve().parents[1] / "src" / "curriculum" / "archetypal_wavelength.json"
 )
 
-#: The marker reported in place of a field name when a stage is on one side only.
-_MISSING_STAGE = "<missing>"
-
-#: The ten stage numbers both sources must carry.
+#: The ten stage numbers the dataset must still carry.
 _ALL_STAGES = frozenset(range(1, TOTAL_STAGES + 1))
 
-
-def _stages(path: Path) -> list[dict[str, Any]]:
-    """Return the raw ``stages`` list of a curriculum JSON file."""
-    payload: dict[str, Any] = json.loads(path.read_text(encoding="utf-8"))
-    stages: list[dict[str, Any]] = payload["stages"]
-    return stages
-
-
-def _mirror_divergences(
-    mirror_stages: list[dict[str, Any]], artifact_stages: list[dict[str, Any]]
-) -> list[tuple[int, str]]:
-    """Return ``(stage_number, field)`` for every shared field the two sources disagree on.
-
-    Stages are joined by ``stage_number``; a stage present on only one side is
-    reported as ``(n, "<missing>")`` rather than raising, so a dropped stage
-    reads as drift instead of a ``KeyError``.
-    """
-    mirror = {stage["stage_number"]: stage for stage in mirror_stages}
-    artifact = {stage["stage_number"]: stage for stage in artifact_stages}
-    divergences: list[tuple[int, str]] = []
-    for number in sorted(mirror.keys() | artifact.keys()):
-        if number not in mirror or number not in artifact:
-            divergences.append((number, _MISSING_STAGE))
-            continue
-        divergences.extend(
-            (number, field)
-            for field in CORRESPONDENCE_FIELDS
-            if mirror[number].get(field) != artifact[number].get(field)
-        )
-    return divergences
+#: Provenance keys that described the retired correspondence copy. The artifact
+#: and ``stage_correspondence_supersessions.json`` own that provenance now.
+_RETIRED_PROVENANCE_KEYS = frozenset(
+    {
+        "supersessions",
+        "stage_attributes_source",
+        "stage_2_free_will_source",
+        "free_will_descriptions_source",
+    }
+)
 
 
-def test_curriculum_mirror_matches_the_artifact_field_by_field() -> None:
-    """All ten stages agree on all seven shared correspondence fields."""
-    mirror, artifact = _stages(_MIRROR_PATH), _stages(generator.ARTIFACT_PATH)
-    assert {stage["stage_number"] for stage in mirror} == _ALL_STAGES
-    assert {stage["stage_number"] for stage in artifact} == _ALL_STAGES
-    assert _mirror_divergences(mirror, artifact) == []
-
-
-def test_the_parity_join_covers_exactly_the_seven_shared_fields() -> None:
-    """The fields compared are the artifact's correspondence columns, all present in the mirror."""
-    mirror = _stages(_MIRROR_PATH)
-    assert len(CORRESPONDENCE_FIELDS) == len(set(CORRESPONDENCE_FIELDS))
-    for stage in mirror:
-        assert set(CORRESPONDENCE_FIELDS) <= stage.keys()
-
-
-def test_a_drifted_mirror_names_the_stage_and_field() -> None:
-    """One altered field is reported as that stage and that field, and nothing else."""
-    artifact = _stages(generator.ARTIFACT_PATH)
-    drifted = copy.deepcopy(artifact)
-    drifted[6]["aspect"] = "Wholeness"
-    assert _mirror_divergences(drifted, artifact) == [(7, "aspect")]
-
-
-def test_every_shared_field_is_compared() -> None:
-    """Each of the seven fields, altered alone, is caught -- the last one included."""
-    artifact = _stages(generator.ARTIFACT_PATH)
-    for field in CORRESPONDENCE_FIELDS:
-        drifted = copy.deepcopy(artifact)
-        drifted[1][field] = f"drifted {field}"
-        assert _mirror_divergences(drifted, artifact) == [(2, field)]
-
-
-def test_a_mirror_missing_a_stage_is_reported() -> None:
-    """A stage dropped from either side is drift, not a crash and not a pass."""
-    artifact = _stages(generator.ARTIFACT_PATH)
-    assert _mirror_divergences(artifact[:-1], artifact) == [(TOTAL_STAGES, _MISSING_STAGE)]
-    assert _mirror_divergences(artifact, artifact[1:]) == [(1, _MISSING_STAGE)]
+def test_curriculum_dataset_carries_no_correspondence_fields() -> None:
+    """No stage, provenance key or loader record repeats the artifact's seven fields."""
+    payload: dict[str, Any] = json.loads(_DATASET_PATH.read_text(encoding="utf-8"))
+    for stage in payload["stages"]:
+        assert set(stage) & set(CORRESPONDENCE_FIELDS) == set(), stage["stage_number"]
+    assert {stage["stage_number"] for stage in payload["stages"]} == _ALL_STAGES
+    assert set(payload["provenance"]) & _RETIRED_PROVENANCE_KEYS == set()
+    assert not any(
+        hasattr(curriculum.stage_curriculum(number), field)
+        for number in _ALL_STAGES
+        for field in CORRESPONDENCE_FIELDS
+    )
 
 
 class TestIssue1637Rulings:
