@@ -275,6 +275,12 @@ export const ROUTES: readonly Route[] = [
   tab('Settings', 'Settings hub', '/settings', 'settings-hub-screen'),
   tab('ApiKeySettings', 'API key settings', '/api-key-settings', 'api-key-settings-screen'),
   settingsRow('TimezoneSettings', 'Timezone settings', 'timezone', 'timezone-settings-screen'),
+  settingsRow(
+    'ProgramStartSettings',
+    'Program start date settings',
+    'program-start',
+    'program-start-settings-screen',
+  ),
   settingsRow('VaultSettings', 'Vault settings', 'vault', 'vault-settings-screen'),
   {
     // The lane enrols user ids 1..100 in the managed-vault pilot (the backend
