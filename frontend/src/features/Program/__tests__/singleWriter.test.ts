@@ -12,11 +12,21 @@ import { describe, expect, it } from '@jest/globals';
  * the two-anchor defect this issue closed. Only ``src/features/Program`` may do
  * either; the habit-derived fallback in ``habitManager`` is the one other
  * writer of the store's anchor, and only for the offline / no-server-row case.
+ *
+ * The scan matches any REFERENCE to a writer, not one spelling of a call, so an
+ * aliased client (``stagesApi.setProgramStart``), a selector-bound setter
+ * (``useProgramStore((s) => s.setProgramStartDay)``), a destructured
+ * ``getState()`` and a raw ``setState`` are all caught (#3097 review). Comments
+ * are stripped first, so naming a writer in prose is not a write.
  */
 
 const SRC = path.resolve(__dirname, '..', '..', '..');
-const PROGRAM_DIR = path.join(SRC, 'features', 'Program');
 const IGNORED_DIRS = new Set(['__tests__', '__mocks__', 'node_modules']);
+
+const PROGRAM_DIR = path.join('features', 'Program');
+const STORE_FILE = path.join('store', 'useProgramStore.ts');
+const API_CLIENT_FILE = path.join('api', 'index.ts');
+const HABIT_FALLBACK_FILE = path.join('features', 'Habits', 'services', 'habitManager.ts');
 
 const isSourceFile = (name: string): boolean =>
   /\.tsx?$/u.test(name) && !/\.(test|spec)\.tsx?$/u.test(name);
@@ -34,26 +44,109 @@ function walk(dir: string): string[] {
   return found;
 }
 
-const callersOf = (pattern: RegExp): string[] =>
-  walk(SRC)
-    .filter((file) => pattern.test(fs.readFileSync(file, 'utf8')))
-    .map((file) => path.relative(SRC, file));
+/** Drop block and line comments; a ``//`` after a colon (a URL) is kept. */
+const withoutComments = (source: string): string =>
+  source.replace(/\/\*[\s\S]*?\*\//gu, '').replace(/(^|[^:])\/\/.*$/gmu, '$1');
 
-const outsideProgram = (files: string[]): string[] =>
-  files.filter((file) => !path.join(SRC, file).startsWith(PROGRAM_DIR + path.sep));
+const inProgram = (file: string): boolean => file.startsWith(PROGRAM_DIR + path.sep);
+
+interface WriterRule {
+  readonly name: string;
+  readonly pattern: RegExp;
+  /** Files (relative to ``src``) that may reference the writer. */
+  readonly allowed: (_file: string) => boolean;
+}
+
+const RULES: readonly WriterRule[] = [
+  {
+    name: 'PUT /stages/program-calendar',
+    // The client method, under any receiver or alias; not the store setters.
+    pattern: /\bsetProgramStart\b(?!Date|Day)/u,
+    allowed: (file) => inProgram(file) || file === API_CLIENT_FILE,
+  },
+  {
+    name: 'server anchor adoption',
+    pattern: /\badoptServerProgramStart\b/u,
+    allowed: (file) => inProgram(file) || file === STORE_FILE,
+  },
+  {
+    name: 'client-side anchor write',
+    pattern: /\bsetProgramStart(?:Date|Day)\b/u,
+    allowed: (file) => file === HABIT_FALLBACK_FILE || file === STORE_FILE,
+  },
+  {
+    name: 'raw program store write',
+    pattern: /\buseProgramStore\.setState\b/u,
+    allowed: (file) => file === STORE_FILE,
+  },
+];
+
+/** ``rule: file`` for every reference a rule does not allow. */
+const violationsIn = (sources: ReadonlyArray<readonly [string, string]>): string[] =>
+  sources.flatMap(([file, source]) => {
+    const code = withoutComments(source);
+    return RULES.filter((rule) => !rule.allowed(file) && rule.pattern.test(code)).map(
+      (rule) => `${rule.name}: ${file}`,
+    );
+  });
+
+const productionSources = (): Array<readonly [string, string]> =>
+  walk(SRC).map((file) => [path.relative(SRC, file), fs.readFileSync(file, 'utf8')] as const);
 
 describe('the program anchor has one writer (#3097)', () => {
-  it('only src/features/Program calls PUT /stages/program-calendar', () => {
-    expect(outsideProgram(callersOf(/\bstages\.setProgramStart\(/u))).toEqual([]);
+  it('no production file outside the seam references a writer', () => {
+    expect(violationsIn(productionSources())).toEqual([]);
   });
 
-  it('only src/features/Program adopts the server anchor into the store', () => {
-    expect(outsideProgram(callersOf(/\.adoptServerProgramStart\(/u))).toEqual([]);
+  it('the habit-derived fallback is the only client-side anchor writer', () => {
+    const writers = productionSources()
+      .filter(([file]) => file !== STORE_FILE)
+      .filter(([, source]) => /\bsetProgramStart(?:Date|Day)\b/u.test(withoutComments(source)))
+      .map(([file]) => file);
+
+    expect(writers).toEqual([HABIT_FALLBACK_FILE]);
+  });
+});
+
+describe('the scan catches every spelling of a second writer', () => {
+  const MAP_SERVICE = path.join('features', 'Map', 'services', 'stageService.ts');
+  const MAP_SCREEN = path.join('features', 'Map', 'MapScreen.tsx');
+
+  it.each<[string, string, string]>([
+    [
+      'an aliased API client',
+      MAP_SERVICE,
+      "import { stages as stagesApi } from '../../../api';\nvoid stagesApi.setProgramStart(day);",
+    ],
+    [
+      'a selector-bound setter',
+      MAP_SCREEN,
+      'const setDay = useProgramStore((s) => s.setProgramStartDay);\nsetDay(day);',
+    ],
+    [
+      'a destructured getState',
+      MAP_SCREEN,
+      'const { adoptServerProgramStart } = useProgramStore.getState();\nadoptServerProgramStart(x);',
+    ],
+    [
+      'a raw setState',
+      MAP_SCREEN,
+      "useProgramStore.setState({ programStartDay: day, anchorSource: 'server' });",
+    ],
+    ['a literal client call', MAP_SERVICE, 'await stages.setProgramStart(day, token);'],
+  ])('flags %s', (_shape, file, source) => {
+    expect(violationsIn([[file, source]])).not.toEqual([]);
   });
 
-  it('only the habit-derived fallback writes a client-side anchor', () => {
-    expect(callersOf(/\.setProgramStart(?:Date|Day)\(/u)).toEqual([
-      path.join('features', 'Habits', 'services', 'habitManager.ts'),
-    ]);
+  it('does not flag a writer named only in a comment', () => {
+    const source = '// adoptServerProgramStart is the seam\n/** setProgramStartDay(...) */\n';
+
+    expect(violationsIn([[MAP_SCREEN, source]])).toEqual([]);
+  });
+
+  it('lets the seam itself through', () => {
+    const source = 'await stages.setProgramStart(day, token);';
+
+    expect(violationsIn([[path.join(PROGRAM_DIR, 'programAnchor.ts'), source]])).toEqual([]);
   });
 });

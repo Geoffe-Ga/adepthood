@@ -28,11 +28,14 @@ import { instantAt } from './zonedClock';
  *  - on the wire: the add sheet's POST /habits/ carries the rung date for its
  *    slot, not today, and GET /habits/ echoes it back as a program row;
  *  - on the Map: the program anchor is the server's (#3097), picked ten days
- *    back through PUT /stages/program-calendar before the rows are laid on its
- *    rungs. A real log-out wipes the stored anchor; the log-in adopts the
- *    server's again, and stage 2 still unlocks eleven days out -- the add
- *    moved no screen's calendar. A today-stamped add could only ever have won
- *    the habit-derived minimum, which is now the offline fallback alone.
+ *    back through PUT /stages/program-calendar. The seeded rows are laid on
+ *    the rungs of a day FOUR days LATER than that anchor, so the habit-derived
+ *    fallback (the minimum over the program rows) would put stage 2 fifteen
+ *    days out, while the server's anchor puts it eleven: the Map can only read
+ *    eleven if the session reconcile adopted the server's day. A real log-out
+ *    wipes the stored anchor, and the log-in must adopt the server's again --
+ *    the add moved no screen's calendar, and the add itself takes its rung
+ *    from the server's anchor, not from the rows.
  *
  * The zone is pinned to UTC and checked against the server's record, and the
  * page's clock is installed at midday on the host's today before the app
@@ -55,6 +58,12 @@ const PINNED_ZONE = 'UTC';
 const PINNED_WALL = '12:00';
 /** How far before today the person says their program began. */
 const ANCHOR_DAYS_BACK = 10;
+/**
+ * How much later than the server's anchor the seeded rows' ladder starts. Not
+ * zero, so the habit-derived fallback and the server's anchor disagree and the
+ * Map shows which one the app counted from.
+ */
+const ROWS_LATER_BY_DAYS = 4;
 /** Program rows already on the ladder before the add; the add takes the next slot. */
 const SEEDED_NAMES = ['Dawn sit', 'Cold water'];
 const ADDED_SLOT = SEEDED_NAMES.length;
@@ -64,6 +73,8 @@ const HABITS_PATH = '/habits/';
 const PROGRAM_ANCHOR_KEY = '@adepthood/program_start_date';
 const FIRST_STAGE_DAYS = STAGE_DURATIONS_DAYS[0];
 const EXPECTED_COUNTDOWN = `Opens in ${FIRST_STAGE_DAYS - ANCHOR_DAYS_BACK} days`;
+/** What the Map would read had it counted from the rows rather than the server. */
+const ROW_DERIVED_COUNTDOWN = `Opens in ${FIRST_STAGE_DAYS - ANCHOR_DAYS_BACK + ROWS_LATER_BY_DAYS} days`;
 const PROGRAM_CALENDAR_PATH = '/stages/program-calendar';
 /** Length of the `YYYY-MM-DD` prefix of an ISO-8601 instant. */
 const ISO_DATE_LENGTH = 10;
@@ -122,9 +133,13 @@ test('an added habit takes its rung on the cadence and does not undercut the pro
     data: { program_start_date: anchorKey },
   });
   expect(picked.ok(), 'arranging the program start date failed').toBe(true);
+  const rowsAnchorKey = addDaysToKey(anchorKey, ROWS_LATER_BY_DAYS);
   for (const [slot, name] of SEEDED_NAMES.entries()) {
-    await seedHabit(page.request, token, name, rungKey(anchorKey, slot));
+    await seedHabit(page.request, token, name, rungKey(rowsAnchorKey, slot));
   }
+  expect(ROW_DERIVED_COUNTDOWN, 'the two anchors must read differently').not.toBe(
+    EXPECTED_COUNTDOWN,
+  );
 
   // The reload re-adopts the server's anchor for the resumed session.
   await page.reload();

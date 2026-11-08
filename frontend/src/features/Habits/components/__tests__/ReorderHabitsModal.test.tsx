@@ -1223,6 +1223,46 @@ describe('ReorderHabitsModal — the server decides the start date (#3097)', () 
     expect(onSaveOrder).toHaveBeenCalledTimes(1);
   });
 
+  it('a reorder alone never answers the start date, even when the picker opened on another day', async () => {
+    // No anchor held (before the session reconcile lands, or after a log-out
+    // wipe): the picker opens on today, which is not the held day. Only a pick
+    // made in this sitting may be sent.
+    const onSaveOrder = jest.fn((_habits: Habit[]) => Promise.resolve());
+    const result = render(
+      <ReorderHabitsModal visible habits={HABITS} onClose={jest.fn()} onSaveOrder={onSaveOrder} />,
+    );
+    expect(useProgramStore.getState().programStartDay).toBeNull();
+
+    await act(async () => {
+      fireEvent.press(result.getByText('Save Order'));
+    });
+
+    expect(mockCommitProgramStart).not.toHaveBeenCalled();
+    expect(onSaveOrder).toHaveBeenCalledTimes(1);
+  });
+
+  it('nor when the held anchor changes under an open modal', async () => {
+    act(() => useProgramStore.getState().hydrateProgramStartDate(STORED_PICK));
+    const onSaveOrder = jest.fn((_habits: Habit[]) => Promise.resolve());
+    const result = render(
+      <ReorderHabitsModal visible habits={HABITS} onClose={jest.fn()} onSaveOrder={onSaveOrder} />,
+    );
+    act(() =>
+      useProgramStore.getState().adoptServerProgramStart({
+        day: '2026-02-01',
+        window: null,
+        locked: false,
+      }),
+    );
+
+    await act(async () => {
+      fireEvent.press(result.getByText('Save Order'));
+    });
+
+    expect(mockCommitProgramStart).not.toHaveBeenCalled();
+    expect(onSaveOrder).toHaveBeenCalledTimes(1);
+  });
+
   it.each([
     [422, 'program_start_too_early'],
     [409, 'program_start_fixed_after_first_cycle'],
