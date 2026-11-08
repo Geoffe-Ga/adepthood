@@ -18,7 +18,7 @@ import {
   type RecordedRequest,
 } from './demoTileBrowserSupport';
 import { DEMO_FRONTEND_PORT, HABIT_DEMO_ENV } from './frontendEnv';
-import { backendUrl, openHabits, signUp } from './journalHabitsBrowserSupport';
+import { backendUrl, isoDaysAgo, openHabits, signUp } from './journalHabitsBrowserSupport';
 
 /**
  * Issue #2491 — a demo placeholder tile stays local: nothing done to it puts
@@ -89,8 +89,16 @@ const ACHIEVED_THIS_WEEK = 'KEPT THIS WEEK';
 const MILESTONE_OR_LOGGED = new RegExp(`(?:achieved|Logged \\d+) for ${LOGGED_TILE}`, 'u');
 const STORY_TILE = 'Scrolling';
 const DELETED_TILE = 'Limit Caffeine';
-/** Any past day the first habit's start date can be moved to. */
-const NEW_START_DATE = '2026-01-05';
+/** How many days back the moved start date lies: well inside the backdate window. */
+const START_DATE_DAYS_AGO = 7;
+/**
+ * A past day the first habit's start date can be moved to. It is relative to
+ * today, not fixed: since #3097 the Reorder modal saves a date picked in its
+ * sitting through `PUT /stages/program-calendar`, and the server refuses a day
+ * before the account's backdate window, so a fixed date would fall out of the
+ * window as the calendar moved and keep the modal open on the refusal.
+ */
+const NEW_START_DATE = isoDaysAgo(START_DATE_DAYS_AGO);
 
 /** How long the habit list must go unasked before the journey acts. */
 const LIST_READS_QUIET_MS = 1500;

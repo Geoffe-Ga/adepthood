@@ -163,6 +163,22 @@ const renderActions = (tz = 'UTC') => {
 };
 
 describe('useHabitActions timezone wiring', () => {
+  it('forwards the picked program start day with the scaffolding picks (#3097)', async () => {
+    const zone = 'America/Los_Angeles';
+    const onboardingSave = jest.spyOn(habitManager, 'onboardingSave').mockResolvedValue(undefined);
+    const { result } = renderActions(zone);
+
+    try {
+      await act(async () => {
+        await result.current.actions.onboardingSave([], '2026-10-29');
+      });
+
+      expect(onboardingSave).toHaveBeenCalledWith([], expect.any(Function), zone, '2026-10-29');
+    } finally {
+      onboardingSave.mockRestore();
+    }
+  });
+
   it('forwards the authenticated zone to date-bearing habit creates', async () => {
     const zone = 'America/Los_Angeles';
     const addHabit = jest.spyOn(habitManager, 'addHabit').mockResolvedValue(undefined);

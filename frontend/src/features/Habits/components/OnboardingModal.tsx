@@ -23,6 +23,14 @@ import { goalGroups as goalGroupsApi, type ApiGoalGroup } from '../../../api';
 import DatePicker, { parseISODate, toISODate } from '../../../components/DatePicker';
 import { colors, STAGE_COLORS } from '../../../design/tokens';
 import { selectProgramStartDate, useProgramStore } from '../../../store/useProgramStore';
+import { detectDeviceTimezone } from '../../../utils/dateUtils';
+import { ProgramStartFixed } from '../../Program/ProgramStartFixed';
+import {
+  notAfterToday,
+  pickerFloor,
+  useProgramStartRange,
+  type ProgramStartRange,
+} from '../../Program/programStartRange';
 import { MAX_HABITS } from '../constants';
 import styles from '../Habits.styles';
 import type { Habit, HabitMergePlan, OnboardingHabit, OnboardingModalProps } from '../Habits.types';
@@ -458,21 +466,13 @@ interface ReorderHeaderProps {
   startDate: Date;
   onDateChange: (_iso: string) => void;
   postReveal?: boolean;
+  /** What the server accepts: nothing after today, nothing before its floor (#3097). */
+  range: ProgramStartRange;
 }
 
-/**
- * The floor the picker offers. Today, ordinarily: a program cannot begin before
- * the user is standing here. But a returning user's picker opens on the day
- * their program already began, which is usually in the past, and a floor above
- * the value on display would refuse to give back the date it was showing a
- * moment ago.
- */
-const earliestSelectable = (startDate: Date): Date => {
-  const today = new Date();
-  return startDate < today ? startDate : today;
-};
+const START_DATE_LABEL = 'Beige begins on:';
 
-const ReorderHeader = ({ startDate, onDateChange, postReveal }: ReorderHeaderProps) => (
+const ReorderHeader = ({ startDate, onDateChange, postReveal, range }: ReorderHeaderProps) => (
   <>
     <Text style={styles.onboardingTitle}>
       {postReveal ? 'Your optimal habit order:' : 'Reorder Your Habits'}
@@ -482,14 +482,19 @@ const ReorderHeader = ({ startDate, onDateChange, postReveal }: ReorderHeaderPro
         ? 'Sorted by energy efficiency. You can drag to reorder if needed.'
         : 'Habits are ordered by energy efficiency. You can drag to reorder if needed.'}
     </Text>
-    <View style={styles.startDateContainer}>
-      <Text style={styles.startDateLabel}>Beige begins on:</Text>
-      <DatePicker
-        value={toISODate(startDate)}
-        minDate={toISODate(earliestSelectable(startDate))}
-        onChange={onDateChange}
-      />
-    </View>
+    {range.locked ? (
+      <ProgramStartFixed label={START_DATE_LABEL} date={startDate} />
+    ) : (
+      <View style={styles.startDateContainer}>
+        <Text style={styles.startDateLabel}>{START_DATE_LABEL}</Text>
+        <DatePicker
+          value={toISODate(startDate)}
+          minDate={pickerFloor(range, toISODate(startDate))}
+          maxDate={range.maxDay}
+          onChange={onDateChange}
+        />
+      </View>
+    )}
   </>
 );
 
@@ -542,6 +547,7 @@ const RevealStep = ({ habits, revealedScoreCount, revealPhase }: RevealStepProps
 interface ReorderStepProps {
   habits: OnboardingHabit[];
   startDate: Date;
+  range: ProgramStartRange;
   showEmojiPicker: boolean;
   selectedHabitIndex: number | null;
   postReveal?: boolean;
@@ -568,6 +574,7 @@ const renderReorderItem =
 const ReorderStep = ({
   habits,
   startDate,
+  range,
   showEmojiPicker,
   selectedHabitIndex,
   postReveal,
@@ -595,6 +602,7 @@ const ReorderStep = ({
             startDate={startDate}
             onDateChange={onDateChange}
             postReveal={postReveal}
+            range={range}
           />
         }
         ListFooterComponent={<ContinueToTemplatesButton onPress={onGoToTemplates} />}
@@ -978,9 +986,16 @@ const useRevealIntegration = (
  * today moves the whole program calendar for a returning user who never touched
  * it. Today is right only when there is no answer yet.
  */
-const entryStateFor = (existingHabits: readonly Habit[], anchor: Date | null) => {
+const entryStateFor = (
+  existingHabits: readonly Habit[],
+  anchor: Date | null,
+  range: ProgramStartRange,
+) => {
   const rows = buildReviewRows(existingHabits);
-  return { rows, step: entryStepFor(rows), startDate: anchor ?? new Date() };
+  // Capped at today: a returning user whose anchor the old, future-only picker
+  // set must not be shown -- and then save -- a date the server refuses (#3097).
+  const seeded = notAfterToday(toISODate(anchor ?? new Date()), range);
+  return { rows, step: entryStepFor(rows), startDate: parseISODate(seeded) };
 };
 
 type EntryState = ReturnType<typeof entryStateFor>;
@@ -989,9 +1004,11 @@ const useComposedState = (
   onClose: () => void,
   onSaveHabits: OnboardingModalProps['onSaveHabits'],
   existingHabits: readonly Habit[],
+  userTimezone: string,
 ) => {
   const anchor = useProgramStore(selectProgramStartDate);
-  const [entry] = useState<EntryState>(() => entryStateFor(existingHabits, anchor));
+  const range = useProgramStartRange(userTimezone);
+  const [entry] = useState<EntryState>(() => entryStateFor(existingHabits, anchor, range));
   const [step, setStep] = useState(entry.step);
   const [habits, setHabits] = useState<OnboardingHabit[]>([]);
   const [reviewRows, setReviewRows] = useState<readonly ReviewRow[]>(entry.rows);
@@ -1008,6 +1025,7 @@ const useComposedState = (
     reviewRows,
     setReviewRows,
     anchor,
+    range,
     startDate,
     setStartDate,
     showEmojiPicker,
@@ -1113,10 +1131,11 @@ const useEntryReset = (
   visible: boolean,
   existingHabits: readonly Habit[],
   anchor: Date | null,
+  range: ProgramStartRange,
   apply: (_entry: EntryState) => void,
 ) => {
-  const latest = useRef({ existingHabits, anchor, apply });
-  latest.current = { existingHabits, anchor, apply };
+  const latest = useRef({ existingHabits, anchor, range, apply });
+  latest.current = { existingHabits, anchor, range, apply };
   const wasOpen = useRef(false);
   useEffect(() => {
     if (!visible) {
@@ -1126,7 +1145,7 @@ const useEntryReset = (
     if (wasOpen.current) return;
     wasOpen.current = true;
     const current = latest.current;
-    current.apply(entryStateFor(current.existingHabits, current.anchor));
+    current.apply(entryStateFor(current.existingHabits, current.anchor, current.range));
   }, [visible]);
 };
 
@@ -1141,7 +1160,7 @@ const useScaffoldReview = (
   existingHabits: readonly Habit[],
   cs: ReturnType<typeof useComposedState>,
 ) => {
-  const { setStep, setHabits, setReviewRows, setStartDate, reviewRows, habits, anchor } = cs;
+  const { setStep, setHabits, setReviewRows, setStartDate, reviewRows, habits, anchor, range } = cs;
   const review = useReviewActions({
     reviewRows,
     setReviewRows,
@@ -1158,10 +1177,10 @@ const useScaffoldReview = (
     },
     [setReviewRows, setStep, setStartDate, setHabits],
   );
-  useEntryReset(visible, existingHabits, anchor, applyEntry);
+  useEntryReset(visible, existingHabits, anchor, range, applyEntry);
   return {
     ...review,
-    resetToEntry: () => applyEntry(entryStateFor(existingHabits, anchor)),
+    resetToEntry: () => applyEntry(entryStateFor(existingHabits, anchor, range)),
     buildResult: (): readonly OnboardingHabit[] | HabitMergePlan =>
       reviewRows.length > 0 ? buildMergePlan(habits, reviewRows, existingHabits) : habits,
   };
@@ -1188,20 +1207,25 @@ const useOnboardingPieces = (
   onSaveHabits: OnboardingModalProps['onSaveHabits'],
   existingHabits: readonly Habit[],
   visible: boolean,
+  userTimezone: string,
 ) => {
-  const cs = useComposedState(onClose, onSaveHabits, existingHabits);
+  const cs = useComposedState(onClose, onSaveHabits, existingHabits, userTimezone);
   const { step, habits, setHabits, setStep, startDate } = cs;
   const revealParts = useRevealIntegration(step, habits, setHabits, setStep, startDate);
   useOnboardingEffects(step, cs.scrollRef, revealParts.prepareHabitsForReorder);
   const review = useScaffoldReview(visible, existingHabits, cs);
   const input = useHabitInput(habits, setHabits, setStep);
+  // The picked day goes with the picks, as picked: the program is anchored to
+  // this YYYY-MM-DD, never to a day read back out of a device-local instant.
+  const saveWithStartDay: OnboardingModalProps['onSaveHabits'] = (result) =>
+    onSaveHabits(result, toISODate(startDate));
   const nav = useOnboardingNavigation(
     review.buildResult,
     review.resetToEntry,
     setStep,
     cs.setGoalGroupTemplates,
     onClose,
-    onSaveHabits,
+    saveWithStartDay,
   );
   const act = useOnboardingActions(
     habits,
@@ -1231,12 +1255,14 @@ const useOnboardingState = (
   onSaveHabits: OnboardingModalProps['onSaveHabits'],
   existingHabits: readonly Habit[],
   visible: boolean,
+  userTimezone: string,
 ) => {
   const { cs, revealParts, review, input, nav, act, removeHabit } = useOnboardingPieces(
     onClose,
     onSaveHabits,
     existingHabits,
     visible,
+    userTimezone,
   );
   return {
     step: cs.step,
@@ -1244,6 +1270,7 @@ const useOnboardingState = (
     habits: cs.habits,
     reviewRows: cs.reviewRows,
     startDate: cs.startDate,
+    range: cs.range,
     showEmojiPicker: cs.showEmojiPicker,
     selectedHabitIndex: cs.selectedHabitIndex,
     scrollRef: cs.scrollRef,
@@ -1287,6 +1314,7 @@ const OnboardingStepReorder = ({ s }: { s: ReturnType<typeof useOnboardingState>
   <ReorderStep
     habits={s.habits}
     startDate={s.startDate}
+    range={s.range}
     showEmojiPicker={s.showEmojiPicker}
     selectedHabitIndex={s.selectedHabitIndex}
     postReveal={s.reveal.revealPhase === 'complete'}
@@ -1426,8 +1454,9 @@ export const OnboardingModal = ({
   onClose,
   onSaveHabits,
   existingHabits = NO_EXISTING_HABITS,
+  userTimezone = detectDeviceTimezone(),
 }: OnboardingModalProps) => {
-  const s = useOnboardingState(onClose, onSaveHabits, existingHabits, visible);
+  const s = useOnboardingState(onClose, onSaveHabits, existingHabits, visible, userTimezone);
 
   return (
     <>

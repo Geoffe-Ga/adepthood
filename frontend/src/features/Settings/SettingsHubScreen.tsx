@@ -5,6 +5,7 @@ import type {
 } from '@react-navigation/native-stack';
 import {
   BookOpen,
+  CalendarDays,
   Download,
   FileText,
   FolderSync,
@@ -91,14 +92,16 @@ const PRIVACY_A11Y_LABEL = `${PRIVACY_VISIBILITY_LINE} ${PRIVACY_INTIMATE_LINE}`
 interface AccountSectionProps {
   onApiKey: () => void;
   onTimezone: () => void;
+  onProgramStart: () => void;
   /** The writer's provider refused their key on the last vault sort (#3595). */
   keyRejected: boolean;
 }
 
-/** Account group: the bring-your-own-key and time-zone destinations. */
+/** Account group: the bring-your-own-key, time-zone and program-start destinations. */
 const AccountSection = ({
   onApiKey,
   onTimezone,
+  onProgramStart,
   keyRejected,
 }: AccountSectionProps): React.JSX.Element => (
   <EditorialSection title="Account" testID="settings-group-account">
@@ -115,6 +118,13 @@ const AccountSection = ({
       description="Set the zone streaks and daily stats count days in."
       onPress={onTimezone}
       testID="settings-row-timezone"
+    />
+    <SettingsRow
+      icon={CalendarDays}
+      label="Program start date"
+      description="The day your 36 weeks count from. Change it any time in your first cycle."
+      onPress={onProgramStart}
+      testID="settings-row-program-start"
     />
   </EditorialSection>
 );
@@ -387,6 +397,7 @@ function useHubNavigation(navigation: NativeStackNavigationProp<RootStackParamLi
   return {
     openApiKey: useCallback(() => navigation.navigate('ApiKeySettings'), [navigation]),
     openTimezone: useCallback(() => navigation.navigate('TimezoneSettings'), [navigation]),
+    openProgramStart: useCallback(() => navigation.navigate('ProgramStartSettings'), [navigation]),
     openSupportCare: useCallback(() => navigation.navigate('SupportCare'), [navigation]),
     openExportData: useCallback(() => navigation.navigate('ExportData'), [navigation]),
     openCorpusConsent: useCallback(() => navigation.navigate('CorpusConsent'), [navigation]),
@@ -419,6 +430,7 @@ const SettingsHubScreen = ({ route }: SettingsHubScreenProps = {}): React.JSX.El
       <AccountSection
         onApiKey={nav.openApiKey}
         onTimezone={nav.openTimezone}
+        onProgramStart={nav.openProgramStart}
         keyRejected={vaultRead.keyRejected}
       />
       <View testID="settings-journal-anchor" onLayout={journalInView.onTargetLayout}>

@@ -23,22 +23,55 @@ creation date, both already in the person's zone.
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from datetime import date, timedelta
 from typing import Literal
 
 from domain.constants import PROGRAM_START_BACKDATE_WINDOW_DAYS
 
-__all__ = ["ProgramStartVerdict", "program_start_verdict"]
+__all__ = [
+    "ProgramStartBounds",
+    "ProgramStartVerdict",
+    "program_start_bounds",
+    "program_start_verdict",
+    "verdict_within",
+]
 
 ProgramStartVerdict = Literal["ok", "future", "too_early"]
+
+
+@dataclass(frozen=True)
+class ProgramStartBounds:
+    """The inclusive range of dates a person may pick, both in their zone."""
+
+    earliest: date
+    latest: date
+
+
+def program_start_bounds(*, today: date, account_created: date) -> ProgramStartBounds:
+    """The pickable range: the one rule both the verdict and the offered window read.
+
+    Exposed to the client on the program-calendar responses so a picker can be
+    clamped to exactly what the PUT accepts, without a second copy of the rule.
+    """
+    return ProgramStartBounds(
+        earliest=account_created - timedelta(days=PROGRAM_START_BACKDATE_WINDOW_DAYS),
+        latest=today,
+    )
+
+
+def verdict_within(chosen: date, bounds: ProgramStartBounds) -> ProgramStartVerdict:
+    """Classify ``chosen`` against an already-computed range; both ends are inclusive."""
+    if chosen > bounds.latest:
+        return "future"
+    if chosen < bounds.earliest:
+        return "too_early"
+    return "ok"
 
 
 def program_start_verdict(
     chosen: date, *, today: date, account_created: date
 ) -> ProgramStartVerdict:
     """Classify ``chosen`` against the pickable range; both endpoints are inclusive."""
-    if chosen > today:
-        return "future"
-    if chosen < account_created - timedelta(days=PROGRAM_START_BACKDATE_WINDOW_DAYS):
-        return "too_early"
-    return "ok"
+    bounds = program_start_bounds(today=today, account_created=account_created)
+    return verdict_within(chosen, bounds)

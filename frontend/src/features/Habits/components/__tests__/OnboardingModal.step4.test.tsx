@@ -4,7 +4,9 @@ import { describe, expect, it, jest, beforeEach, afterEach } from '@jest/globals
 import { render, fireEvent, act } from '@testing-library/react-native';
 import type { ReactNode } from 'react';
 
+import DatePicker, { toISODate } from '../../../../components/DatePicker';
 import { STAGE_COLORS } from '../../../../design/tokens';
+import { useProgramStore } from '../../../../store/useProgramStore';
 import { STAGE_ORDER } from '../../HabitUtils';
 
 const OnboardingModal = require('../OnboardingModal').default;
@@ -59,6 +61,13 @@ describe('OnboardingModal reorder step', () => {
 
   afterEach(() => {
     jest.useRealTimers();
+    useProgramStore.setState({
+      programStartDay: null,
+      programStartDate: null,
+      anchorSource: null,
+      programStartWindow: null,
+      programStartLocked: false,
+    });
   });
 
   const REVEAL_TOTAL_MS = 150 * 2 + 500 + 100; // 2 habits × 150ms stagger + 500ms pause + 100ms settle
@@ -139,5 +148,50 @@ describe('OnboardingModal reorder step', () => {
     const styles = Array.isArray(modal.props.style) ? modal.props.style : [modal.props.style];
     const found = styles.find((s: any) => s && s.height);
     expect(found?.height).toBe('90%');
+  });
+
+  describe('the start date is clamped to what the server accepts (#3097)', () => {
+    const datePickerProps = (result: ReturnType<typeof setupToReorder>) =>
+      result.UNSAFE_getByType(DatePicker).props as {
+        value: string;
+        minDate?: string;
+        maxDate?: string;
+      };
+
+    it('offers nothing after today and reaches back before it', () => {
+      const today = toISODate(new Date());
+
+      const picker = datePickerProps(setupToReorder());
+
+      expect(picker.maxDate).toBe(today);
+      expect(picker.minDate).toBeDefined();
+      expect(picker.minDate! < today).toBe(true);
+    });
+
+    it('takes the floor from the server window when one is held', () => {
+      useProgramStore.setState({
+        programStartWindow: { earliest: '2025-12-01', latest: '2026-01-01' },
+      });
+
+      expect(datePickerProps(setupToReorder()).minDate).toBe('2025-12-01');
+    });
+
+    it('pulls a legacy future anchor back to today rather than offering a refused date', () => {
+      const future = new Date();
+      future.setDate(future.getDate() + 30);
+      useProgramStore.getState().setProgramStartDate(future);
+
+      expect(datePickerProps(setupToReorder()).value).toBe(toISODate(new Date()));
+    });
+
+    it('shows a fixed date, not a picker, once begin-again has run', () => {
+      useProgramStore.setState({ programStartLocked: true });
+
+      const result = setupToReorder();
+
+      expect(result.UNSAFE_queryByType(DatePicker)).toBeNull();
+      expect(result.getByTestId('program-start-fixed')).toBeTruthy();
+      expect(result.getByText(/begin again/i)).toBeTruthy();
+    });
   });
 });
