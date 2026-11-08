@@ -1262,25 +1262,66 @@ class VaultPipelineJobState(enum.StrEnum):
 #: (Creek-Vault#1877, ``JOB_FAILURE_CODE_SINCE_MINOR`` upstream). Declared on the
 #: job-status poll only, and only to a vault whose handshake lists it: the pin
 #: above stays where the deployed vaults are, and Creek refuses an unlisted minor.
+#: It governs whether the *key* is present; each code has its own minor below.
 JOB_FAILURE_CODE_SINCE_MINOR: Final = "0.26"
+
+#: The Creek minor that published ``busy`` (Creek-Vault#2090, #2075). A caller
+#: declaring 0.26-0.28 is served ``null`` for the same failure, so the job poll
+#: declares this minor -- again only to a vault whose handshake lists it -- to
+#: learn that a failed pass met content-lock contention rather than some fault.
+BUSY_FAILURE_CODE_SINCE_MINOR: Final = "0.29"
 
 
 class VaultJobFailureCode(enum.StrEnum):
-    """Why a ``failed`` pipeline job failed, when the writer can remedy it (contract 0.26).
+    """Why a ``failed`` pipeline job failed, when the vault publishes a reason (contract 0.26+).
 
-    Creek's closed ``JobFailureCode`` vocabulary, member for member. A code is
-    published only for a failure the *caller* can act on; any other failure,
-    and every answer from a vault below 0.26, carries no code. Values are
-    persisted on :class:`~models.vault_pipeline_run.VaultPipelineRun`, so they
-    must not be reworded without a migration.
+    Creek's closed ``JobFailureCode`` vocabulary, member for member. Creek
+    publishes a code only for a failure the *caller* can act on -- by replacing
+    a key, or simply by resubmitting -- so not every code is the writer's to
+    remedy; :func:`failure_code_is_final` says which ones settle a run. Any
+    other failure, and every answer from a vault below 0.26, carries no code.
+    Each member is served only to a caller declaring at least its own minor
+    (:data:`JOB_FAILURE_CODE_SINCE_MINOR_BY_CODE`). Values are persisted on
+    :class:`~models.vault_pipeline_run.VaultPipelineRun`, so they must not be
+    reworded without a migration, and a new member needs one that widens the
+    row's ``failure_code`` CHECK.
 
     Attributes:
         REQUEST_KEY_REJECTED: The writer's own provider key, relayed for the
             pass, was refused by its vendor with ``401``/``403``. Retrying with
             the same key fails the same way: the writer has to replace it.
+            Since contract 0.26.
+        BUSY: Another writer held the vault's content-mutation lock past the
+            pass's bounded wait. The pass takes that lock before touching any
+            fragment, so nothing was written. The condition is transient: the
+            same request is resubmitted with backoff, and the writer has
+            nothing to change. Since contract 0.29.
     """
 
     REQUEST_KEY_REJECTED = "request_key_rejected"
+    BUSY = "busy"
+
+
+#: The minor Creek published each code at -- total over :class:`VaultJobFailureCode`.
+JOB_FAILURE_CODE_SINCE_MINOR_BY_CODE: Final[Mapping[VaultJobFailureCode, str]] = {
+    VaultJobFailureCode.REQUEST_KEY_REJECTED: JOB_FAILURE_CODE_SINCE_MINOR,
+    VaultJobFailureCode.BUSY: BUSY_FAILURE_CODE_SINCE_MINOR,
+}
+
+#: Published reasons a later attempt may clear on its own. A failed job naming
+#: one joins the bounded retry, exactly as an unnamed failure does.
+TRANSIENT_JOB_FAILURE_CODES: Final = frozenset({VaultJobFailureCode.BUSY})
+
+
+def failure_code_is_final(code: VaultJobFailureCode | None) -> bool:
+    """Whether a failed job's reason settles its run now, instead of joining the bounded retry.
+
+    Only a reason that would meet every resubmit unchanged is final -- a refused
+    writer key is refused again. ``None`` (no reason, or one this build cannot
+    name) and a transient reason such as ``busy`` say time may change the
+    answer, so the pass is retried with backoff.
+    """
+    return code is not None and code not in TRANSIENT_JOB_FAILURE_CODES
 
 
 @dataclass(frozen=True)
@@ -1293,7 +1334,8 @@ class VaultPipelineJob:
 
     ``failure_code`` is set only on a ``FAILED`` job whose vault published a
     reason adepthood knows (:class:`VaultJobFailureCode`); ``None`` means the
-    vault gave none, gave one this build cannot name, or is older than 0.26.
+    vault gave none, gave one this build cannot name, is older than 0.26, or
+    was asked at a minor older than the code's own (``busy`` needs 0.29).
     """
 
     job_id: UUID

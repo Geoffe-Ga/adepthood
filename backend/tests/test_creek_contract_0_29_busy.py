@@ -23,7 +23,15 @@ from typing import Any, Final
 import jsonschema
 import pytest
 
-from domain.creek_vault import CONTRACT_VERSION
+from domain.creek_vault import (
+    BUSY_FAILURE_CODE_SINCE_MINOR,
+    CONTRACT_VERSION,
+    JOB_FAILURE_CODE_SINCE_MINOR,
+    JOB_FAILURE_CODE_SINCE_MINOR_BY_CODE,
+    TRANSIENT_JOB_FAILURE_CODES,
+    VaultJobFailureCode,
+    failure_code_is_final,
+)
 
 #: The reviewed Creek-Vault commit the snapshot was copied from (a git SHA, not a secret).
 _PINNED_COMMIT: Final = "c8d671c1afd118741ee587c30f93fda2e7b8abc4"  # pragma: allowlist secret
@@ -50,6 +58,7 @@ def test_the_0_29_snapshot_is_pinned_to_the_producer_manifest_and_the_pin_stays_
     assert vendor["commit"] == _PINNED_COMMIT
     assert vendor["contract_version"] == manifest["contract_version"] == "0.29.0"
     assert CONTRACT_VERSION == "0.22.0"
+    assert BUSY_FAILURE_CODE_SINCE_MINOR == "0.29"
     upstream = {entry["path"]: entry["sha256"] for entry in manifest["files"]}
     assert set(vendor["files"]) == {
         path.relative_to(_ROOT).as_posix()
@@ -72,3 +81,37 @@ def test_a_busy_document_is_one_creek_publishes() -> None:
         jsonschema.validate(_failed_status(failure_code="a_code_creek_never_published"), schema)
     capabilities = _json(_ROOT / "examples" / "capabilities" / "success.json")
     assert "0.29" in capabilities["supported_contract_minors"]
+
+
+def test_every_code_names_the_minor_creek_published_it_at() -> None:
+    """The map is total, and each entry is Creek's own since-minor, as a literal."""
+    assert dict(JOB_FAILURE_CODE_SINCE_MINOR_BY_CODE) == {
+        VaultJobFailureCode.REQUEST_KEY_REJECTED: "0.26",
+        VaultJobFailureCode.BUSY: "0.29",
+    }
+    assert set(JOB_FAILURE_CODE_SINCE_MINOR_BY_CODE) == set(VaultJobFailureCode)
+    assert JOB_FAILURE_CODE_SINCE_MINOR == "0.26"
+    assert VaultJobFailureCode.BUSY.value == _BUSY
+
+
+#: Whether each published reason settles a failed run now. A new member must be
+#: added here, deciding which it is, before :func:`failure_code_is_final` is green.
+_FINALITY: Final[dict[VaultJobFailureCode | None, bool]] = {
+    None: False,
+    VaultJobFailureCode.REQUEST_KEY_REJECTED: True,
+    VaultJobFailureCode.BUSY: False,
+}
+
+
+@pytest.mark.parametrize(("code", "final"), list(_FINALITY.items()), ids=str)
+def test_only_a_refused_key_is_a_final_failure(
+    code: VaultJobFailureCode | None, *, final: bool
+) -> None:
+    """A refused key is refused again; a busy vault or an unnamed failure may clear."""
+    assert failure_code_is_final(code) is final
+
+
+def test_the_finality_table_decides_every_code() -> None:
+    """No member reaches the ladder without someone deciding whether it retries."""
+    assert set(_FINALITY) == {None, *VaultJobFailureCode}
+    assert frozenset({VaultJobFailureCode.BUSY}) == TRANSIENT_JOB_FAILURE_CODES
