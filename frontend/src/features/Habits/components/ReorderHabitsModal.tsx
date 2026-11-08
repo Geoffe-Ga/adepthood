@@ -19,7 +19,7 @@ import {
 } from '../../Program/programStartRange';
 import { MAX_HABITS } from '../constants';
 import styles from '../Habits.styles';
-import type { Habit, ReorderHabitsModalProps } from '../Habits.types';
+import type { Habit, ReorderHabitsModalProps, SaveHabitOrder } from '../Habits.types';
 import {
   carryoverSlot,
   formatStageRange,
@@ -28,6 +28,7 @@ import {
   stageAtIndex,
   stageRangeForPage,
 } from '../HabitUtils';
+import { HABIT_ROWS_NOT_MOVED_COPY } from '../services/habitManager';
 import { layProgramRows } from '../services/habitOrdering';
 
 import { REORDER_HABITS_CLOSE_LABEL } from './modalCloseLabels';
@@ -552,7 +553,7 @@ interface ReorderHookInput {
   visible: boolean;
   userTimezone?: string;
   onClose: () => void;
-  onSaveOrder: (_habits: Habit[]) => Promise<void>;
+  onSaveOrder: SaveHabitOrder;
 }
 
 /**
@@ -577,38 +578,58 @@ interface ReorderHookInput {
 /** May the order be sent? Synchronous when there is no start date to send first. */
 type StartDateGate = () => boolean | Promise<boolean>;
 
+/** The start date's half of one sitting, as the commit needs it. */
+interface StartDateSitting {
+  /** The start date's own commit, run before the order is sent. */
+  gate: StartDateGate;
+  /** Whether a start date was saved in this sitting, so the rows are owed to it. */
+  anchorSaved: () => boolean;
+  /** Say the date saved but the habits did not move to match (#3707). */
+  rowsUnsaved: () => void;
+}
+
 const useOrderCommit = (
-  onSaveOrder: (_habits: Habit[]) => Promise<void>,
+  onSaveOrder: SaveHabitOrder,
   onClose: () => void,
 ): {
   saving: boolean;
-  commit: (_ordered: Habit[], _before: StartDateGate) => Promise<void>;
+  commit: (_ordered: Habit[], _sitting: StartDateSitting) => Promise<void>;
 } => {
   const [saving, setSaving] = useState(false);
   const savingRef = useRef(false);
-  const commit = async (ordered: Habit[], before: StartDateGate): Promise<void> => {
+  const commit = async (ordered: Habit[], sitting: StartDateSitting): Promise<void> => {
     if (savingRef.current) return;
     savingRef.current = true;
     setSaving(true);
-    // ``before`` is the start date's own commit. When the server refuses it the
+    // ``gate`` is the start date's own commit. When the server refuses it the
     // modal stays open on the date that still stands, so the person can pick
     // again rather than lose the chance (#3097); nothing of the order is sent.
     // A gate with nothing to send answers synchronously, so the order is sent
     // in the same tick as the press, exactly as it was before the gate existed.
     let proceed = false;
+    let rowsOwed = false;
     try {
-      const verdict = before();
+      const verdict = sitting.gate();
       proceed = typeof verdict === 'boolean' ? verdict : await verdict;
-      if (proceed) await onSaveOrder(ordered);
+      if (proceed) {
+        const anchorSaved = sitting.anchorSaved();
+        // A rejection is a save that did not land, the same as ``false``.
+        const landed = await onSaveOrder(ordered, { anchorSaved }).catch(() => false);
+        rowsOwed = anchorSaved && !landed;
+      }
     } finally {
       savingRef.current = false;
       setSaving(false);
-      // Close either way once the order was sent. ``onSaveOrder`` settles rather
-      // than failing: a refusal has already alerted and rolled the store back,
-      // and the order this modal is still holding is the one that did not take
-      // -- staying open would show the person an arrangement the app no longer
-      // has.
-      if (proceed) onClose();
+      // Close once the order was sent. ``onSaveOrder`` settles rather than
+      // failing: a refusal has already alerted and rolled the store back, and
+      // the order this modal is still holding is the one that did not take --
+      // staying open would show the person an arrangement the app no longer has.
+      // The one exception is a start date saved in this sitting whose rows did
+      // not follow (#3707): closing would hide that the anchor moved, so the
+      // modal stays on the saved date and says so, and Save Order re-lays the
+      // rows from it without sending the date again.
+      if (rowsOwed) sitting.rowsUnsaved();
+      else if (proceed) onClose();
     }
   };
   return { saving, commit };
@@ -637,11 +658,20 @@ const useStartDateGate = ({ startDate, userTimezone, range, restore }: StartDate
   const [notice, setNotice] = useState<string | null>(null);
   // Whether the person picked a date in this sitting; only then is one sent.
   const [picked, setPicked] = useState(false);
+  // Whether a date was SAVED in this sitting (#3707). A ref, not ``picked``: an
+  // unchanged pick sends nothing, and a retry after the rows failed sends no
+  // second PUT, yet the rows are still owed to the anchor saved earlier. Only
+  // the end of the sitting clears it -- a new pick does not, because the rows
+  // are still laid from the old day until one of these saves lands.
+  const anchorSavedRef = useRef(false);
   const gate: StartDateGate = () => {
     const day = toISODate(startDate);
     if (!picked || range.locked || day === programStartDay) return true;
     return commitProgramStart(day, { tz: userTimezone }).then((outcome) => {
-      if (outcome.kind === 'saved') return true;
+      if (outcome.kind === 'saved') {
+        anchorSavedRef.current = true;
+        return true;
+      }
       restore(programStartDate ?? new Date());
       setNotice(outcome.message);
       return false;
@@ -652,12 +682,18 @@ const useStartDateGate = ({ startDate, userTimezone, range, restore }: StartDate
     setPicked(true);
     setNotice(null);
   };
-  /** The sitting is over: nothing picked, nothing to say. */
+  /** The sitting is over: nothing picked, nothing saved, nothing to say. */
   const endSitting = () => {
     setPicked(false);
     setNotice(null);
+    anchorSavedRef.current = false;
   };
-  return { notice, gate, markPicked, endSitting };
+  const sitting: StartDateSitting = {
+    gate,
+    anchorSaved: () => anchorSavedRef.current,
+    rowsUnsaved: () => setNotice(HABIT_ROWS_NOT_MOVED_COPY),
+  };
+  return { notice, sitting, markPicked, endSitting };
 };
 
 /**
@@ -709,7 +745,7 @@ const useReorderState = ({
     setStartDate(date);
     setOrderedHabits((prev) => updateStartDates(prev, date, userTimezone));
   };
-  const { notice, gate, markPicked, endSitting } = useStartDateGate({
+  const { notice, sitting, markPicked, endSitting } = useStartDateGate({
     startDate,
     userTimezone,
     range,
@@ -743,7 +779,7 @@ const useReorderState = ({
     },
     handleCancelDate: () => setPickerVisible(false),
     saving,
-    handleSave: () => commit(orderedHabits, gate),
+    handleSave: () => commit(orderedHabits, sitting),
     range,
     notice,
   };

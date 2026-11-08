@@ -275,7 +275,7 @@ export const useHabitActions = (
       updateHabit: (habit) => habitManager.updateHabit(habit, tz),
       deleteHabit: habitManager.deleteHabit,
       addHabit: (input, isCarryover) => habitManager.addHabit(input, isCarryover, tz),
-      saveHabitOrder: (habits) => habitManager.saveHabitOrder(habits, tz),
+      saveHabitOrder: (habits, options) => habitManager.saveHabitOrder(habits, tz, options),
       onboardingSave,
       iconPress,
       emojiSelect,

@@ -83,7 +83,14 @@ import {
   type ProgramStartOutcome,
 } from '../../Program/programAnchor';
 import { HABIT_DEFAULTS } from '../HabitDefaults';
-import type { AddHabitInput, Goal, Habit, HabitMergePlan, OnboardingHabit } from '../Habits.types';
+import type {
+  AddHabitInput,
+  Goal,
+  Habit,
+  HabitMergePlan,
+  OnboardingHabit,
+  SaveOrderOptions,
+} from '../Habits.types';
 import {
   getGoalTier,
   getGoalTarget,
@@ -1241,7 +1248,8 @@ function restoreRows(prev: Habit[], scope = captureHabitMutationScope()): () => 
   };
 }
 
-const HABIT_ORDER_NOT_SAVED_COPY =
+/** The alert a refused reorder raises when no start date moved with it. */
+export const HABIT_ORDER_NOT_SAVED_COPY =
   "We couldn't save the new habit order. Your previous order was restored — check your connection and try again.";
 
 /**
@@ -2291,12 +2299,27 @@ export const habitManager = {
    * the reorder server-side while the store and the on-disk snapshot both went
    * on claiming it saved. Completion has to be observable for the modal (and
    * the browser journey) to have anything truthful to wait on.
+   *
+   * It resolves WHETHER THE ROWS LANDED (#3707): ``true`` once every PUT did
+   * (or there was nothing to PUT), ``false`` once a refusal has been rolled
+   * back. The settle guarantee above is unchanged -- it still never rejects.
+   * The boolean exists for the reorder modal's one case that needs it: a start
+   * date it saved in this sitting whose re-laid rows were then refused. That
+   * caller passes ``anchorSaved``, and the rows are restored silently, because
+   * "your previous order was restored" would hide that the anchor moved; the
+   * modal says so itself (``HABIT_ROWS_NOT_MOVED_COPY``) and stays open on the
+   * saved date. Every other refusal keeps its alert.
    */
-  saveHabitOrder: async (ordered: Habit[], tz?: string): Promise<void> => {
-    await commitOrderedRows(
+  saveHabitOrder: async (
+    ordered: Habit[],
+    tz?: string,
+    options: SaveOrderOptions = {},
+  ): Promise<boolean> => {
+    const prev = getHabits();
+    return commitOrderedRows(
       ordered,
       tz ?? detectDeviceTimezone(),
-      revertOnFailure(getHabits(), HABIT_ORDER_NOT_SAVED_COPY),
+      options.anchorSaved ? restoreRows(prev) : revertOnFailure(prev, HABIT_ORDER_NOT_SAVED_COPY),
     );
   },
 
