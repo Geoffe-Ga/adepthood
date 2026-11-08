@@ -103,6 +103,7 @@ from urllib.parse import quote
 import httpx
 
 from domain.creek_vault import (
+    BUSY_FAILURE_CODE_SINCE_MINOR,
     CONTRACT_VERSION,
     JOB_FAILURE_CODE_SINCE_MINOR,
     CreekCapability,
@@ -1130,16 +1131,27 @@ _EXPORT_CALL = _CallDepartures(
 # the admission that carries the writer's key included -- stays on the pin.
 _FAILURE_CODE_POLL = _CallDepartures(contract_minor=JOB_FAILURE_CODE_SINCE_MINOR)
 
+# The same poll against a vault that serves 0.29, whose failed job can also say
+# ``busy`` (Creek-Vault#2090). Creek gates nothing else on that route between
+# 0.26 and 0.29, so this changes only which codes the body may carry.
+_BUSY_CODE_POLL = _CallDepartures(contract_minor=BUSY_FAILURE_CODE_SINCE_MINOR)
+
 
 def _job_status_departures(handshake: HandshakeResult) -> _CallDepartures:
-    """Declare 0.26 on a job poll only to a vault that listed it, else the pin.
+    """Declare the newest failure-code minor a vault listed on its job poll, else the pin.
 
+    0.29 when the handshake lists it (``busy`` is served from there), else 0.26
+    when that is listed (``request_key_rejected`` only), else the pinned minor.
     Creek refuses any minor its ``supported_contract_minors`` does not name, and
-    the deployed managed vaults run older images. Asking for the newer body
+    the deployed managed vaults run older images. Asking for a newer body
     unconditionally would turn every poll against them into a ``409``, so an
-    older vault keeps hearing the pinned minor and answers the old body, whose
-    failed job simply carries no code.
+    older vault keeps hearing a minor it serves and answers its own body, whose
+    failed job simply carries fewer codes, or none. The answer is recomputed
+    from the latest handshake on every poll, so a vault rolled back below 0.29
+    is asked for 0.26 again once a re-handshake has seen its new list.
     """
+    if handshake.serves_minor(BUSY_FAILURE_CODE_SINCE_MINOR):
+        return _BUSY_CODE_POLL
     if handshake.serves_minor(JOB_FAILURE_CODE_SINCE_MINOR):
         return _FAILURE_CODE_POLL
     return _STANDING_CALL

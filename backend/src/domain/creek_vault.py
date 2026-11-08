@@ -90,6 +90,11 @@ from domain.vault_export import VaultExportPage
 #    `request_key_rejected` (Creek-Vault#1877, #3595) -- only to a vault whose
 #    handshake lists 0.26 (`JOB_FAILURE_CODE_SINCE_MINOR`); an older vault keeps
 #    hearing 0.22. `tests/test_creek_contract_0_26.py` pins that negotiation.
+#    The same poll declares 0.29 instead -- whose failed job can also name
+#    `busy`, content-lock contention, which is retried rather than final
+#    (Creek-Vault#2090, #3710) -- only to a vault whose handshake lists 0.29
+#    (`BUSY_FAILURE_CODE_SINCE_MINOR`); `tests/test_creek_contract_0_29_busy.py`
+#    pins it, and the admissions it follows stay on 0.22.
 #    The owner export (`GET /v1/export`, Creek-Vault#2033, #3579) declares 0.27
 #    the same way (`VAULT_EXPORT_SINCE_MINOR`), and only to a vault that both
 #    advertises `export` and lists 0.27; `tests/test_creek_contract_0_27_export.py`
