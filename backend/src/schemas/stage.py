@@ -113,6 +113,20 @@ class StageCorrespondenceResponse(BaseModel):
     )
 
 
+class ProgramStartWindow(BaseModel):
+    """The inclusive range of start dates the person may pick (issue #3097).
+
+    Both ends are local calendar dates in the person's zone: ``latest`` is
+    today there, ``earliest`` is account creation minus one whole program.
+    Computed by ``domain.program_start.program_start_bounds``, the same rule
+    ``PUT /stages/program-calendar`` enforces, so a picker clamped to it never
+    offers a date the server would refuse.
+    """
+
+    earliest: date
+    latest: date
+
+
 class ProgramCalendarResponse(BaseModel):
     """The server's date-derived program calendar.
 
@@ -125,6 +139,8 @@ class ProgramCalendarResponse(BaseModel):
     unlock is ``domain.stage_authority.open_through`` — the union of the
     two, never the record alone. ``cycle_number`` is exposed so the
     frontend can seed its "Cycle N" indicator on cold start.
+    ``program_start_window`` is the range the person may pick their start
+    date from, or null once begin-again has fixed it (cycle 2 and later).
     """
 
     program_started_at: datetime | None
@@ -132,6 +148,7 @@ class ProgramCalendarResponse(BaseModel):
     calendar_week: int
     current_stage: int
     cycle_number: int = Field(default=1, ge=1)
+    program_start_window: ProgramStartWindow | None = None
 
 
 class ProgramStartRequest(BaseModel):

@@ -19,7 +19,7 @@ from domain.constants import STAGE_START_WEEKS, TOTAL_STAGES
 from domain.creek_vault import CreekVaultClient
 from domain.dates import day_bounds_in_tz, ensure_aware, to_user_date, today_in_tz
 from domain.program_calendar import calendar_stage, calendar_week, resolve_program_anchor
-from domain.program_start import program_start_verdict
+from domain.program_start import ProgramStartBounds, program_start_bounds, verdict_within
 from domain.stage_authority import reanchor_program, record_stage_entry
 from domain.stage_keys import STAGE_KEYS
 from domain.stage_progress import (
@@ -44,6 +44,7 @@ from schemas.pagination import paginate_query
 from schemas.stage import (
     ProgramCalendarResponse,
     ProgramStartRequest,
+    ProgramStartWindow,
     StageChordNote,
     StageCorrespondenceProvenance,
     StageCorrespondenceResponse,
@@ -295,6 +296,7 @@ async def get_program_calendar(
     not the one they left.
     """
     progress = await _record_visit(session, current_user, user_tz)
+    bounds = await _program_start_bounds(session, current_user, user_tz)
     if progress is None:
         return ProgramCalendarResponse(
             program_started_at=None,
@@ -302,12 +304,24 @@ async def get_program_calendar(
             calendar_week=1,
             current_stage=1,
             cycle_number=1,
+            program_start_window=_window(bounds),
         )
-    return _calendar_response(progress, user_tz)
+    return _calendar_response(progress, user_tz, bounds)
 
 
-def _calendar_response(progress: StageProgress, tz: str) -> ProgramCalendarResponse:
-    """Project a progress row onto the calendar contract, counted in ``tz``."""
+def _window(bounds: ProgramStartBounds) -> ProgramStartWindow:
+    """Project the domain range onto its wire shape."""
+    return ProgramStartWindow(earliest=bounds.earliest, latest=bounds.latest)
+
+
+def _calendar_response(
+    progress: StageProgress, tz: str, bounds: ProgramStartBounds
+) -> ProgramCalendarResponse:
+    """Project a progress row onto the calendar contract, counted in ``tz``.
+
+    The pickable window is offered only in the first cycle; after begin-again
+    the anchor is fixed, so there is no range to offer and the window is null.
+    """
     anchor = resolve_program_anchor(progress)
     return ProgramCalendarResponse(
         program_started_at=anchor,
@@ -315,6 +329,18 @@ def _calendar_response(progress: StageProgress, tz: str) -> ProgramCalendarRespo
         calendar_week=calendar_week(anchor, tz=tz),
         current_stage=progress.current_stage,
         cycle_number=progress.cycle_number,
+        program_start_window=_window(bounds) if progress.cycle_number <= _FIRST_CYCLE else None,
+    )
+
+
+async def _program_start_bounds(session: AsyncSession, user_id: int, tz: str) -> ProgramStartBounds:
+    """The range ``user_id`` may pick from today, both ends counted in ``tz``."""
+    user = await session.get(User, user_id)
+    if user is None:
+        raise not_found("user")
+    return program_start_bounds(
+        today=today_in_tz(tz),
+        account_created=to_user_date(tz, ensure_aware(user.created_at)),
     )
 
 
@@ -327,18 +353,13 @@ _PROGRAM_START_REFUSALS: dict[str, str] = {
 
 async def _validate_program_start(
     session: AsyncSession, user_id: int, chosen: date, tz: str
-) -> None:
+) -> ProgramStartBounds:
     """Refuse a date outside the pickable range with 422, before anything is written."""
-    user = await session.get(User, user_id)
-    if user is None:
-        raise not_found("user")
-    verdict = program_start_verdict(
-        chosen,
-        today=today_in_tz(tz),
-        account_created=to_user_date(tz, ensure_aware(user.created_at)),
-    )
+    bounds = await _program_start_bounds(session, user_id, tz)
+    verdict = verdict_within(chosen, bounds)
     if verdict != "ok":
         raise unprocessable(_PROGRAM_START_REFUSALS[verdict])
+    return bounds
 
 
 @router.put("/program-calendar", response_model=ProgramCalendarResponse)
@@ -367,7 +388,7 @@ async def set_program_start(
     because a later cycle's anchor is also its predecessor's recorded end.
     """
     chosen = payload.program_start_date
-    await _validate_program_start(session, current_user, chosen, user_tz)
+    bounds = await _validate_program_start(session, current_user, chosen, user_tz)
     progress = await ensure_user_progress(session, current_user)
     await session.refresh(progress, with_for_update=True)
     if progress.cycle_number > _FIRST_CYCLE:
@@ -381,7 +402,7 @@ async def set_program_start(
         "program_start_picked",
         extra={"user_id": current_user, "current_stage": progress.current_stage},
     )
-    return _calendar_response(progress, user_tz)
+    return _calendar_response(progress, user_tz, bounds)
 
 
 @router.get("/wheel", response_model=WheelBalanceResponse)
