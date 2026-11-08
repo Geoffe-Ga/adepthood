@@ -1,10 +1,15 @@
 """Typed loader for the vendored Archetypal Wavelength curriculum dataset.
 
 This package vendors a single source of truth for the per-Stage and per-phase
-copy of the Archetypal Wavelength (``archetypal_wavelength.json``) and exposes
-it as validated, frozen dataclasses.  The seeder and any other consumer read
-their Stage definitions from here rather than hardcoding them, so the copy
-cannot drift between call sites.
+copy of the Archetypal Wavelength (``archetypal_wavelength.json``): each
+Stage's title, subtitle, Mode and six phase manifestations. It exposes them as
+validated, frozen dataclasses. The seeder and any other consumer read that
+copy from here rather than hardcoding it, so it cannot drift between call
+sites.
+
+The seven per-Stage correspondence fields are not here. They are owned by the
+generated artifact loaded by :mod:`curriculum.stage_correspondence`, reconciled
+into the ``CourseStage`` table and served by ``GET /stages`` (#2666).
 
 The loader is strict: it rejects any dataset that is not exactly ten Stages
 (numbered one through ten, no duplicates), each carrying exactly the six
@@ -107,21 +112,20 @@ class PhaseChord:
 class StageCurriculum:
     """The full curriculum record for one APTITUDE Stage.
 
-    Carries the Stage's identifying attributes plus its six phase
-    manifestations, in canonical phase order. A Stage whose ``mode`` holds all
-    the Modes carries no manifestations of its own.
+    Carries the Stage's title and subtitle plus its six phase manifestations,
+    in canonical phase order. A Stage whose ``mode`` holds all the Modes
+    carries no manifestations of its own.
+
+    The seven correspondence fields (category, aspect, colour, Growing Up
+    stage, polarity and the free-will pair) are deliberately absent: they live
+    in :mod:`curriculum.stage_correspondence`, which the seeder reconciles into
+    ``CourseStage`` (#2666). A dataset stage that still carries one is read
+    without error and the key is ignored.
     """
 
     stage_number: int
     title: str
     subtitle: str
-    category: str
-    aspect: str
-    spiral_dynamics_color: str
-    growing_up_stage: str
-    divine_gender_polarity: str
-    relationship_to_free_will: str
-    free_will_description: str
     manifestations: tuple[PhaseManifestation, ...]
     mode: StageMode | None = None
 
@@ -251,17 +255,6 @@ def _parse_stage(raw: object) -> StageCurriculum:
         stage_number=stage_number,
         title=_require_str(obj, "title", context),
         subtitle=_require_str(obj, "subtitle", context),
-        category=_require_str(obj, "category", context),
-        aspect=_require_str(obj, "aspect", context),
-        spiral_dynamics_color=_require_str(obj, "spiral_dynamics_color", context),
-        growing_up_stage=_require_str(obj, "growing_up_stage", context),
-        divine_gender_polarity=_require_str(obj, "divine_gender_polarity", context),
-        relationship_to_free_will=_require_str(
-            obj,
-            "relationship_to_free_will",
-            context,
-        ),
-        free_will_description=_require_str(obj, "free_will_description", context),
         manifestations=_parse_stage_manifestations(obj.get("manifestations"), context, mode),
         mode=mode,
     )
