@@ -5,6 +5,7 @@ export const STAGE_DURATIONS_DAYS = [21, 21, 21, 21, 21, 21, 21, 21, 42, 42] as 
 // the Archetypal Wavelength (issue #2866). CROSS-STACK CONTRACT: mirrors
 // ``STAGES_PER_SECTION`` in ``backend/src/domain/constants.py`` literal-for-
 // literal, and is pinned against that file by a test, because the section's
-// colour name is derived here from STAGE_ORDER while the backend derives the
-// section's week span from the same number.
+// colour name is derived from this number (its closing stage's served colour,
+// with STAGE_ORDER as the offline fallback -- ``store/stageColorName.ts``)
+// while the backend derives the section's week span from the same number.
 export const STAGES_PER_SECTION = 3;

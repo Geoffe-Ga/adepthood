@@ -23,6 +23,8 @@ import { readBackendSource } from '@/testing/backendSource';
  */
 const FREQUENCIES = ['src', 'domain', 'frequencies.py'];
 const CONSTANTS = ['src', 'domain', 'constants.py'];
+/** The generated artifact the `coursestage` rows are seeded from. */
+const CORRESPONDENCE_ARTIFACT = ['src', 'curriculum', 'stage_correspondence.json'];
 
 /** The `FREQUENCY_COLORS = MappingProxyType({...})` literal, up to its close. */
 const FREQUENCY_COLORS_BLOCK = /FREQUENCY_COLORS[^=]*=\s*MappingProxyType\(\s*\{([\s\S]*?)\}/;
@@ -47,6 +49,22 @@ function backendStageColors(): string[] {
     .map(([, position = '', colour = '']) => ({ position: Number(position), colour }))
     .sort((left, right) => left.position - right.position)
     .map((entry) => entry.colour);
+}
+
+/** One stage's colour as `stage_correspondence.json` declares it. */
+interface ArtifactStage {
+  stage_number: number;
+  spiral_dynamics_color: string;
+}
+
+/** The artifact's colour names in stage-number order. */
+function artifactStageColors(): string[] {
+  const { stages } = JSON.parse(readBackendSource(...CORRESPONDENCE_ARTIFACT)) as {
+    stages: ArtifactStage[];
+  };
+  return [...stages]
+    .sort((left, right) => left.stage_number - right.stage_number)
+    .map((stage) => stage.spiral_dynamics_color);
 }
 
 function backendStagesPerSection(): number {
@@ -74,8 +92,17 @@ describe('the frontend mirrors of the APTITUDE ten', () => {
     expect([...STAGE_ORDER]).toEqual(backendStageColors());
   });
 
-  it('lists the same stages, in the same order, as the practice palette', () => {
-    expect([...SPIRAL_DYNAMICS_COLORS]).toEqual(backendStageColors());
+  it('pins the offline colour fallback to the stage-correspondence artifact (#2666)', () => {
+    // STAGE_ORDER is the one static stage -> colour-name list the frontend
+    // keeps, read only when no served row is in hand. The artifact seeds the
+    // `coursestage` rows `GET /stages` serves, so pinning the fallback to it
+    // means the offline answer can never disagree with the served one.
+    expect(artifactStageColors()).toHaveLength(STAGE_ORDER.length);
+    expect([...STAGE_ORDER]).toEqual(artifactStageColors());
+  });
+
+  it('keeps the practice palette on the one fallback list rather than a copy of it', () => {
+    expect(SPIRAL_DYNAMICS_COLORS).toBe(STAGE_ORDER);
   });
 
   it('schedules each stage for the same number of days as the backend', () => {

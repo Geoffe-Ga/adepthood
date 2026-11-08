@@ -1,6 +1,6 @@
 /* eslint-env jest */
 import { jest, beforeEach, afterEach, describe, it, expect } from '@jest/globals';
-import { fireEvent, render } from '@testing-library/react-native';
+import { act, fireEvent, render } from '@testing-library/react-native';
 import React from 'react';
 import { StyleSheet } from 'react-native';
 
@@ -18,6 +18,7 @@ import {
   programWeek,
   useProgramStore,
 } from '@/store/useProgramStore';
+import { clearServedStages, serveStageColors } from '@/testing/servedStageColors';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 const MID_PROGRAM_DAYS_AGO = 50;
@@ -28,6 +29,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  clearServedStages();
   useProgramStore.getState().hydrateProgramStartDate(null);
   jest.useRealTimers();
 });
@@ -68,6 +70,18 @@ describe('JournalHero', () => {
     const { getByText } = render(<JournalHero />);
     expect(getByText(new RegExp(`Week ${String(week)} of ${TOTAL_PROGRAM_WEEKS}`))).toBeTruthy();
     expect(getByText(new RegExp(String(stageName)))).toBeTruthy();
+  });
+
+  it('names the stage by the colour the server served, once it arrives (#2666)', () => {
+    const anchor = new Date(Date.now() - MID_PROGRAM_DAYS_AGO * DAY_MS);
+    useProgramStore.getState().hydrateProgramStartDate(anchor);
+    const stage = programStage(anchor) ?? 1;
+    const served = STAGE_ORDER.find((name) => name !== STAGE_ORDER[stage - 1]) ?? '';
+    const { getByTestId } = render(<JournalHero />);
+    const position = () => String(getByTestId('journal-hero-position').props.accessibilityLabel);
+    expect(position()).toContain(String(STAGE_ORDER[stage - 1]));
+    act(() => serveStageColors({ [stage]: served }));
+    expect(position()).toContain(` · ${served}.`);
   });
 
   it('exposes the position line as a pressable button with a map-opening label (no anchor)', () => {

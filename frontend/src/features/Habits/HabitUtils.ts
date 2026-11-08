@@ -13,6 +13,7 @@ import {
 
 import type { Goal, Habit, Completion } from './Habits.types';
 
+// Re-exported for callers (and the onboarding suite) that cycle the ring below.
 export { STAGE_ORDER };
 // Re-export so existing call sites stay valid; canonical definition lives in src/constants/program.ts.
 export { STAGE_DURATIONS_DAYS };
@@ -29,6 +30,10 @@ const STAGE_COUNT = STAGE_ORDER.length;
  * of truth for program-slot stage identity shared by the Habits screen, the
  * reorder modal, and onboarding. Negative-slot presentation is resolved below:
  * carryover is deliberately unranked even though its position remains signed.
+ *
+ * This indexes ``STAGE_ORDER`` by ring slot, not by a stage's number: the
+ * result is a persisted habit identity key, so it must not follow a served
+ * stage's colour the way ``store/stageColorName.ts`` does (#2666).
  */
 export const stageAtIndex = (index: number): string => {
   const wrapped = ((index % STAGE_COUNT) + STAGE_COUNT) % STAGE_COUNT;

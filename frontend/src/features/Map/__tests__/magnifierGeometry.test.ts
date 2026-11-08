@@ -344,6 +344,12 @@ describe('lensStageIdentity', () => {
     expect(lensStageIdentity(rewritten, 2)).toBe('Quiet, stage 2 · PURPLE, Sentinel Persona');
   });
 
+  it("speaks the served stage's own colour, not the offline list's (#2666)", () => {
+    const served = mockMakeCanonicalStage(4, { spiralDynamicsColor: 'Teal' });
+    expect(STAGE_ORDER[3]).toBe('Blue');
+    expect(lensStageIdentity(served, 4)).toContain('stage 4 · TEAL');
+  });
+
   it('still names a stage that has not loaded, by number and colour', () => {
     expect(lensStageIdentity(undefined, 4)).toBe('stage 4 · BLUE');
     expect(lensStageIdentity(undefined, 99)).toBe('stage 99 · ');

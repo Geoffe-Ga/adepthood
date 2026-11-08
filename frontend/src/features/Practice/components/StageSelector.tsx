@@ -25,12 +25,12 @@ import {
   BORDER_RADIUS,
   INTERACTIVE_TEXT_MIN,
   SPACING,
-  STAGE_ORDER,
   accent,
   editorialType,
   ink,
   surface,
 } from '@/design/tokens';
+import { useStageColorNames } from '@/store/stageColorName';
 
 /** Minimum width of a ``picker`` stage box so single-digit numbers stay tappable. */
 const STAGE_BOX_MIN_WIDTH = 36;
@@ -154,9 +154,9 @@ const PICKER_COLUMN_HEIGHT = 2;
 const renderPickerChip = (
   item: StageItem,
   disabled: boolean,
-  stage: number | null,
+  colorName: string | null,
 ): React.JSX.Element => {
-  const swatch = stage === null ? null : swatchFor(STAGE_ORDER[stage - 1] ?? '');
+  const swatch = colorName === null ? null : swatchFor(colorName);
   return (
     <StageChip
       key={item.key}
@@ -215,6 +215,8 @@ const StageSelector = ({
     formatLabel,
     testIDPrefix,
   });
+  // Hooks run before the variant branch, unconditionally; only the picker tints.
+  const colorNameOf = useStageColorNames();
   if (variant !== 'picker') {
     return (
       <View style={[styles.row, rowStyle]} testID={rowTestID}>
@@ -224,7 +226,7 @@ const StageSelector = ({
   }
   return (
     <View style={[styles.pickerGrid, rowStyle]} testID={rowTestID}>
-      {pickerColumns(items, disabled, testIDPrefix)}
+      {pickerColumns(items, { disabled, testIDPrefix, colorNameOf })}
     </View>
   );
 };
@@ -244,8 +246,16 @@ const StageSelector = ({
  */
 const pickerColumns = (
   items: StageItem[],
-  disabled: boolean,
-  testIDPrefix: string,
+  {
+    disabled,
+    testIDPrefix,
+    colorNameOf,
+  }: {
+    disabled: boolean;
+    testIDPrefix: string;
+    /** Each stage's served colour name (#2666), the offline name until the stages load. */
+    colorNameOf: (stage: number) => string | undefined;
+  },
 ): React.JSX.Element[] => {
   const skip = items.filter((item) => item.key === 'skip');
   const stages = items.filter((item) => item.key !== 'skip');
@@ -264,7 +274,7 @@ const pickerColumns = (
       >
         {stages
           .slice(start, start + PICKER_COLUMN_HEIGHT)
-          .map((item) => renderPickerChip(item, disabled, Number(item.key)))}
+          .map((item) => renderPickerChip(item, disabled, colorNameOf(Number(item.key)) ?? ''))}
       </View>,
     );
   }

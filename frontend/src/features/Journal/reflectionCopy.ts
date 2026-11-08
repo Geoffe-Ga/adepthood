@@ -10,7 +10,7 @@
  */
 import type { PromotedQuoteSourceKind, ReflectionLevel, ReflectionSourceItem } from '@/api';
 import { STAGES_PER_SECTION } from '@/constants/program';
-import { STAGE_ORDER } from '@/design/tokens';
+import { storedStageColorName } from '@/store/stageColorName';
 
 /** Extracts the week ordinal from a week scope key (``c1:w14`` → ``14``). */
 const WEEK_SCOPE_KEY = /^c\d+:w(\d+)$/;
@@ -28,15 +28,15 @@ function weekTitle(scopeKey: string): string {
  * A section title naming the Wavelength turn the section closes.
  *
  * The colour is DERIVED — section ``n`` closes on stage ``STAGES_PER_SECTION *
- * n``, and that stage's name is its colour — rather than written out as a list
- * that could drift from the curriculum. Degrades to the bare label when the
+ * n``, and that stage's name is its colour, served first (#2666) — rather than
+ * written out as a list that could drift from the curriculum. Degrades to the bare label when the
  * scope key is not the ``x<n>`` shape or names a section the curriculum has no
  * stage for.
  */
 function sectionTitle(scopeKey: string): string {
   const captured = SECTION_SCOPE_KEY.exec(scopeKey)?.[1];
   const section = captured == null ? Number.NaN : Number.parseInt(captured, 10);
-  const closingStage = STAGE_ORDER[STAGES_PER_SECTION * section - 1];
+  const closingStage = storedStageColorName(STAGES_PER_SECTION * section);
   return closingStage == null ? 'Section Review' : `Section Review — ${closingStage}`;
 }
 

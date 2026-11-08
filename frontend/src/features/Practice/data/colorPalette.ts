@@ -8,27 +8,16 @@
  * honest the moment they break the rule.
  */
 
-export const SPIRAL_DYNAMICS_COLORS = [
-  'Beige',
-  'Purple',
-  'Red',
-  'Blue',
-  'Orange',
-  'Green',
-  'Yellow',
-  'Teal',
-  'Ultraviolet',
-  'Clear Light',
-] as const;
+import { STAGE_ORDER, canonicalStageColorName, type StageColorName } from '@/design/tokens';
 
-// Pre-rename Spiral-Dynamics name for stage 8. A server still on the old
-// dataset can send this label; it maps to the canonical Teal swatch so the
-// banner never falls back to the neutral Clear-Light white.
-const LEGACY_COLOR_ALIASES: Readonly<Record<string, SpiralDynamicsColor>> = Object.freeze({
-  Turquoise: 'Teal',
-});
+/**
+ * The ten colours the palette covers, in stage order: the design tokens' one
+ * offline list rather than a copy of it (#2666), so the swatch table and the
+ * stage colour names can never disagree about which ten there are.
+ */
+export const SPIRAL_DYNAMICS_COLORS = STAGE_ORDER;
 
-export type SpiralDynamicsColor = (typeof SPIRAL_DYNAMICS_COLORS)[number];
+export type SpiralDynamicsColor = StageColorName;
 
 export interface ColorSwatch {
   /** Background fill — the frequency colour itself. */
@@ -62,6 +51,6 @@ export function isSpiralDynamicsColor(value: string): value is SpiralDynamicsCol
  * crashing on a typo from a future content drop.
  */
 export function swatchFor(color: string): ColorSwatch {
-  const canonical = LEGACY_COLOR_ALIASES[color] ?? color;
+  const canonical = canonicalStageColorName(color);
   return isSpiralDynamicsColor(canonical) ? COLOR_PALETTE[canonical] : COLOR_PALETTE['Clear Light'];
 }

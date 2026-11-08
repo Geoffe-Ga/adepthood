@@ -4,6 +4,7 @@ import { jest, describe, it, expect, beforeEach } from '@jest/globals';
 import { GREEN_STAGE_NUMBER, keepAsPractice, planKeepAsPractice } from '../keepAsPractice';
 
 import { practiceSessions, practices, stages, userPractices } from '@/api';
+import { clearServedStages, serveStageColors } from '@/testing/servedStageColors';
 
 jest.mock('@/api', () => ({
   practices: { listAll: jest.fn() },
@@ -104,6 +105,14 @@ describe('planKeepAsPractice — what the writer would be agreeing to', () => {
     programCalendar.mockImplementation(() => Promise.resolve({ current_stage: 1 }));
 
     expect((await planKeepAsPractice())?.waitingAt).toBe('Beige');
+  });
+
+  it('names the waiting stage by the colour the server served it (#2666)', async () => {
+    serveStageColors({ 1: 'Teal' });
+    programCalendar.mockImplementation(() => Promise.resolve({ current_stage: 1 }));
+
+    expect((await planKeepAsPractice())?.waitingAt).toBe('Teal');
+    clearServedStages();
   });
 
   it('treats the stage below Green as not yet open, and Green itself as open', async () => {
