@@ -15,6 +15,10 @@ import {
   useProgramStore,
 } from '../../../store/useProgramStore';
 import { useStageStore } from '../../../store/useStageStore';
+import {
+  CORRUPT_HELD_PROGRAM_STARTS,
+  writeRawHeldProgramStart,
+} from '../../../testing/corruptHeldProgramStarts';
 import { adoptProgramCalendar } from '../adoptProgramCalendar';
 import {
   commitProgramStart,
@@ -398,6 +402,32 @@ describe('a pick that never reached the server is sent again (#3097 review)', ()
 
       expect(mockSetProgramStart).toHaveBeenCalledWith(PICKED_DAY, undefined);
     });
+  });
+
+  describe('a held record this device never wrote is never sent (#3708)', () => {
+    // The corrupt rows name this account, and the server holds only its own
+    // default stamp, so a record that slipped past the read would be replayed.
+    const ROW_OWNER = 7;
+
+    afterEach(() => {
+      setActiveUser(null);
+    });
+
+    it.each(CORRUPT_HELD_PROGRAM_STARTS)(
+      "sends no PUT for $label and adopts the server's day",
+      async ({ raw }) => {
+        setActiveUser(ROW_OWNER);
+        await writeRawHeldProgramStart(raw);
+        mockSetProgramStart.mockResolvedValue(calendar());
+        mockProgramCalendar.mockResolvedValue(calendar({ program_started_at: SERVER_STAMP_AT }));
+
+        await reconcileProgramAnchor(ZONE);
+
+        expect(mockSetProgramStart).not.toHaveBeenCalled();
+        expect(useProgramStore.getState().programStartDay).toBe('2026-11-08');
+        expect(useProgramStore.getState().anchorSource).toBe('server');
+      },
+    );
   });
 });
 
