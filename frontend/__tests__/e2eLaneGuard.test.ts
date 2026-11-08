@@ -136,6 +136,7 @@ const EXPECTED_BROWSER_JOURNEYS = [
   'journal-resonance-refill.browser.e2e.test.ts',
   'journal-return-offer.browser.e2e.test.ts',
   'journal-review-from-shelf.browser.e2e.test.ts',
+  'journal-running-timer-passthrough.browser.e2e.test.ts',
   'journal-save-retry.browser.e2e.test.ts',
   'journal-section-course-review.browser.e2e.test.ts',
   'journal-short-habit-offer.browser.e2e.test.ts',

@@ -3065,6 +3065,18 @@
     "coveredBy": "frontend/e2e/journal-idle-timer-obstruction.browser.e2e.test.ts"
   },
   {
+    "id": "journal.running-writing-timer-lets-clicks-reach-the-writing",
+    "description": "A writer opens a draft at 1280x800 and at 390x844, writes forty lines, and starts the writing timer (#3694). The running timer floats in a band that spans the page so it can sit on the trailing edge, but only the pill itself may catch a pointer: the browser hit-tests a grid across the whole band with document.elementFromPoint and every point outside the pill must land on the page beneath, never inside the band. This pins the RN Web seam where box-none turns off only an element's own box and resets its direct children to pointer-events: auto, which had turned the ScrollView's full-width content container into an invisible strip that kept the writer from clicking into the bottom of their own entry.",
+    "crosses": {
+      "screen": "frontend/src/features/Journal/JournalEntryScreen.tsx",
+      "client": ["auth", "journal"],
+      "routes": ["POST /auth/signup", "GET /journal/"],
+      "tables": ["user", "journalentry"]
+    },
+    "status": "covered",
+    "coveredBy": "frontend/e2e/journal-running-timer-passthrough.browser.e2e.test.ts"
+  },
+  {
     "id": "journal.minimized-writing-timer-waits-in-the-header",
     "description": "A writer opens a draft at 390x844 and meets the idle writing timer's tray below the paper with at least 12px of page between the two, so the tray never butts against the sheet. Minimizing it removes the tray entirely: no pill is left in the writing column, a timer icon named 'Open the writing timer' appears in the page's top-right exit row, and the sheet grows into the height the tray held. Tapping the icon brings the full setter back (every preset in reach, the gap restored) and a session starts from it. Below the 1020px desk-side rail a finished session also puts the resting timer away into that icon rather than leaving a compact clock; at the rail the established docked clock is unchanged (journal.writing-timer-elevation-through-its-lifecycle exercises both).",
     "crosses": {
