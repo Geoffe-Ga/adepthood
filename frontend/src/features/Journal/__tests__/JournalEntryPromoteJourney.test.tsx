@@ -420,41 +420,50 @@ describe('JournalEntryPromoteJourney -- sources panel navigation (#2883)', () =>
     jest.restoreAllMocks();
   });
 
-  it('sets the wide pane BESIDE the writing sheet, in one row', async () => {
+  // #3133: the wide panel is a centred modal, so nothing beside the page is
+  // reserved -- the sheet keeps its row and the writing band spans the desk.
+  it('opens the wide panel as a centred Modal over the untouched sheet', async () => {
     atWidth(1280);
     const screen = await openWithDraftAndFold();
+    expect(screen.getByTestId('reflection-sources-modal').props.transparent).toBe(true);
     const row = screen.getByTestId('journal-compose-row');
     expect(within(row).getByTestId('journal-sheet')).toBeTruthy();
-    expect(within(row).getByTestId('reflection-sources-pane')).toBeTruthy();
-    const { StyleSheet } = require('react-native');
-    expect(StyleSheet.flatten(row.props.style).flexDirection).toBe('row');
+    expect(screen.queryByTestId('reflection-sources-pane')).toBeNull();
   });
 
-  it('closes only the wide pane with its X, returning focus to the Sources toggle', async () => {
+  it('leaves the writing band spanning the desk while the wide Sources modal is open', async () => {
+    atWidth(1280);
+    const screen = await openWithDraftAndFold();
+    const { StyleSheet } = require('react-native');
+    const band = screen.getByTestId('writing-session-band', { includeHiddenElements: true });
+    expect(StyleSheet.flatten(band.props.style).right).toBe(0);
+  });
+
+  it('closes only the centred modal with its X, returning focus to the Sources toggle', async () => {
     atWidth(1280);
     const screen = await openWithDraftAndFold();
     const bodyBefore = screen.getByTestId('journal-body-input').props.value as string;
     expect(toggleFocus).not.toHaveBeenCalled();
     fireEvent.press(screen.getByTestId('reflection-sources-close'));
-    expectOnlyThePanelClosed(screen, bodyBefore, 'reflection-sources-pane');
+    expectOnlyThePanelClosed(screen, bodyBefore, 'reflection-sources-modal');
   });
 
-  it('closes only the wide pane on the hardware back button, which never pops the route', async () => {
-    const rn = require('react-native');
-    let back: (() => boolean | null | undefined) | undefined;
-    jest.spyOn(rn.BackHandler, 'addEventListener').mockImplementation((...args: unknown[]) => {
-      back = args[1] as () => boolean;
-      return { remove: jest.fn() };
-    });
+  it('closes only the centred modal on Escape or back (the Modal request), never popping the route', async () => {
     atWidth(1280);
     const screen = await openWithDraftAndFold();
     const bodyBefore = screen.getByTestId('journal-body-input').props.value as string;
-    let consumed: boolean | null | undefined;
     act(() => {
-      consumed = back?.();
+      screen.getByTestId('reflection-sources-modal').props.onRequestClose();
     });
-    expect(consumed).toBe(true);
-    expectOnlyThePanelClosed(screen, bodyBefore, 'reflection-sources-pane');
+    expectOnlyThePanelClosed(screen, bodyBefore, 'reflection-sources-modal');
+  });
+
+  it('closes only the centred modal on a backdrop tap', async () => {
+    atWidth(1280);
+    const screen = await openWithDraftAndFold();
+    const bodyBefore = screen.getByTestId('journal-body-input').props.value as string;
+    fireEvent.press(screen.getByTestId('reflection-sources-backdrop'));
+    expectOnlyThePanelClosed(screen, bodyBefore, 'reflection-sources-modal');
   });
 
   it('closes only the narrow sheet on Escape or back (the Modal request)', async () => {
@@ -481,7 +490,7 @@ describe('JournalEntryPromoteJourney -- sources panel navigation (#2883)', () =>
     const bodyBefore = screen.getByTestId('journal-body-input').props.value as string;
     fireEvent.press(screen.getByTestId('reflection-sources-close'));
     await openReflectionSources(screen);
-    expect(screen.getByTestId('reflection-sources-pane')).toBeTruthy();
+    expect(screen.getByTestId('reflection-sources-modal')).toBeTruthy();
     expect(screen.getByTestId('journal-body-input').props.value).toBe(bodyBefore);
   });
 });

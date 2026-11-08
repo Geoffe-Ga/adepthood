@@ -1,4 +1,4 @@
-// The Sources pane's "From your reading" group (#3659): Course and letter
+// The Sources panel's "From your reading" group (#3659): Course and letter
 // quotes promoted inside the review's window have no entry in the feed to ride
 // with, so they wait under their own sub-label, each captioned with where it
 // came from, and fold in through the same paths as an entry's quotes.
@@ -12,8 +12,8 @@ import type { BatchFoldResult } from '../useReflectionMode';
 import type { PromotedQuoteSummary, ReadingQuoteItem, ReflectionSourceItem } from '@/api';
 
 const ReflectionSourcesPanel = require('../ReflectionSourcesPanel').default;
-const { SIDE_PANE_BREAKPOINT, READING_QUOTES_LABEL } = require('../ReflectionSourcesPanel') as {
-  SIDE_PANE_BREAKPOINT: number;
+const { CENTRED_MODAL_BREAKPOINT, READING_QUOTES_LABEL } = require('../ReflectionSourcesPanel') as {
+  CENTRED_MODAL_BREAKPOINT: number;
   READING_QUOTES_LABEL: string;
 };
 
@@ -66,7 +66,7 @@ function renderPanel(props: Record<string, unknown> = {}): ReturnType<typeof ren
   const rn = require('react-native');
   jest
     .spyOn(rn, 'useWindowDimensions')
-    .mockReturnValue({ width: SIDE_PANE_BREAKPOINT, height: 900, scale: 1, fontScale: 1 });
+    .mockReturnValue({ width: CENTRED_MODAL_BREAKPOINT, height: 900, scale: 1, fontScale: 1 });
   return render(
     <ReflectionSourcesPanel
       items={[MONDAY]}

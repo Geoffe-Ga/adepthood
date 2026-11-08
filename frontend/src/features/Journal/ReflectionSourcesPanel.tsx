@@ -15,11 +15,12 @@
  *      reflections in scope. Each row collapses to an excerpt and expands to its
  *      full body on tap.
  *
- * Responsive: an inline side pane beside the writing sheet only where the page,
- * its margin column and the pane all fit (``SIDE_PANE_BREAKPOINT``); below that a
- * bounded, centred bottom-sheet ``Modal`` a tap on the backdrop dismisses. Either
- * way the heading and its X stay fixed above a scroll holding only the quotes and
- * the feed (#2883). Reduced-motion safe.
+ * Responsive, and a ``Modal`` at every width: below ``CENTRED_MODAL_BREAKPOINT`` a
+ * bounded bottom sheet the width of the page; from it up, a card at the page's
+ * reading measure centred over the dimmed desk (#3133), never a sliver beside
+ * the writing. Either way a tap on the backdrop, Escape, the platform back
+ * button or the X closes it, and the heading and its X stay fixed above a scroll
+ * holding only the quotes and the feed (#2883). Reduced-motion safe.
  */
 import { X } from 'lucide-react-native';
 import React, {
@@ -41,6 +42,7 @@ import {
   TouchableOpacity,
   View,
   useWindowDimensions,
+  type ViewStyle,
 } from 'react-native';
 
 import { excerpt } from './excerpt';
@@ -78,36 +80,37 @@ import {
   editorialType,
   ink,
   journalLayout,
-  journalSheet,
   spacing,
   surface,
   surfaceShadow,
   touchTarget,
 } from '@/design/tokens';
-import { useDismissKeys } from '@/hooks/useDismissKeys';
 import { useReducedMotion } from '@/hooks/useReducedMotion';
-import { useScreenFocused } from '@/hooks/useScreenFocused';
-
-/** The side pane's width: half the page's reading measure. */
-const SOURCES_PANE_WIDTH = journalLayout.pageMaxWidth / 2;
-
-/** The desk ground left between the side pane and the viewport's trailing edge. */
-const SOURCES_PANE_GUTTER = journalSheet.deskPaddingH;
-/** Width the inline dock reserves, including its trailing desk gutter. */
-export const SOURCES_PANE_OCCUPIED_WIDTH = SOURCES_PANE_WIDTH + SOURCES_PANE_GUTTER;
 
 /**
- * At/above this viewport width the panel is an inline side pane beside the
- * writing sheet; below it, a bounded bottom sheet. The sheet holds the page
- * (``contentLayout.maxWidth``: the reading measure plus its fixed 220 margin
- * column, which persists from 600 up), so a pane only goes beside it once the
- * viewport also has room for the pane itself. Narrower, a pane would crush the
- * writing column to a sliver (about 145px at 768).
+ * At/above this viewport width the panel opens as a card centred over the desk;
+ * below it, as a bounded bottom sheet (#3133). The sheet is as wide as the page
+ * (``contentLayout.maxWidth``: the reading measure plus its 220 margin column),
+ * so below this it still spans the page a writer is reading beside. From here
+ * up the desk is wide enough that a page-wide sheet would strand the sources
+ * along the bottom edge, so the panel comes forward as a card at the reading
+ * measure instead. The value -- the page plus half a reading measure, where the
+ * retired side pane used to begin -- is kept so no width below it changes.
  */
-export const SIDE_PANE_BREAKPOINT = contentLayout.maxWidth + SOURCES_PANE_WIDTH;
+export const CENTRED_MODAL_BREAKPOINT = contentLayout.maxWidth + journalLayout.pageMaxWidth / 2;
 
 /** The sheet never covers more than this share of the viewport's height. */
 const SHEET_MAX_HEIGHT = '80%';
+
+/**
+ * The centred card never covers more than this share of the viewport's height:
+ * taller than the sheet, since it rises from neither edge, yet leaving a band of
+ * dimmed desk above and below to tap away on.
+ */
+const MODAL_MAX_HEIGHT = '90%';
+
+/** The dialog's accessible name: what the heading says the panel holds. */
+const SOURCES_DIALOG_LABEL = 'Sources';
 
 /**
  * On native, the in-panel selection field is capped at this share of the
@@ -612,8 +615,7 @@ interface RowSelection {
 function useRowSelection(onPromoteSpan?: PromoteSpanHandler): RowSelection {
   const [selectingKey, setSelectingKey] = useState<string | null>(null);
   const [promoteFailedKey, setPromoteFailedKey] = useState<string | null>(null);
-  // State, not a ref: a surface remounted mid-selection (the sheet and pane
-  // swapping as the window crosses the breakpoint) is seeded from it.
+  // State, not a ref: a surface remounted mid-selection is seeded from it.
   const [span, setSpan] = useState<CodePointSpan>(EMPTY_SPAN);
 
   const startSelecting = useCallback((key: string) => {
@@ -868,7 +870,7 @@ function useFocusOnOpen(enabled: boolean): CloseControlRef {
  * {@link formatReviewPeriod}) on the left, and in the trailing slot an
  * icon-only X that closes the sheet. The X is the word "Done" as a glyph, so it
  * keeps that word as its accessible name, and takes focus as the panel opens; a
- * pane caller that passes no ``onClose`` gets the heading without it.
+ * caller that passes no ``onClose`` gets the heading without it.
  */
 function SourcesHeading({
   window: reviewWindow,
@@ -959,9 +961,9 @@ function EmptyFeed({
 }
 
 /**
- * Everything the reader has done in the panel. Owned ABOVE the sheet/pane
- * switch: those are different containers, so crossing the breakpoint while
- * open remounts the content, and this is what survives it (#2883).
+ * Everything the reader has done in the panel. Owned ABOVE the container, so
+ * whatever becomes of it -- crossing the breakpoint while open swaps the sheet
+ * for the centred card (#2883, #3133) -- this is what the reader keeps.
  */
 interface PanelState {
   feed: FeedState;
@@ -1025,7 +1027,7 @@ function usePanelLists(
   return { pending, reading, feed };
 }
 
-/** The panel's inner content, shared by the sheet and pane containers. */
+/** The panel's inner content, shared by the sheet and the centred card. */
 function SourcesContent({
   items,
   readingQuotes,
@@ -1080,22 +1082,34 @@ function SourcesContent({
   );
 }
 
+/** Where the panel's frame sits in its Modal: rising from the foot, or centred. */
+type SheetPlacement = 'bottom' | 'center';
+
 /**
- * The bottom sheet. The Modal's ``onRequestClose`` carries Escape (web) and the
- * platform back button; the backdrop is a sibling BEFORE the sheet body, never
- * its parent, so a press inside the sheet cannot bubble up and close it.
+ * The panel's one container, a ``Modal`` at every width: a bottom sheet that
+ * slides up, or a card that fades in centred over the desk (#3133). The Modal's
+ * ``onRequestClose`` alone carries Escape (web) and the platform back button --
+ * nothing else listens, so one request is one close. The backdrop is a sibling
+ * BEFORE the frame, never its parent, so a press inside the frame (a row, the
+ * selection field) cannot bubble up and close it. Crossing the breakpoint swaps
+ * only this component's props, never its type, so the content does not remount.
  */
-function SourcesSheet(props: ContainerProps): React.JSX.Element {
+function SourcesSheet({
+  placement,
+  ...props
+}: ContainerProps & { placement: SheetPlacement }): React.JSX.Element {
   const reducedMotion = useReducedMotion();
+  const frame = SHEET_FRAMES[placement];
   return (
     <Modal
       visible
       transparent
-      animationType={reducedMotion ? 'none' : 'slide'}
+      animationType={reducedMotion ? 'none' : frame.animation}
       onRequestClose={props.onClose}
-      testID="reflection-sources-sheet"
+      aria-label={SOURCES_DIALOG_LABEL}
+      testID={frame.modalId}
     >
-      <View style={styles.sheetBackdrop}>
+      <View style={frame.backdropStyle} testID="reflection-sources-scrim">
         <Pressable
           style={StyleSheet.absoluteFill}
           onPress={props.onClose}
@@ -1104,7 +1118,7 @@ function SourcesSheet(props: ContainerProps): React.JSX.Element {
           importantForAccessibility="no"
           testID="reflection-sources-backdrop"
         />
-        <View style={styles.sheet} testID="reflection-sources-sheet-body">
+        <View style={frame.bodyStyle} testID={frame.bodyId}>
           <SourcesContent {...props} />
         </View>
       </View>
@@ -1112,53 +1126,13 @@ function SourcesSheet(props: ContainerProps): React.JSX.Element {
   );
 }
 
-/** No-op stand-in so the pane's dismissal hook always has a callable handler. */
-function noop(): void {}
-
-/**
- * The inline side pane. It has no Modal to carry Escape or the back button, so
- * it takes both from ``useDismissKeys`` -- only while it can actually close and
- * its screen is the one in front.
- */
-function SourcesPane(props: ContainerProps): React.JSX.Element {
-  // Only while its screen is in front: a stack keeps a covered entry mounted,
-  // and an armed pane there would swallow the back press (or Escape) meant for
-  // the screen pushed over it.
-  const screenFocused = useScreenFocused();
-  useDismissKeys(props.onClose ?? noop, props.onClose != null && screenFocused);
-  return (
-    <View style={styles.pane} testID="reflection-sources-pane">
-      <SourcesContent {...props} />
-    </View>
-  );
-}
-
 function ReflectionSourcesPanel(props: ReflectionSourcesPanelProps): React.JSX.Element {
   const state = usePanelState(props);
-  if (useWindowDimensions().width < SIDE_PANE_BREAKPOINT) {
-    return <SourcesSheet {...props} state={state} />;
-  }
-  return <SourcesPane {...props} state={state} />;
+  const placement = useWindowDimensions().width < CENTRED_MODAL_BREAKPOINT ? 'bottom' : 'center';
+  return <SourcesSheet {...props} state={state} placement={placement} />;
 }
 
 const styles = StyleSheet.create({
-  pane: {
-    // The editor's timer and resonance controls are intentionally absolute.
-    // Keep the open source surface in a higher stacking context so those
-    // background controls cannot absorb taps meant for quotes in the panel.
-    position: 'relative',
-    zIndex: 1,
-    // Beside the writing sheet, stretched to its height: a column whose heading
-    // stays put while the scroll beneath it takes the rest.
-    width: SOURCES_PANE_WIDTH,
-    alignSelf: 'stretch',
-    flexDirection: 'column',
-    marginTop: journalSheet.deskPaddingTop,
-    marginRight: SOURCES_PANE_GUTTER,
-    backgroundColor: surface.raised,
-    borderRadius: BORDER_RADIUS.lg,
-    ...surfaceShadow.card,
-  },
   sheetBackdrop: {
     flex: 1,
     justifyContent: 'flex-end',
@@ -1175,8 +1149,25 @@ const styles = StyleSheet.create({
     borderTopRightRadius: BORDER_RADIUS.lg,
     ...surfaceShadow.raised,
   },
-  // Shrinks to the frame's bounded height (the sheet's cap, the pane's
-  // stretched column) so the feed scrolls beneath a heading that stays put.
+  modalBackdrop: {
+    flex: 1,
+    justifyContent: 'center',
+    backgroundColor: colors.mystical.overlay,
+  },
+  // No horizontal gutter: the card exists only from the breakpoint up, where
+  // the reading measure is always narrower than the viewport.
+  modalCard: {
+    flexDirection: 'column',
+    width: '100%',
+    maxWidth: journalLayout.pageMaxWidth,
+    alignSelf: 'center',
+    maxHeight: MODAL_MAX_HEIGHT,
+    backgroundColor: surface.raised,
+    borderRadius: BORDER_RADIUS.lg,
+    ...surfaceShadow.raised,
+  },
+  // Shrinks to the frame's bounded height (the sheet's or the card's cap) so
+  // the feed scrolls beneath a heading that stays put.
   scroll: {
     flexGrow: 0,
     flexShrink: 1,
@@ -1286,5 +1277,32 @@ const styles = StyleSheet.create({
     paddingTop: spacing(0.5),
   },
 });
+
+/** Each placement's motion, testIDs and frame styles; read once styles exist. */
+const SHEET_FRAMES = {
+  bottom: {
+    animation: 'slide',
+    modalId: 'reflection-sources-sheet',
+    bodyId: 'reflection-sources-sheet-body',
+    backdropStyle: styles.sheetBackdrop,
+    bodyStyle: styles.sheet,
+  },
+  center: {
+    animation: 'fade',
+    modalId: 'reflection-sources-modal',
+    bodyId: 'reflection-sources-modal-body',
+    backdropStyle: styles.modalBackdrop,
+    bodyStyle: styles.modalCard,
+  },
+} as const satisfies Record<
+  SheetPlacement,
+  {
+    animation: 'slide' | 'fade';
+    modalId: string;
+    bodyId: string;
+    backdropStyle: ViewStyle;
+    bodyStyle: ViewStyle;
+  }
+>;
 
 export default ReflectionSourcesPanel;
