@@ -176,7 +176,20 @@ export const STAGE_COLORS: Record<string, string> = {
   'Clear Light': '#ffffff',
 };
 
-export const STAGE_ORDER: readonly string[] = [
+/**
+ * The ten Spiral colour names in stage order: the frontend's single offline
+ * stage -> colour-name fallback (#2666).
+ *
+ * The served stage is the source -- ``GET /stages`` returns each row's
+ * ``spiral_dynamics_color`` from the ``coursestage`` table -- so read a stage's
+ * colour name through ``store/stageColorName.ts``, which takes the served value
+ * first and comes here only when no served row is in hand (offline, before the
+ * stages load, or on a surface that never loads them). Pinned to the generated
+ * ``backend/src/curriculum/stage_correspondence.json`` by
+ * ``constants/__tests__/stageOntologyDrift.test.ts``, and kept the only list of
+ * its kind by ``features/Map/__tests__/stageCanonDrift.test.ts``.
+ */
+export const STAGE_ORDER = [
   'Beige',
   'Purple',
   'Red',
@@ -187,14 +200,22 @@ export const STAGE_ORDER: readonly string[] = [
   'Teal',
   'Ultraviolet',
   'Clear Light',
-];
+] as const;
+
+/** One of the ten Spiral colour names. */
+export type StageColorName = (typeof STAGE_ORDER)[number];
 
 // Pre-rename Spiral-Dynamics name for stage 8, mapped to its canonical name so
-// a server still on the old dataset resolves to the Teal hex rather than the
-// neutral-gray fallback.
-const LEGACY_STAGE_ALIASES: Record<string, string> = {
+// a server still on the old dataset resolves to the Teal hex and swatch rather
+// than a neutral fallback. The one alias table: every colour-name reader goes
+// through ``canonicalStageColorName``.
+const LEGACY_STAGE_ALIASES: Readonly<Record<string, StageColorName>> = Object.freeze({
   Turquoise: 'Teal',
-};
+});
+
+/** A served colour name in its canonical spelling: a legacy alias becomes its current name. */
+export const canonicalStageColorName = (spiralColor: string): string =>
+  LEGACY_STAGE_ALIASES[spiralColor] ?? spiralColor;
 
 /**
  * Resolve a Spiral-Dynamics color name to its hex value, falling back to the
@@ -206,8 +227,7 @@ export const resolveStageColor = (spiralColor: string | undefined): string => {
   if (!spiralColor) {
     return colors.neutral;
   }
-  const canonical = LEGACY_STAGE_ALIASES[spiralColor] ?? spiralColor;
-  return STAGE_COLORS[canonical] ?? colors.neutral;
+  return STAGE_COLORS[canonicalStageColorName(spiralColor)] ?? colors.neutral;
 };
 
 /** How far each channel is pushed from the gray point when brightening. */
