@@ -10,6 +10,7 @@ import { create } from 'zustand';
 
 import type { ProgramStartWindow } from '../api';
 import { STAGE_DURATIONS_DAYS, TOTAL_PROGRAM_DAYS } from '../constants/program';
+import { clearPendingProgramStart } from '../storage/pendingProgramStart';
 import {
   clearProgramStartDate,
   loadProgramStartDate,
@@ -148,6 +149,10 @@ export const useProgramStore = create<ProgramStoreState>((set, get) => ({
   reset: () => {
     set({ ...INITIAL_STATE });
     persistAsync(null);
+    // A pick held for retry belongs to the account that made it.
+    clearPendingProgramStart().catch(() => {
+      reportDiagnostic('storage_write_failed', { storage: 'program' });
+    });
   },
 }));
 

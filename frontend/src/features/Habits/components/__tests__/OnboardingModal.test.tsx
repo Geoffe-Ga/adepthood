@@ -191,7 +191,9 @@ describe('OnboardingModal close behaviour', () => {
     const PICKED_DAYS_BACK = 30;
     const originalTZ = process.env.TZ;
     process.env.TZ = 'America/Los_Angeles';
-    const onSave = jest.fn((_habits: { start_date: Date }[]) => undefined);
+    const onSave = jest.fn(
+      (_habits: { start_date: Date }[], _programStartDay?: string) => undefined,
+    );
     const tree = renderer.create(
       <OnboardingModal visible onClose={jest.fn()} onSaveHabits={onSave} />,
     );
@@ -251,6 +253,9 @@ describe('OnboardingModal close behaviour', () => {
     expect(saved!.start_date.getFullYear()).toBe(pickedYear);
     expect(saved!.start_date.getMonth()).toBe(pickedMonth);
     expect(saved!.start_date.getDate()).toBe(pickedDay);
+    // The picked day itself is handed over as the program's anchor, so the save
+    // never has to read a day back out of a device-local instant (#3097 review).
+    expect(onSave.mock.calls[0]?.[1]).toBe(pickedIso);
     process.env.TZ = originalTZ;
   });
 });

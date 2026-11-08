@@ -1215,13 +1215,17 @@ const useOnboardingPieces = (
   useOnboardingEffects(step, cs.scrollRef, revealParts.prepareHabitsForReorder);
   const review = useScaffoldReview(visible, existingHabits, cs);
   const input = useHabitInput(habits, setHabits, setStep);
+  // The picked day goes with the picks, as picked: the program is anchored to
+  // this YYYY-MM-DD, never to a day read back out of a device-local instant.
+  const saveWithStartDay: OnboardingModalProps['onSaveHabits'] = (result) =>
+    onSaveHabits(result, toISODate(startDate));
   const nav = useOnboardingNavigation(
     review.buildResult,
     review.resetToEntry,
     setStep,
     cs.setGoalGroupTemplates,
     onClose,
-    onSaveHabits,
+    saveWithStartDay,
   );
   const act = useOnboardingActions(
     habits,

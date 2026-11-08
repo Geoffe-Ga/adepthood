@@ -202,8 +202,14 @@ export interface OnboardingModalProps {
    * review. The union is the whole point: a first-run pass has no row to name,
    * while a review pass knows exactly which row each pick means and which rows
    * the user chose to let go of, and only a stated plan can carry a release.
+   *
+   * ``programStartDay`` is the ``YYYY-MM-DD`` the start-date picker showed --
+   * the program's anchor, sent to the server exactly as picked (#3097).
    */
-  onSaveHabits: (_habits: readonly OnboardingHabit[] | HabitMergePlan) => void;
+  onSaveHabits: (
+    _habits: readonly OnboardingHabit[] | HabitMergePlan,
+    _programStartDay?: string,
+  ) => void;
   /**
    * The habits the user already has, so the modal can ask about them instead of
    * starting from nothing. Optional and empty by default: a first run has none,
@@ -263,7 +269,10 @@ export interface HabitsActions {
   /** Resolves once the reorder is durably persisted, or rolled back (#2755). */
   saveHabitOrder: (_orderedHabits: Habit[]) => Promise<void>;
   /** Mirrors ``OnboardingModalProps.onSaveHabits``: the screen passes this straight through. */
-  onboardingSave: (_input: readonly OnboardingHabit[] | HabitMergePlan) => Promise<void>;
+  onboardingSave: (
+    _input: readonly OnboardingHabit[] | HabitMergePlan,
+    _programStartDay?: string,
+  ) => Promise<void>;
   iconPress: (_index: number) => void;
   emojiSelect: (_emoji: string) => void;
   revealAllHabits: () => void;

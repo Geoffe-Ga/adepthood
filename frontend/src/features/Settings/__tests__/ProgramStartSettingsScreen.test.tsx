@@ -6,9 +6,10 @@ import ProgramStartSettingsScreen from '../ProgramStartSettingsScreen';
 
 import DatePicker from '@/components/DatePicker';
 import { useAuth } from '@/context/AuthContext';
+import type { ProgramStartChangeOutcome } from '@/features/Habits/services/habitManager';
 import type { ProgramStartOutcome } from '@/features/Program/programAnchor';
 import { useProgramStore } from '@/store/useProgramStore';
-import { todayInUserTZ } from '@/utils/dateUtils';
+import { addDaysInTZ, todayInUserTZ } from '@/utils/dateUtils';
 
 jest.mock('@/context/AuthContext', () => ({ useAuth: jest.fn() }));
 
@@ -18,7 +19,7 @@ jest.mock('@/features/Program/programAnchor', () => ({
 }));
 
 const mockChangeProgramStart =
-  jest.fn<(_day: string, _tz?: string) => Promise<ProgramStartOutcome>>();
+  jest.fn<(_day: string, _tz?: string) => Promise<ProgramStartChangeOutcome>>();
 jest.mock('@/features/Habits/services/habitManager', () => ({
   habitManager: {
     changeProgramStart: (day: string, tz?: string) => mockChangeProgramStart(day, tz),
@@ -114,6 +115,47 @@ describe('ProgramStartSettingsScreen (#3097)', () => {
       outcome.kind === 'saved' ? '' : outcome.message,
     );
     expect(picker(result).value).toBe(HELD_DAY);
+  });
+
+  it('never opens on a future day held from before the server answered, and saves today instead', async () => {
+    const today = todayInUserTZ(ZONE);
+    const FUTURE_DAYS = 30;
+    act(() =>
+      useProgramStore.setState({
+        programStartDay: addDaysInTZ(today, FUTURE_DAYS, ZONE),
+        anchorSource: 'storage',
+        programStartWindow: WINDOW,
+      }),
+    );
+
+    const result = render(<ProgramStartSettingsScreen />);
+
+    expect(picker(result)).toMatchObject({ value: today, maxDate: today });
+    fireEvent.press(result.getByTestId('save-program-start-button'));
+    await waitFor(() => expect(mockChangeProgramStart).toHaveBeenCalledWith(today, ZONE));
+  });
+
+  it('says the habits did not follow, not "saved", when only the date took (#3097 review)', async () => {
+    const message = "Your new start date saved, but your habits' start dates didn't move to match.";
+    hold();
+    mockChangeProgramStart.mockImplementationOnce((day: string) => {
+      act(() =>
+        useProgramStore.getState().adoptServerProgramStart({ day, window: WINDOW, locked: false }),
+      );
+      return Promise.resolve({ kind: 'rows_unsaved', message });
+    });
+    const result = render(<ProgramStartSettingsScreen />);
+
+    act(() => picker(result).onChange('2026-04-01'));
+    fireEvent.press(result.getByTestId('save-program-start-button'));
+
+    await waitFor(() =>
+      expect(result.getByTestId('program-start-error')).toHaveTextContent(message),
+    );
+    expect(result.queryByTestId('program-start-status')).toBeNull();
+    // The date did move, so the picker stays on it and Save re-lays the rows.
+    expect(picker(result).value).toBe('2026-04-01');
+    expect(result.getByTestId('current-program-start')).toHaveTextContent('April 1, 2026');
   });
 
   it('shows the fixed date and no picker once begin-again has run', () => {

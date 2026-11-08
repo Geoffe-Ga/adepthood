@@ -1,7 +1,12 @@
 import { afterEach, beforeEach, describe, expect, it, jest } from '@jest/globals';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 
 import type * as ApiModule from '../../../api';
 import { ApiError, type ProgramCalendar } from '../../../api';
+import {
+  loadPendingProgramStart,
+  savePendingProgramStart,
+} from '../../../storage/pendingProgramStart';
 import {
   daysUntilStage,
   programStage,
@@ -12,6 +17,7 @@ import { useStageStore } from '../../../store/useStageStore';
 import { adoptProgramCalendar } from '../adoptProgramCalendar';
 import {
   commitProgramStart,
+  holdPendingProgramStart,
   PROGRAM_START_NOT_SAVED_COPY,
   reconcileProgramAnchor,
 } from '../programAnchor';
@@ -59,7 +65,19 @@ const calendar = (overrides: Partial<ProgramCalendar> = {}): ProgramCalendar => 
   ...overrides,
 });
 
-beforeEach(() => {
+/** A promise the test settles by hand, so it can choose which answer lands first. */
+function deferred<T>() {
+  let resolve!: (_value: T) => void;
+  const promise = new Promise<T>((settle) => {
+    resolve = settle;
+  });
+  return { promise, resolve };
+}
+
+const flush = () => new Promise<void>((done) => setImmediate(done));
+
+beforeEach(async () => {
+  await AsyncStorage.clear();
   jest.useFakeTimers({ now: NOW, doNotFake: ['nextTick', 'setImmediate'] });
   mockSetProgramStart.mockReset();
   mockProgramCalendar.mockReset();
@@ -189,5 +207,100 @@ describe('reconcileProgramAnchor', () => {
     await reconcileProgramAnchor(ZONE);
 
     expect(useProgramStore.getState().programStartDay).toBe('2026-11-01');
+  });
+});
+
+describe('a late reconcile read never undoes a commit (#3097 review)', () => {
+  const OLD_DAY_AT = '2026-09-01T04:00:00Z';
+
+  it('drops a GET that was answered before a PUT whose echo has since been adopted', async () => {
+    const stale = deferred<ProgramCalendar>();
+    mockProgramCalendar.mockReturnValueOnce(stale.promise);
+    mockSetProgramStart.mockResolvedValueOnce(calendar());
+
+    const reading = reconcileProgramAnchor(ZONE);
+    await flush();
+    const outcome = await commitProgramStart(PICKED_DAY, { tz: ZONE });
+    stale.resolve(calendar({ program_started_at: OLD_DAY_AT }));
+    await reading;
+
+    expect(outcome).toEqual({ kind: 'saved' });
+    expect(useProgramStore.getState().programStartDay).toBe(PICKED_DAY);
+    expect(useProgramStore.getState().anchorSource).toBe('server');
+  });
+
+  it('still adopts a read that started after the commit landed', async () => {
+    mockSetProgramStart.mockResolvedValueOnce(calendar());
+    await commitProgramStart(PICKED_DAY, { tz: ZONE });
+    mockProgramCalendar.mockResolvedValueOnce(calendar({ program_started_at: OLD_DAY_AT }));
+
+    await reconcileProgramAnchor(ZONE);
+
+    expect(useProgramStore.getState().programStartDay).toBe('2026-09-01');
+  });
+});
+
+describe('a pick that never reached the server is sent again (#3097 review)', () => {
+  const SERVER_STAMP_AT = '2026-11-08T05:00:00Z';
+
+  it('holds the pick on disk until it is sent', async () => {
+    await holdPendingProgramStart(PICKED_DAY);
+
+    await expect(loadPendingProgramStart()).resolves.toBe(PICKED_DAY);
+  });
+
+  it("PUTs the held pick before reading the server's default stamp, and adopts the echo", async () => {
+    await savePendingProgramStart(PICKED_DAY);
+    mockSetProgramStart.mockResolvedValueOnce(calendar());
+    mockProgramCalendar.mockResolvedValue(calendar({ program_started_at: SERVER_STAMP_AT }));
+
+    await reconcileProgramAnchor(ZONE);
+
+    expect(mockSetProgramStart).toHaveBeenCalledWith(PICKED_DAY, undefined);
+    expect(useProgramStore.getState().programStartDay).toBe(PICKED_DAY);
+    expect(useProgramStore.getState().anchorSource).toBe('server');
+    await expect(loadPendingProgramStart()).resolves.toBeNull();
+  });
+
+  it("keeps the pick, and does not adopt the server's stamp, while still offline", async () => {
+    await savePendingProgramStart(PICKED_DAY);
+    useProgramStore.getState().setProgramStartDay(PICKED_DAY);
+    mockSetProgramStart.mockRejectedValueOnce(new TypeError('Failed to fetch'));
+    mockProgramCalendar.mockResolvedValue(calendar({ program_started_at: SERVER_STAMP_AT }));
+
+    await reconcileProgramAnchor(ZONE);
+
+    expect(useProgramStore.getState().programStartDay).toBe(PICKED_DAY);
+    expect(useProgramStore.getState().anchorSource).toBe('local');
+    await expect(loadPendingProgramStart()).resolves.toBe(PICKED_DAY);
+  });
+
+  it("lets a refused pick go and adopts the server's day", async () => {
+    await savePendingProgramStart(PICKED_DAY);
+    mockSetProgramStart.mockRejectedValueOnce(new ApiError(422, 'program_start_too_early'));
+    mockProgramCalendar.mockResolvedValue(calendar({ program_started_at: SERVER_STAMP_AT }));
+
+    await reconcileProgramAnchor(ZONE);
+
+    expect(useProgramStore.getState().programStartDay).toBe('2026-11-08');
+    await expect(loadPendingProgramStart()).resolves.toBeNull();
+  });
+
+  it('a later pick that saves supersedes the held one', async () => {
+    await savePendingProgramStart('2026-10-01');
+    mockSetProgramStart.mockResolvedValueOnce(calendar());
+
+    await commitProgramStart(PICKED_DAY, { tz: ZONE });
+
+    await expect(loadPendingProgramStart()).resolves.toBeNull();
+  });
+
+  it('a log-out forgets the held pick', async () => {
+    await savePendingProgramStart(PICKED_DAY);
+
+    useProgramStore.getState().reset();
+    await flush();
+
+    await expect(loadPendingProgramStart()).resolves.toBeNull();
   });
 });

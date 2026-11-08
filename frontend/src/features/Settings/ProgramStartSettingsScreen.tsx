@@ -106,7 +106,9 @@ function useSaveProgramStart(form: SettingsFormState, tz: string, revert: () => 
       setStatus(savedCopy(draft));
       return;
     }
-    revert();
+    // The server took the date but the habits could not follow: the date
+    // stands, so the picker stays on it and Save again re-lays the rows.
+    if (outcome.kind !== 'rows_unsaved') revert();
     setError(outcome.message);
   }, [draft, tz, revert, setSubmitting, setError, setStatus]);
 }
