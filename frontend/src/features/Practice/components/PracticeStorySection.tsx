@@ -3,8 +3,9 @@ import { Pressable, StyleSheet, Text, View } from 'react-native';
 
 import { PracticeStory } from './PracticeStory';
 
-import { STAGE_ORDER, ink, rhythm, touchTarget, uiType } from '@/design/tokens';
+import { ink, rhythm, touchTarget, uiType } from '@/design/tokens';
 import { usePracticeStory } from '@/features/Practice/hooks/usePracticeStory';
+import { useStageColorName } from '@/store/stageColorName';
 
 export function PracticeStorySection({
   practiceId,
@@ -14,6 +15,7 @@ export function PracticeStorySection({
   stageNumber: number;
 }) {
   const result = usePracticeStory(practiceId, stageNumber);
+  const stageName = useStageColorName(stageNumber);
   if (result.error !== null)
     return (
       <View style={styles.error} testID="practice-story-error">
@@ -32,7 +34,7 @@ export function PracticeStorySection({
   return (
     <PracticeStory
       story={result.story}
-      stageName={STAGE_ORDER[stageNumber - 1] ?? `Stage ${stageNumber}`}
+      stageName={stageName ?? `Stage ${stageNumber}`}
       timezone={result.timezone}
     />
   );

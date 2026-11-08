@@ -1,4 +1,4 @@
-import { describe, expect, it } from '@jest/globals';
+import { afterEach, describe, expect, it } from '@jest/globals';
 
 import {
   continuityLines,
@@ -16,9 +16,15 @@ import {
   weeklyTierRows,
 } from '../ledgerPresentation';
 
+import { STAGE_COLORS } from '@/design/tokens';
 import { habitStoryFixture, storyDays } from '@/features/Habits/testSupport/habitStoryFixture';
+import { clearServedStages, serveStageColors } from '@/testing/servedStageColors';
 
 const at = () => '18:40';
+
+afterEach(() => {
+  clearServedStages();
+});
 
 describe('ledgerPresentation', () => {
   it('words every continuity figure with its unit', () => {
@@ -98,6 +104,13 @@ describe('ledgerPresentation', () => {
       ['Red', 9],
     ]);
     expect(strips[0]?.color).toMatch(/^#/);
+  });
+
+  it('names and colours a strip by the colour the server served its stage (#2666)', () => {
+    serveStageColors({ 1: 'Teal' });
+    const [first] = stageStrips(habitStoryFixture());
+    expect(first?.name).toBe('Teal');
+    expect(first?.color).toBe(STAGE_COLORS.Teal);
   });
 
   it('groups logs by day, newest first, each day with its total', () => {

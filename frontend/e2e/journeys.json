@@ -2304,7 +2304,7 @@
   },
   {
     "id": "map.stage-persona-is-the-course-archetype",
-    "description": "A traveller reads a stage's free-will archetype -- the persona beside each stage in the Map's left column and in its spoken label -- and it is the course's own archetype as the coursestage row holds it: Purple reads Pleasure Seeker, the name its free-will chapter and the aptitude-stages.md heading use. Since #2666 nothing about it is hardcoded client-side: stageService fills the stage store from GET /stages and stageVocabulary.ts derives the persona from relationship_to_free_will, so the covering spec names no persona of its own. It reads the persona the Map shows, rewrites that stage's row out of band with tests.e2e.stage_copy set-field (which reports the value it replaced) and requires the replaced value to be exactly what was on screen, then reloads and requires the left column and the hotspot's aria-label to follow the row to a string the curriculum never held -- an assertion a client answering from its own copy of the seeded words cannot pass. The row is put back before the file ends. The Journal AspectChordControl reads the same persona without a program visit: from the stage store when the Map or Practice filled it, otherwise from GET /stages/correspondence, otherwise the stage colour name; that path is pinned by frontend/src/features/Journal/__tests__/useAspectOptions.test.tsx and JournalEntryScreenChord.test.tsx rather than a browser spec.",
+    "description": "A traveller reads a stage's free-will archetype -- the persona beside each stage in the Map's left column and in its spoken label -- and it is the course's own archetype as the coursestage row holds it: Purple reads Pleasure Seeker, the name its free-will chapter and the aptitude-stages.md heading use. Since #2666 nothing about it is hardcoded client-side: stageService fills the stage store from GET /stages and stageVocabulary.ts derives the persona from relationship_to_free_will, so the covering spec names no persona of its own. It reads the persona the Map shows, rewrites that stage's row out of band with tests.e2e.stage_copy set-field (which reports the value it replaced) and requires the replaced value to be exactly what was on screen, then reloads and requires the left column and the hotspot's aria-label to follow the row to a string the curriculum never held -- an assertion a client answering from its own copy of the seeded words cannot pass. The row is put back before the file ends. The Journal AspectChordControl reads the same persona without a program visit: from the stage store when the Map or Practice filled it, otherwise from GET /stages/correspondence, otherwise the stage colour name; that path is pinned by frontend/src/features/Journal/__tests__/useAspectOptions.test.tsx and JournalEntryScreenChord.test.tsx rather than a browser spec. The stage's colour follows the served row the same way: toStageData colours the Map from the row's spiral_dynamics_color, and every stage-number-to-colour-name reader goes through store/stageColorName.ts, which takes the served colour first and the pinned offline STAGE_ORDER only when no served row is in hand; the browser proof of that half is the uncovered map.stage-colour-follows-the-coursestage-row.",
     "crosses": {
       "screen": "frontend/src/features/Map/MapScreen.tsx",
       "client": ["stages"],
@@ -2313,6 +2313,18 @@
     },
     "status": "covered",
     "coveredBy": "frontend/e2e/map-stage-persona.browser.e2e.test.ts"
+  },
+  {
+    "id": "map.stage-colour-follows-the-coursestage-row",
+    "description": "A traveller sees each stage's Spiral colour -- the Map tile's fill and the colour named in its spoken label, and the same name on the Journal hero, the Practice stage picker and story, the Course pills, the Habits story and ledger and the Progress ribbon -- and it is the colour the coursestage row holds, not a frontend copy. Since #2666 stageService.toStageData colours a stage from the served spiral_dynamics_color through resolveStageColor (the legacy Turquoise reads as Teal), and every stage-number-to-colour-name reader goes through store/stageColorName.ts: the served row first, the pinned offline STAGE_ORDER only when no served row is in hand. GET /stages/correspondence carries the same field for the visit-free Journal chord. Uncovered in a browser because tests.e2e.stage_copy set-field cannot yet rewrite spiral_dynamics_color (SETTABLE_FIELDS is subtitle and relationship_to_free_will); the linked issue widens it and adds the spec that rewrites a row's colour out of band, reloads, and requires the Map tile and its aria-label to follow. Pinned meanwhile by stageService.test.ts, store/__tests__/stageColorName.test.ts, the served-first cases in each reader's suite, stageOntologyDrift.test.ts (the fallback equals stage_correspondence.json) and stageCanonDrift.test.ts (no second colour list, no STAGE_ORDER lookup outside its readers).",
+    "crosses": {
+      "screen": "frontend/src/features/Map/MapScreen.tsx",
+      "client": ["stages"],
+      "routes": ["GET /stages", "GET /stages/correspondence"],
+      "tables": ["coursestage"]
+    },
+    "status": "uncovered",
+    "issue": 3697
   },
   {
     "id": "journal.higher-self-does-not-repeat-itself",

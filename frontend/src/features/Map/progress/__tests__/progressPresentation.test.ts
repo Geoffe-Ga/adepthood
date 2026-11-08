@@ -1,4 +1,4 @@
-import { describe, expect, it } from '@jest/globals';
+import { afterEach, describe, expect, it } from '@jest/globals';
 
 import {
   arcSummary,
@@ -23,8 +23,19 @@ import {
 
 import { STAGE_COLORS } from '@/design/tokens';
 import { progressOverviewFixture } from '@/features/Map/testSupport/progressOverviewFixture';
+import { clearServedStages, serveStageColors } from '@/testing/servedStageColors';
+
+afterEach(() => {
+  clearServedStages();
+});
 
 describe('the arc', () => {
+  it('names and colours a block by the colour the server served its stage (#2666)', () => {
+    serveStageColors({ 1: 'Teal' });
+    const blocks = ribbonBlocks(progressOverviewFixture());
+    expect(blocks[0]).toEqual({ label: 'Teal · Aspect 1', weeks: 3, color: STAGE_COLORS.Teal });
+  });
+
   it('draws ten labelled stage blocks sized by weeks', () => {
     const blocks = ribbonBlocks(progressOverviewFixture());
     expect(blocks).toHaveLength(10);

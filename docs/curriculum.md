@@ -331,8 +331,16 @@ literal held equal to the artifact by a test.
 | `backend/tests/e2e/stage_copy.py` (test-only) | server | reads and rewrites whitelisted `coursestage` columns for browser specs |
 | `frontend/src/features/Map/stageVocabulary.ts` | server | `GET /stages` rows (stage store) |
 | `frontend/src/features/Journal/useAspectOptions.ts` | server, then pinned fallback | stage store, then `GET /stages/correspondence`, then the stage colour name |
-| `frontend/src/features/Course/stageDisplay.ts` | server, then pinned fallback | the stage's `spiral_dynamics_color`, else `STAGE_ORDER` |
-| Frontend stage_number → colour-name sites (`Map/services/stageService.ts` and the other `STAGE_ORDER[n - 1]` lookups) | pinned fallback | `frontend/src/design/tokens.ts` `STAGE_ORDER` (held to `FREQUENCY_COLORS`, and so to the artifact, by `stageOntologyDrift.test.ts`); moving these to served-first is the frontend half of #2666 |
+| `frontend/src/store/stageColorName.ts` (`stageColorName`, `storedStageColorName`, `useStageColorName(s)`) | server, then pinned fallback | the explicit served row or the stage store, else `STAGE_ORDER` — the one stage_number → colour-name resolver |
+| `frontend/src/design/tokens.ts` `STAGE_ORDER` | pinned fallback | offline only; held to `stage_correspondence.json` by `stageOntologyDrift.test.ts`, and the only colour list (`stageCanonDrift` forbids a second) |
+| `frontend/src/features/Map/services/stageService.ts` `toStageData` (tile colour) | server | the served `spiral_dynamics_color` |
+| `frontend/src/features/Map/magnifierGeometry.ts` (spoken label) | server, then pinned fallback | explicit `VocabularySource.spiralDynamicsColor` |
+| `Map/stageVocabulary.ts` fallback words, `Map/progress/progressPresentation.ts`, `Map/StageModeSection.tsx` | server, then pinned fallback | the stage store via the resolver |
+| `Journal/AspectChordControl.tsx`, `Journal/JournalHero.tsx`, `Journal/reflectionCopy.ts` | server, then pinned fallback | the stage store via the resolver |
+| `Practice/components/StageSelector.tsx`, `PracticeStorySection.tsx`, `utils/stageDisplayName.ts`, `data/colorPalette.ts` | server, then pinned fallback | the stage store via the resolver; swatch hexes are design data |
+| `Habits/story/habitStoryPresentation.ts`, `Habits/ledger/ledgerPresentation.ts` | server, then pinned fallback | the stage store via the resolver |
+| `frontend/src/features/Course/stageDisplay.ts` `getStageColor` | server, then pinned fallback | the explicit API stage's `spiral_dynamics_color`, else by position |
+| `Habits/HabitUtils.ts` `stageAtIndex` | not a consumer | the pinned list used as habit identity keys for ring cycling, not a correspondence read |
 
 `FREQUENCY_NAMES` (`domain/frequencies.py`) is not a consumer: it is Creek's
 wire vocabulary (see "The vocabulary decision" in

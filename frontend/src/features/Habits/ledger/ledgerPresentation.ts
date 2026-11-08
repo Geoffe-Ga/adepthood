@@ -5,7 +5,7 @@
  */
 import type { ApiHabitStory } from '@/api';
 import type { ChartTableRow, HeatCell } from '@/components/charts';
-import { STAGE_COLORS, STAGE_ORDER, chart } from '@/design/tokens';
+import { STAGE_COLORS, chart } from '@/design/tokens';
 import {
   amount,
   countIn,
@@ -18,6 +18,7 @@ import {
   WEEKDAY_NAMES,
   WITH_LABEL,
 } from '@/features/Habits/story/habitStoryPresentation';
+import { storedStageColorName } from '@/store/stageColorName';
 
 type StoryDay = ApiHabitStory['days'][number];
 
@@ -129,7 +130,7 @@ export interface StageStrip {
 /** "By stage": one strip of day cells per program stage the history touches. */
 export const stageStrips = (story: ApiHabitStory): StageStrip[] =>
   story.stages.map((stage) => {
-    const name = STAGE_ORDER[stage.stage_number - 1] ?? `Stage ${stage.stage_number}`;
+    const name = storedStageColorName(stage.stage_number) ?? `Stage ${stage.stage_number}`;
     return {
       stageNumber: stage.stage_number,
       name,

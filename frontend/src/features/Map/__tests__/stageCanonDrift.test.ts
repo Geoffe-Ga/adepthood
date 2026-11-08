@@ -76,6 +76,7 @@ interface CorrespondenceStage {
   category: string;
   aspect: string;
   relationship_to_free_will: string;
+  spiral_dynamics_color: string;
 }
 
 const CORRESPONDENCES: readonly CorrespondenceStage[] = (
@@ -193,6 +194,151 @@ const hardcodedVocabulary = (
         .filter((text) => vocabulary.has(text))
         .map((text) => `${path.relative(SRC, file)}: ${text}`),
     );
+
+// --- The one-colour-list guards (#2666) --------------------------------------
+
+/**
+ * The one production file allowed to spell the stage colours as a list: the
+ * design tokens, whose `STAGE_ORDER` is the single offline fallback, pinned to
+ * the artifact by `constants/__tests__/stageOntologyDrift.test.ts`.
+ */
+const COLOUR_LIST_WHITELIST = new Set([path.join(SRC, 'design', 'tokens.ts')]);
+
+/**
+ * The files allowed to index `STAGE_ORDER` by position: the tokens that
+ * declare it, the served-first resolver that is its only reader for a stage's
+ * colour name, and the Habits ring, which cycles persisted habit identity keys
+ * rather than naming a stage's colour.
+ */
+const STAGE_ORDER_INDEX_WHITELIST = new Set([
+  path.join(SRC, 'design', 'tokens.ts'),
+  path.join(SRC, 'store', 'stageColorName.ts'),
+  path.join(SRC, 'features', 'Habits', 'HabitUtils.ts'),
+]);
+
+/** How many distinct served colours an array literal needs before it is a colour list. */
+const MIN_COLOURS_IN_A_LIST = 2;
+
+/** Every Spiral colour name the backend serves. */
+const servedColours = (stages: readonly CorrespondenceStage[]): ReadonlySet<string> =>
+  new Set(stages.map((stage) => stage.spiral_dynamics_color));
+
+/** Parse a source text into a TypeScript AST, as TSX when its name says so. */
+const parse = (file: string, text: string): ts.SourceFile =>
+  ts.createSourceFile(
+    file,
+    text,
+    ts.ScriptTarget.Latest,
+    true,
+    file.endsWith('.tsx') ? ts.ScriptKind.TSX : ts.ScriptKind.TS,
+  );
+
+/** Every node of a source that satisfies `matches`. */
+function nodesWhere(source: ts.SourceFile, matches: (node: ts.Node) => boolean): ts.Node[] {
+  const found: ts.Node[] = [];
+  const visit = (node: ts.Node): void => {
+    if (matches(node)) found.push(node);
+    ts.forEachChild(node, visit);
+  };
+  visit(source);
+  return found;
+}
+
+/** The 1-based line a node starts on, for a finding a reader can open. */
+const lineOf = (source: ts.SourceFile, node: ts.Node): number =>
+  source.getLineAndCharacterOfPosition(node.getStart(source)).line + 1;
+
+/** `file:line` for every array literal spelling two or more served colours. */
+function colourListsIn(file: string, text: string, colours: ReadonlySet<string>): string[] {
+  const source = parse(file, text);
+  return nodesWhere(source, (node) => {
+    if (!ts.isArrayLiteralExpression(node)) return false;
+    const spelled = node.elements
+      .filter(
+        (element): element is ts.StringLiteral | ts.NoSubstitutionTemplateLiteral =>
+          ts.isStringLiteral(element) || ts.isNoSubstitutionTemplateLiteral(element),
+      )
+      .map((element) => element.text)
+      .filter((word) => colours.has(word));
+    return new Set(spelled).size >= MIN_COLOURS_IN_A_LIST;
+  }).map((node) => `${path.relative(SRC, file)}:${lineOf(source, node)}`);
+}
+
+/** `file:line` for every `STAGE_ORDER[...]` positional lookup. */
+function stageOrderIndexesIn(file: string, text: string): string[] {
+  const source = parse(file, text);
+  return nodesWhere(
+    source,
+    (node) =>
+      ts.isElementAccessExpression(node) &&
+      ts.isIdentifier(node.expression) &&
+      node.expression.text === 'STAGE_ORDER',
+  ).map((node) => `${path.relative(SRC, file)}:${lineOf(source, node)}`);
+}
+
+/** Run a per-file scan over every non-whitelisted file, collecting its findings. */
+const scanFiles = (
+  files: readonly string[],
+  whitelist: ReadonlySet<string>,
+  scan: (file: string, text: string) => string[],
+): string[] =>
+  files
+    .filter((file) => !whitelist.has(file))
+    .flatMap((file) => scan(file, fs.readFileSync(file, 'utf8')));
+
+describe('the frontend keeps one offline stage-colour list (#2666)', () => {
+  const colours = servedColours(CORRESPONDENCES);
+  const tokens = path.join(SRC, 'design', 'tokens.ts');
+
+  it('reads the ten served colours out of the correspondence artifact', () => {
+    expect(colours.size).toBe(STAGE_COUNT);
+  });
+
+  it('finds no list of served colour names outside the design tokens', () => {
+    const files = productionFiles(SRC);
+    expect(
+      scanFiles(files, COLOUR_LIST_WHITELIST, (file, text) => colourListsIn(file, text, colours)),
+    ).toEqual([]);
+  });
+
+  it('would catch a colour list anywhere else, and not a lone colour or a mixed pair', () => {
+    const synthetic = path.join(SRC, 'features', 'Synthetic', 'palette.ts');
+    expect(
+      colourListsIn(synthetic, "export const PALETTE = ['Beige', 'Purple'];", colours),
+    ).toEqual(['features/Synthetic/palette.ts:1']);
+    expect(
+      colourListsIn(synthetic, "export const ONE = ['Beige', 'Beige', 'x'];", colours),
+    ).toEqual([]);
+    // The tokens file itself is caught the moment it leaves the whitelist.
+    expect(
+      scanFiles([tokens], new Set(), (file, text) => colourListsIn(file, text, colours)),
+    ).toHaveLength(1);
+    expect(
+      scanFiles([tokens], COLOUR_LIST_WHITELIST, (file, text) =>
+        colourListsIn(file, text, colours),
+      ),
+    ).toEqual([]);
+  });
+
+  it('finds no positional STAGE_ORDER lookup outside its three readers', () => {
+    expect(
+      scanFiles(productionFiles(SRC), STAGE_ORDER_INDEX_WHITELIST, stageOrderIndexesIn),
+    ).toEqual([]);
+  });
+
+  it('would catch a STAGE_ORDER lookup anywhere else, and not a mere mention', () => {
+    const synthetic = path.join(SRC, 'features', 'Synthetic', 'name.ts');
+    expect(
+      stageOrderIndexesIn(
+        synthetic,
+        'const name = STAGE_ORDER[stage - 1];\nconst n = STAGE_ORDER.length;',
+      ),
+    ).toEqual(['features/Synthetic/name.ts:1']);
+    const resolver = path.join(SRC, 'store', 'stageColorName.ts');
+    expect(scanFiles([resolver], new Set(), stageOrderIndexesIn).length).toBeGreaterThan(0);
+    expect(scanFiles([resolver], STAGE_ORDER_INDEX_WHITELIST, stageOrderIndexesIn)).toEqual([]);
+  });
+});
 
 describe('the Map keeps no stage words of its own', () => {
   // Both of these guard a parse rather than a value. A regex or a JSON shape

@@ -10,7 +10,7 @@
  * functions; no React.
  */
 
-import { STAGE_ORDER } from '../../design/tokens';
+import { storedStageColorName } from '../../store/stageColorName';
 
 import type { StageData } from './stageData';
 
@@ -29,7 +29,7 @@ const ASPECT_WORD_SEPARATOR = ' ';
 /** The fields of a served stage the vocabulary reads. */
 export type VocabularySource = Pick<
   StageData,
-  'stageNumber' | 'title' | 'category' | 'aspect' | 'relationshipToFreeWill'
+  'stageNumber' | 'title' | 'category' | 'aspect' | 'relationshipToFreeWill' | 'spiralDynamicsColor'
 >;
 
 /** Every Map word for one stage. */
@@ -111,8 +111,11 @@ export const mapWatermarkLines = (lookup: StageVocabularyLookup): string[] =>
   }).filter((line): line is string => line !== undefined);
 
 /**
- * A stage's name when nothing about it has loaded: its Spiral colour, never an
- * empty string, so a control offered before the server answers still reads.
+ * A stage's name when its words have not loaded: its Spiral colour -- the one
+ * the store was served when it holds the stage, else the offline name (#2666)
+ * -- never an empty string, so a control offered before the server answers
+ * still reads. Every caller reaches for this precisely because it has no served
+ * row in hand, so it reads the store rather than taking one.
  */
 export const stageFallbackName = (stageNumber: number): string =>
-  STAGE_ORDER[stageNumber - 1] ?? `Stage ${stageNumber}`;
+  storedStageColorName(stageNumber) ?? `Stage ${stageNumber}`;

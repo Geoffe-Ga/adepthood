@@ -9,7 +9,8 @@
  * through, so its per-stage resting points sit exactly on the strand.
  */
 
-import { editorialType, spacing, STAGE_ORDER } from '../../design/tokens';
+import { editorialType, spacing } from '../../design/tokens';
+import { stageColorName } from '../../store/stageColorName';
 
 import { STAGE_COUNT } from './stageData';
 import type { StageData } from './stageData';
@@ -261,7 +262,7 @@ export const lensStageIdentity = (
   stage: VocabularySource | undefined,
   stageNumber: number,
 ): string => {
-  const colorName = (STAGE_ORDER[stageNumber - 1] ?? '').toUpperCase();
+  const colorName = (stageColorName(stageNumber, stage?.spiralDynamicsColor) ?? '').toUpperCase();
   const position = `stage ${stageNumber} · ${colorName}`;
   if (stage === undefined) return position;
   return `${stageHeadline(stage)}, ${position}, ${stagePersona(stage)}`;

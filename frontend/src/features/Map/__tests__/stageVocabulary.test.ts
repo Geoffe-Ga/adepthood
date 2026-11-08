@@ -25,6 +25,7 @@ import {
   TITLE_STAGE_NUMBERS,
 } from '@/features/Map/stageVocabulary';
 import { readBackendSource } from '@/testing/backendSource';
+import { clearServedStages, serveStageColors } from '@/testing/servedStageColors';
 
 /**
  * The Map's stage vocabulary derives from the stage the server served (#2666).
@@ -141,6 +142,15 @@ describe('stageFallbackName', () => {
     expect(stageFallbackName(1)).toBe('Beige');
     expect(stageFallbackName(2)).toBe('Purple');
     expect(stageFallbackName(10)).toBe('Clear Light');
+  });
+
+  it('names a stage by the colour the server served it, once the store holds it (#2666)', () => {
+    serveStageColors({ 1: 'Teal' });
+    try {
+      expect(stageFallbackName(1)).toBe('Teal');
+    } finally {
+      clearServedStages();
+    }
   });
 
   it('never returns an empty name, even off the end of the colour list', () => {

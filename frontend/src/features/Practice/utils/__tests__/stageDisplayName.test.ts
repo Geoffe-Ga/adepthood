@@ -1,7 +1,13 @@
 /* eslint-env jest */
-import { describe, it, expect } from '@jest/globals';
+import { afterEach, describe, it, expect } from '@jest/globals';
 
 import { stageDisplayName, stageLabel } from '../stageDisplayName';
+
+import { clearServedStages, serveStageColors } from '@/testing/servedStageColors';
+
+afterEach(() => {
+  clearServedStages();
+});
 
 describe('stageDisplayName', () => {
   it.each([
@@ -11,6 +17,11 @@ describe('stageDisplayName', () => {
     [10, 'Clear Light'],
   ])('resolves stage %i to %s', (stage, name) => {
     expect(stageDisplayName(stage)).toBe(name);
+  });
+
+  it('names a stage by the colour the server served it (#2666)', () => {
+    serveStageColors({ 2: 'Teal' });
+    expect(stageDisplayName(2)).toBe('Teal');
   });
 
   it('falls back to "Stage {n}" for a stage below the known range', () => {
