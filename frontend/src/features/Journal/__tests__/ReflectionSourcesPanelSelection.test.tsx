@@ -12,8 +12,8 @@ import type { BatchFoldResult } from '../useReflectionMode';
 import type { PromotedQuoteSummary, ReflectionSourceItem } from '@/api';
 
 const ReflectionSourcesPanel = require('../ReflectionSourcesPanel').default;
-const { SIDE_PANE_BREAKPOINT } = require('../ReflectionSourcesPanel') as {
-  SIDE_PANE_BREAKPOINT: number;
+const { CENTRED_MODAL_BREAKPOINT } = require('../ReflectionSourcesPanel') as {
+  CENTRED_MODAL_BREAKPOINT: number;
 };
 
 function quote(id: number, text: string): PromotedQuoteSummary {
@@ -56,7 +56,7 @@ function mockWidth(width: number) {
 
 function renderPanel(
   props: Record<string, unknown> = {},
-  width = SIDE_PANE_BREAKPOINT,
+  width = CENTRED_MODAL_BREAKPOINT,
 ): ReturnType<typeof render> {
   mockWidth(width);
   return render(
@@ -70,7 +70,7 @@ function renderPanel(
   );
 }
 
-/** The web cases use the sheet: the wide pane listens on ``document``, absent here. */
+/** The phone width, where the panel is a bottom sheet; the web cases run here. */
 const SHEET_WIDTH = 375;
 
 const originalOS = Platform.OS;
@@ -153,7 +153,7 @@ describe('ReflectionSourcesPanel -- selection mode (#2885)', () => {
     expect(bar()?.props['aria-disabled']).toBe(false);
   });
 
-  it.each([375, SIDE_PANE_BREAKPOINT])(
+  it.each([375, CENTRED_MODAL_BREAKPOINT])(
     'keeps the action outside the scroll at %ipx, so it never scrolls away',
     (width) => {
       const { getByTestId, getByLabelText } = renderPanel({}, width);
@@ -300,7 +300,7 @@ describe('ReflectionSourcesPanel -- selection mode (#2885)', () => {
     expect(getByTestId('pending-quote-11').props.accessibilityState.checked).toBe(true);
   });
 
-  it('keeps the selection when the window crosses the side-pane breakpoint', () => {
+  it('keeps the selection when the window crosses the centred-modal breakpoint', () => {
     const element = () => (
       <ReflectionSourcesPanel
         items={[S1, S2]}
@@ -309,7 +309,7 @@ describe('ReflectionSourcesPanel -- selection mode (#2885)', () => {
         onClose={jest.fn()}
       />
     );
-    mockWidth(SIDE_PANE_BREAKPOINT + 40);
+    mockWidth(CENTRED_MODAL_BREAKPOINT + 40);
     const screen = render(element());
     fireEvent.press(screen.getByLabelText('Select quotes'));
     fireEvent.press(screen.getByTestId('pending-quote-12'));

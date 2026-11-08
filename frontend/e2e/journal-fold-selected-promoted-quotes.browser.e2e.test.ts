@@ -111,13 +111,19 @@ test('a writer checks several promoted quotes and folds them into the review at 
   await expect(row(secondId)).toHaveAttribute('aria-checked', 'false');
   await expect(action).toHaveText('Fold 2 quotes into this review');
   await expect(action).toBeInViewport();
-  const paneBox = await page.getByTestId('reflection-sources-pane').boundingBox();
-  const timerBox = await page.getByTestId('writing-timer-pill').boundingBox();
-  if (paneBox === null || timerBox === null) throw new Error('Sources or timer has no layout');
-  expect(timerBox.x + timerBox.width, 'idle timer enters the Sources pane').toBeLessThanOrEqual(
-    paneBox.x,
-  );
-  await page.screenshot({ path: testInfo.outputPath('sources-timer-clearance.png') });
+  // At 1280 the panel is a card centred over the desk (#3133): the action sits
+  // inside it, above the dimmed page and its writing timer.
+  const cardBox = await page
+    .locator('[data-testid="reflection-sources-modal-body"]:visible')
+    .boundingBox();
+  const actionBox = await action.boundingBox();
+  if (cardBox === null || actionBox === null)
+    throw new Error('Sources or its action has no layout');
+  expect(actionBox.x, 'fold action leaves the Sources card').toBeGreaterThanOrEqual(cardBox.x);
+  expect(actionBox.y, 'fold action leaves the Sources card').toBeGreaterThanOrEqual(cardBox.y);
+  expect(actionBox.x + actionBox.width).toBeLessThanOrEqual(cardBox.x + cardBox.width);
+  expect(actionBox.y + actionBox.height).toBeLessThanOrEqual(cardBox.y + cardBox.height);
+  await page.screenshot({ path: testInfo.outputPath('sources-modal-fold-action.png') });
   await action.click();
 
   await expect(page.locator('[data-testid="journal-save-hint"]:visible')).toHaveText('Saved');
@@ -138,6 +144,12 @@ test('a writer checks several promoted quotes and folds them into the review at 
   // The folded rows read as folded; the unchecked one still waits.
   await expect(row(firstId)).toHaveAttribute('aria-disabled', 'true');
   await expect(row(secondId)).toHaveAttribute('aria-checked', 'false');
+  // Sources is a modal over the page (#3133): close it before reaching for the
+  // page's own Journal menu beneath its scrim.
+  await page.locator('[data-testid="reflection-sources-close"]:visible').click();
+  await expect(page.locator('[data-testid="reflection-sources-modal-body"]:visible')).toHaveCount(
+    0,
+  );
 
   // From the review's own drawer, the Promoted quotes screen counts the move,
   // and folds the quote still waiting back into THIS review.

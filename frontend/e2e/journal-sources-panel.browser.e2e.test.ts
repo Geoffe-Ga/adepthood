@@ -10,11 +10,12 @@ import { openPrompts } from './journalHabitsBrowserSupport';
 
 /**
  * The review composer's Sources panel as navigation (#2883): its heading and X
- * stay put while the feed scrolls, it closes by X, Escape, a backdrop tap (the
- * narrow sheet) and nothing else, focus lands on its X as it opens and returns
- * to the Sources toggle as it closes (#3002), and the
- * writer keeps writing into the same saved entry afterwards. On a wide screen
- * the pane sits BESIDE the writing sheet, never stacked full-width beneath it.
+ * stay put while the feed scrolls, it closes by X, Escape, a backdrop tap and
+ * nothing else, focus lands on its X as it opens and returns to the Sources
+ * toggle as it closes (#3002), and the writer keeps writing into the same
+ * saved entry afterwards. On a phone it is a bottom sheet; on a wide screen a
+ * card at the reading measure centred over the dimmed desk (#3133), never a
+ * sliver beside the page.
  *
  * Every box is read in ONE evaluate pass, after the layout has held still for
  * a few frames: a stale box is how a press lands on nothing (#2959).
@@ -26,17 +27,19 @@ const SOURCE_COUNT = 12;
 const SOURCE_LINES = 30;
 /** The platform touch floor (touchTarget.minimum), in CSS px. */
 const MIN_TOUCH_TARGET_PX = 44;
-/** The narrowest the entry body may get while the panel is open beside it. */
+/** The narrowest the entry body may get, behind the open panel, on a wide screen. */
 const READABLE_EDITOR_MIN_PX = 480;
-/** The writing sheet keeps at least this share of the viewport's height. */
-const MIN_EDITOR_HEIGHT_SHARE = 0.6;
 /** An expanded source's text is never squeezed narrower than this. */
 const SOURCE_TEXT_MIN_PX = 240;
 /** The widths the panel is checked at: phone, tablet, laptop, desktop. */
 const PROBE_WIDTHS = [390, 768, 1024, 1440] as const;
 const PROBE_HEIGHT = 900;
-/** The viewport where the pane goes beside the page (the panel's SIDE_PANE_BREAKPOINT). */
-const SIDE_PANE_MIN_WIDTH = 1240;
+/** The viewport where the panel opens as a centred card (the panel's CENTRED_MODAL_BREAKPOINT). */
+const CENTRED_MODAL_MIN_WIDTH = 1240;
+/** The centred card's width cap: the page's reading measure (journalLayout.pageMaxWidth). */
+const READING_MEASURE_PX = 680;
+/** The dialog's accessible name. */
+const DIALOG_NAME = 'Sources';
 const PHONE = { width: 390, height: 844 } as const;
 const LAPTOP = { width: 1280, height: 720 } as const;
 /** Sub-pixel rounding allowance on any box comparison. */
@@ -176,19 +179,17 @@ function viewportBox(page: Page): Box {
 
 /** The panel's frame testID at the current viewport width. */
 function frameId(page: Page): string {
-  return viewportBox(page).width >= SIDE_PANE_MIN_WIDTH
-    ? 'reflection-sources-pane'
+  return viewportBox(page).width >= CENTRED_MODAL_MIN_WIDTH
+    ? 'reflection-sources-modal-body'
     : 'reflection-sources-sheet-body';
 }
 
 async function openSources(page: Page): Promise<void> {
   await visible(page, 'reflection-sources-toggle').click();
   await expect(visible(page, frameId(page))).toBeVisible();
-  if (frameId(page) === 'reflection-sources-sheet-body') {
-    // react-native-web makes a Modal active -- role "dialog", listening for
-    // Escape -- only once its slide-in has ended.
-    await expect(page.getByRole('dialog')).toBeVisible();
-  }
+  // react-native-web makes a Modal active -- role "dialog", listening for
+  // Escape -- only once its slide-in (or fade-in) has ended.
+  await expect(page.getByRole('dialog', { name: DIALOG_NAME })).toBeVisible();
 }
 
 /** Scrolled to the end of a feed that really scrolls, the X is still in view and in the frame. */
@@ -274,26 +275,36 @@ test.describe('phone, 390x844', () => {
 test.describe('laptop, 1280x720', () => {
   test.use({ viewport: LAPTOP });
 
-  test('the pane sits beside the writing sheet and leaves the editor readable', async ({
+  test('the panel opens as a card centred over the desk at the reading measure', async ({
     page,
   }) => {
     await seedReview(page, 'sources-panel-laptop');
+    const closed = await settledBoxes(page, ['journal-sheet']);
     await openSources(page);
     const boxes = await settledBoxes(page, [
-      'reflection-sources-pane',
+      'reflection-sources-modal-body',
+      'reflection-sources-scrim',
       'journal-sheet',
-      'journal-body-input',
     ]);
-    const pane = boxes['reflection-sources-pane']!;
-    const sheet = boxes['journal-sheet']!;
-    expect(pane.x).toBeGreaterThanOrEqual(sheet.x + sheet.width - EPSILON_PX);
-    expect(pane.width).toBeLessThan(LAPTOP.width);
-    expect(pane.y).toBeLessThan(sheet.y + sheet.height);
-    expect(boxes['journal-body-input']!.width).toBeGreaterThanOrEqual(READABLE_EDITOR_MIN_PX);
-    expect(sheet.height).toBeGreaterThanOrEqual(MIN_EDITOR_HEIGHT_SHARE * LAPTOP.height);
+    const card = boxes['reflection-sources-modal-body']!;
+    const viewport = viewportBox(page);
+    // Centred on both axes, at the reading measure -- not a sliver at the edge.
+    expect(Math.abs(card.x + card.width / 2 - viewport.width / 2)).toBeLessThanOrEqual(EPSILON_PX);
+    expect(Math.abs(card.y + card.height / 2 - viewport.height / 2)).toBeLessThanOrEqual(
+      EPSILON_PX,
+    );
+    expect(Math.abs(card.width - Math.min(READING_MEASURE_PX, viewport.width))).toBeLessThanOrEqual(
+      EPSILON_PX,
+    );
+    expectInside(card, viewport);
+    // The dimmed desk covers the whole viewport behind it, and the page itself
+    // has not moved or shrunk to make room.
+    await expect(visible(page, 'reflection-sources-scrim')).toBeVisible();
+    expectInside(viewport, boxes['reflection-sources-scrim']!);
+    expect(boxes['journal-sheet']).toEqual(closed['journal-sheet']);
 
     // The heading comes first to a screen reader: before any row of the feed.
-    const headingFirst = await visible(page, 'reflection-sources-pane').evaluate((node) => {
+    const headingFirst = await visible(page, 'reflection-sources-modal-body').evaluate((node) => {
       const heading = node.querySelector('[data-testid="reflection-sources-heading"]');
       const row = node.querySelector('[data-testid^="entry-source-"]');
       return (
@@ -306,36 +317,38 @@ test.describe('laptop, 1280x720', () => {
 
     await expectCloseHeldThroughScroll(page);
 
+    // Escape closes only the card.
     await page.keyboard.press('Escape');
-    await expect(visible(page, 'reflection-sources-pane')).toHaveCount(0);
+    await expect(visible(page, 'reflection-sources-modal-body')).toHaveCount(0);
+    await expect(visible(page, 'reflection-sources-toggle')).toBeFocused();
+    await expect(entryBody(page)).toHaveValue(DRAFT);
+
+    // So does a click on the dimmed desk beside it -- and a click inside it does not.
+    await openSources(page);
+    const reopened = (await settledBoxes(page, ['reflection-sources-modal-body']))[
+      'reflection-sources-modal-body'
+    ]!;
+    const middleY = reopened.y + reopened.height / 2;
+    await page.mouse.click(reopened.x + reopened.width / 2, middleY);
+    await expect(visible(page, 'reflection-sources-modal-body')).toBeVisible();
+    await page.mouse.click(reopened.x / 2, middleY);
+    await expect(visible(page, 'reflection-sources-modal-body')).toHaveCount(0);
+    await expect(visible(page, 'reflection-sources-toggle')).toBeFocused();
+    await expect(entryBody(page)).toHaveValue(DRAFT);
+
+    // And so does the X.
+    await openSources(page);
+    await page.getByRole('button', { name: 'Done' }).click();
+    await expect(visible(page, 'reflection-sources-modal-body')).toHaveCount(0);
     await expect(visible(page, 'reflection-sources-toggle')).toBeFocused();
     await expect(entryBody(page)).toHaveValue(DRAFT);
   });
 
-  test('Escape while typing leaves the pane alone and the writer in their text', async ({
+  test('opening Sources from the keyboard lands focus on the centred card close', async ({
     page,
   }) => {
-    await seedReview(page, 'sources-panel-escape-typing');
-    await openSources(page);
-    await entryBody(page).click();
-    await page.keyboard.press('Control+End');
-    await page.keyboard.type(' Still here.');
-    // The editor keeps its own keys (react-native-web's TextInput stops every
-    // keydown), so Escape here is the writer's, never the pane's.
-    await page.keyboard.press('Escape');
-    await expect(visible(page, 'reflection-sources-pane')).toBeVisible();
-    await expect(entryBody(page)).toBeFocused();
-    await page.keyboard.type(' And still writing.');
-    await expect(entryBody(page)).toHaveValue(`${DRAFT} Still here. And still writing.`);
-    // Outside a text field, Escape is the pane's again.
-    await visible(page, 'reflection-sources-heading').click();
-    await page.keyboard.press('Escape');
-    await expect(visible(page, 'reflection-sources-pane')).toHaveCount(0);
-  });
-
-  test('opening Sources from the keyboard lands focus on the pane close', async ({ page }) => {
     await seedReview(page, 'sources-panel-keyboard');
-    await expectKeyboardRoundTrip(page, 'reflection-sources-pane');
+    await expectKeyboardRoundTrip(page, 'reflection-sources-modal-body');
   });
 });
 
@@ -366,7 +379,7 @@ test('at every probe width: no overflow, the X in view at both ends, readable te
       () => document.documentElement.scrollWidth - document.documentElement.clientWidth,
     );
     expect(overflow).toBeLessThanOrEqual(0);
-    if (width >= SIDE_PANE_MIN_WIDTH) {
+    if (width >= CENTRED_MODAL_MIN_WIDTH) {
       expect(open['journal-body-input']!.width).toBeGreaterThanOrEqual(READABLE_EDITOR_MIN_PX);
     }
     await page.getByRole('button', { name: 'Done' }).click();

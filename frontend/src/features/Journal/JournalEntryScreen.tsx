@@ -63,10 +63,7 @@ import QuoteInclusionHint from './QuoteInclusionHint';
 import QuoteSelectionSurface, { type CodePointSpan } from './QuoteSelectionSurface';
 import { readingScrollStyle } from './readingSurfaceStyles';
 import { formatQuotePrefill } from './reflectionCopy';
-import ReflectionSourcesPanel, {
-  SIDE_PANE_BREAKPOINT,
-  SOURCES_PANE_OCCUPIED_WIDTH,
-} from './ReflectionSourcesPanel';
+import ReflectionSourcesPanel from './ReflectionSourcesPanel';
 import { useRefreshAfterEdit } from './refreshAfterEdit';
 import { isStoredAs, replayReconcilePatch, type SentPage } from './replayReconcile';
 import ResonanceEssayModal from './ResonanceEssayModal';
@@ -4688,10 +4685,10 @@ function EntryExitControls({
 }
 
 /**
- * The rereadable sources panel, docked in the compose row beside the writing
- * sheet: a side pane where both fit, else a bottom sheet over the page (#2883).
- * Renders nothing unless a reflection's sources are open, so the plain and
- * weekly-prompt paths are untouched.
+ * The rereadable sources panel, mounted in the compose row but drawn in its own
+ * ``Modal``: a bottom sheet over the page, or from laptop widths a card centred
+ * over the desk (#2883, #3133). Renders nothing unless a reflection's sources
+ * are open, so the plain and weekly-prompt paths are untouched.
  */
 function ReflectionSourcesDock({
   reflection,
@@ -4722,9 +4719,9 @@ function ReflectionSourcesDock({
 }
 
 /**
- * The writing sheet and, beside it where there is room, the open sources pane
- * (#2883). Below the side-pane width the dock renders a Modal sheet instead, and
- * the row holds the page alone, laid out exactly as it always was.
+ * The writing sheet, and the dock for the open sources panel (#2883). The panel
+ * draws in its own Modal at every width (#3133), so the row holds the page
+ * alone, laid out exactly as it always was.
  */
 function EntryComposeRow({
   ctl,
@@ -5072,11 +5069,6 @@ function EntryWritingSurfaces({
   onIdleDockHeightChange: (_height: number) => void;
 }): React.JSX.Element | null {
   const session = useQuickLaunchedSession(launch);
-  const width = useWindowDimensions().width;
-  const rightInset =
-    ctl.reflection.active && ctl.reflection.sourcesOpen && width >= SIDE_PANE_BREAKPOINT
-      ? SOURCES_PANE_OCCUPIED_WIDTH
-      : 0;
   // Above the edit-mode return, beside the practice hook it wraps: both kinds
   // of page finish through this one handler, so a linked habit is checked off
   // on either (#2861).
@@ -5085,7 +5077,6 @@ function EntryWritingSurfaces({
   if (!ctl.editGate.editMode) return null;
   return (
     <WritingSessionSurface
-      rightInset={rightInset}
       initialMinutes={session.initialMinutes}
       autoStart={session.autoStart}
       onSession={onSession}

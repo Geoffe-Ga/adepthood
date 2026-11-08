@@ -138,9 +138,9 @@ const styles = StyleSheet.create({
     backgroundColor: colors.paper.desk,
   },
   /**
-   * The writing desk and, when a wide side pane is open, the sources beside it
-   * (#2883). With the pane closed, or on the sheet path, the row holds the desk
-   * alone, so the page lays out exactly as before.
+   * The writing desk, and the dock for the sources panel (#2883). The panel
+   * draws in its own Modal at every width (#3133), so the row holds the desk
+   * alone and the page lays out exactly as before.
    */
   composeRow: {
     flex: 1,

@@ -14,7 +14,7 @@ import {
  *
  * A writer reviewing a week opens a long source, chooses Promote a quote, and
  * highlights a sentence far down it. The pill comes to the selection -- in the
- * bounded bottom sheet on a phone and the side pane on a laptop -- floating
+ * bounded bottom sheet on a phone and the centred modal on a laptop -- floating
  * centred over the source's column, its lift above the foot of the panel's
  * scroll, never doubled by a Promote in the footer. Its X clears the
  * selection without leaving selection mode; a pointer press at the pill's

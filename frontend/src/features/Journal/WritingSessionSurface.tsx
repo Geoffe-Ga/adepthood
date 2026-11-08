@@ -77,8 +77,6 @@ export interface WritingSessionSurfaceProps {
   loggedSession?: LoggedWritingSession;
   /** The length the timer opens at; the writer can change it before starting. */
   initialMinutes?: number;
-  /** Keep floating controls inside the writing desk when Sources occupy a side pane. */
-  rightInset?: number;
   /**
    * Begin the session on mount, because the page was opened in order to run it.
    *
@@ -321,22 +319,18 @@ function StandingSessionNote({
   );
 }
 
-function writingBandStyle(
-  layout: {
-    idleDocked: boolean;
-    idleDockMaxHeight: number;
-    lift: number;
-    unreserved: boolean;
-    scrollWholeSurface: boolean;
-  },
-  rightInset: number,
-) {
+function writingBandStyle(layout: {
+  idleDocked: boolean;
+  idleDockMaxHeight: number;
+  lift: number;
+  unreserved: boolean;
+  scrollWholeSurface: boolean;
+}) {
   return [
     styles.band,
     layout.idleDocked ? styles.idleDock : null,
     !layout.scrollWholeSurface && styles.unclipped,
     {
-      right: rightInset,
       bottom: layout.idleDocked ? 0 : layout.lift,
       maxHeight: layout.idleDocked ? layout.idleDockMaxHeight : undefined,
       opacity: layout.unreserved ? 0 : 1,
@@ -400,7 +394,6 @@ function useWritingBandLayout(
 
 function WritingSessionSurface({
   loggedSession,
-  rightInset = 0,
   renderOffer,
   onSession,
   onClearanceChange,
@@ -415,7 +408,7 @@ function WritingSessionSurface({
   });
   return (
     <View
-      style={writingBandStyle(layout, rightInset)}
+      style={writingBandStyle(layout)}
       pointerEvents={layout.unreserved ? 'none' : 'box-none'}
       {...decorativeHidden(layout.unreserved)}
       onLayout={layout.reportBandLayout}

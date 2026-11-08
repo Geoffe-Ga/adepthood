@@ -1,19 +1,17 @@
 /**
- * The wide pane's Escape / back handling, proved against a real navigator.
+ * The Sources panel's keyboard and focus contract, at both of its placements.
  *
- * native-stack keeps a covered screen mounted. A pane opened after the
- * NavigationContainer mounted registers its back listener AFTER React
- * Navigation's, so -- BackHandler calling the newest listener first -- an armed
- * pane on a covered entry would swallow the back press meant to pop the pushed
- * route (#2883). The pane must only listen while its screen is focused.
+ * The panel is a ``Modal`` at every width (#3133): a bottom sheet on a phone, a
+ * centred card on a laptop. The Modal's own ``onRequestClose`` carries Escape
+ * (web) and the platform back button, so the panel arms no listener of its own
+ * -- one request is one close, and a covered screen's panel cannot swallow a
+ * back press meant for the screen pushed over it. Focus lands on the X one
+ * frame after opening (#3002); closing hands it back to the Sources toggle.
  */
 import { jest, describe, it, expect, beforeEach, afterEach } from '@jest/globals';
-import { NavigationContainer, createNavigationContainerRef } from '@react-navigation/native';
-import { createNativeStackNavigator } from '@react-navigation/native-stack';
-import { act, fireEvent, render } from '@testing-library/react-native';
-import React, { useState } from 'react';
-import { BackHandler, Text, TouchableOpacity, View } from 'react-native';
-import type { NativeEventSubscription } from 'react-native';
+import { act, render } from '@testing-library/react-native';
+import React from 'react';
+import { BackHandler } from 'react-native';
 
 import { spyOnFocus } from './focusSpyTestKit';
 
@@ -21,10 +19,6 @@ import type { ReflectionSourceItem } from '@/api';
 
 const ReflectionSourcesPanel = require('../ReflectionSourcesPanel').default;
 const Platform = require('react-native').Platform as { OS: string };
-
-type StackList = { Entry: undefined; Photograph: undefined };
-const Stack = createNativeStackNavigator<StackList>();
-const navigationRef = createNavigationContainerRef<StackList>();
 
 const SOURCE: ReflectionSourceItem = {
   kind: 'entry',
@@ -36,146 +30,10 @@ const SOURCE: ReflectionSourceItem = {
   promoted_quotes: [],
 };
 
-let onClose: jest.Mock;
-
-/** An entry screen whose pane is opened by a tap, i.e. after the container mounted. */
-function EntryScreen(): React.JSX.Element {
-  const [open, setOpen] = useState(false);
-  return (
-    <View>
-      <TouchableOpacity testID="open-sources" onPress={() => setOpen(true)}>
-        <Text>Sources</Text>
-      </TouchableOpacity>
-      {open ? (
-        <ReflectionSourcesPanel
-          items={[SOURCE]}
-          onInsertQuote={jest.fn()}
-          onClose={() => {
-            onClose();
-            setOpen(false);
-          }}
-        />
-      ) : null}
-    </View>
-  );
-}
-
-function PhotographScreen(): React.JSX.Element {
-  return <Text testID="photograph">Photograph</Text>;
-}
-
-/** BackHandler as Android runs it: newest listener first, stop at the first `true`. */
-function fakeBackHandler(): () => void {
-  const handlers: Array<() => boolean | null | undefined> = [];
-  jest.spyOn(BackHandler, 'addEventListener').mockImplementation((_event, handler) => {
-    const entry = handler as () => boolean;
-    handlers.push(entry);
-    return {
-      remove: () => {
-        const at = handlers.indexOf(entry);
-        if (at !== -1) handlers.splice(at, 1);
-      },
-    } as unknown as NativeEventSubscription;
-  });
-  return () => {
-    act(() => {
-      for (let index = handlers.length - 1; index >= 0; index -= 1) {
-        if (handlers[index]?.()) return;
-      }
-    });
-  };
-}
-
-function mountStack() {
-  const rn = require('react-native');
-  jest
-    .spyOn(rn, 'useWindowDimensions')
-    .mockReturnValue({ width: 1280, height: 900, scale: 1, fontScale: 1 });
-  return render(
-    <NavigationContainer ref={navigationRef}>
-      <Stack.Navigator screenOptions={{ headerShown: false }}>
-        <Stack.Screen name="Entry" component={EntryScreen} />
-        <Stack.Screen name="Photograph" component={PhotographScreen} />
-      </Stack.Navigator>
-    </NavigationContainer>,
-  );
-}
-
-describe('ReflectionSourcesPanel -- dismiss keys follow screen focus (#2883)', () => {
-  beforeEach(() => {
-    onClose = jest.fn();
-  });
-
-  afterEach(() => {
-    jest.restoreAllMocks();
-  });
-
-  it('closes the pane on back while its screen is focused', () => {
-    const pressBack = fakeBackHandler();
-    const screen = mountStack();
-    fireEvent.press(screen.getByTestId('open-sources'));
-    expect(screen.getByTestId('reflection-sources-pane')).toBeTruthy();
-    pressBack();
-    expect(onClose).toHaveBeenCalledTimes(1);
-    expect(navigationRef.getCurrentRoute()?.name).toBe('Entry');
-  });
-
-  it('lets back pop a pushed screen instead of closing the covered pane', () => {
-    const pressBack = fakeBackHandler();
-    const screen = mountStack();
-    fireEvent.press(screen.getByTestId('open-sources'));
-    act(() => {
-      navigationRef.navigate('Photograph');
-    });
-    expect(navigationRef.getCurrentRoute()?.name).toBe('Photograph');
-    pressBack();
-    expect(onClose).not.toHaveBeenCalled();
-    expect(navigationRef.getCurrentRoute()?.name).toBe('Entry');
-    // Back on the entry, the pane is still open and owns back again.
-    expect(screen.getByTestId('reflection-sources-pane')).toBeTruthy();
-    pressBack();
-    expect(onClose).toHaveBeenCalledTimes(1);
-  });
-
-  it('ignores Escape on web while the entry is covered by a pushed screen', () => {
-    const globalRef = globalThis as { document?: Document };
-    const original = Platform.OS;
-    const target = new EventTarget();
-    globalRef.document = Object.assign(target, {
-      querySelector: () => null,
-    }) as unknown as Document;
-    const escape = () => {
-      const event = new Event('keydown');
-      Object.defineProperty(event, 'key', { value: 'Escape' });
-      act(() => {
-        target.dispatchEvent(event);
-      });
-    };
-    try {
-      const screen = mountStack();
-      Platform.OS = 'web';
-      fireEvent.press(screen.getByTestId('open-sources'));
-      act(() => {
-        navigationRef.navigate('Photograph');
-      });
-      escape();
-      expect(onClose).not.toHaveBeenCalled();
-      act(() => {
-        navigationRef.goBack();
-      });
-      escape();
-      expect(onClose).toHaveBeenCalledTimes(1);
-    } finally {
-      Platform.OS = original;
-      delete globalRef.document;
-    }
-  });
-});
-
 /** The phone width, where the panel is a bottom sheet over the page. */
 const SHEET_WIDTH = 390;
-/** A laptop width, where the panel is a pane beside the page. */
-const PANE_WIDTH = 1280;
+/** A laptop width, where the panel is a card centred over the desk. */
+const MODAL_WIDTH = 1280;
 /** The id the stubbed ``requestAnimationFrame`` hands back for the first frame. */
 const FIRST_FRAME_ID = 1;
 
@@ -213,7 +71,7 @@ describe('ReflectionSourcesPanel -- focus lands on the close when it opens (#300
   }
 
   it.each([
-    { width: PANE_WIDTH, frame: 'reflection-sources-pane' },
+    { width: MODAL_WIDTH, frame: 'reflection-sources-modal-body' },
     { width: SHEET_WIDTH, frame: 'reflection-sources-sheet-body' },
   ])('focuses the close one frame after opening, in $frame', ({ width, frame }) => {
     const screen = renderAt(width, jest.fn());
@@ -228,16 +86,74 @@ describe('ReflectionSourcesPanel -- focus lands on the close when it opens (#300
   });
 
   it('takes no focus when the caller offers no close control', () => {
-    const screen = renderAt(PANE_WIDTH);
+    const screen = renderAt(MODAL_WIDTH);
     expect(screen.queryByTestId('reflection-sources-close')).toBeNull();
     expect(frames).toHaveLength(0);
     screen.unmount();
   });
 
   it('cancels the pending focus when the panel closes before the frame', () => {
-    const screen = renderAt(PANE_WIDTH, jest.fn());
+    const screen = renderAt(MODAL_WIDTH, jest.fn());
     expect(frames).toHaveLength(1);
     screen.unmount();
     expect(globalThis.cancelAnimationFrame).toHaveBeenCalledWith(FIRST_FRAME_ID);
+  });
+});
+
+describe('ReflectionSourcesPanel -- the centred modal owns Escape and back (#3133)', () => {
+  afterEach(() => {
+    jest.restoreAllMocks();
+  });
+
+  function renderModal(onClose: () => void) {
+    const rn = require('react-native');
+    jest
+      .spyOn(rn, 'useWindowDimensions')
+      .mockReturnValue({ width: MODAL_WIDTH, height: 900, scale: 1, fontScale: 1 });
+    return render(
+      <ReflectionSourcesPanel items={[SOURCE]} onInsertQuote={jest.fn()} onClose={onClose} />,
+    );
+  }
+
+  const ESCAPE_EVENT_TYPES = ['keydown', 'keyup'] as const;
+
+  it('arms no document Escape listener of its own on web; the Modal request closes it once', () => {
+    const globalRef = globalThis as { document?: Document };
+    const original = Platform.OS;
+    const target = new EventTarget();
+    globalRef.document = Object.assign(target, {
+      querySelector: () => null,
+    }) as unknown as Document;
+    const onClose = jest.fn();
+    try {
+      Platform.OS = 'web';
+      const screen = renderModal(onClose);
+      // react-native-web's Modal itself closes on a document `keyup`, so a
+      // listener of the panel's own on either key event would double-close.
+      for (const type of ESCAPE_EVENT_TYPES) {
+        const escape = new Event(type);
+        Object.defineProperty(escape, 'key', { value: 'Escape' });
+        act(() => {
+          target.dispatchEvent(escape);
+        });
+      }
+      expect(onClose).not.toHaveBeenCalled();
+      act(() => {
+        screen.getByTestId('reflection-sources-modal').props.onRequestClose();
+      });
+      expect(onClose).toHaveBeenCalledTimes(1);
+      screen.unmount();
+    } finally {
+      Platform.OS = original;
+      delete globalRef.document;
+    }
+  });
+
+  it('registers no back handler: the Modal window answers back', () => {
+    const add = jest.spyOn(BackHandler, 'addEventListener');
+    const onClose = jest.fn();
+    const screen = renderModal(onClose);
+    expect(add).not.toHaveBeenCalled();
+    expect(screen.getByTestId('reflection-sources-modal').props.onRequestClose).toBe(onClose);
   });
 });
