@@ -14,9 +14,12 @@ unnamed failure does (``_MAX_STAGE_ATTEMPTS`` admissions, backed off):
 * in every case the writer's stored key survives, and Settings' "your key was
   refused" notice neither turns on nor turns off.
 
-The ladder here reads each busy job as a 0.29 poll would (``_BusyReadingClient``),
+Most ladder tests read each busy job as a 0.29 poll would (``_BusyReadingClient``),
 so the bounded retry is pinned independently of how the job-status poll
-negotiates its minor. Synthetic throughout: no real key, no journal content.
+negotiates its minor; the "over the wire" tests at the end drive the unmodified
+adapter against a vault that serves ``busy`` exactly as Creek does, including
+one rolled back below 0.29 mid-pass. Synthetic throughout: no real key, no
+journal content.
 """
 
 from __future__ import annotations
@@ -82,9 +85,9 @@ _CONNECTED_VAULT_URL: Final = "https://vault.example.com"
 _CONNECTED_VAULT_KEY: Final = "vault-key-3710"  # pragma: allowlist secret
 
 
-def _capabilities() -> dict[str, object]:
-    """The published 0.29 handshake."""
-    path = _FIXTURES / "creek_jobs_v029" / "examples" / "capabilities" / "success.json"
+def _capabilities(snapshot: str = "creek_jobs_v029") -> dict[str, object]:
+    """A published handshake: the 0.29 image by default, or an older one."""
+    path = _FIXTURES / snapshot / "examples" / "capabilities" / "success.json"
     loaded: dict[str, object] = json.loads(path.read_bytes())
     return loaded
 
@@ -105,6 +108,13 @@ def _linked(method: str) -> dict[str, object]:
     return loaded
 
 
+def _unavailable() -> dict[str, object]:
+    """Creek's published ``503 unavailable`` envelope."""
+    path = _FIXTURES / "creek_v1" / "examples" / "pipeline" / "unavailable-service.json"
+    loaded: dict[str, object] = json.loads(path.read_bytes())
+    return loaded
+
+
 def _minor(text: str) -> tuple[int, ...]:
     """A declared ``"0.29"``-style minor as comparable integers."""
     return tuple(int(part) for part in text.split("."))
@@ -116,20 +126,32 @@ class _LadderVault:
     Each admission gets its own job. A busy job stays failed on every poll, and
     names its reason exactly as Creek does: ``busy`` to a poll declaring 0.29 or
     later, ``null`` at 0.26-0.28, and no key at all below 0.26.
+
+    ``rolls_back`` models a vault re-imaged below 0.29 mid-pass: its first poll
+    answers Creek's ``503 unavailable`` envelope, and every later handshake is
+    the 0.26 image's.
     """
 
-    def __init__(self, *, busy_passes: int, lose_first_admission: bool = False) -> None:
-        """Script how many admitted jobs end busy, and whether the first admission is lost."""
+    def __init__(
+        self, *, busy_passes: int, lose_first_admission: bool = False, rolls_back: bool = False
+    ) -> None:
+        """Script the busy jobs, a lost first admission, and an optional rollback."""
         self.submissions = 0
+        self.handshakes = 0
         self.busy_jobs: set[str] = set()
+        self.declared_on_polls: list[str | None] = []
         self._busy_passes = busy_passes
         self._lose_first_admission = lose_first_admission
+        self._rolls_back = rolls_back
+        self._rolled_back = False
 
     def __call__(self, request: httpx.Request) -> httpx.Response:
         """Answer the handshake, admissions, polls and synchronous link stages."""
         path = request.url.path
         if path == "/v1/capabilities":
-            return httpx.Response(HTTPStatus.OK, json=_capabilities())
+            self.handshakes += 1
+            snapshot = "creek_jobs_v026" if self._rolled_back else "creek_jobs_v029"
+            return httpx.Response(HTTPStatus.OK, json=_capabilities(snapshot))
         if path == _CLASSIFICATIONS:
             return self._admit()
         if path.startswith(_JOBS):
@@ -153,6 +175,10 @@ class _LadderVault:
 
     def _status(self, job_id: str, headers: httpx.Headers) -> httpx.Response:
         """A busy job's failure, served by declared minor; any other job's counts."""
+        self.declared_on_polls.append(headers.get(_CONTRACT_HEADER))
+        if self._rolls_back and not self._rolled_back:
+            self._rolled_back = True
+            return httpx.Response(HTTPStatus.SERVICE_UNAVAILABLE, json=_unavailable())
         if job_id not in self.busy_jobs:
             succeeded = {"status": "ok", "job_id": job_id, "state": "succeeded"}
             return httpx.Response(HTTPStatus.OK, json={**succeeded, "result": _classified()})
@@ -220,10 +246,20 @@ async def _owner(db_session: AsyncSession) -> AsyncIterator[None]:
     await pipeline.close_vault_pipeline_tasks()
 
 
-async def _drive(session: AsyncSession, vault: _LadderVault) -> None:
-    """One journal write's pass, and the continuation it leaves running, to the end."""
+async def _drive(
+    session: AsyncSession, vault: _LadderVault, *, over_the_wire: bool = False
+) -> None:
+    """One journal write's pass, and the continuation it leaves running, to the end.
+
+    ``over_the_wire`` drives the unmodified adapter, so each busy job is read
+    from what the poll's own negotiated minor was served.
+    """
     async with httpx.AsyncClient(transport=httpx.MockTransport(vault)) as http:
-        client = _BusyReadingClient(vault, http)
+        client = (
+            HttpCreekVaultClient(_VAULT_URL, _API_KEY, http_client=http)
+            if over_the_wire
+            else _BusyReadingClient(vault, http)
+        )
         await client.handshake()
         await drive_vault_pipeline(
             session, client, user_id=_OWNER, trigger=VaultPipelineTrigger.JOURNAL_WRITE
@@ -495,3 +531,73 @@ async def test_vault_connection_reads_the_same_before_and_after_a_busy_pass(
     assert before["classification_key_rejected"] is True
     assert before["classification_state"] == "complete"
     assert await _fields() == before
+
+
+# -- over the wire ---------------------------------------------------------------
+
+
+_BUSY_MINOR: Final = "0.29"
+_FAILURE_CODE_MINOR: Final = "0.26"
+#: The handshake the driver opens with, plus the one a 503 on the poll forces.
+_OPENING_AND_FORCED_HANDSHAKES: Final = 2
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("_encrypted", "_owner")
+async def test_a_busy_job_is_readmitted_with_bounded_backoff_and_keeps_the_stored_key(
+    db_session: AsyncSession,
+) -> None:
+    """Through the real adapter: polled at 0.29, read busy, resubmitted, completed, key kept."""
+    await _store_key(db_session)
+    vault = _LadderVault(busy_passes=1)
+    await _drive(db_session, vault, over_the_wire=True)
+
+    assert set(vault.declared_on_polls) == {_BUSY_MINOR}
+    assert vault.submissions == 2
+    assert await _classify_rows(db_session) == [(VaultPipelineOutcome.COMPLETED.value, None, 2)]
+    assert await _stored_keys(db_session) == [_OWNER]
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("_encrypted", "_owner")
+async def test_busy_on_every_pass_over_the_wire_records_busy_and_keeps_the_key(
+    db_session: AsyncSession,
+) -> None:
+    """Through the real adapter, the spent retry records busy and nothing else moves."""
+    await _store_key(db_session)
+    vault = _LadderVault(busy_passes=_ALWAYS)
+    await _drive(db_session, vault, over_the_wire=True)
+
+    assert set(vault.declared_on_polls) == {_BUSY_MINOR}
+    assert vault.submissions == MAX_STAGE_ATTEMPTS
+    assert await _classify_rows(db_session) == [
+        (VaultPipelineOutcome.FAILED.value, _BUSY, MAX_STAGE_ATTEMPTS)
+    ]
+    assert await _stored_keys(db_session) == [_OWNER]
+    assert (await classification_status(db_session, _OWNER)).key_rejected is False
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("_encrypted", "_owner")
+async def test_a_vault_rolled_back_below_0_29_mid_pass_is_re_handshaken_and_polled_at_0_26(
+    db_session: AsyncSession,
+) -> None:
+    """A 503 on the poll re-handshakes; the older image is never asked for 0.29 again.
+
+    The rolled-back vault still meets lock contention, but at 0.26 it can only
+    say ``null``: the pass behaves as a pre-0.29 one -- bounded retry, failed
+    with no reason -- and the stored key is untouched.
+    """
+    await _store_key(db_session)
+    vault = _LadderVault(busy_passes=_ALWAYS, rolls_back=True)
+    await _drive(db_session, vault, over_the_wire=True)
+
+    first, *later = vault.declared_on_polls
+    assert first == _BUSY_MINOR
+    assert later
+    assert set(later) == {_FAILURE_CODE_MINOR}
+    assert vault.handshakes >= _OPENING_AND_FORCED_HANDSHAKES
+    assert await _classify_rows(db_session) == [
+        (VaultPipelineOutcome.FAILED.value, None, MAX_STAGE_ATTEMPTS)
+    ]
+    assert await _stored_keys(db_session) == [_OWNER]
