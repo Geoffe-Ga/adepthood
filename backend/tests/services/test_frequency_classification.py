@@ -22,6 +22,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from curriculum import stage_curriculum
 from curriculum.stage_correspondence import stage_correspondence
 from domain.frequencies import (
     FREQUENCY_COLORS,
@@ -527,10 +528,10 @@ async def test_no_bound_is_the_default_and_leaves_the_provider_layer_alone(
 # states the identity and graph/ontology-spine.md writes it as an equation per
 # row. These tests hold the vendored table to the curriculum so the two
 # spellings of one ontology cannot drift apart -- which is the whole reason the
-# vendored copy is allowed to exist. The colour join reads the generated
-# stage_correspondence.json, the canonical source the database is seeded from
-# (#2667); the labelings test still reads the curriculum dataset because it
-# needs the stage ``title``, which the artifact does not carry.
+# vendored copy is allowed to exist. The colour join and each position's
+# aspect read the generated stage_correspondence.json, the canonical source the
+# database is seeded from (#2667, #2666); the labelings test also reads the
+# curriculum dataset for the stage ``title``, which the artifact does not carry.
 
 
 def _curriculum_stages() -> list[dict[str, object]]:
@@ -548,8 +549,7 @@ def _curriculum_stages() -> list[dict[str, object]]:
 def test_the_vendored_colours_match_the_curriculum() -> None:
     """Colour is the primary key, so it is the join that must hold exactly.
 
-    Held against the generated stage-correspondence artifact, not the
-    ``archetypal_wavelength.json`` mirror, so the table follows the source the
+    Held against the generated stage-correspondence artifact, the source the
     ``coursestage`` rows are seeded from. If this fails, one of the two
     spellings of a single ontology has moved and every colour-keyed surface --
     content directories, STAGE_COLORS, the habit ring -- is now pointing
@@ -571,9 +571,18 @@ def test_the_curriculum_has_exactly_ten_positions() -> None:
     assert len(_curriculum_stages()) == _EXPECTED_FREQUENCY_COUNT
 
 
-def _acceptable_names(row: dict[str, object]) -> set[str]:
-    """The names a Frequency could carry if it matched the curriculum row."""
-    aspect, title = str(row["aspect"]), str(row["title"])
+def _acceptable_names(stage_number: int) -> set[str]:
+    """The names a Frequency could carry if it matched its curriculum position.
+
+    The aspect comes from the correspondence artifact and the title from the
+    curriculum dataset, each the one owner of its field.
+    """
+    aspect = next(
+        stage.aspect
+        for stage in stage_correspondence().stages
+        if stage.stage_number == stage_number
+    )
+    title = stage_curriculum(stage_number).title
     return {aspect, f"{aspect} / {title}"}
 
 
@@ -598,11 +607,10 @@ def test_the_two_labelings_of_a_position_may_differ_but_the_colour_may_not() -> 
     colour cannot. Recorded as a test so the divergence is a known, asserted
     fact rather than something the next reader rediscovers as a bug.
     """
-    by_number = {int(str(stage["stage_number"])): stage for stage in _curriculum_stages()}
     diverging = {
         code
         for code in Frequency
-        if FREQUENCY_NAMES[code] not in _acceptable_names(by_number[int(code.value[1:])])
+        if FREQUENCY_NAMES[code] not in _acceptable_names(int(code.value[1:]))
     }
 
     assert diverging == {Frequency.F5, Frequency.F6, Frequency.F7, Frequency.F8}

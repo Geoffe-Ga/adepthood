@@ -1,6 +1,6 @@
 ---
 ontology_version: aptitude-wavelength/2026-05-23
-dataset_version: "2.2.0"
+dataset_version: "3.0.0"
 ---
 
 # APTITUDE / Archetypal Wavelength -- Ontology Spine
@@ -19,10 +19,11 @@ extractor should resolve every name on an Aliases line onto the same node.
 
 ## Sources
 
-- `backend/src/curriculum/archetypal_wavelength.json` (dataset_version as in this file's frontmatter) -- the vendored source of truth for the 10 Stages and their 6-phase manifestations.
+- `backend/src/curriculum/archetypal_wavelength.json` (dataset_version as in this file's frontmatter) -- the vendored source of truth for the 10 Stages' titles, subtitles, Modes and 6-phase manifestations.
+- `backend/src/curriculum/stage_correspondence.json` -- the generated source of each Stage's seven correspondence fields (category, aspect, colour, Growing-Up stage, divine gender, free-will archetype and description), reconciled into the `coursestage` table and served by `GET /stages` (#2664, #2666). `archetypal_wavelength.json` carries no copy of them since dataset 3.0.0.
 - `backend/content/markdown/NN-color/` chapters (e.g. `08-teal/`) -- each Stage's Mode ("The Mode of the Wavelength of ...").
 - `frontend/src/design/tokens.ts` -- Stage color hex (`STAGE_COLORS`) and the legacy Turquoise -> Teal alias (`LEGACY_STAGE_ALIASES`).
-- `docs/curriculum.md` -- provenance: `stage_attributes_source` = APTITUDE Complete Map.csv (aptitude-course repo), `manifestations_source` = Archetypal Wavelength "Expanded List" sheet; Rx = integrated, OD = shadow.
+- `docs/curriculum.md` -- provenance: the correspondence fields are generated from APTITUDE Complete Map.csv (aptitude-course repo) plus `stage_correspondence_supersessions.json`; `manifestations_source` = Archetypal Wavelength "Expanded List" sheet; Rx = integrated, OD = shadow.
 - `NORTH-STAR.md` -- the Aspects of Wholeness (the ten gifts). Adepthood's Aspects and Creek's Frequencies name the same ten developmental positions (Stages); `NORTH-STAR.md` states that identity outright -- "the shared ontology where Adepthood's Aspects equal Creek's Frequencies equal the Wavelength Modes" -- and `docs/creek-vault-mcp-contract.md` -- the Creek Vault contract pointer, whose path is a retained filename and not a statement about the transport, which is HTTP/JSON `/v1` -- holds the adepthood-owned mappings built on it (the privacy-tier names and the Wheel-of-Wholeness projection).
 
   Four names, one set of ten: **Aspect = Frequency = Stage = Mode**, keyed by colour (Beige .. Clear Light). Each Stage's Mode is the "The Mode of the Wavelength of <Colour>" chapter -- Beige is Inhabit (Do), Clear Light is Be (Both/Neither) -- so the Modes are colour-keyed positions, exactly like the Aspects and the Frequencies.
@@ -30,7 +31,7 @@ extractor should resolve every name on an Aliases line onto the same node.
   The six Wavelength *phases* below (Rising .. Restoration) are a **different axis entirely**: a cycle each position moves through, not a member of the set of ten. Phases and Modes are the two things most easily confused here, and were: this line read "equal the Wavelength phases" until 2026-08-13.
 - Creek-Vault repo `docs/Ontology/creek_ontology_agent_prompt.md` (public) section 2.1 (primitives), 6.1 (Frequencies), 7 (Modes + Medicine/Toxic). Version anchor `aptitude-wavelength/2026-05-23` from Creek-Vault `docs/decisions/2026-05-23-frequency-naming.md`.
 
-**Field provenance.** Per-Stage `archetype` is the dataset's `relationship_to_free_will`; `gift` is the dataset's `aspect` (an Aspect of Wholeness); `shadow` is the overdose tendency paraphrased from `free_will_description`, or from a shadow (OD) manifestation where that field carries no shadow language. Derived, curated fields -- not literal JSON keys.
+**Field provenance.** Per-Stage `archetype` is the artifact's `relationship_to_free_will`; `gift` is the artifact's `aspect` (an Aspect of Wholeness); `shadow` is the overdose tendency paraphrased from `free_will_description`, or from a shadow (OD) manifestation where that field carries no shadow language. Derived, curated fields -- not literal JSON keys.
 
 ## Stages
 
@@ -39,7 +40,7 @@ extractor should resolve every name on an Aliases line onto the same node.
 - Color `#d8cbb8` | Category Yes-And-Ness | Gift Agency | Growing-Up Survival | Divine gender Divine Masculine
 - Mode Inhabit (Do) | Archetype Biological Machine | Frequency F1 Agency
 - Shadow: "a bundle of reflexes, needs, cravings, and instincts" -- "Basically, a baby. An addict deep in the territory of abuse."
-- Source: `archetypal_wavelength.json` stage 1; `tokens.ts`; `backend/content/markdown/01-beige/05-the-vibe-wavelength-of-beige-internalize-do.md`.
+- Source: `stage_correspondence.json` and `archetypal_wavelength.json` stage 1; `tokens.ts`; `backend/content/markdown/01-beige/05-the-vibe-wavelength-of-beige-internalize-do.md`.
 
 #### Aliases
 
@@ -50,7 +51,7 @@ Beige = Stage 1 = F1 = BEIGE = 01-beige = Survival
 - Color `#a093c6` | Category Yes-And-Ness | Gift Receptivity | Growing-Up Magic | Divine gender Divine Feminine
 - Mode Inhabit (Feel) | Archetype Pleasure Seeker | Frequency F2 Receptivity
 - Shadow: will steered "toward the pleasant, away from the unpleasant" -- pleasure as real information that is also a leash, hijacked by whoever controls what feels nice
-- Source: `archetypal_wavelength.json` stage 2; `tokens.ts`; `backend/content/markdown/02-purple/04-the-relationship-to-free-will-at-purple-pleasure-seeker.md`; `backend/content/markdown/02-purple/05-the-vibe-wavelength-of-purple-internalize-feel.md`.
+- Source: `stage_correspondence.json` and `archetypal_wavelength.json` stage 2; `tokens.ts`; `backend/content/markdown/02-purple/04-the-relationship-to-free-will-at-purple-pleasure-seeker.md`; `backend/content/markdown/02-purple/05-the-vibe-wavelength-of-purple-internalize-feel.md`.
 
 #### Aliases
 
@@ -61,7 +62,7 @@ Purple = Stage 2 = F2 = PURPLE = 02-purple = Magick
 - Color `#cc5b5b` | Category Love | Gift Self-Love | Growing-Up Ego-centrism | Divine gender Divine Masculine
 - Mode Express (Do) | Archetype Dominator | Frequency F3 Self-Love / Power
 - Shadow: the Dominator "ruled by fear and shame" -- "Their 'choices' are reactions. Their 'power' is armor."
-- Source: `archetypal_wavelength.json` stage 3; `tokens.ts`; `backend/content/markdown/03-red/05-the-vibe-wavelength-of-red-externalize-do.md`.
+- Source: `stage_correspondence.json` and `archetypal_wavelength.json` stage 3; `tokens.ts`; `backend/content/markdown/03-red/05-the-vibe-wavelength-of-red-externalize-do.md`.
 
 #### Aliases
 
@@ -72,7 +73,7 @@ Red = Stage 3 = F3 = RED = 03-red = Power = Self-Love / Power
 - Color `#6fa3d3` | Category Love | Gift Community Love | Growing-Up Conformity | Divine gender Divine Feminine
 - Mode Express (Feel) | Archetype Victim | Frequency F4 Community Love / Conformity
 - Shadow: "you do what you're told. You follow the rules. You meet the expectations."
-- Source: `archetypal_wavelength.json` stage 4; `tokens.ts`; `backend/content/markdown/04-blue/05-the-vibe-wavelength-of-blue-express-feel.md`.
+- Source: `stage_correspondence.json` and `archetypal_wavelength.json` stage 4; `tokens.ts`; `backend/content/markdown/04-blue/05-the-vibe-wavelength-of-blue-express-feel.md`.
 
 #### Aliases
 
@@ -83,7 +84,7 @@ Blue = Stage 4 = F4 = BLUE = 04-blue = Conformity = Community Love / Conformity
 - Color `#f29f67` | Category Understanding | Gift Intellectual Understanding | Growing-Up Achievest | Divine gender Divine Masculine
 - Mode Collaborate (Do) | Archetype Status Seeker | Frequency F5 Achievism
 - Shadow: "chasing things valued by the culture: money, wealth, status, privilege, fame" -- achievement, with free will left unconsidered
-- Source: `archetypal_wavelength.json` stage 5; `tokens.ts`; `backend/content/markdown/05-orange/05-the-vibe-wavelength-of-orange-collaborate-do.md`.
+- Source: `stage_correspondence.json` and `archetypal_wavelength.json` stage 5; `tokens.ts`; `backend/content/markdown/05-orange/05-the-vibe-wavelength-of-orange-collaborate-do.md`.
 
 #### Aliases
 
@@ -94,7 +95,7 @@ Orange = Stage 5 = F5 = ORANGE = 05-orange = Achievist = Achievism
 - Color `#6fcf97` | Category Understanding | Gift Embodied Understanding | Growing-Up Pluralistic | Divine gender Divine Feminine
 - Mode Collaborate (Feel) | Archetype Shadow Glorifier | Frequency F6 Pluralism
 - Shadow: "recognizing that you've been conditioned is not the same as freeing yourself from that conditioning"
-- Source: `archetypal_wavelength.json` stage 6; `tokens.ts`; `backend/content/markdown/06-green/05-the-vibe-wavelength-of-green-collaborate-feel.md`.
+- Source: `stage_correspondence.json` and `archetypal_wavelength.json` stage 6; `tokens.ts`; `backend/content/markdown/06-green/05-the-vibe-wavelength-of-green-collaborate-feel.md`.
 
 #### Aliases
 
@@ -106,7 +107,7 @@ Green = Stage 6 = F6 = GREEN = 06-green = Pluralist = Pluralism
 - Mode Integrate (Do) | Archetype Despairing Analyst | Frequency F7 Integration
 - Shadow: `free_will_description` names the medicine, not the overdose -- "the smallest sliver of space -- the gap between impulse and action"; the Despairing Analyst OD is the conclusion that Free Will is an illusion
 - See Known Conflicts -- the manifest chapters carry a differing ontology for this Stage.
-- Source: `archetypal_wavelength.json` stage 7; `tokens.ts`; `backend/content/markdown/07-yellow/06-the-vibe-wavelength-of-yellow-integrate-do.md`.
+- Source: `stage_correspondence.json` and `archetypal_wavelength.json` stage 7; `tokens.ts`; `backend/content/markdown/07-yellow/06-the-vibe-wavelength-of-yellow-integrate-do.md`.
 
 #### Aliases
 
@@ -119,7 +120,7 @@ Yellow = Stage 7 = F7 = YELLOW = 07-yellow = Integrative = Integration
 - Shadow: `free_will_description` carries no shadow language (it describes the integrated path only); representative OD, Peaking: "Obsession -- the subtle grasp of preferring the state to continue"
 - Legacy: this Stage was named Turquoise before the Dec-2025 supersession (settled, see Known Conflicts).
 - See Known Conflicts -- the manifest chapters carry a differing category for this Stage.
-- Source: `archetypal_wavelength.json` stage 8; `tokens.ts` (`LEGACY_STAGE_ALIASES`); `backend/content/markdown/08-teal/05-the-vibe-wavelength-of-teal-integrate-feel.md`.
+- Source: `stage_correspondence.json` and `archetypal_wavelength.json` stage 8; `tokens.ts` (`LEGACY_STAGE_ALIASES`); `backend/content/markdown/08-teal/05-the-vibe-wavelength-of-teal-integrate-feel.md`.
 
 #### Aliases
 
@@ -131,7 +132,7 @@ Teal = Stage 8 = F8 = TEAL = 08-teal = Nondual = Turquoise (legacy) = True Self 
 - Mode Absorb (Do/Feel) | Archetype Blissy Adept | Frequency F9 Unity
 - Shadow: the goal becomes to "subsume individual Will into alignment with the Will of Source" -- blissful union of Atman and Brahman
 - See Known Conflicts -- the manifest chapters carry a differing ontology for this Stage.
-- Source: `archetypal_wavelength.json` stage 9; `tokens.ts`; `backend/content/markdown/09-ultraviolet/05-the-vibe-wavelength-of-ultraviolet-absorb-do.md`.
+- Source: `stage_correspondence.json` and `archetypal_wavelength.json` stage 9; `tokens.ts`; `backend/content/markdown/09-ultraviolet/05-the-vibe-wavelength-of-ultraviolet-absorb-do.md`.
 
 #### Aliases
 
@@ -143,7 +144,7 @@ Ultraviolet = Stage 9 = F9 = ULTRAVIOLET = 09-ultraviolet = Effortless Being = U
 - Mode Be (Both/Neither) | Archetype Whole Adept | Frequency F10 Emptiness
 - Shadow: "There is no 'you' to have free will. And yet, choice is obviously happening."
 - See Known Conflicts -- the manifest chapters carry a differing ontology for this Stage.
-- Source: `archetypal_wavelength.json` stage 10; `tokens.ts`; `backend/content/markdown/10-clearlight/05-the-vibe-wavelength-of-clear-light-be-neitherall.md`.
+- Source: `stage_correspondence.json` and `archetypal_wavelength.json` stage 10; `tokens.ts`; `backend/content/markdown/10-clearlight/05-the-vibe-wavelength-of-clear-light-be-neitherall.md`.
 
 #### Aliases
 
@@ -289,7 +290,7 @@ Praxis
 - F8's Creek name is "True Self / Transcendence"; Creek's color listing reads "Teal/Turquoise" where adepthood's canon (post Dec-2025 supersession) is Teal only -- see Known Conflicts.
 - F9 "Unity" (Ultraviolet) matches adepthood's aspect name exactly.
 
-Source: Creek-Vault `docs/Ontology/creek_ontology_agent_prompt.md` section 6.1; `backend/src/curriculum/archetypal_wavelength.json`.
+Source: Creek-Vault `docs/Ontology/creek_ontology_agent_prompt.md` section 6.1; `backend/src/curriculum/stage_correspondence.json`.
 
 #### Aliases
 
@@ -306,11 +307,11 @@ F10 = Frequency 10 = Emptiness = Clear Light = Stage 10
 
 ## Known Conflicts
 
-The Stage attribute values shipped above come from `APTITUDE Complete Map.csv` (the dataset's `stage_attributes_source`, with Stage 2's free-will pair following the vendored course per `stage_2_free_will_source`; see `archetypal_wavelength.json` and `docs/curriculum.md`). The vendored course manifest chapters under `backend/content/markdown/` carried a DIFFERING ontology for Stages 7-10; the re-pin also opened a Stage 2 archetype difference, since resolved by #2915. The content re-pin to `9d0f896` (issue #2706) reconciled the **Category** and **Aspect** halves of that difference at each stage's Mood chapter, by renaming those six chapters upstream. It did NOT reconcile the **Archetype** half, which still differs at Stages 7, 9 and 10, nor the older Category vocabulary that survives in the Stage 9 and 10 introductions. The residue is recorded here neutrally as an open decision (#1637, epic:stage-ontology):
+The Stage attribute values shipped above come from `APTITUDE Complete Map.csv`, generated into `stage_correspondence.json` with the ratified departures in `stage_correspondence_supersessions.json` (see `docs/curriculum.md`). The vendored course manifest chapters under `backend/content/markdown/` carried a DIFFERING ontology for Stages 7-10; the re-pin also opened a Stage 2 archetype difference, since resolved by #2915. The content re-pin to `9d0f896` (issue #2706) reconciled the **Category** and **Aspect** halves of that difference at each stage's Mood chapter, by renaming those six chapters upstream. It did NOT reconcile the **Archetype** half, which still differs at Stages 7, 9 and 10, nor the older Category vocabulary that survives in the Stage 9 and 10 introductions. The residue is recorded here neutrally as an open decision (#1637, epic:stage-ontology):
 
-- Stage 2 -- RESOLVED by #2915: the dataset's `relationship_to_free_will` and the Map persona (served from `coursestage` via `GET /stages` since #2666) now read "Pleasure Seeker", the course's own name (`backend/content/markdown/02-purple/04-the-relationship-to-free-will-at-purple-pleasure-seeker.md` and the `aptitude-stages.md` heading), and `free_will_description` is the vendored Complete Map CSV sentence carried by `stage_correspondence.json` (#2664, held equal by #2667). The re-pin to `9d0f896` had opened this when upstream `3bf0df5` renamed Purple's archetype; the old name now survives only in the vendored `backup/` tree. `backend/tests/test_vendored_course_copy_pins.py` now holds every stage's archetype to its `aptitude-stages.md` heading except where `provenance.supersessions` records a ratified supersession.
-- Stage 7 -- RESOLVED by the re-pin: the Mood chapter is now `backend/content/markdown/07-yellow/02-the-mood-of-yellow-wisdomsystems-wisdom.md` (Category Wisdom, Aspect Systems Wisdom), and `01-what-is-yellow.md` agrees. **Still open:** Archetype Despairing Analyst vs. manifest "Intentional Actor" (`backend/content/markdown/07-yellow/05-the-relationship-to-free-will-at-yellow-intentional-actor.md`). The course uses "Intentional Actor" for the *integrated* pole of Systems Wisdom and "Despairing Analyst" for the *repressed* pole; the dataset's `relationship_to_free_will` pins the repressed one. The two name-sets are describing different poles, not disagreeing about the stage.
-- Stage 8 -- FULLY RESOLVED by the re-pin: the Mood chapter is now `backend/content/markdown/08-teal/02-the-mood-of-teal-wisdomtrue-self-wisdom.md` (Category Wisdom), and the Archetype already agreed (`04-the-relationship-to-free-will-at-teal-true-self-embodier.md` vs. dataset "True Self Embodier").
+- Stage 2 -- RESOLVED by #2915: the artifact's `relationship_to_free_will` and the Map persona (served from `coursestage` via `GET /stages` since #2666) now read "Pleasure Seeker", the course's own name (`backend/content/markdown/02-purple/04-the-relationship-to-free-will-at-purple-pleasure-seeker.md` and the `aptitude-stages.md` heading), and `free_will_description` is the vendored Complete Map CSV sentence carried by `stage_correspondence.json` (#2664; the dataset's copy was retired by #2666). The re-pin to `9d0f896` had opened this when upstream `3bf0df5` renamed Purple's archetype; the old name now survives only in the vendored `backup/` tree. `backend/tests/test_vendored_course_copy_pins.py` now holds all ten stages' archetypes, as `stage_correspondence.json` ships them, to their `aptitude-stages.md` headings with no exemptions.
+- Stage 7 -- RESOLVED by the re-pin: the Mood chapter is now `backend/content/markdown/07-yellow/02-the-mood-of-yellow-wisdomsystems-wisdom.md` (Category Wisdom, Aspect Systems Wisdom), and `01-what-is-yellow.md` agrees. **Still open:** Archetype Despairing Analyst vs. manifest "Intentional Actor" (`backend/content/markdown/07-yellow/05-the-relationship-to-free-will-at-yellow-intentional-actor.md`). The course uses "Intentional Actor" for the *integrated* pole of Systems Wisdom and "Despairing Analyst" for the *repressed* pole; the artifact's `relationship_to_free_will` pins the repressed one. The two name-sets are describing different poles, not disagreeing about the stage.
+- Stage 8 -- FULLY RESOLVED by the re-pin: the Mood chapter is now `backend/content/markdown/08-teal/02-the-mood-of-teal-wisdomtrue-self-wisdom.md` (Category Wisdom), and the Archetype already agreed (`04-the-relationship-to-free-will-at-teal-true-self-embodier.md` vs. artifact "True Self Embodier").
 - Stage 9 -- PARTIALLY RESOLVED: the Mood chapter is now `backend/content/markdown/09-ultraviolet/02-the-mood-of-ultraviolet-beingunity.md` (Category Being, Aspect Unity). **Still open:** `01-what-is-ultraviolet.md:27` still reads "APTITUDE calls this **Wholeness** ... **Developmental Complexity**", as does the Gift chapter title (`10-ultraviolets-gift-the-recognition-of-natural-hierarchy.md`); and Archetype Blissy Adept vs. manifest "Hierarchical Organizer" (`backend/content/markdown/09-ultraviolet/04-the-relationship-to-free-will-at-ultraviolet-hierarchical-or.md`). Note the re-pin left the course internally inconsistent here: the Mood chapter's integrated pole is now "Skillful Composer" while the Free Will chapter is still titled "Hierarchical Organizer".
 - Stage 10 -- PARTIALLY RESOLVED: the Mood chapter is now `backend/content/markdown/10-clearlight/02-the-mood-of-clear-light-awarenessemptiness.md` (Category Awareness). **Still open:** `01-what-is-clear-light.md:29` still reads "APTITUDE calls this **Wholeness**"; and Archetype Whole Adept vs. manifest "Adept" (`backend/content/markdown/10-clearlight/04-the-relationship-to-free-will-at-clear-light-adept.md`).
 
