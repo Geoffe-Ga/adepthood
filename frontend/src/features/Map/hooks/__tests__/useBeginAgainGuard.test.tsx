@@ -29,7 +29,13 @@ jest.mock('react', () => {
   return { ...actual, useState: mockWrapUseState(actual.useState) };
 });
 
-const mockBeginAgain = jest.fn() as jest.MockedFunction<(_token?: string) => Promise<void>>;
+const mockBeginAgain = jest.fn() as jest.MockedFunction<
+  (_token?: string, _tz?: string | null) => Promise<void>
+>;
+
+// The account zone the begin-again adopts the new cycle's day in (#3702).
+const mockAuth = { userTimezone: 'Europe/Paris', userTimezoneReady: true };
+jest.mock('@/context/AuthContext', () => ({ useAuth: () => mockAuth }));
 jest.mock('../../services/stageService', () => ({
   stageService: {
     beginAgain: (...a: unknown[]) =>
@@ -54,6 +60,8 @@ beforeEach(() => {
   );
   mockUnmountTrackingArmed = false;
   mockPostUnmountDispatches.length = 0;
+  mockAuth.userTimezone = 'Europe/Paris';
+  mockAuth.userTimezoneReady = true;
 });
 
 afterEach(() => {
@@ -115,5 +123,37 @@ describe('useBeginAgainGuard', () => {
       /unmounted|not wrapped in act/i.test(String(call[0])),
     );
     expect(lifecycleWarnings).toHaveLength(0);
+  });
+
+  it("hands begin-again the account's zone once it is known (#3702)", async () => {
+    const { result } = renderHook(() => useBeginAgainGuard());
+
+    act(() => {
+      result.current.handleBeginAgain();
+    });
+
+    expect(mockBeginAgain).toHaveBeenCalledWith(undefined, 'Europe/Paris');
+    await act(async () => {
+      resolveBeginAgain();
+      await Promise.resolve();
+    });
+  });
+
+  it('hands begin-again no zone while the account zone is still provisional (#3702)', async () => {
+    // The provisional "UTC" default is not the person's zone; adopting a day
+    // counted in it could name the wrong date, so the day waits for a reconcile.
+    mockAuth.userTimezone = 'UTC';
+    mockAuth.userTimezoneReady = false;
+    const { result } = renderHook(() => useBeginAgainGuard());
+
+    act(() => {
+      result.current.handleBeginAgain();
+    });
+
+    expect(mockBeginAgain).toHaveBeenCalledWith(undefined, null);
+    await act(async () => {
+      resolveBeginAgain();
+      await Promise.resolve();
+    });
   });
 });

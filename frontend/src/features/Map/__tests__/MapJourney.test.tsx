@@ -33,6 +33,9 @@ jest.mock('@react-navigation/bottom-tabs', () =>
 jest.mock('react-native-safe-area-context', () =>
   jest.requireActual('./mapTestHarness').mockSafeAreaModule(),
 );
+jest.mock('@/context/AuthContext', () =>
+  jest.requireActual('./mapTestHarness').mockAuthContextModule(),
+);
 
 // Reduced-motion-safe path: no Animated pulse (Animated trips the test
 // renderer's InteractionManager). Asserts the celebration still renders at rest.

@@ -3,6 +3,7 @@ import { act } from '@testing-library/react-native';
 
 import type { Stage, StageProgressRecord } from '../../../../api';
 import { STAGE_COLORS, STAGE_ORDER, colors } from '../../../../design/tokens';
+import type { useProgramStore as ProgramStore } from '../../../../store/useProgramStore';
 import {
   BEGIN_AGAIN_FAILED_MESSAGE,
   MAP_LOAD_FAILED_MESSAGE,
@@ -17,6 +18,7 @@ interface ProgramCalendarPayload {
   calendar_week: number;
   current_stage: number;
   cycle_number: number;
+  program_start_window?: { earliest: string; latest: string } | null;
 }
 
 const mockList = jest.fn() as jest.MockedFunction<(_token?: string) => Promise<Stage[]>>;
@@ -751,6 +753,164 @@ describe('stageService', () => {
       // Failure short-circuits: no reload and no cycle bump from a bad response.
       expect(mockList).not.toHaveBeenCalled();
       expect(state.cycleNumber).toBe(1);
+    });
+  });
+
+  describe("begin-again re-anchors the start day in the account's zone (#3702)", () => {
+    const ACCOUNT_ZONE = 'America/Los_Angeles';
+    // 03:00 UTC on 2026-11-09 is 19:00 PST on 2026-11-08: the zone decides the day.
+    const NEW_CYCLE_STARTED_AT = '2026-11-09T03:00:00Z';
+    const NEW_CYCLE_DAY_IN_ZONE = '2026-11-08';
+    const PRIOR_CYCLE_DAY = '2026-01-05';
+    const SECOND_CYCLE = 2;
+
+    const secondCycleCalendar = (): ProgramCalendarPayload => ({
+      program_started_at: NEW_CYCLE_STARTED_AT,
+      calendar_stage: 1,
+      calendar_week: 1,
+      current_stage: 1,
+      cycle_number: SECOND_CYCLE,
+      program_start_window: null,
+    });
+
+    const progressRecord = (): StageProgressRecord => ({
+      id: 1,
+      user_id: 42,
+      current_stage: 1,
+      completed_stages: [],
+      cycle_number: SECOND_CYCLE,
+    });
+
+    /** The program store, from the module registry this test's service resolves. */
+    const programStore = () =>
+      (require('../../../../store/useProgramStore') as { useProgramStore: typeof ProgramStore })
+        .useProgramStore;
+
+    /** Hold the first cycle's anchor, as the session reconcile left it. */
+    const holdPriorCycleDay = (): void => {
+      act(() =>
+        programStore().getState().adoptServerProgramStart({
+          day: PRIOR_CYCLE_DAY,
+          window: null,
+          locked: false,
+        }),
+      );
+    };
+
+    const flush = () => new Promise<void>((done) => setImmediate(done));
+
+    it("adopts the new cycle's start day right after begin-again", async () => {
+      mockBeginAgainClient.mockResolvedValueOnce(progressRecord());
+      mockList.mockResolvedValueOnce([makeApiStage(1)]);
+      mockProgramCalendar.mockResolvedValueOnce(secondCycleCalendar());
+      const { stageService } = require('../stageService');
+      holdPriorCycleDay();
+
+      await act(async () => {
+        await stageService.beginAgain(undefined, ACCOUNT_ZONE);
+      });
+
+      const program = programStore().getState();
+      expect(program.programStartDay).toBe(NEW_CYCLE_DAY_IN_ZONE);
+      expect(program.programStartLocked).toBe(true);
+      // The UTC date is a day later, so the zone is what put the day here.
+      expect(NEW_CYCLE_STARTED_AT.slice(0, 10)).not.toBe(NEW_CYCLE_DAY_IN_ZONE);
+    });
+
+    it('a plain loadStages leaves the anchor day alone', async () => {
+      // Every other load passes no zone, so a first pick still held offline is
+      // never overwritten by an ordinary Map visit.
+      mockList.mockResolvedValueOnce([makeApiStage(1)]);
+      mockProgramCalendar.mockResolvedValueOnce(secondCycleCalendar());
+      const { stageService } = require('../stageService');
+      const { useStageStore } = require('../../../../store/useStageStore');
+      holdPriorCycleDay();
+
+      await act(async () => {
+        await stageService.loadStages();
+      });
+
+      const program = programStore().getState();
+      expect(program.programStartDay).toBe(PRIOR_CYCLE_DAY);
+      expect(program.programStartLocked).toBe(true);
+      expect(useStageStore.getState().cycleNumber).toBe(SECOND_CYCLE);
+    });
+
+    it('a failed begin-again does not move the anchor day', async () => {
+      const consoleError = jest.spyOn(console, 'error').mockImplementation(() => undefined);
+      mockBeginAgainClient.mockRejectedValueOnce(new Error('boom'));
+      mockProgramCalendar.mockResolvedValue(secondCycleCalendar());
+      const { stageService } = require('../stageService');
+      holdPriorCycleDay();
+
+      await act(async () => {
+        await stageService.beginAgain(undefined, ACCOUNT_ZONE);
+      });
+
+      expect(mockProgramCalendar).not.toHaveBeenCalled();
+      expect(programStore().getState().programStartDay).toBe(PRIOR_CYCLE_DAY);
+      expect(consoleError).toHaveBeenCalledWith('map_begin_again_failed');
+      consoleError.mockRestore();
+    });
+
+    it('a begin-again answered after a sign-out does not move the anchor day', async () => {
+      let answer: (_record: StageProgressRecord) => void = () => {};
+      mockBeginAgainClient.mockReturnValueOnce(
+        new Promise<StageProgressRecord>((resolve) => {
+          answer = resolve;
+        }),
+      );
+      mockList.mockResolvedValue([makeApiStage(1)]);
+      mockProgramCalendar.mockResolvedValue(secondCycleCalendar());
+      const { stageService } = require('../stageService');
+      const { useStageStore } = require('../../../../store/useStageStore');
+      holdPriorCycleDay();
+
+      let again: Promise<void> = Promise.resolve();
+      act(() => {
+        again = stageService.beginAgain(undefined, ACCOUNT_ZONE);
+      });
+      act(() => {
+        useStageStore.getState().reset();
+      });
+      await act(async () => {
+        answer(progressRecord());
+        await again;
+      });
+
+      expect(mockProgramCalendar).not.toHaveBeenCalled();
+      expect(programStore().getState().programStartDay).toBe(PRIOR_CYCLE_DAY);
+    });
+
+    it("a begin-again reload overtaken by a newer load does not adopt its stale calendar's day", async () => {
+      let answerCalendar: (_calendar: ProgramCalendarPayload) => void = () => {};
+      mockBeginAgainClient.mockResolvedValueOnce(progressRecord());
+      mockList.mockResolvedValue([makeApiStage(1)]);
+      mockProgramCalendar
+        .mockReturnValueOnce(
+          new Promise<ProgramCalendarPayload>((resolve) => {
+            answerCalendar = resolve;
+          }),
+        )
+        .mockResolvedValueOnce(secondCycleCalendar());
+      const { stageService } = require('../stageService');
+      holdPriorCycleDay();
+
+      let again: Promise<void> = Promise.resolve();
+      await act(async () => {
+        again = stageService.beginAgain(undefined, ACCOUNT_ZONE);
+        await flush();
+      });
+      expect(mockProgramCalendar).toHaveBeenCalledTimes(1);
+      await act(async () => {
+        await stageService.loadStages();
+      });
+      await act(async () => {
+        answerCalendar(secondCycleCalendar());
+        await again;
+      });
+
+      expect(programStore().getState().programStartDay).toBe(PRIOR_CYCLE_DAY);
     });
   });
 });
