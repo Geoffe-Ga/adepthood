@@ -90,6 +90,7 @@ from domain.creek_vault import (
     VaultPipelineJob,
     VaultPipelineStage,
     VaultSendSuspendedError,
+    failure_code_is_final,
 )
 from domain.dates import ensure_aware
 from models.vault_pipeline_follow_up import VaultPipelineFollowUp
@@ -1221,11 +1222,38 @@ def _continue_after_retry(
     return retried[0]
 
 
+async def _retire_retryable_failure(
+    session: AsyncSession,
+    run: VaultPipelineRun,
+    polled: VaultPipelineJob,
+    *,
+    ambiguous: bool,
+) -> VaultPipelineOutcome | None:
+    """Hand a retryable failed job to the bounded retry, or close a run it has spent.
+
+    Usually the handle is forgotten and ``None`` lets the retry re-admit. Once a
+    failure naming a *transient* reason (``busy``) arrives on the last allowed
+    admission, the run is closed here instead, because only here is the reason
+    still known: ``failed`` with it recorded when every admission answered, and
+    ``ambiguous`` with none when an earlier admission went unanswered -- that one
+    may have landed labels, which a later busy pass says nothing about.
+    """
+    spent = polled.failure_code is not None and run.attempt_count >= _MAX_STAGE_ATTEMPTS
+    if not spent:
+        await _clear_job(session, run)
+        return None
+    if ambiguous:
+        return await _finish_exhausted_run(session, run, ambiguous=True)
+    return await _land_result(session, run, polled)
+
+
 async def _reconcile_existing_job(
     session: AsyncSession,
     client: CreekVaultPipelineClient,
     run: VaultPipelineRun,
     job: VaultPipelineJob,
+    *,
+    ambiguous: bool,
 ) -> VaultPipelineOutcome | None:
     """Poll off-pool, then land, retire, or bound one persisted job.
 
@@ -1238,11 +1266,10 @@ async def _reconcile_existing_job(
     polled = await _poll_until_terminal(client, job)
     if polled is None:
         return await _finish_exhausted_run(session, run, ambiguous=True)
-    # A failed job that names its reason (a refused writer key) is final too.
-    if not isinstance(polled, VaultPipelineJob) or polled.failure_code is not None:
+    # A failed job naming a final reason (a refused writer key) is landed too.
+    if not isinstance(polled, VaultPipelineJob) or failure_code_is_final(polled.failure_code):
         return await _land_result(session, run, polled)
-    await _clear_job(session, run)
-    return None
+    return await _retire_retryable_failure(session, run, polled, ambiguous=ambiguous)
 
 
 async def _reconciliation_step(
@@ -1254,7 +1281,9 @@ async def _reconciliation_step(
 ) -> VaultPipelineOutcome | _Reconciliation:
     """Advance one poll-or-admit transition of a logical stage run."""
     if state.job is not None:
-        outcome = await _reconcile_existing_job(session, client, run, state.job)
+        outcome = await _reconcile_existing_job(
+            session, client, run, state.job, ambiguous=state.ambiguous
+        )
         if outcome is not None:
             return outcome
     retried = await _retry_once(session, client, run, stage, ambiguous=state.ambiguous)

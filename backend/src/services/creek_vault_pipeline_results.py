@@ -20,6 +20,7 @@ from domain.creek_vault import (
     VaultPipelineJob,
     VaultPipelineJobState,
     VaultPipelineStage,
+    failure_code_is_final,
 )
 from models.vault_pipeline_run import VaultPipelineOutcome, VaultPipelineRun
 
@@ -58,9 +59,11 @@ class StageCounts:
         lost: Fragments it dropped to noise. Only a clustering stage can lose
             any; the classification pass loses nothing.
         failure_code: Why a failed stage failed, when the vault published a
-            reason the writer can act on (Creek contract 0.26). A failure that
-            names one is final: retrying cannot change the answer, so it is
-            landed rather than re-admitted (:func:`poll_needs_reconciliation`).
+            reason (Creek contract 0.26+). A *final* reason (a refused key) is
+            landed rather than re-admitted, because retrying cannot change the
+            answer; a transient one (``busy``, 0.29) joins the bounded retry
+            like an unnamed failure (:func:`poll_needs_reconciliation`,
+            :func:`~domain.creek_vault.failure_code_is_final`).
     """
 
     seen: int = 0
@@ -142,17 +145,19 @@ def poll_needs_reconciliation(
     outcome: VaultPipelineOutcome,
     counts: StageCounts | None = None,
 ) -> bool:
-    """A failed status can retry; an admission refusal or a named reason is final.
+    """A failed status can retry; an admission refusal or a final reason is not.
 
-    A reason the vault published (``counts.failure_code``) says the writer, not
-    time, has to change something -- a refused key is refused again -- so such
-    a failure is landed now instead of being handed to the bounded retry.
+    A final reason the vault published (``counts.failure_code``) says the
+    writer, not time, has to change something -- a refused key is refused
+    again -- so such a failure is landed now instead of being handed to the
+    bounded retry. A transient reason (``busy``: another writer held the
+    vault's lock) is retried exactly as an unnamed failure is.
     """
-    named = counts is not None and counts.failure_code is not None
+    final = counts is not None and failure_code_is_final(counts.failure_code)
     return (
         outcome is VaultPipelineOutcome.FAILED
         and run.outcome == VaultPipelineOutcome.ATTEMPTED.value
-        and not named
+        and not final
     )
 
 

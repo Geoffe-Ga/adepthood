@@ -192,6 +192,9 @@ async def forget_if_rejected(
     Creek contract 0.26's ``request_key_rejected`` is final (#3600): the run
     lands ``failed`` and is not re-admitted. The same refusal would meet every
     later background submit, so the copy goes with it and is never spent again.
+    No other reason forgets it: Creek 0.29's ``busy`` means the pass never got
+    the vault's lock, let alone reached the vendor, and is retried with the
+    same copy.
     """
     if failure_code is VaultJobFailureCode.REQUEST_KEY_REJECTED:
         await stage_forget(session, user_id)

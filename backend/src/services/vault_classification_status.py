@@ -10,6 +10,10 @@ about two different rows on purpose.
 not answered, so it neither raises nor clears the notice. Any later pass that
 lands -- completed, incomplete, failed for another reason, or ambiguous --
 supersedes the refusal, because it is newer evidence about the key in use now.
+The one exception is a pass that failed for a *transient* reason -- Creek 0.29's
+``busy``, another writer holding the vault's lock -- which stopped before it
+reached any provider and so says nothing about the key either way: it is
+skipped, and the verdict stays with the pass before it.
 
 **Has the writing had its full sort?** (#3577) Read from the latest pass that
 *landed labels*: ``completed`` or ``incomplete``. A failed or ambiguous pass
@@ -30,11 +34,15 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Final
 
-from sqlalchemy import ColumnElement
+from sqlalchemy import ColumnElement, or_
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import col, select
 
-from domain.creek_vault import VaultJobFailureCode, VaultPipelineStage
+from domain.creek_vault import (
+    TRANSIENT_JOB_FAILURE_CODES,
+    VaultJobFailureCode,
+    VaultPipelineStage,
+)
 from models.vault_pipeline_run import VaultPipelineOutcome, VaultPipelineRun
 from schemas.vault_config import VaultClassificationState
 
@@ -55,8 +63,10 @@ class VaultClassificationStatus:
     """The two facts, each read from its own row.
 
     Attributes:
-        key_rejected: The latest settled pass failed because the writer's own
-            provider key was refused (Creek contract 0.26).
+        key_rejected: The latest settled pass that tested the key failed
+            because the writer's own provider key was refused (Creek contract
+            0.26). A pass that failed ``busy`` (0.29) never reached a provider
+            and is not counted.
         landed_outcome: The outcome of the latest pass that landed labels, or
             ``None`` when none has.
     """
@@ -79,6 +89,10 @@ class VaultClassificationStatus:
         return VaultClassificationState.INCOMPLETE
 
 
+#: Reasons whose pass stopped before reaching a provider, so they say nothing about the key.
+_SILENT_ON_THE_KEY: Final = tuple(code.value for code in TRANSIENT_JOB_FAILURE_CODES)
+
+
 def _classify_rows_in(user_id: int, outcomes: frozenset[str]) -> tuple[ColumnElement[bool], ...]:
     """The filter selecting ``user_id``'s own classify rows whose outcome is in ``outcomes``."""
     return (
@@ -93,7 +107,13 @@ async def classification_status(session: AsyncSession, user_id: int) -> VaultCla
     newest_first = col(VaultPipelineRun.id).desc()
     settled_code = (
         select(col(VaultPipelineRun.failure_code))
-        .where(*_classify_rows_in(user_id, _SETTLED))
+        .where(
+            *_classify_rows_in(user_id, _SETTLED),
+            or_(
+                col(VaultPipelineRun.failure_code).is_(None),
+                col(VaultPipelineRun.failure_code).not_in(_SILENT_ON_THE_KEY),
+            ),
+        )
         .order_by(newest_first)
         .limit(1)
         .scalar_subquery()
