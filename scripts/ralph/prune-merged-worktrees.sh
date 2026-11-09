@@ -126,12 +126,16 @@ main_wt="$(physical "$main_wt")"
 live_cwds() {
   if [[ -r /proc/self/cwd ]]; then
     local d
-    for d in /proc/[0-9]*; do readlink "$d/cwd" 2>/dev/null; done
+    # A process can exit between the glob and its readlink — this loop's own
+    # subshells always do — so a failed readlink is expected, and the loop's
+    # last exit status says nothing about whether /proc was readable.
+    for d in /proc/[0-9]*; do readlink "$d/cwd" 2>/dev/null || true; done
+    return 0
   elif command -v lsof >/dev/null 2>&1; then
     lsof -d cwd -Fn 2>/dev/null | sed -n 's/^n//p'
-  else
-    return 1
+    return 0
   fi
+  return 1
 }
 live_ok=1
 live="$(cd / && live_cwds)" || live_ok=0
