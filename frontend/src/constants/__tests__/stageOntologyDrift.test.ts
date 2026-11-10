@@ -3,7 +3,11 @@ import { describe, it, expect } from '@jest/globals';
 
 import { STAGE_ORDER } from '../../design/tokens';
 import { SPIRAL_DYNAMICS_COLORS } from '../../features/Practice/data/colorPalette';
-import { STAGE_DURATIONS_DAYS, STAGES_PER_SECTION } from '../program';
+import {
+  PROGRAM_START_BACKDATE_WINDOW_DAYS,
+  STAGE_DURATIONS_DAYS,
+  STAGES_PER_SECTION,
+} from '../program';
 
 import { readBackendSource } from '@/testing/backendSource';
 
@@ -34,6 +38,18 @@ const FREQUENCY_COLOR_ENTRY = /Frequency\.F(\d+):\s*"([^"]+)"/g;
 const STAGE_DURATIONS = /STAGE_DURATIONS_DAYS[^=]*=\s*\(([\d,\s]+)\)/;
 /** The `STAGES_PER_SECTION = 3` assignment (issue #2866). */
 const STAGES_PER_SECTION_LITERAL = /^STAGES_PER_SECTION\s*=\s*(\d+)\s*$/m;
+/**
+ * The `PROGRAM_START_BACKDATE_WINDOW_DAYS = ...` assignment (#3097, #3708). The
+ * right-hand side must be one bare word -- an integer literal or a name -- so an
+ * expression such as `TOTAL_PROGRAM_DAYS * 2` fails the match rather than being
+ * half-read.
+ */
+const BACKDATE_WINDOW_ASSIGNMENT = /^PROGRAM_START_BACKDATE_WINDOW_DAYS\s*=\s*(\w+)\s*$/m;
+/** The one alias the window may name: the whole program, in days. */
+const TOTAL_PROGRAM_DAYS_ALIAS = 'TOTAL_PROGRAM_DAYS';
+/** The alias is trusted only while it is defined as the sum of the stage durations. */
+const TOTAL_PROGRAM_DAYS_AS_SUM = /^TOTAL_PROGRAM_DAYS\s*=\s*sum\(STAGE_DURATIONS_DAYS\)\s*$/m;
+const INTEGER_LITERAL = /^\d+$/;
 
 function capture(pattern: RegExp, file: string[], what: string): string {
   const group = pattern.exec(readBackendSource(...file))?.[1];
@@ -80,6 +96,29 @@ function backendStageDurationDays(): number[] {
     .map(Number);
 }
 
+/**
+ * The backend's backdate window in days. Accepts an integer literal, or the
+ * `TOTAL_PROGRAM_DAYS` alias -- resolved through the parsed stage-duration
+ * tuple, and only while that alias is still `sum(STAGE_DURATIONS_DAYS)`. Any
+ * other shape throws, so a change the parse does not understand fails loudly
+ * instead of comparing against a guess.
+ */
+function backendBackdateWindowDays(): number {
+  const rhs = capture(
+    BACKDATE_WINDOW_ASSIGNMENT,
+    CONSTANTS,
+    'the PROGRAM_START_BACKDATE_WINDOW_DAYS assignment',
+  );
+  if (INTEGER_LITERAL.test(rhs)) return Number(rhs);
+  if (rhs !== TOTAL_PROGRAM_DAYS_ALIAS) {
+    throw new Error(`PROGRAM_START_BACKDATE_WINDOW_DAYS = ${rhs} is not a shape this pin reads`);
+  }
+  if (!TOTAL_PROGRAM_DAYS_AS_SUM.test(readBackendSource(...CONSTANTS))) {
+    throw new Error('TOTAL_PROGRAM_DAYS is no longer sum(STAGE_DURATIONS_DAYS)');
+  }
+  return backendStageDurationDays().reduce((total, days) => total + days, 0);
+}
+
 describe('the frontend mirrors of the APTITUDE ten', () => {
   it('reads a ten-position colour table out of the backend', () => {
     // Guards the parse itself: a regex that silently matched nothing would
@@ -118,6 +157,17 @@ describe('the frontend mirrors of the APTITUDE ten', () => {
     // of the Wavelength rather than fail anywhere visible.
     expect(Number.isInteger(backendStagesPerSection())).toBe(true);
     expect(STAGES_PER_SECTION).toBe(backendStagesPerSection());
+  });
+
+  it('bounds the start-date backdate window the same way the backend does', () => {
+    // Each stack used to pin this only to its own TOTAL_PROGRAM_DAYS, so a
+    // change on one side alone passed both suites while the offline picker
+    // floor and the server's refusal disagreed (#3708). The integer guard runs
+    // first: a parse that read nothing would otherwise compare NaN vacuously.
+    const backend = backendBackdateWindowDays();
+    expect(Number.isInteger(backend)).toBe(true);
+    expect(backend).toBeGreaterThan(0);
+    expect(PROGRAM_START_BACKDATE_WINDOW_DAYS).toBe(backend);
   });
 
   it('leaves the final stage outside every section, in both stacks', () => {

@@ -4,11 +4,9 @@ from __future__ import annotations
 
 from dataclasses import FrozenInstanceError
 from datetime import UTC, date, datetime, timedelta
-from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import pytest
 
-import domain.dates as dates_module
 from domain.practice_insights import (
     WEEKLY_HISTORY_WEEKS,
     WEEKLY_TARGET_SESSIONS,
@@ -16,6 +14,7 @@ from domain.practice_insights import (
     build_insights,
 )
 from models.practice_session import PracticeSession
+from tests.support.frozen_clock import freeze_domain_clock
 
 # A week after the 2026-05-11 session the boundary test uses, so both the UTC
 # (week 2026-05-11) and Pacific (week 2026-05-04) buckets of that instant fall
@@ -23,20 +22,6 @@ from models.practice_session import PracticeSession
 # freeze the test is time-coupled: as today advances the fixed session drifts to
 # the window's trailing edge and the tz shift tips the Pacific bucket out.
 _FROZEN_NOW = datetime(2026, 5, 18, 12, 0, tzinfo=UTC)
-
-
-def _zone_for(user_or_tz: object) -> ZoneInfo:
-    """Resolve an IANA zone from a tz string, UTC on failure (mirrors domain.dates)."""
-    candidate = user_or_tz if isinstance(user_or_tz, str) else getattr(user_or_tz, "timezone", None)
-    try:
-        return ZoneInfo(candidate) if candidate else ZoneInfo("UTC")
-    except (ZoneInfoNotFoundError, ValueError):
-        return ZoneInfo("UTC")
-
-
-def _frozen_now_in_tz(user_or_tz: object = None) -> datetime:
-    """Stand-in for ``domain.dates.now_in_tz`` pinned to :data:`_FROZEN_NOW`."""
-    return _FROZEN_NOW.astimezone(_zone_for(user_or_tz))
 
 
 @pytest.fixture
@@ -47,8 +32,7 @@ def frozen_clock(monkeypatch: pytest.MonkeyPatch) -> datetime:
     single clock seam is ``now_in_tz`` (resolved through the module namespace),
     so patching it here freezes the window for every caller.
     """
-    monkeypatch.setattr(dates_module, "now_in_tz", _frozen_now_in_tz)
-    return _FROZEN_NOW
+    return freeze_domain_clock(monkeypatch, _FROZEN_NOW)
 
 
 def _session(

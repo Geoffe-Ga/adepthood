@@ -27,6 +27,7 @@ from models.habit import Habit
 from models.stage_progress import StageProgress
 from models.user import User
 from tests.helpers.feedback_triage import Account, make_account
+from tests.support.frozen_clock import freeze_domain_clock
 
 _PATH = "/stages/program-calendar"
 # 60 days back: stages 1 and 2 (21 days each) have closed, so stage 3 is open.
@@ -36,19 +37,32 @@ _LADDER = (("Beige ring", "Beige", 1), ("Purple ring", "Purple", 2), ("Red ring"
 _LOCKED_RING = ("Blue ring", "Blue", 4)
 # A zone far from UTC, so "local midnight" is visibly not "UTC midnight".
 _ZONE = "America/Los_Angeles"
+# 03:00 UTC on 2026-06-15 is 20:00 PDT on 2026-06-14: an evening in ``_ZONE``
+# when the UTC date has already turned over, so "today" differs by zone.
+_LA_EVENING_UTC = datetime(2026, 6, 15, 3, 0, tzinfo=UTC)
 
 
 def _today() -> date:
     return datetime.now(ZoneInfo(_ZONE)).date()
 
 
-async def _account(db_session: AsyncSession, email: str, *, created_days_ago: int = 0) -> Account:
-    """An account in ``_ZONE`` created ``created_days_ago`` days back."""
+async def _account(
+    db_session: AsyncSession,
+    email: str,
+    *,
+    created_days_ago: int = 0,
+    created_at: datetime | None = None,
+) -> Account:
+    """An account in ``_ZONE`` created ``created_days_ago`` days before ``created_at``.
+
+    ``created_at`` defaults to the live clock; a test that freezes the clock
+    passes its frozen instant so the account is not made in the future.
+    """
     account = await make_account(db_session, email)
     user = await db_session.get(User, account.user_id)
     assert user is not None
     user.timezone = _ZONE
-    user.created_at = datetime.now(UTC) - timedelta(days=created_days_ago)
+    user.created_at = (created_at or datetime.now(UTC)) - timedelta(days=created_days_ago)
     db_session.add(user)
     await db_session.commit()
     return account
@@ -405,16 +419,24 @@ async def test_a_person_with_no_progress_row_is_offered_the_window(
 
 @pytest.mark.asyncio
 async def test_the_window_counts_today_in_the_persons_zone(
-    async_client: AsyncClient, db_session: AsyncSession
+    async_client: AsyncClient, db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """``latest`` is today where the person lives, never the server's UTC date."""
-    account = await _account(db_session, "window-zone@example.com")
+    """``latest`` is today where the person lives, never the server's UTC date.
 
-    body = await _pick(async_client, account, _today())
+    The clock is frozen at an evening in ``_ZONE`` whose UTC date is already
+    tomorrow (#3708). On the live clock the two dates agree for most of the
+    day, so a bound counted in UTC passed whenever the suite ran in those hours.
+    """
+    now = freeze_domain_clock(monkeypatch, _LA_EVENING_UTC)
+    la_today = now.astimezone(ZoneInfo(_ZONE)).date()
+    assert la_today != now.date()
+    account = await _account(db_session, "window-zone@example.com", created_at=now)
+
+    body = await _pick(async_client, account, la_today)
 
     window = _window(body)
     assert isinstance(window, dict)
-    assert window["latest"] == _today().isoformat()
+    assert window["latest"] == "2026-06-14"
 
 
 @pytest.mark.asyncio

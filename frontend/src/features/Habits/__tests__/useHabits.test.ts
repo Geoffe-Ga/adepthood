@@ -242,4 +242,27 @@ describe('useHabits', () => {
     expect(result.current.habits[0]!.name).toBe('Second');
     expect(result.current.habits[1]!.name).toBe('First');
   });
+
+  it('saveHabitOrder hands a saved anchor through, so a refused re-lay restores silently (#3707)', async () => {
+    const h1 = makeHabit({ id: 1, name: 'First' });
+    const h2 = makeHabit({ id: 2, name: 'Second' });
+    const api = jest.requireMock('../../../api') as { habits: { update: jest.Mock } };
+    api.habits.update
+      .mockImplementationOnce(() => Promise.reject(new Error('offline')))
+      .mockImplementationOnce(() => Promise.reject(new Error('offline')));
+    const { Alert } = jest.requireMock('react-native') as { Alert: { alert: jest.Mock } };
+    const { result } = renderHook(() => useHabits());
+    act(() => result.current.setHabitsForTesting([h1, h2]));
+    Alert.alert.mockClear();
+
+    let landed: boolean | undefined;
+    await act(async () => {
+      landed = await result.current.actions.saveHabitOrder([h2, h1], { anchorSaved: true });
+    });
+
+    expect(landed).toBe(false);
+    expect(api.habits.update).toHaveBeenCalled();
+    expect(Alert.alert).not.toHaveBeenCalled();
+    expect(result.current.habits.map((h) => h.name)).toEqual(['First', 'Second']);
+  });
 });
