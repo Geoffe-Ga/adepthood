@@ -37,11 +37,13 @@ from domain.creek_vault import (
     VaultPipelineJobState,
     VaultPipelineStage,
 )
+from domain.vault_job_failure import JOB_FAILURE_CODE_SINCE_MINOR_BY_CODE
 from services.creek_vault_client import HttpCreekVaultClient
 
 #: The reviewed Creek-Vault commit the snapshot was copied from (a git SHA, not a secret).
 _PINNED_COMMIT: Final = "426088eb819221a6f4d50e0292e205ee03b9a815"  # pragma: allowlist secret
-_ROOT: Final = Path(__file__).parent / "fixtures" / "creek_jobs_v026"
+_FIXTURES: Final = Path(__file__).parent / "fixtures"
+_ROOT: Final = _FIXTURES / "creek_jobs_v026"
 _BASE: Final = Path(__file__).parent / "fixtures" / "creek_v1" / "examples"
 _VAULT_URL: Final = "https://vault.example.test"
 _API_KEY: Final = "contract-026-test-key"  # pragma: allowlist secret
@@ -90,11 +92,40 @@ def test_the_snapshot_is_pinned_to_the_producer_manifest_and_the_pin_stays_0_22(
             assert upstream[name] == digest
 
 
-def test_the_failure_code_vocabulary_is_exactly_creeks() -> None:
-    """Adepthood names every published code and invents none."""
-    schema = _json(_ROOT / "schemas" / "JobStatusResponse.schema.json")
+def _minor(text: str) -> tuple[int, ...]:
+    """A ``"0.26"``-style minor as comparable integers, so ``"0.3" < "0.26"`` holds."""
+    return tuple(int(part) for part in text.split("."))
+
+
+@pytest.mark.parametrize(
+    ("snapshot", "minor"),
+    [("creek_jobs_v026", "0.26"), ("creek_jobs_v029", "0.29")],
+    ids=["0.26", "0.29"],
+)
+def test_the_failure_code_vocabulary_is_exactly_creeks_at_each_minor(
+    snapshot: str, minor: str
+) -> None:
+    """At each vendored minor, adepthood names every code Creek published by then, and no other.
+
+    A code is published at its own minor (``JOB_FAILURE_CODE_SINCE_MINOR_BY_CODE``),
+    so the 0.26 schema names only ``request_key_rejected`` while 0.29 adds ``busy``.
+    """
+    schema = _json(_FIXTURES / snapshot / "schemas" / "JobStatusResponse.schema.json")
     published = set(schema["$defs"]["JobFailureCode"]["enum"])
-    assert {code.value for code in VaultJobFailureCode} == published
+    named_by_then = {
+        code.value
+        for code, since in JOB_FAILURE_CODE_SINCE_MINOR_BY_CODE.items()
+        if _minor(since) <= _minor(minor)
+    }
+    assert named_by_then == published
+
+
+def test_the_newest_snapshot_names_every_code_adepthood_knows() -> None:
+    """No member is invented ahead of Creek: the 0.29 enum is the whole vocabulary."""
+    schema = _json(_FIXTURES / "creek_jobs_v029" / "schemas" / "JobStatusResponse.schema.json")
+    assert {code.value for code in VaultJobFailureCode} == set(
+        schema["$defs"]["JobFailureCode"]["enum"]
+    )
 
 
 def test_the_rejected_key_document_this_suite_serves_is_one_creek_publishes() -> None:

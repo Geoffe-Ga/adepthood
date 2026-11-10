@@ -148,6 +148,7 @@ from domain.reading_recommendations import (
     ReadingRequest,
 )
 from domain.vault_export import VAULT_EXPORT_SINCE_MINOR, VaultExportPage
+from domain.vault_job_failure import BUSY_FAILURE_CODE_SINCE_MINOR
 from services.creek_vault_activity_wire import read_agent_activity
 from services.creek_vault_agent_discovery import parse_agent_mcp
 from services.creek_vault_call_errors import HTTP_CALL_FAILED_ERRORS as _HTTP_CALL_FAILED_ERRORS
@@ -1130,16 +1131,20 @@ _EXPORT_CALL = _CallDepartures(
 # the admission that carries the writer's key included -- stays on the pin.
 _FAILURE_CODE_POLL = _CallDepartures(contract_minor=JOB_FAILURE_CODE_SINCE_MINOR)
 
+# The same poll against a 0.29 vault, whose failed job can also say ``busy``.
+_BUSY_CODE_POLL = _CallDepartures(contract_minor=BUSY_FAILURE_CODE_SINCE_MINOR)
+
 
 def _job_status_departures(handshake: HandshakeResult) -> _CallDepartures:
-    """Declare 0.26 on a job poll only to a vault that listed it, else the pin.
+    """Declare 0.29, else 0.26, on a job poll only to a vault that listed it, else the pin.
 
     Creek refuses any minor its ``supported_contract_minors`` does not name, and
-    the deployed managed vaults run older images. Asking for the newer body
-    unconditionally would turn every poll against them into a ``409``, so an
-    older vault keeps hearing the pinned minor and answers the old body, whose
-    failed job simply carries no code.
+    the deployed managed vaults run older images, so an older vault keeps
+    hearing a minor it serves and answers its own body, whose failed job carries
+    fewer codes or none. Read from the latest handshake on every poll.
     """
+    if handshake.serves_minor(BUSY_FAILURE_CODE_SINCE_MINOR):
+        return _BUSY_CODE_POLL
     if handshake.serves_minor(JOB_FAILURE_CODE_SINCE_MINOR):
         return _FAILURE_CODE_POLL
     return _STANDING_CALL

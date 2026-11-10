@@ -21,6 +21,7 @@ from domain.creek_vault import (
     VaultPipelineJobState,
     VaultPipelineStage,
 )
+from domain.vault_job_failure import failure_code_is_final
 from models.vault_pipeline_run import VaultPipelineOutcome, VaultPipelineRun
 
 _LOGGER = logging.getLogger(__name__)
@@ -58,9 +59,12 @@ class StageCounts:
         lost: Fragments it dropped to noise. Only a clustering stage can lose
             any; the classification pass loses nothing.
         failure_code: Why a failed stage failed, when the vault published a
-            reason the writer can act on (Creek contract 0.26). A failure that
-            names one is final: retrying cannot change the answer, so it is
-            landed rather than re-admitted (:func:`poll_needs_reconciliation`).
+            reason (Creek contract 0.26+). A *final* reason (a refused key) is
+            landed rather than re-admitted, because retrying cannot change the
+            answer; a transient one (``busy``, 0.29) joins the bounded retry
+            like an unnamed failure (:func:`poll_needs_reconciliation`,
+            :func:`~domain.vault_job_failure.failure_code_is_final`,
+            :data:`~domain.vault_job_failure.TRANSIENT_JOB_FAILURE_CODES`).
     """
 
     seen: int = 0
@@ -142,18 +146,40 @@ def poll_needs_reconciliation(
     outcome: VaultPipelineOutcome,
     counts: StageCounts | None = None,
 ) -> bool:
-    """A failed status can retry; an admission refusal or a named reason is final.
+    """A failed status can retry; an admission refusal or a final reason is not.
 
-    A reason the vault published (``counts.failure_code``) says the writer, not
-    time, has to change something -- a refused key is refused again -- so such
-    a failure is landed now instead of being handed to the bounded retry.
+    A final reason the vault published (``counts.failure_code``) says the
+    writer, not time, has to change something -- a refused key is refused
+    again -- so such a failure is landed now instead of being handed to the
+    bounded retry. A transient reason (``busy``: another writer held the
+    vault's lock) is retried exactly as an unnamed failure is.
     """
-    named = counts is not None and counts.failure_code is not None
+    final = counts is not None and failure_code_is_final(counts.failure_code)
     return (
         outcome is VaultPipelineOutcome.FAILED
         and run.outcome == VaultPipelineOutcome.ATTEMPTED.value
-        and not named
+        and not final
     )
+
+
+def lands_polled_job(
+    polled: VaultClassificationPass | VaultLinkPass | VaultPipelineJob,
+    *,
+    attempts_spent: bool,
+    ambiguous: bool,
+) -> bool:
+    """Whether a continuation lands a terminal poll now rather than handing it to the retry.
+
+    Counts land, and so does a failure naming a final reason. A failure naming a
+    *transient* reason (``busy``) is retried -- unless it arrived on the last
+    allowed admission of a run whose every admission answered, the one point
+    where the reason is still known and worth recording. An ambiguous run is
+    never landed this way: an earlier admission went unanswered and may have
+    landed labels, so the spent retry closes it ``ambiguous`` and uncoded.
+    """
+    if not isinstance(polled, VaultPipelineJob) or failure_code_is_final(polled.failure_code):
+        return True
+    return polled.failure_code is not None and attempts_spent and not ambiguous
 
 
 def job_from_run(run: VaultPipelineRun, stage: VaultPipelineStage) -> VaultPipelineJob | None:

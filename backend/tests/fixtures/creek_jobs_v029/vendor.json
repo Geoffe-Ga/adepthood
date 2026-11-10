@@ -1,0 +1,11 @@
+{
+  "repository": "Geoffe-Ga/Creek-Vault",
+  "commit": "c8d671c1afd118741ee587c30f93fda2e7b8abc4",
+  "path": "docs/contracts/adepthood-v1",
+  "contract_version": "0.29.0",
+  "files": {
+    "manifest.json": "34ea3f77dff82a6d275f51a9fe8af0d38904a6855db20c2200165934865f1249",
+    "examples/capabilities/success.json": "72223537eed7b460b533b99f667567000084ee5b69477bef5cb1c56edb6cfd0f",
+    "schemas/JobStatusResponse.schema.json": "f85e90e7b3483ad2c6ffed3ebdf64be69358d95855f78fd5ddb088578d51e9d7"
+  }
+}

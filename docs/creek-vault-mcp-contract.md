@@ -493,6 +493,24 @@ capability is still used for the others it supports:
   yet, so the code is read outside `VaultErrorCode`, which mirrors the
   vendored 0.22 envelope; `backend/tests/test_creek_contract_0_28.py` pins
   the negotiation.
+- **A busy durable job (0.29 extension; content pin stays 0.22).** Creek
+  0.29 (Creek-Vault#2090) adds `busy` to the closed `JobFailureCode` of
+  `GET /v1/jobs/{job_id}`: a durable `llm` classification or `embeddings`
+  link pass that could not take the vault content-mutation lock within its
+  bounded wait ends `failed` with `failure_code: "busy"`. Nothing was
+  written and the condition is transient. The job-status poll alone declares
+  `X-Creek-Contract-Version: 0.29` to a vault whose handshake lists `0.29`
+  (`BUSY_FAILURE_CODE_SINCE_MINOR`), else `0.26` when that is listed, else
+  `0.22`; both admissions and every other call keep `0.22`. Unlike
+  `request_key_rejected`, which is final, `busy` joins the same bounded
+  retry an unnamed failure does (`failure_code_is_final`); a run whose
+  retries all end busy lands `failed` with `busy` recorded, or `ambiguous`
+  with no reason if an earlier admission went unanswered. A busy pass never
+  forgets the writer's stored key and never moves
+  `classification_key_rejected`. `failure_code` is `VARCHAR(32)` with a
+  CHECK, widened by migration `166523efc36e`.
+  `backend/tests/test_creek_contract_0_29_busy.py` pins the negotiation
+  against the vendored `creek_jobs_v029` snapshot.
 - **WHEEL** — if absent, or if the vault does not advertise it,
   `fetch_vault_wheel` returns `None` before any call is made
   (`backend/src/services/creek_vault_wheel.py:128-147`). A malformed or

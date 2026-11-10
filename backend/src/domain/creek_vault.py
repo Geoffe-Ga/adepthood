@@ -90,6 +90,8 @@ from domain.vault_export import VaultExportPage
 #    `request_key_rejected` (Creek-Vault#1877, #3595) -- only to a vault whose
 #    handshake lists 0.26 (`JOB_FAILURE_CODE_SINCE_MINOR`); an older vault keeps
 #    hearing 0.22. `tests/test_creek_contract_0_26.py` pins that negotiation.
+#    It declares 0.29 instead -- whose failed job can also name a transient
+#    `busy` -- to a vault listing 0.29 (#3710, `test_creek_contract_0_29_busy.py`).
 #    The owner export (`GET /v1/export`, Creek-Vault#2033, #3579) declares 0.27
 #    the same way (`VAULT_EXPORT_SINCE_MINOR`), and only to a vault that both
 #    advertises `export` and lists 0.27; `tests/test_creek_contract_0_27_export.py`
@@ -1266,21 +1268,25 @@ JOB_FAILURE_CODE_SINCE_MINOR: Final = "0.26"
 
 
 class VaultJobFailureCode(enum.StrEnum):
-    """Why a ``failed`` pipeline job failed, when the writer can remedy it (contract 0.26).
+    """Why a ``failed`` pipeline job failed, when the vault publishes a reason (contract 0.26).
 
-    Creek's closed ``JobFailureCode`` vocabulary, member for member. A code is
-    published only for a failure the *caller* can act on; any other failure,
-    and every answer from a vault below 0.26, carries no code. Values are
-    persisted on :class:`~models.vault_pipeline_run.VaultPipelineRun`, so they
-    must not be reworded without a migration.
+    Creek's closed ``JobFailureCode`` vocabulary, member for member; not every
+    code is final (:mod:`domain.vault_job_failure`). Any other failure, and
+    every answer from a vault below 0.26, carries no code. Values are persisted
+    on :class:`~models.vault_pipeline_run.VaultPipelineRun`: rewording one, or
+    adding one, needs a migration of its ``failure_code`` CHECK.
 
     Attributes:
         REQUEST_KEY_REJECTED: The writer's own provider key, relayed for the
             pass, was refused by its vendor with ``401``/``403``. Retrying with
             the same key fails the same way: the writer has to replace it.
+        BUSY: Another writer held the vault content-mutation lock past its
+            bounded wait, so nothing was written. Transient: the same request
+            is resubmitted with backoff. Since contract 0.29.
     """
 
     REQUEST_KEY_REJECTED = "request_key_rejected"
+    BUSY = "busy"
 
 
 @dataclass(frozen=True)
@@ -1293,7 +1299,8 @@ class VaultPipelineJob:
 
     ``failure_code`` is set only on a ``FAILED`` job whose vault published a
     reason adepthood knows (:class:`VaultJobFailureCode`); ``None`` means the
-    vault gave none, gave one this build cannot name, or is older than 0.26.
+    vault gave none, gave one this build cannot name, is older than 0.26, or
+    was asked at a minor older than the code's own (``busy`` needs 0.29).
     """
 
     job_id: UUID

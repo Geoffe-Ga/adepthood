@@ -139,6 +139,15 @@ const CONTRACT_MINOR = '0.22';
 const READING_MINOR = '0.25';
 /** The minor whose failed job names why (Creek contract 0.26, Creek-Vault#1877). */
 const FAILURE_CODE_MINOR = '0.26';
+/**
+ * The minor Creek published each job failure code at: a poll declaring an
+ * older minor is served `null` for that failure (Creek's `_served_failure_code`).
+ * `busy` arrived in 0.29 (Creek-Vault#2090); this vault never lists 0.29.
+ */
+const FAILURE_CODE_SINCE_MINOR = new Map([
+  ['request_key_rejected', FAILURE_CODE_MINOR],
+  ['busy', '0.29'],
+]);
 let readingsAdvertised = false;
 /** The minor of Creek's owner export (contract 0.27, Creek-Vault#2033, #3579). */
 const EXPORT_MINOR = '0.27';
@@ -420,7 +429,7 @@ const pipelineJobs = new Map();
 /**
  * A journey can model a vendor that refuses the writer's key (#3595): this vault
  * then lists 0.26, and a keyed classification admitted meanwhile ends `failed`
- * -- with `failure_code` only for a poll that declares 0.26, as Creek answers.
+ * -- with `failure_code` only for a poll that declares 0.26 or later, as Creek answers.
  */
 let requestKeysRejected = false;
 /** Handles whose keyed pass the vendor refused. Opaque ids only. */
@@ -942,6 +951,33 @@ async function recordAgentCall(request, response) {
   send(response, HTTP_OK, { status: 'ok' });
 }
 
+/** A `"0.26"`-style minor as comparable integers, so `"0.3"` sorts below `"0.26"`. */
+function minorParts(minor) {
+  return minor.split('.').map(Number);
+}
+
+/** Whether the declared minor is at or above `since`, compared part by part. */
+function declaresAtLeast(declared, since) {
+  if (declared === null) return false;
+  const [have, need] = [minorParts(declared), minorParts(since)];
+  for (let index = 0; index < need.length; index += 1) {
+    const difference = (have[index] ?? 0) - need[index];
+    if (difference !== 0) return difference > 0;
+  }
+  return true;
+}
+
+/**
+ * The `failure_code` field a failed job carries, as Creek serves it: no key
+ * below 0.26, `null` below the code's own minor, else the code.
+ */
+function servedFailureCode(declared, code) {
+  if (!declaresAtLeast(declared, FAILURE_CODE_MINOR)) return {};
+  return {
+    failure_code: declaresAtLeast(declared, FAILURE_CODE_SINCE_MINOR.get(code)) ? code : null,
+  };
+}
+
 /** The opt-in pipeline publishes only counts and a bounded inference source. */
 async function pipelineCall(request, response, pathname) {
   if (!pipelineAdvertised) return false;
@@ -959,7 +995,7 @@ async function pipelineCall(request, response, pathname) {
         job_id: jobId,
         state: 'failed',
         result: null,
-        ...(declared === FAILURE_CODE_MINOR ? { failure_code: 'request_key_rejected' } : {}),
+        ...servedFailureCode(declared, 'request_key_rejected'),
       });
     } else send(response, HTTP_OK, { status: 'ok', job_id: jobId, state: 'succeeded', result });
     return true;

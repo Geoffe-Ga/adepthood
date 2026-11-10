@@ -114,6 +114,7 @@ from services.creek_vault_pipeline_results import (
 from services.creek_vault_pipeline_results import counts_from_result as _counts_from_result
 from services.creek_vault_pipeline_results import failed_job as _failed_job
 from services.creek_vault_pipeline_results import job_from_run as _job_from_run
+from services.creek_vault_pipeline_results import lands_polled_job as _lands_polled_job
 from services.creek_vault_pipeline_results import (
     pending_admission_event as _pending_admission_event,
 )
@@ -1226,6 +1227,8 @@ async def _reconcile_existing_job(
     client: CreekVaultPipelineClient,
     run: VaultPipelineRun,
     job: VaultPipelineJob,
+    *,
+    ambiguous: bool,
 ) -> VaultPipelineOutcome | None:
     """Poll off-pool, then land, retire, or bound one persisted job.
 
@@ -1238,8 +1241,8 @@ async def _reconcile_existing_job(
     polled = await _poll_until_terminal(client, job)
     if polled is None:
         return await _finish_exhausted_run(session, run, ambiguous=True)
-    # A failed job that names its reason (a refused writer key) is final too.
-    if not isinstance(polled, VaultPipelineJob) or polled.failure_code is not None:
+    spent = run.attempt_count >= _MAX_STAGE_ATTEMPTS
+    if _lands_polled_job(polled, attempts_spent=spent, ambiguous=ambiguous):
         return await _land_result(session, run, polled)
     await _clear_job(session, run)
     return None
@@ -1254,7 +1257,9 @@ async def _reconciliation_step(
 ) -> VaultPipelineOutcome | _Reconciliation:
     """Advance one poll-or-admit transition of a logical stage run."""
     if state.job is not None:
-        outcome = await _reconcile_existing_job(session, client, run, state.job)
+        outcome = await _reconcile_existing_job(
+            session, client, run, state.job, ambiguous=state.ambiguous
+        )
         if outcome is not None:
             return outcome
     retried = await _retry_once(session, client, run, stage, ambiguous=state.ambiguous)
