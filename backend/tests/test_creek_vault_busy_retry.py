@@ -56,7 +56,11 @@ from services import journal_encryption
 from services.creek_vault_client import HttpCreekVaultClient
 from services.creek_vault_pipeline import _MAX_STAGE_ATTEMPTS as MAX_STAGE_ATTEMPTS
 from services.creek_vault_pipeline import VaultPipelineTrigger, drive_vault_pipeline
-from services.creek_vault_pipeline_results import StageCounts, poll_needs_reconciliation
+from services.creek_vault_pipeline_results import (
+    StageCounts,
+    lands_polled_job,
+    poll_needs_reconciliation,
+)
 from services.user_vault_config import store_vault_config
 from services.vault_classification_key import forget_if_rejected
 from services.vault_classification_status import classification_status
@@ -198,10 +202,17 @@ class _BusyReadingClient(HttpCreekVaultClient):
     pinned whatever minor the poll itself negotiates.
     """
 
-    def __init__(self, vault: _LadderVault, http: httpx.AsyncClient) -> None:
-        """Wrap ``http`` against ``vault``."""
+    def __init__(
+        self,
+        vault: _LadderVault,
+        http: httpx.AsyncClient,
+        *,
+        served_code: VaultJobFailureCode = VaultJobFailureCode.BUSY,
+    ) -> None:
+        """Wrap ``http`` against ``vault``, answering each scripted job with ``served_code``."""
         super().__init__(_VAULT_URL, _API_KEY, http_client=http)
         self._vault = vault
+        self._served_code = served_code
 
     async def pipeline_job(
         self, job: VaultPipelineJob, /
@@ -212,7 +223,7 @@ class _BusyReadingClient(HttpCreekVaultClient):
                 job_id=job.job_id,
                 stage=job.stage,
                 state=VaultPipelineJobState.FAILED,
-                failure_code=VaultJobFailureCode.BUSY,
+                failure_code=self._served_code,
             )
         return await super().pipeline_job(job)
 
@@ -247,18 +258,23 @@ async def _owner(db_session: AsyncSession) -> AsyncIterator[None]:
 
 
 async def _drive(
-    session: AsyncSession, vault: _LadderVault, *, over_the_wire: bool = False
+    session: AsyncSession,
+    vault: _LadderVault,
+    *,
+    over_the_wire: bool = False,
+    served_code: VaultJobFailureCode = VaultJobFailureCode.BUSY,
 ) -> None:
     """One journal write's pass, and the continuation it leaves running, to the end.
 
     ``over_the_wire`` drives the unmodified adapter, so each busy job is read
-    from what the poll's own negotiated minor was served.
+    from what the poll's own negotiated minor was served. Otherwise each scripted
+    job is read as failing with ``served_code``.
     """
     async with httpx.AsyncClient(transport=httpx.MockTransport(vault)) as http:
         client = (
             HttpCreekVaultClient(_VAULT_URL, _API_KEY, http_client=http)
             if over_the_wire
-            else _BusyReadingClient(vault, http)
+            else _BusyReadingClient(vault, http, served_code=served_code)
         )
         await client.handshake()
         await drive_vault_pipeline(
@@ -363,6 +379,49 @@ async def test_busy_exhaustion_after_a_lost_admission_stays_ambiguous_and_uncode
     assert await _classify_rows(db_session) == [
         (VaultPipelineOutcome.AMBIGUOUS.value, None, MAX_STAGE_ATTEMPTS)
     ]
+
+
+@pytest.mark.parametrize("attempts_spent", [False, True], ids=["attempts-left", "attempts-spent"])
+@pytest.mark.parametrize("ambiguous", [False, True], ids=["answered", "ambiguous"])
+def test_a_refused_key_lands_whatever_the_retry_budget_or_ambiguity(
+    *, attempts_spent: bool, ambiguous: bool
+) -> None:
+    """A refusal is final: the new ladder inputs never hand it back to the retry.
+
+    ``attempts_spent`` and ``ambiguous`` only decide what a *transient* code does;
+    a refused key re-admitted would be refused again, and would never be forgotten.
+    """
+    job = VaultPipelineJob(
+        job_id=UUID(int=1),
+        stage=VaultPipelineStage.CLASSIFY,
+        state=VaultPipelineJobState.FAILED,
+        failure_code=VaultJobFailureCode.REQUEST_KEY_REJECTED,
+    )
+
+    assert lands_polled_job(job, attempts_spent=attempts_spent, ambiguous=ambiguous)
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("_encrypted", "_owner")
+async def test_a_refused_key_after_a_lost_admission_lands_and_is_forgotten(
+    db_session: AsyncSession,
+) -> None:
+    """An ambiguous run still lands a refusal on the pass that met it, and forgets the key.
+
+    The first admission's answer is lost, so the run is ambiguous; the retry's job
+    is refused. Re-admitting it would spend every remaining attempt on a key the
+    vendor already refused, close the run ambiguous and uncoded, keep relaying the
+    refused key, and never raise Settings' replace-your-key notice.
+    """
+    await _store_key(db_session)
+    vault = _LadderVault(busy_passes=_ALWAYS, lose_first_admission=True)
+    await _drive(db_session, vault, served_code=VaultJobFailureCode.REQUEST_KEY_REJECTED)
+
+    assert vault.submissions == 2
+    assert await _classify_rows(db_session) == [
+        (VaultPipelineOutcome.FAILED.value, VaultJobFailureCode.REQUEST_KEY_REJECTED.value, 2)
+    ]
+    assert await _stored_keys(db_session) == []
 
 
 @pytest.mark.asyncio

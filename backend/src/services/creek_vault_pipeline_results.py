@@ -63,7 +63,8 @@ class StageCounts:
             landed rather than re-admitted, because retrying cannot change the
             answer; a transient one (``busy``, 0.29) joins the bounded retry
             like an unnamed failure (:func:`poll_needs_reconciliation`,
-            :func:`~domain.creek_vault.failure_code_is_final`).
+            :func:`~domain.vault_job_failure.failure_code_is_final`,
+            :data:`~domain.vault_job_failure.TRANSIENT_JOB_FAILURE_CODES`).
     """
 
     seen: int = 0

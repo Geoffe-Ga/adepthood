@@ -181,8 +181,10 @@ class VaultConnectionResponse(OwnedResourcePublic):
     unreachable discovery returns ``None``; the stored binding stays connected.
 
     ``classification_key_rejected`` is true when the account's latest settled
-    vault classification failed because the writer's own provider key was
-    refused by its vendor (Creek contract 0.26, #3595). It is read from the
+    vault classification that tested the key failed because the writer's own
+    provider key was refused by its vendor (Creek contract 0.26, #3595). A pass
+    that failed ``busy`` (Creek 0.29, #3710) never reached a provider and is
+    skipped, so it neither raises nor clears the flag. It is read from the
     account's pipeline rows rather than from the connection row, so it holds
     for the deployment-wide vault's owner too, and it carries no key material
     and no vendor text -- the client owns the sentence it renders.
