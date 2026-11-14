@@ -6,6 +6,7 @@ import {
   CREDIT_EXHAUSTED_COPY,
   DAILY_GENERATION_LIMIT_COPY,
   formatApiError,
+  formatPromoteError,
   GENERATION_IN_PROGRESS_COPY,
   GENERIC_FALLBACK,
   INSUFFICIENT_OFFERINGS_COPY,
@@ -80,6 +81,8 @@ describe('USER_FACING_ERROR_MESSAGES', () => {
       'journal_entry_deletion_pending',
       // promoted quotes (#3059, owner decision R5-2)
       'quote_source_restricted',
+      // a letter promote or list on a note whose letter is gone (#3658)
+      'letter_not_found',
       // wallet
       'payment_required',
       'insufficient_offerings',
@@ -128,6 +131,48 @@ describe('USER_FACING_ERROR_MESSAGES', () => {
     for (const message of Object.values(USER_FACING_ERROR_MESSAGES)) {
       expect(message).toMatch(/[.!?]$/);
     }
+  });
+});
+
+/**
+ * A promote from a reading (#3660): the same backend codes mean something
+ * narrower on these routes than they do app-wide, so the copy names the
+ * chapter or the letter the reader was quoting from.
+ */
+describe('formatPromoteError', () => {
+  it('tells a reader promoting from a chapter that is not open to them yet', () => {
+    const copy = formatPromoteError(new ApiError(404, 'content_not_found'), 'course');
+
+    expect(copy).toMatch(/^This chapter isn't open to you yet/);
+    expect(copy).not.toBe(messageForCode('content_not_found'));
+  });
+
+  it('tells a reader promoting from a letter on an Intimate page why it stays put', () => {
+    const copy = formatPromoteError(new ApiError(409, 'quote_source_restricted'), 'letter');
+
+    expect(copy).toMatch(/page this letter answered is marked Intimate/);
+    expect(copy).toMatch(/Nothing was changed\.$/);
+  });
+
+  it('says plainly when a letter can no longer be quoted', () => {
+    expect(formatPromoteError(new ApiError(404, 'letter_not_found'), 'letter')).toBe(
+      "This letter can't be quoted any more. Nothing was changed.",
+    );
+  });
+
+  it('keeps the app-wide copy on an entry, where these codes mean what they always meant', () => {
+    const restricted = new ApiError(409, 'quote_source_restricted');
+
+    expect(formatPromoteError(restricted, 'entry')).toBe(formatApiError(restricted));
+  });
+
+  it.each([
+    ['course', new ApiError(422, 'anchor_out_of_range')],
+    ['letter', new ApiError(500, 'internal_error')],
+    ['course', new TypeError('Failed to fetch')],
+    ['letter', null],
+  ] as const)('falls through to formatApiError for anything else (%s)', (kind, err) => {
+    expect(formatPromoteError(err, kind)).toBe(formatApiError(err));
   });
 });
 

@@ -139,6 +139,111 @@ describe('promotions.list', () => {
   });
 });
 
+/**
+ * The reading sources (#3660): a Course chapter and a Resonance Letter promote
+ * and list through their own routes (#3658), and parse through the same quote
+ * schema as an entry's. Offsets only ever go up; the server slices the words.
+ */
+describe('promotions.createForCourse', () => {
+  test('POSTs the offsets to /course/content/{id}/promote and parses the course quote', async () => {
+    const courseQuote = quote({
+      id: 31,
+      source_kind: 'course',
+      source_entry_id: null,
+      source_content_id: 4,
+      anchor_text: 'riff',
+    });
+    mockFetch.mockReturnValueOnce(jsonResponse(courseQuote, 201));
+
+    const result = await promotions.createForCourse(4, { anchor_start: 22, anchor_end: 26 }, 'tok');
+
+    const [url, init] = mockFetch.mock.calls[0];
+    expect(url).toBe('http://test/course/content/4/promote');
+    expect(init.method).toBe('POST');
+    expect(JSON.parse(init.body)).toEqual({ anchor_start: 22, anchor_end: 26 });
+    expect(result).toEqual(courseQuote);
+  });
+
+  test('surfaces a masked 404 content_not_found as an ApiError', async () => {
+    mockFetch.mockReturnValueOnce(jsonResponse({ detail: 'content_not_found' }, 404));
+
+    await expect(
+      promotions.createForCourse(4, { anchor_start: 0, anchor_end: 4 }, 'tok'),
+    ).rejects.toMatchObject({ status: 404, detail: 'content_not_found' });
+  });
+});
+
+describe('promotions.listForCourse', () => {
+  test('GETs /course/content/{id}/promotions and parses the array', async () => {
+    mockFetch.mockReturnValueOnce(
+      jsonResponse([quote({ id: 31, source_kind: 'course', source_content_id: 4 })], 200),
+    );
+
+    const result = await promotions.listForCourse(4, 'tok');
+
+    const [url, init] = mockFetch.mock.calls[0];
+    expect(url).toBe('http://test/course/content/4/promotions');
+    expect(init.method ?? 'GET').toBe('GET');
+    expect(result).toEqual([expect.objectContaining({ id: 31, source_content_id: 4 })]);
+  });
+
+  test('rejects a malformed row via zod', async () => {
+    mockFetch.mockReturnValueOnce(jsonResponse([{ ...quote(), anchor_end: 'nine' }], 200));
+
+    await expect(promotions.listForCourse(4, 'tok')).rejects.toBeInstanceOf(ApiValidationError);
+  });
+});
+
+describe('promotions.createForLetter', () => {
+  test('POSTs the offsets to the letter promote route of the margin note', async () => {
+    const letterQuote = quote({
+      id: 32,
+      source_kind: 'letter',
+      source_entry_id: null,
+      source_marginalia_id: 9,
+      anchor_text: 'the heron',
+    });
+    mockFetch.mockReturnValueOnce(jsonResponse(letterQuote, 201));
+
+    const result = await promotions.createForLetter(9, { anchor_start: 3, anchor_end: 12 }, 'tok');
+
+    const [url, init] = mockFetch.mock.calls[0];
+    expect(url).toBe('http://test/journal/marginalia/9/letter/promote');
+    expect(init.method).toBe('POST');
+    expect(JSON.parse(init.body)).toEqual({ anchor_start: 3, anchor_end: 12 });
+    expect(result).toEqual(letterQuote);
+  });
+
+  test('surfaces a 409 quote_source_restricted as an ApiError', async () => {
+    mockFetch.mockReturnValueOnce(jsonResponse({ detail: 'quote_source_restricted' }, 409));
+
+    await expect(
+      promotions.createForLetter(9, { anchor_start: 0, anchor_end: 4 }, 'tok'),
+    ).rejects.toMatchObject({ status: 409, detail: 'quote_source_restricted' });
+  });
+});
+
+describe('promotions.listForLetter', () => {
+  test('GETs the letter promotions route of the margin note and parses the array', async () => {
+    mockFetch.mockReturnValueOnce(
+      jsonResponse([quote({ id: 32, source_kind: 'letter', source_marginalia_id: 9 })], 200),
+    );
+
+    const result = await promotions.listForLetter(9, 'tok');
+
+    const [url, init] = mockFetch.mock.calls[0];
+    expect(url).toBe('http://test/journal/marginalia/9/letter/promotions');
+    expect(init.method ?? 'GET').toBe('GET');
+    expect(result).toEqual([expect.objectContaining({ id: 32, source_marginalia_id: 9 })]);
+  });
+
+  test('rejects a row with an unknown source kind via zod', async () => {
+    mockFetch.mockReturnValueOnce(jsonResponse([{ ...quote(), source_kind: 'podcast' }], 200));
+
+    await expect(promotions.listForLetter(9, 'tok')).rejects.toBeInstanceOf(ApiValidationError);
+  });
+});
+
 describe('promotions.listAll', () => {
   const listItem = {
     ...quote({ id: 4, pending: false }),

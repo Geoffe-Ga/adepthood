@@ -529,6 +529,10 @@ const styles = StyleSheet.create({
     color: colors.danger,
     paddingTop: spacing(1),
   },
+  /** A promote notice set on a card that pads it itself (a chapter's floating notice, #3660). */
+  promotionFlush: {
+    paddingTop: 0,
+  },
   /** Anchored card revealed beside a tapped promoted span, offering removal. */
   promotionRemoveCard: {
     backgroundColor: colors.paper.background,

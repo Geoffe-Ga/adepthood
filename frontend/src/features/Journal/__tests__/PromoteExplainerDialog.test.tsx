@@ -4,8 +4,9 @@ import { fireEvent, render } from '@testing-library/react-native';
 import React from 'react';
 import { StyleSheet } from 'react-native';
 
-import { PROMOTE_EXPLAINER_BODY } from '../promoteExplainerCopy';
+import { PROMOTE_EXPLAINER_BODY, PROMOTE_EXPLAINER_READING_BODY } from '../promoteExplainerCopy';
 import PromoteExplainerDialog, {
+  PromoteExplainerPanel,
   type PromoteExplainerDialogProps,
 } from '../PromoteExplainerDialog';
 
@@ -70,5 +71,47 @@ describe('PromoteExplainerDialog', () => {
     fireEvent.press(getByTestId('promote-explainer-scrim'));
     expect(props.onCancel).toHaveBeenCalledTimes(2);
     expect(props.onContinue).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('PromoteExplainerDialog -- a promote from a reading (#3660)', () => {
+  it('says a chapter or letter quote waits for the review covering the week it is promoted', () => {
+    const { getByTestId } = renderDialog({ sourceKind: 'letter' });
+    expect(getByTestId('promote-explainer-body')).toHaveTextContent(PROMOTE_EXPLAINER_READING_BODY);
+    expect(getByTestId('promote-explainer-continue')).toHaveTextContent('Choose the passage');
+  });
+
+  it('goes on to promote a passage the reader has already chosen', () => {
+    const { getByTestId, props } = renderDialog({ sourceKind: 'course', passageChosen: true });
+    const proceed = getByTestId('promote-explainer-continue');
+    expect(proceed).toHaveTextContent('Promote the passage');
+    expect(proceed.props.accessibilityLabel).toBe('Promote the passage you chose');
+    fireEvent.press(proceed);
+    expect(props.onContinue).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('PromoteExplainerPanel -- the same note, set inside a card that is already open', () => {
+  it('renders the reading words, the box and both arms with no scrim of its own', () => {
+    const onContinue = jest.fn();
+    const onCancel = jest.fn();
+    const { getByRole, getByTestId, queryByTestId } = render(
+      <PromoteExplainerPanel
+        sourceKind="letter"
+        dontShowAgain={false}
+        onToggleDontShowAgain={jest.fn()}
+        onContinue={onContinue}
+        onCancel={onCancel}
+      />,
+    );
+
+    expect(getByRole('header', { name: 'Promote a quote' })).toBeTruthy();
+    expect(getByTestId('promote-explainer-body')).toHaveTextContent(PROMOTE_EXPLAINER_READING_BODY);
+    expect(getByTestId('promote-explainer-panel')).toBeTruthy();
+    expect(queryByTestId('promote-explainer-scrim')).toBeNull();
+    fireEvent.press(getByTestId('promote-explainer-cancel'));
+    fireEvent.press(getByTestId('promote-explainer-continue'));
+    expect(onCancel).toHaveBeenCalledTimes(1);
+    expect(onContinue).toHaveBeenCalledTimes(1);
   });
 });

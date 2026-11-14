@@ -72,7 +72,14 @@ mark and its label) beside quiet glass companions (`surface.hairline` edge,
 secondary action and a trailing X that clears the selection. The selection
 surface's footer keeps only the one-line echo and Cancel, so a screen never shows
 two primaries, and it reserves the band the pill floats in once the text's end
-is in view. Every surface that promotes a passage renders this one component.
+is in view. Every surface that promotes a passage renders this one component:
+journal read mode, a review's sources, a Course chapter (Promote beside a glass
+Write a note, its footer's way out named Done) and a Resonance Letter (#3660).
+A chapter's field can run screens long, so its promote notice floats too: a
+`floatingChrome.pill` card centred in the pill's band, where the pill was once a
+quote lands, lifted one pill higher while a passage is still chosen. While a
+chapter is in selection its bottom fade and chapter controls stand down, so
+nothing washes over the footer or the pill.
 
 ## Palette provenance
 

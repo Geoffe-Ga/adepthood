@@ -39,6 +39,7 @@ import { ExplainerActionPair, PayerChangedNotice, explainerStyles } from './Expl
 import { fundingOutcome, type FundingOutcome } from './fundingOutcome';
 import { generationRefusal } from './generationRefusal';
 import JournalModalShell from './JournalModalShell';
+import LetterPassage from './LetterPassage';
 import { loadCostState, unknownCostState, type ResonanceCostState } from './resonanceCost';
 import {
   ESSAY_ASK_CANCEL,
@@ -473,8 +474,13 @@ function EssayActions({
   );
 }
 
-/** The body region: spinner, the essay, the server's care, or a friendly error with retry. */
+/**
+ * The body region: spinner, the essay, the server's care, or a friendly error
+ * with retry. Only a real letter offers "Promote a quote" (#3660): never the
+ * spinner, the care, or an error -- and the offer never reaches here.
+ */
 function EssayBody({
+  noteId,
   essay,
   loading,
   error,
@@ -482,7 +488,7 @@ function EssayBody({
   retry,
   essaySource,
   care,
-}: Omit<EssayState, 'offer'> & { retry: () => void }) {
+}: Omit<EssayState, 'offer'> & { noteId: number | undefined; retry: () => void }) {
   if (loading) {
     return <ActivityIndicator testID="essay-loading" color={colors.paper.ink} />;
   }
@@ -512,14 +518,49 @@ function EssayBody({
       </View>
     );
   }
+  return <EssayLetter noteId={noteId} essay={essay} essaySource={essaySource} />;
+}
+
+/**
+ * The letter and the line naming who wrote it. A real letter on a known note
+ * offers "Promote a quote" beneath them (#3660), keyed by the note so a
+ * different letter in the same card starts afresh.
+ */
+function EssayLetter({
+  noteId,
+  essay,
+  essaySource,
+}: {
+  noteId: number | undefined;
+  essay: string | null;
+  essaySource: unknown;
+}): React.JSX.Element {
+  const source = (
+    <Text style={styles.source} testID="essay-source">
+      {sourceLabel(essaySource)}
+    </Text>
+  );
+  if (noteId === undefined || essay == null || essay === '') {
+    return (
+      <View>
+        <Text style={styles.essay} testID="essay-text">
+          {essay}
+        </Text>
+        {source}
+      </View>
+    );
+  }
   return (
     <View>
-      <Text style={styles.essay} testID="essay-text">
-        {essay}
-      </Text>
-      <Text style={styles.source} testID="essay-source">
-        {sourceLabel(essaySource)}
-      </Text>
+      <LetterPassage
+        key={noteId}
+        marginaliaId={noteId}
+        essay={essay}
+        textStyle={styles.essay}
+        textTestID="essay-text"
+      >
+        {source}
+      </LetterPassage>
     </View>
   );
 }
@@ -634,7 +675,7 @@ function ResonanceEssayModal({
             onDecline={onClose}
           />
         ) : (
-          <EssayBody {...shown} />
+          <EssayBody {...shown} noteId={note?.id} />
         )}
       </ScrollView>
     </JournalModalShell>
