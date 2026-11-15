@@ -125,6 +125,7 @@ const EXPECTED_BROWSER_JOURNEYS = [
   'journal-notification-center.browser.e2e.test.ts',
   'journal-only.browser.e2e.test.ts',
   'journal-promote-explainer.browser.e2e.test.ts',
+  'journal-promote-opener-keeps-scroll.browser.e2e.test.ts',
   'journal-promote-quote-long-entry.browser.e2e.test.ts',
   'journal-promote-quote.browser.e2e.test.ts',
   'journal-promote-selection-floating-button.browser.e2e.test.ts',

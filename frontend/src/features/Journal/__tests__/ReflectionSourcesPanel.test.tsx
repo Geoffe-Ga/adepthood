@@ -257,6 +257,143 @@ describe('ReflectionSourcesPanel -- in-panel re-promotion opener', () => {
   });
 });
 
+// #3718: the opener floats at the panel's foot, outside the scroll, and acts on
+// the expanded source in view, so it can be pressed from anywhere in a long
+// source, and opening the selection does not move the scroll.
+describe('ReflectionSourcesPanel -- floating promote opener (#3718)', () => {
+  const VIEWPORT_HEIGHT = 600;
+
+  function layout(y: number, height: number) {
+    return { nativeEvent: { layout: { x: 0, y, width: 390, height } } };
+  }
+
+  function scrollTo(scroll: ReturnType<ReturnType<typeof render>['getByTestId']>, y: number) {
+    fireEvent.scroll(scroll, {
+      nativeEvent: {
+        contentOffset: { x: 0, y },
+        layoutMeasurement: { width: 390, height: VIEWPORT_HEIGHT },
+        contentSize: { width: 390, height: 5000 },
+      },
+    });
+  }
+
+  function renderTwo() {
+    const first = item({ id: 1, timestamp: '2026-06-01T00:00:00Z' });
+    const second = item({ id: 2, timestamp: '2026-06-02T00:00:00Z', title: 'Second entry' });
+    return render(
+      <ReflectionSourcesPanel
+        items={[first, second]}
+        onInsertQuote={jest.fn()}
+        onPromoteSpan={jest.fn(() => Promise.resolve(true))}
+      />,
+    );
+  }
+
+  it('stands outside the scroll, after it, so it never scrolls away', () => {
+    const screen = renderTwo();
+    fireEvent.press(screen.getByTestId('entry-source-1'));
+    const scroll = screen.getByTestId('reflection-sources-scroll');
+    expect(within(scroll).queryByTestId('source-promote-entry-1')).toBeNull();
+    const tree = JSON.stringify(screen.toJSON());
+    expect(tree.indexOf('reflection-sources-scroll')).toBeLessThan(
+      tree.indexOf('source-promote-entry-1'),
+    );
+  });
+
+  it('is absent until a source is expanded', () => {
+    const screen = renderTwo();
+    expect(screen.queryByTestId('source-promote-entry-1')).toBeNull();
+    expect(screen.queryByTestId('source-promote-entry-2')).toBeNull();
+  });
+
+  it('names the source it will promote from', () => {
+    const screen = renderTwo();
+    fireEvent.press(screen.getByTestId('entry-source-2'));
+    expect(screen.getByTestId('source-promote-entry-2').props.accessibilityLabel).toBe(
+      'Promote a passage from Second entry',
+    );
+  });
+
+  it('acts on the source expanded last before anything is laid out', () => {
+    const screen = renderTwo();
+    fireEvent.press(screen.getByTestId('entry-source-1'));
+    fireEvent.press(screen.getByTestId('entry-source-2'));
+    expect(screen.getByTestId('source-promote-entry-2')).toBeTruthy();
+    expect(screen.queryByTestId('source-promote-entry-1')).toBeNull();
+  });
+
+  it('follows the expanded source in view as the reader scrolls, and withdraws past them', () => {
+    const screen = renderTwo();
+    fireEvent.press(screen.getByTestId('entry-source-1'));
+    fireEvent.press(screen.getByTestId('entry-source-2'));
+    const scroll = screen.getByTestId('reflection-sources-scroll');
+    fireEvent(scroll, 'layout', layout(0, VIEWPORT_HEIGHT));
+    fireEvent(screen.getByTestId('reflection-sources-feed'), 'layout', layout(100, 3100));
+    fireEvent(screen.getByTestId('source-row-entry-1'), 'layout', layout(0, 2000));
+    fireEvent(screen.getByTestId('source-row-entry-2'), 'layout', layout(2000, 1000));
+
+    scrollTo(scroll, 0);
+    expect(screen.getByTestId('source-promote-entry-1')).toBeTruthy();
+    scrollTo(scroll, 2200);
+    expect(screen.getByTestId('source-promote-entry-2')).toBeTruthy();
+    expect(screen.queryByTestId('source-promote-entry-1')).toBeNull();
+    scrollTo(scroll, 3300);
+    expect(screen.queryByTestId('source-promote-entry-2')).toBeNull();
+  });
+
+  it('opens the selection in that source, focusing it without scrolling', () => {
+    const screen = renderTwo();
+    fireEvent.press(screen.getByTestId('entry-source-1'));
+    fireEvent.press(screen.getByTestId('source-promote-entry-1'));
+    expect(screen.getByTestId('source-select-entry-1-input').props.autoFocus).toBe(false);
+    // The surface's own pill and Cancel take over while it is open.
+    expect(screen.queryByTestId('source-promote-entry-1')).toBeNull();
+    fireEvent.press(screen.getByTestId('source-select-entry-1-cancel'));
+    expect(screen.getByTestId('source-promote-entry-1')).toBeTruthy();
+  });
+
+  it('on web, holds the body height through the swap so the scroll is never clamped', () => {
+    const Platform = require('react-native').Platform as { OS: string };
+    const original = Platform.OS;
+    Platform.OS = 'web';
+    try {
+      const screen = renderTwo();
+      fireEvent.press(screen.getByTestId('entry-source-1'));
+      fireEvent(screen.getByTestId('source-expansion-entry-1'), 'layout', layout(80, 2400));
+      fireEvent.press(screen.getByTestId('source-promote-entry-1'));
+      const held = StyleSheet.flatten(screen.getByTestId('source-expansion-entry-1').props.style);
+      expect(held.minHeight).toBe(2400);
+    } finally {
+      Platform.OS = original;
+    }
+  });
+
+  it('on native, where the field is capped, holds no height (no gap under the field)', () => {
+    const screen = renderTwo();
+    fireEvent.press(screen.getByTestId('entry-source-1'));
+    fireEvent(screen.getByTestId('source-expansion-entry-1'), 'layout', layout(80, 2400));
+    fireEvent.press(screen.getByTestId('source-promote-entry-1'));
+    const style = StyleSheet.flatten(screen.getByTestId('source-expansion-entry-1').props.style);
+    expect(style?.minHeight).toBeUndefined();
+  });
+
+  it('rests while the quotes are being checked, so only the fold bar acts', () => {
+    const first = item({ id: 1, promoted_quotes: [quote({ id: 90, pending: true })] });
+    const screen = render(
+      <ReflectionSourcesPanel
+        items={[first]}
+        onInsertQuote={jest.fn()}
+        onInsertQuotes={jest.fn()}
+        onPromoteSpan={jest.fn(() => Promise.resolve(true))}
+      />,
+    );
+    fireEvent.press(screen.getByTestId('entry-source-1'));
+    expect(screen.getByTestId('source-promote-entry-1')).toBeTruthy();
+    fireEvent.press(screen.getByTestId('pending-quotes-select-toggle'));
+    expect(screen.queryByTestId('source-promote-entry-1')).toBeNull();
+  });
+});
+
 describe('ReflectionSourcesPanel -- in-panel re-promotion selection surface', () => {
   it('confirming a selected span calls onPromoteSpan with the source item and offsets', async () => {
     const onPromoteSpan = jest.fn(() => Promise.resolve(true));

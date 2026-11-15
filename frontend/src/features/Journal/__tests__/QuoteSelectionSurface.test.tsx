@@ -357,6 +357,29 @@ describe('QuoteSelectionSurface -- bounded field (#2883)', () => {
   });
 });
 
+describe('QuoteSelectionSurface -- focus without scrolling (#3718)', () => {
+  afterEach(() => {
+    jest.restoreAllMocks();
+  });
+
+  it('keeps autoFocus by default, so read mode is unchanged', () => {
+    const focusField = require('../focusField');
+    const spy = jest.spyOn(focusField, 'focusWithoutScrolling');
+    const { getByTestId } = renderSurface();
+    expect(getByTestId('quote-select-input').props.autoFocus).toBe(true);
+    expect(spy).not.toHaveBeenCalled();
+  });
+
+  it('drops autoFocus and focuses the field on mount without scrolling when asked', () => {
+    const focusField = require('../focusField');
+    const spy = jest.spyOn(focusField, 'focusWithoutScrolling').mockImplementation(() => {});
+    const { getByTestId } = renderSurface({ focusWithoutScroll: true });
+    expect(getByTestId('quote-select-input').props.autoFocus).toBe(false);
+    expect(spy).toHaveBeenCalledTimes(1);
+    expect(spy.mock.calls[0]?.[1]).toBe(Platform.OS);
+  });
+});
+
 describe('QuoteSelectionSurface -- initial selection (#2883)', () => {
   it('starts with nothing chosen when no initial selection is given', () => {
     const { queryByTestId } = renderSurface();
