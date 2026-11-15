@@ -13,7 +13,9 @@
  *      captioned with where it came from, and fold the same way (#3659).
  *   2. The chronological feed (oldest → newest) of the entries and earlier
  *      reflections in scope. Each row collapses to an excerpt and expands to its
- *      full body on tap.
+ *      full body on tap. "Promote a quote" floats beneath the scroll and acts
+ *      on the expanded source in view, opening the selection in place without
+ *      moving the scroll (#3718).
  *
  * Responsive, and a ``Modal`` at every width: below ``CENTRED_MODAL_BREAKPOINT`` a
  * bounded bottom sheet the width of the page; from it up, a card at the page's
@@ -42,10 +44,14 @@ import {
   TouchableOpacity,
   View,
   useWindowDimensions,
+  type LayoutChangeEvent,
+  type NativeScrollEvent,
+  type NativeSyntheticEvent,
   type ViewStyle,
 } from 'react-native';
 
 import { excerpt } from './excerpt';
+import { pickPromoteTarget, type RowExtent } from './promoteTarget';
 import { candidateFromReadingQuote, candidateFromSource, type FoldCandidate } from './quoteBatch';
 import { FOLDED_SUFFIX, foldQuoteA11y, foldSelectedLabel, selectQuoteA11y } from './quoteFoldCopy';
 import { QUOTE_STRIPE_WIDTH, QuoteRow } from './QuoteRow';
@@ -84,6 +90,7 @@ import {
   surface,
   surfaceShadow,
   touchTarget,
+  uiType,
 } from '@/design/tokens';
 import { useReducedMotion } from '@/hooks/useReducedMotion';
 
@@ -119,6 +126,12 @@ const SOURCES_DIALOG_LABEL = 'Sources';
  * footer is sticky to the panel's scroller.
  */
 const SELECTION_FIELD_HEIGHT_FRACTION = 0.35;
+
+/**
+ * How often, in ms, the scroll reports its offset (about one frame), so the
+ * floating opener retargets as the reader scrolls past a source (#3718).
+ */
+const SCROLL_EVENT_THROTTLE_MS = 16;
 
 /** The native selection field's cap for this window height; none on web. */
 function selectionFieldCap(windowHeight: number): number | undefined {
@@ -479,17 +492,17 @@ function PendingQuotesGroup({
   );
 }
 
-/** The gesture wiring an expanded row hands to its promote opener / selection. */
+/**
+ * The selection wiring an expanded row hands to its surface. The opener that
+ * starts a selection is the panel's, beneath the scroll (#3718), not the row's.
+ */
 interface RowPromoteControls {
   /** True when this row currently owns the shared selection surface. */
   selecting: boolean;
   /** True when this row's last re-promotion could not be saved. */
   promoteFailed: boolean;
-  /** True when re-promotion is available at all (the parent wired a handler). */
-  canPromote: boolean;
   /** The passage already chosen, so a remounted surface picks up where it was. */
   selectedSpan: CodePointSpan;
-  onStartSelecting: () => void;
   onSelectionChange: (_span: CodePointSpan) => void;
   onConfirm: () => Promise<void>;
   onCancel: () => void;
@@ -504,38 +517,44 @@ function SourceExpansion({
   controls: RowPromoteControls;
 }): React.JSX.Element {
   const windowHeight = useWindowDimensions().height;
-  if (controls.selecting) {
-    return (
-      <QuoteSelectionSurface
-        body={item.body}
-        onSelectionChange={controls.onSelectionChange}
-        onConfirm={controls.onConfirm}
-        onCancel={controls.onCancel}
-        testID={`source-select-${item.kind}-${item.id}`}
-        maxFieldHeight={selectionFieldCap(windowHeight)}
-        initialSelection={controls.selectedSpan}
-      />
-    );
-  }
+  const fieldCap = selectionFieldCap(windowHeight);
+  // The read-only body's last laid-out height. The selection field mounts at
+  // its two-line floor and grows to its text a frame later, so without a hold
+  // the content would shrink under the reader for that frame and the browser
+  // would clamp the scroll to the top (#3718). Held only where the field is
+  // uncapped (web): a capped native field is meant to be shorter than the body.
+  const bodyHeight = useRef<number | undefined>(undefined);
+  const { selecting } = controls;
+  const onLayout = useCallback(
+    (event: LayoutChangeEvent) => {
+      if (!selecting) bodyHeight.current = event.nativeEvent.layout.height;
+    },
+    [selecting],
+  );
+  const hold = selecting && fieldCap == null ? { minHeight: bodyHeight.current } : undefined;
   return (
-    <>
-      <ReadOnlyMarkdownText
-        body={item.body}
-        style={styles.body}
-        testID={`source-body-${item.id}`}
-      />
-      {controls.canPromote ? (
-        <TouchableOpacity
-          style={styles.promoteOpener}
-          onPress={controls.onStartSelecting}
-          accessibilityRole="button"
-          accessibilityLabel="Promote a passage from this source"
-          testID={`source-promote-${item.kind}-${item.id}`}
-        >
-          <Text style={styles.promoteOpenerLink}>Promote a quote</Text>
-        </TouchableOpacity>
-      ) : null}
-    </>
+    <View style={hold} onLayout={onLayout} testID={`source-expansion-${item.kind}-${item.id}`}>
+      {selecting ? (
+        <QuoteSelectionSurface
+          body={item.body}
+          onSelectionChange={controls.onSelectionChange}
+          onConfirm={controls.onConfirm}
+          onCancel={controls.onCancel}
+          testID={`source-select-${item.kind}-${item.id}`}
+          maxFieldHeight={fieldCap}
+          initialSelection={controls.selectedSpan}
+          // Opened from the floating opener while the reader is partway down
+          // this body: focus must not scroll the field's caret into view (#3718).
+          focusWithoutScroll
+        />
+      ) : (
+        <ReadOnlyMarkdownText
+          body={item.body}
+          style={styles.body}
+          testID={`source-body-${item.id}`}
+        />
+      )}
+    </View>
   );
 }
 
@@ -546,16 +565,18 @@ function SourceRow({
   onToggle,
   controls,
   timeZone,
+  onLayout,
 }: {
   item: ReflectionSourceItem;
   expanded: boolean;
   timeZone?: string;
   onToggle: () => void;
   controls: RowPromoteControls;
+  onLayout: (_event: LayoutChangeEvent) => void;
 }): React.JSX.Element {
   const isReflection = item.kind === 'reflection';
   return (
-    <View style={styles.row}>
+    <View style={styles.row} onLayout={onLayout} testID={`source-row-${item.kind}-${item.id}`}>
       <TouchableOpacity
         style={[styles.rowHeader, isReflection && styles.rowHeaderReflection]}
         onPress={onToggle}
@@ -658,19 +679,87 @@ function useRowSelection(onPromoteSpan?: PromoteSpanHandler): RowSelection {
 function buildControls(
   item: ReflectionSourceItem,
   key: string,
-  canPromote: boolean,
   selection: RowSelection,
 ): RowPromoteControls {
   return {
     selecting: selection.selectingKey === key,
     promoteFailed: selection.promoteFailedKey === key,
-    canPromote,
     selectedSpan: selection.span,
-    onStartSelecting: () => selection.startSelecting(key),
     onSelectionChange: selection.onSelectionChange,
     onConfirm: () => selection.confirmSelection(item, key),
     onCancel: selection.cancelSelecting,
   };
+}
+
+/**
+ * Where the feed's rows lie against the scroll viewport, kept so the floating
+ * opener can act on the expanded source in view (#3718). Every measure is a ref
+ * (a scroll event is no reason to re-render), and only the resulting target
+ * key is state, so a re-render happens when the target changes and not on each
+ * scroll event.
+ */
+interface ViewportTracker {
+  /** The expanded row's key the opener acts on; null when none is in view. */
+  targetKey: string | null;
+  onScroll: (_event: NativeSyntheticEvent<NativeScrollEvent>) => void;
+  onViewportLayout: (_event: LayoutChangeEvent) => void;
+  onFeedLayout: (_event: LayoutChangeEvent) => void;
+  onRowLayout: (_key: string, _event: LayoutChangeEvent) => void;
+}
+
+/** Track the viewport and rows, and the expanded row that is most in view. */
+function useViewportTracker(expandedKeys: ReadonlySet<string>): ViewportTracker {
+  const scrollY = useRef(0);
+  const viewportHeight = useRef<number | null>(null);
+  const feedY = useRef(0);
+  const rowExtents = useRef(new Map<string, RowExtent>());
+  const expandedRef = useRef(expandedKeys);
+  expandedRef.current = expandedKeys;
+  const [targetKey, setTargetKey] = useState<string | null>(null);
+
+  const recompute = useCallback(() => {
+    const extents = new Map<string, RowExtent>();
+    for (const [key, row] of rowExtents.current) {
+      extents.set(key, { top: feedY.current + row.top, height: row.height });
+    }
+    const height = viewportHeight.current;
+    const viewport = height == null ? null : { top: scrollY.current, height };
+    setTargetKey(pickPromoteTarget([...expandedRef.current], extents, viewport));
+  }, []);
+
+  // A row expanding or collapsing changes who the target can be.
+  useEffect(recompute, [expandedKeys, recompute]);
+
+  const onScroll = useCallback(
+    (event: NativeSyntheticEvent<NativeScrollEvent>) => {
+      scrollY.current = event.nativeEvent.contentOffset.y;
+      recompute();
+    },
+    [recompute],
+  );
+  const onViewportLayout = useCallback(
+    (event: LayoutChangeEvent) => {
+      viewportHeight.current = event.nativeEvent.layout.height;
+      recompute();
+    },
+    [recompute],
+  );
+  const onFeedLayout = useCallback(
+    (event: LayoutChangeEvent) => {
+      feedY.current = event.nativeEvent.layout.y;
+      recompute();
+    },
+    [recompute],
+  );
+  const onRowLayout = useCallback(
+    (key: string, event: LayoutChangeEvent) => {
+      const { y, height } = event.nativeEvent.layout;
+      rowExtents.current.set(key, { top: y, height });
+      recompute();
+    },
+    [recompute],
+  );
+  return { targetKey, onScroll, onViewportLayout, onFeedLayout, onRowLayout };
 }
 
 /** Which rows are expanded, and the one row holding the selection surface. */
@@ -679,6 +768,7 @@ interface FeedState {
   toggle: (_key: string) => void;
   selection: RowSelection;
   canPromote: boolean;
+  viewport: ViewportTracker;
 }
 
 /** Own the feed's expansion and selection state. */
@@ -688,7 +778,8 @@ function useFeedState(onPromoteSpan?: PromoteSpanHandler): FeedState {
     setExpandedKeys((prev) => toggleKey(prev, key));
   }, []);
   const selection = useRowSelection(onPromoteSpan);
-  return { expandedKeys, toggle, selection, canPromote: onPromoteSpan != null };
+  const viewport = useViewportTracker(expandedKeys);
+  return { expandedKeys, toggle, selection, canPromote: onPromoteSpan != null, viewport };
 }
 
 /** The chronological feed, rendered from state its caller owns. */
@@ -701,9 +792,9 @@ function SourceFeed({
   state: FeedState;
   timeZone?: string;
 }): React.JSX.Element {
-  const { expandedKeys, toggle, selection, canPromote } = state;
+  const { expandedKeys, toggle, selection, viewport } = state;
   return (
-    <View>
+    <View onLayout={viewport.onFeedLayout} testID="reflection-sources-feed">
       {feed.map((item) => {
         const key = `${item.kind}-${item.id}`;
         return (
@@ -712,8 +803,9 @@ function SourceFeed({
             item={item}
             expanded={expandedKeys.has(key)}
             onToggle={() => toggle(key)}
-            controls={buildControls(item, key, canPromote, selection)}
+            controls={buildControls(item, key, selection)}
             timeZone={timeZone}
+            onLayout={(event) => viewport.onRowLayout(key, event)}
           />
         );
       })}
@@ -1027,6 +1119,84 @@ function usePanelLists(
   return { pending, reading, feed };
 }
 
+/**
+ * The source the floating opener acts on: the expanded one in view, unless the
+ * opener has nothing to offer (no re-promotion wired, or a row already
+ * selecting, whose own pill and Cancel take over).
+ */
+function promoteOpenerTarget(
+  feed: readonly ReflectionSourceItem[],
+  state: FeedState,
+): ReflectionSourceItem | null {
+  const { canPromote, selection, viewport } = state;
+  if (!canPromote || selection.selectingKey != null) return null;
+  const { targetKey } = viewport;
+  return feed.find((item) => `${item.kind}-${item.id}` === targetKey) ?? null;
+}
+
+/**
+ * "Promote a quote", fixed beneath the scroll (#3718): like the fold bar, it is
+ * in reach however far down a long source the reader is, and pressing it opens
+ * the selection in that source without moving the scroll.
+ */
+function PromoteOpenerBar({
+  item,
+  onPress,
+}: {
+  item: ReflectionSourceItem;
+  onPress: () => void;
+}): React.JSX.Element {
+  return (
+    <View style={styles.openerBar}>
+      <TouchableOpacity
+        style={styles.openerAction}
+        onPress={onPress}
+        accessibilityRole="button"
+        accessibilityLabel={`Promote a passage from ${sourceAttribution(item)}`}
+        testID={`source-promote-${item.kind}-${item.id}`}
+      >
+        <Text style={styles.openerActionText}>Promote a quote</Text>
+      </TouchableOpacity>
+    </View>
+  );
+}
+
+/**
+ * The panel's fixed actions, after the scroll and never inside it: like the
+ * heading, they stay in view however long the feed is. While quotes are being
+ * checked, the fold bar (#2885) is the one action; otherwise it is the opener
+ * for the expanded source in view (#3718).
+ */
+function FixedActions({
+  feed,
+  state,
+  onFold,
+}: {
+  feed: readonly ReflectionSourceItem[];
+  state: PanelState;
+  onFold: () => void;
+}): React.JSX.Element | null {
+  const { selection, folding } = state;
+  if (selection.selecting) {
+    return (
+      <QuoteFoldBar
+        label={foldSelectedLabel(selection.selected.size)}
+        count={selection.selected.size}
+        disabled={folding}
+        onPress={onFold}
+      />
+    );
+  }
+  const opener = promoteOpenerTarget(feed, state.feed);
+  if (opener == null) return null;
+  return (
+    <PromoteOpenerBar
+      item={opener}
+      onPress={() => state.feed.selection.startSelecting(`${opener.kind}-${opener.id}`)}
+    />
+  );
+}
+
 /** The panel's inner content, shared by the sheet and the centred card. */
 function SourcesContent({
   items,
@@ -1040,7 +1210,8 @@ function SourcesContent({
   state,
 }: ContainerProps): React.JSX.Element {
   const { pending, reading, feed } = usePanelLists(items, readingQuotes);
-  const { includedIds, onInsert, onInsertReading, selection, onFoldSelected, folding } = state;
+  const { includedIds, onInsert, onInsertReading, selection, onFoldSelected } = state;
+  const { viewport } = state.feed;
 
   // The heading is the panel's navigation, so it stands ABOVE the scroll: only
   // the quotes and the feed move, and the way out never scrolls away (#2883).
@@ -1051,6 +1222,9 @@ function SourcesContent({
         style={styles.scroll}
         contentContainerStyle={styles.scrollContent}
         keyboardShouldPersistTaps="handled"
+        onScroll={viewport.onScroll}
+        onLayout={viewport.onViewportLayout}
+        scrollEventThrottle={SCROLL_EVENT_THROTTLE_MS}
         testID="reflection-sources-scroll"
       >
         <PendingQuotesGroup
@@ -1068,16 +1242,11 @@ function SourcesContent({
           <SourceFeed feed={feed} state={state.feed} timeZone={timeZone} />
         )}
       </ScrollView>
-      {/* After the scroll, never inside it: like the heading, the one way to
-          act on a selection stays in view however long the feed is (#2885). */}
-      {selection.selecting ? (
-        <QuoteFoldBar
-          label={foldSelectedLabel(selection.selected.size)}
-          count={selection.selected.size}
-          disabled={folding}
-          onPress={() => onFoldSelected(foldOrder(pending, reading))}
-        />
-      ) : null}
+      <FixedActions
+        feed={feed}
+        state={state}
+        onFold={() => onFoldSelected(foldOrder(pending, reading))}
+      />
     </>
   );
 }
@@ -1262,14 +1431,24 @@ const styles = StyleSheet.create({
     color: ink.primary,
     paddingTop: spacing(1),
   },
-  promoteOpener: {
-    minHeight: touchTarget.minimum,
-    justifyContent: 'center',
-    paddingTop: spacing(1),
+  // The fold bar's frame (QuoteSelectionControls), so the panel's two fixed
+  // actions beneath the scroll read as one family.
+  openerBar: {
+    paddingHorizontal: SPACING.lg,
+    paddingVertical: SPACING.md,
+    backgroundColor: surface.raised,
   },
-  promoteOpenerLink: {
-    ...editorialType.action,
-    color: accent.primary,
+  openerAction: {
+    minHeight: touchTarget.minimum,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: SPACING.lg,
+    borderRadius: BORDER_RADIUS.md,
+    backgroundColor: accent.primary,
+  },
+  openerActionText: {
+    ...uiType.button,
+    color: accent.onPrimary,
   },
   promoteHint: {
     ...editorialType.caption,

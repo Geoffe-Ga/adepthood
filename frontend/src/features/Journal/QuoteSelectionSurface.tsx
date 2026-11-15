@@ -25,7 +25,7 @@
  * ``testID`` prefixes every element so more than one surface can coexist on a
  * page.
  */
-import React, { useCallback, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Platform,
   Pressable,
@@ -41,6 +41,7 @@ import {
 import { selectionToAnchorSpan } from './anchorSpan';
 import { codePointToUtf16 } from './codePoints';
 import FloatingPromoteButton, { DEFAULT_PROMOTE_LABEL } from './FloatingPromoteButton';
+import { focusWithoutScrolling, type FocusableField } from './focusField';
 import styles from './JournalEntry.styles';
 import { floatingDockStyle, pinnedFooterStyle } from './readingSurfaceStyles';
 import { buildSelectionSurfaceCopy } from './selectionSurfaceCopy';
@@ -117,6 +118,12 @@ export interface QuoteSelectionSurfaceProps {
    * enabled confirm carry over. Defaults to nothing chosen.
    */
   initialSelection?: CodePointSpan;
+  /**
+   * Take focus on mount WITHOUT scrolling the field into view (#3718), for a
+   * surface that opens in place over a long body the reader is partway down
+   * (a review's sources). Unset, the field keeps ``autoFocus`` (read mode).
+   */
+  focusWithoutScroll?: boolean;
 }
 
 /** The derived view state the surface chrome renders from. */
@@ -211,6 +218,8 @@ interface SelectionBodyProps {
   inputRef: React.RefObject<TextInput | null>;
   testID: string;
   maxFieldHeight?: number;
+  /** True: the field takes ``autoFocus``; false: its host focuses it on mount. */
+  autoFocus: boolean;
 }
 
 /**
@@ -228,6 +237,7 @@ const SelectionBody = React.memo(function SelectionBody({
   inputRef,
   testID,
   maxFieldHeight,
+  autoFocus,
 }: SelectionBodyProps): React.JSX.Element {
   const [focused, setFocused] = useState(false);
   const bounded = maxFieldHeight != null;
@@ -249,8 +259,9 @@ const SelectionBody = React.memo(function SelectionBody({
       // The control that opened the surface (read mode's Promote button, or the
       // sheet's opener) unmounts as it opens, so focus is handed here rather
       // than dropped on the page; with the soft keyboard suppressed this only
-      // lights the focus rule and puts a keyboard reader in the text.
-      autoFocus
+      // lights the focus rule and puts a keyboard reader in the text. A host
+      // that must not move the scroll focuses it itself (``useFocusOnMount``).
+      autoFocus={autoFocus}
       showSoftInputOnFocus={false}
       caretHidden
       scrollEnabled={bounded}
@@ -561,6 +572,20 @@ function SelectionActionsArea({
 }
 
 /**
+ * Focus the field once, as the surface mounts, without scrolling it into view
+ * (#3718). Does nothing unless ``enabled``: the field's ``autoFocus`` serves then.
+ */
+function useFocusOnMount(inputRef: React.RefObject<TextInput | null>, enabled: boolean): void {
+  // Mount-only on purpose: mounting IS opening, and a later re-render must
+  // never pull focus back to the field.
+  const enabledAtMount = useRef(enabled);
+  useEffect(() => {
+    if (!enabledAtMount.current) return;
+    focusWithoutScrolling(inputRef.current as FocusableField | null, Platform.OS);
+  }, [inputRef]);
+}
+
+/**
  * The warm guiding line above the field. Its wording is resolved per render
  * rather than at module load so it follows the platform the surface is
  * actually mounted on (and so a test that sets ``Platform.OS`` after import
@@ -584,11 +609,13 @@ function QuoteSelectionSurface({
   confirmPlacement = 'floating',
   maxFieldHeight,
   initialSelection,
+  focusWithoutScroll = false,
 }: QuoteSelectionSurfaceProps): React.JSX.Element {
   const state = useSelectionSurfaceState(body, onSelectionChange, initialSelection);
   const inputRef = useRef<TextInput>(null);
   useWebSelectionListener(inputRef, state.emitSpan);
   useInitialFieldSelection(inputRef, state.initialSpan);
+  useFocusOnMount(inputRef, focusWithoutScroll);
   const { growth, onContentSizeChange } = useSelectionFieldGrowth();
 
   return (
@@ -602,6 +629,7 @@ function QuoteSelectionSurface({
         inputRef={inputRef}
         testID={testID}
         maxFieldHeight={maxFieldHeight}
+        autoFocus={!focusWithoutScroll}
       />
       <SelectionActionsArea
         state={state}
