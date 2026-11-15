@@ -108,7 +108,9 @@ function HabitsSection({ overview, onOpenStory }: { overview: Overview; onOpenSt
   const habits = habitHistories(overview);
   const range = habitRange(overview);
   const program = habits.filter((habit) => !habit.carryover);
-  const brought = habits.filter((habit) => habit.carryover);
+  // Served nearest-first (-1, -2, ...); shown deepest-first so this list reads
+  // forward in time, in the same order as the Habits screen's negative pages.
+  const brought = habits.filter((habit) => habit.carryover).reverse();
   return (
     <EditorialSection title="Your habits" testID="progress-habits">
       <Text style={text.caption}>{range ?? 'Nothing logged yet.'}</Text>

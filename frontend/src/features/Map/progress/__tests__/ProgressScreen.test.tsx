@@ -140,6 +140,24 @@ describe('ProgressScreen', () => {
     expect(brought.getByText('Water')).toBeTruthy();
   });
 
+  it('lists carryovers deepest first, the order the Habits screen pages them in', () => {
+    const overview = progressOverviewFixture();
+    const history = [{ unit: 'glasses', days: [{ date: '2026-05-18', units: 8, average: 8 }] }];
+    // Served nearest-first: Water is -1, Stretching is -2.
+    overview.arc.habit_births[2]!.unit_histories = history;
+    overview.arc.habit_births.push({
+      ...overview.arc.habit_births[2]!,
+      habit_id: 4,
+      name: 'Stretching',
+    });
+    mockRead = read({ overview });
+
+    const brought = within(render(<ProgressScreen />).getByTestId('progress-carryovers'));
+
+    const names = brought.getAllByText(/^(Water|Stretching)$/).map((node) => node.props.children);
+    expect(names).toEqual(['Stretching', 'Water']);
+  });
+
   it('heads the wave with its latest share and reads the latest point by default', () => {
     const tree = render(<ProgressScreen />);
     const wave = within(tree.getByTestId('progress-wave'));
