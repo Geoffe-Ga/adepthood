@@ -487,3 +487,39 @@ async def test_moving_start_preserves_recorded_native_period_units(
     ]
     assert pairs[:2] == [(0, 0), (0, 0)]
     assert pairs[_PERIOD_END[unit]] == (0, 1)
+
+
+@pytest.mark.asyncio
+async def test_habits_follow_the_order_the_person_arranged_not_creation_order(
+    async_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """The overview lists habits the way GET /habits does, so the screens agree.
+
+    Ordering by id listed habits in the order they were created, which stops
+    matching the Habits screen the moment a person reorders or re-scaffolds.
+    """
+    headers, owner = await _signup(async_client, "arranged-order")
+    arranged: list[Habit] = []
+    for name, slot in (("First made", 2), ("Second made", 0), ("Third made", 1)):
+        habit = Habit(
+            user_id=owner,
+            name=name,
+            icon="pen",
+            start_date=date(2026, 1, 5),
+            stage="Beige",
+            energy_cost=1,
+            energy_return=4,
+            revealed=True,
+            sort_order=slot,
+        )
+        db_session.add(habit)
+        await db_session.flush()
+        arranged.append(habit)
+    await db_session.commit()
+    first, second, third = arranged
+
+    response = await async_client.get("/progress/overview", headers=headers)
+
+    assert response.status_code == HTTPStatus.OK
+    births = response.json()["arc"]["habit_births"]
+    assert [birth["habit_id"] for birth in births] == [second.id, third.id, first.id]

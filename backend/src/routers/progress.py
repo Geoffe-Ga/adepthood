@@ -94,7 +94,16 @@ async def _read_values(session: AsyncSession, owner: int, timezone: str) -> Over
         )
     ).scalar_one_or_none()
     habits = (
-        (await session.execute(select(Habit).where(Habit.user_id == owner).order_by(col(Habit.id))))
+        (
+            await session.execute(
+                select(Habit)
+                .where(Habit.user_id == owner)
+                # The order GET /habits serves, so this screen lists habits the
+                # way the Habits screen does: arranged slot first (unnumbered
+                # legacy rows ahead of numbered ones), id only as the tie-break.
+                .order_by(col(Habit.sort_order).asc().nulls_first(), col(Habit.id))
+            )
+        )
         .scalars()
         .all()
     )

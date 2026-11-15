@@ -1659,19 +1659,21 @@ describe('buildPagedHabits', () => {
     expect(result.colorIndices).toEqual([0, 1, 2]);
   });
 
-  test('page -1 returns carryover habits with negative slots and true flat indices', () => {
+  test('page -1 returns carryover habits deepest first, with negative slots and true flat indices', () => {
+    // Time reads forward down the page: the label says "-10 to -1", so the
+    // deepest slot the page holds comes first and -1 comes last.
     const result = buildPagedHabits(mixed, -1, 10);
-    expect(result.habits.map((h: Habit) => h.id)).toEqual([2, 4]);
-    expect(result.flatIndices).toEqual([1, 3]);
-    expect(result.colorIndices).toEqual([-1, -2]);
+    expect(result.habits.map((h: Habit) => h.id)).toEqual([4, 2]);
+    expect(result.flatIndices).toEqual([3, 1]);
+    expect(result.colorIndices).toEqual([-2, -1]);
   });
 
   test('page -2 slices the second carryover lap with deeper negative slots', () => {
     const many = Array.from({ length: 24 }, (_, i) => makePagedHabit(i + 1, i % 2 === 0));
     const result = buildPagedHabits(many, -2, 10);
-    expect(result.habits.map((h: Habit) => h.id)).toEqual([21, 23]);
-    expect(result.flatIndices).toEqual([20, 22]);
-    expect(result.colorIndices).toEqual([-11, -12]);
+    expect(result.habits.map((h: Habit) => h.id)).toEqual([23, 21]);
+    expect(result.flatIndices).toEqual([22, 20]);
+    expect(result.colorIndices).toEqual([-12, -11]);
   });
 });
 
