@@ -306,6 +306,48 @@ const clearSlotOnLapChange = (rows: readonly Habit[], byId: ReadonlyMap<number, 
     return { ...row, sort_order: null };
   });
 
+/**
+ * Seat the rows that entered the carryover lap this pass, and move everything
+ * already on it one arrival further back.
+ *
+ * A carryover slot is a distance into the past: index 0 is -1, the habit
+ * nearest the program, and the numbers grow the further back a habit sits. A
+ * habit leaving the program lap is by definition more recent than anything
+ * that was carryover before it, so the arrivals take the front -- the last
+ * program habit becomes -1, the first becomes the deepest of its lap -- and
+ * the rows that were -1..-3 become -11..-13 behind a lap of ten.
+ *
+ * Appending instead (numbering arrivals above the partition's highest slot, as
+ * ``assignPartitionSlots`` does for a row with no history) put the newest
+ * habits deepest in the past and left the oldest at -1.
+ *
+ * Both the array order and ``sort_order`` are rewritten, because they are two
+ * readers' truth: the grid pages off the array, and the next ``GET /habits``
+ * sorts by the stored slot. The whole partition is renumbered from zero since
+ * the rows already there may hold global numbers (``saveHabitOrder``) or none.
+ * With no arrivals nothing is touched, so a pass that moved nobody stays
+ * silent on the wire.
+ */
+const seatCarryoverArrivals = (rows: readonly Habit[], existing: readonly Habit[]): Habit[] => {
+  const formerProgramPosition = new Map<number, number>();
+  existing.filter(isNotCarryoverHabit).forEach((habit, position) => {
+    if (!formerProgramPosition.has(habit.id)) formerProgramPosition.set(habit.id, position);
+  });
+  const positionOf = (row: Habit): number => formerProgramPosition.get(row.id) ?? -1;
+  const isArrival = (row: Habit): boolean =>
+    !isNotCarryoverHabit(row) && formerProgramPosition.has(row.id);
+
+  const arrivals = rows.filter(isArrival).sort((a, b) => positionOf(b) - positionOf(a));
+  if (arrivals.length === 0) return [...rows];
+  const settled = rows.filter((row) => !isNotCarryoverHabit(row) && !isArrival(row));
+  const seated = [...arrivals, ...settled].map((row, slot) => ({ ...row, sort_order: slot }));
+
+  // Refill the positions carryover rows already occupied, so the program rows
+  // interleaved among them keep exactly the places they had.
+  const refill = [...seated];
+  return rows.map((row) => (isNotCarryoverHabit(row) ? row : (refill.shift() ?? row)));
+};
+
 /** A disposition that keeps a row the store already holds. */
 type KeptDisposition = Exclude<HabitDisposition, { kind: 'new' } | { kind: 'released' }>;
 
@@ -428,16 +470,19 @@ export const planHabitMerge = (plan: HabitMergePlan, existing: readonly Habit[])
     ...plan.flatMap((d) => ('habit' in d && 'habitId' in d ? [d.habitId] : [])),
   ]);
   const nextStore = stampPickedSlots(
-    clearSlotOnLapChange(
-      [
-        ...carried,
-        ...unmentionedRows(
-          existing,
-          namedHabitIds(plan),
-          new Set(carried.map((r) => nameKey(r.name))),
-        ),
-      ],
-      byId,
+    seatCarryoverArrivals(
+      clearSlotOnLapChange(
+        [
+          ...carried,
+          ...unmentionedRows(
+            existing,
+            namedHabitIds(plan),
+            new Set(carried.map((r) => nameKey(r.name))),
+          ),
+        ],
+        byId,
+      ),
+      existing,
     ),
     picked,
   );
