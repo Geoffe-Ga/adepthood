@@ -162,9 +162,79 @@ describe('a habit that changes lap gets a place in the lap it enters', () => {
     // Named rather than de-duplicated: a set of slots is also unique when one
     // of them is `null`, so a uniqueness assertion alone is satisfied by
     // wiping the wrong row's position instead of numbering the new arrival.
+    // The arrival is the more recent habit, so it takes the nearest slot (-1)
+    // and the row that was already carryover moves one further back.
     const byId = new Map(ops.nextStore.map((row) => [row.id, row]));
-    expect(byId.get(8)?.sort_order).toBe(0);
-    expect(byId.get(7)?.sort_order).toBe(1);
+    expect(byId.get(7)?.sort_order).toBe(0);
+    expect(byId.get(8)?.sort_order).toBe(1);
+  });
+});
+
+describe('a second scaffolding pass that brings the whole program lap along', () => {
+  const OLD_CARRYOVER_IDS = [1, 2, 3];
+  const PROGRAM_IDS = [4, 5, 6, 7, 8, 9, 10, 11, 12, 13];
+
+  // The store as `saveHabitOrder` leaves it: one global numbering straight
+  // down the mixed list, carryover -1..-3 first, then program habits 1..10.
+  const existing = [
+    ...OLD_CARRYOVER_IDS.map((id, i) =>
+      habit({ id, name: `Old ${id}`, sort_order: i, is_carryover: true }),
+    ),
+    ...PROGRAM_IDS.map((id, i) =>
+      habit({ id, name: `Program ${id}`, sort_order: OLD_CARRYOVER_IDS.length + i }),
+    ),
+  ];
+  const plan: HabitMergePlan = existing.map((row) => ({
+    kind: 'brought-along',
+    habitId: row.id,
+    habit: pick({ id: `existing-${row.id}`, name: row.name }),
+  }));
+
+  const carryoverIdsInOrder = (rows: readonly Habit[]): number[] =>
+    rows.filter((row) => row.is_carryover === true).map((row) => row.id);
+
+  it('seats the former program lap on -1..-10, most recent habit nearest', () => {
+    const ops = planHabitMerge(plan, existing);
+
+    // Display slot is the row's index among carryover rows: index 0 is -1.
+    // Program habit 10 (id 13) is the most recent, so it becomes -1; program
+    // habit 1 (id 4) is the oldest of that lap, so it becomes -10.
+    expect(carryoverIdsInOrder(ops.nextStore).slice(0, PROGRAM_IDS.length)).toEqual(
+      [...PROGRAM_IDS].reverse(),
+    );
+  });
+
+  it('pushes the habits that were already -1..-3 back to -11..-13', () => {
+    const ops = planHabitMerge(plan, existing);
+
+    expect(carryoverIdsInOrder(ops.nextStore).slice(PROGRAM_IDS.length)).toEqual(OLD_CARRYOVER_IDS);
+  });
+
+  it('persists that order, so a reload sorted by sort_order shows the same thing', () => {
+    const ops = planHabitMerge(plan, existing);
+
+    const reloaded = [...ops.nextStore].sort((a, b) => (a.sort_order ?? -1) - (b.sort_order ?? -1));
+    expect(reloaded.map((row) => row.id)).toEqual([
+      ...[...PROGRAM_IDS].reverse(),
+      ...OLD_CARRYOVER_IDS,
+    ]);
+    // The pushed-back rows only moved by position, and that still has to be sent.
+    expect(ops.updates.map((row) => row.id).sort((a, b) => a - b)).toEqual([
+      ...OLD_CARRYOVER_IDS,
+      ...PROGRAM_IDS,
+    ]);
+  });
+
+  it('leaves the carryover lap alone when nothing entered it', () => {
+    const settled = existing.slice(0, OLD_CARRYOVER_IDS.length);
+
+    const ops = planHabitMerge(
+      settled.map((row) => ({ kind: 'retained', habitId: row.id })),
+      settled,
+    );
+
+    expect(ops.nextStore).toEqual(settled);
+    expect(ops.updates).toEqual([]);
   });
 });
 
