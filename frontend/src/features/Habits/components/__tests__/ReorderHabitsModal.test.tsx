@@ -249,6 +249,70 @@ describe('ReorderHabitsModal — signed range drop targets', () => {
     expect(result.getByText(/11–20/)).toBeTruthy();
   });
 
+  describe('carryover rows read in time order, deepest past first', () => {
+    // Store order is nearest-first: index 0 is -1. Thirteen rows fill -1..-13.
+    const THIRTEEN_CARRYOVER: Habit[] = Array.from({ length: 13 }, (_, index) => ({
+      ...makeHabit(100 + index, 'Beige', `Carried ${index + 1}`),
+      is_carryover: true,
+    }));
+    const mixed = [...THIRTEEN_CARRYOVER, ...HABITS];
+    const onSaveOrder = jest.fn();
+    const renderMixed = () => {
+      onSaveOrder.mockClear();
+      return render(
+        <ReorderHabitsModal visible habits={mixed} onClose={jest.fn()} onSaveOrder={onSaveOrder} />,
+      );
+    };
+    // What the modal hands the store, which is nearest-first -- unlike the
+    // rendered entries, which are in display (time) order.
+    const savedOrder = (result: ReturnType<typeof render>): Habit[] => {
+      fireEvent.press(result.getByText('Save Order'));
+      return onSaveOrder.mock.calls[0]![0] as Habit[];
+    };
+    const describeEntry = (entry: unknown): string => {
+      const typed = entry as { kind: string; page?: number; slot?: number };
+      return typed.kind === 'page' ? `page:${typed.page}` : `slot:${typed.slot}`;
+    };
+
+    it('lists -13..-11 above -10..-1, and -1 directly above the program', () => {
+      const result = renderMixed();
+
+      const carryoverSide = getReorderEntries(result).map(describeEntry);
+      const programStart = carryoverSide.indexOf('page:0');
+      expect(carryoverSide.slice(0, programStart)).toEqual([
+        'page:-2',
+        'slot:-13',
+        'slot:-12',
+        'slot:-11',
+        'page:-1',
+        ...[-10, -9, -8, -7, -6, -5, -4, -3, -2, -1].map((slot) => `slot:${slot}`),
+      ]);
+    });
+
+    it('keeps the stored nearest-first order when a drag changes nothing', () => {
+      const result = renderMixed();
+
+      const entries = [...getReorderEntries(result)];
+      act(() => result.getByTestId('reorder-list').props.onDragEnd({ data: entries }));
+
+      expect(savedOrder(result).map((habit) => habit.id)).toEqual(mixed.map((habit) => habit.id));
+    });
+
+    it('makes a habit dropped at the very top the deepest carryover row', () => {
+      const result = renderMixed();
+
+      const entries = [...getReorderEntries(result)];
+      const movingIndex = entries.findIndex((entry) => isHabitEntry(entry, 100));
+      const [moving] = entries.splice(movingIndex, 1);
+      entries.splice(1, 0, moving!);
+      act(() => result.getByTestId('reorder-list').props.onDragEnd({ data: entries }));
+
+      const carryover = savedOrder(result).filter((habit) => habit.is_carryover === true);
+      expect(carryover.at(-1)?.id).toBe(100);
+      expect(carryover[0]?.id).toBe(101);
+    });
+  });
+
   it('turns a program habit into carryover when it crosses the program boundary', () => {
     const onSaveOrder = jest.fn();
     const result = render(

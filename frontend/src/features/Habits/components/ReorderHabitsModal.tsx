@@ -161,24 +161,39 @@ const habitEntry = (habit: Habit, slot: number): ReorderHabitEntry => ({
 });
 
 /**
+ * The carryover side of the list, in time order: the deepest range first and
+ * -1 last, so it sits directly above the program and the whole surface reads
+ * as one line from the furthest past to the next lap.
+ *
+ * The store keeps carryover nearest-first (index 0 is -1), so each range is
+ * walked from its deepest filled slot back towards the program. A range's
+ * marker leads its rows, and a completely full deepest range earns one more
+ * empty marker above it -- with no carryover at all that is the single -1
+ * range, which is why the first negative range always exists as a drop target.
+ */
+const buildCarryoverEntries = (carryover: readonly Habit[]): ReorderEntry[] => {
+  const contentPages = Math.ceil(carryover.length / MAX_HABITS);
+  const entries: ReorderEntry[] = [];
+  if (carryover.length % MAX_HABITS === 0) entries.push(pageEntry(-(contentPages + 1)));
+  for (let page = contentPages; page >= 1; page -= 1) {
+    entries.push(pageEntry(-page));
+    const deepest = Math.min(carryover.length, page * MAX_HABITS) - 1;
+    for (let index = deepest; index >= (page - 1) * MAX_HABITS; index -= 1) {
+      const habit = carryover[index];
+      if (habit !== undefined) entries.push(habitEntry(habit, carryoverSlot(index)));
+    }
+  }
+  return entries;
+};
+
+/**
  * Materialize the same signed ranges as the Habits screen inside one scrollable
  * drag surface. Empty invite ranges are intentional drop targets: the first
  * negative range always exists, and a full positive lap exposes the next one.
  */
 const buildReorderEntries = (habits: Habit[]): ReorderEntry[] => {
-  const carryover = habits.filter(isCarryoverHabit);
   const program = habits.filter((habit) => !isCarryoverHabit(habit));
-  const entries: ReorderEntry[] = [pageEntry(-1)];
-
-  carryover.forEach((habit, index) => {
-    if (index > 0 && index % MAX_HABITS === 0) {
-      entries.push(pageEntry(-(index / MAX_HABITS + 1)));
-    }
-    entries.push(habitEntry(habit, carryoverSlot(index)));
-  });
-  if (carryover.length > 0 && carryover.length % MAX_HABITS === 0) {
-    entries.push(pageEntry(-(carryover.length / MAX_HABITS + 1)));
-  }
+  const entries: ReorderEntry[] = buildCarryoverEntries(habits.filter(isCarryoverHabit));
 
   entries.push(pageEntry(0, true));
   program.forEach((habit, index) => {
@@ -193,17 +208,23 @@ const buildReorderEntries = (habits: Habit[]): ReorderEntry[] => {
   return entries;
 };
 
+/**
+ * Read a dragged list back into store order. Rows above the program marker are
+ * carryover and are displayed deepest-first, so they are reversed back to the
+ * nearest-first order the store and ``sort_order`` keep.
+ */
 const habitsFromEntries = (entries: ReorderEntry[]): Habit[] => {
   let isCarryover = true;
-  const habits: Habit[] = [];
+  const carryover: Habit[] = [];
+  const program: Habit[] = [];
   entries.forEach((entry) => {
     if (entry.kind === 'page') {
       if (entry.isProgramStart) isCarryover = false;
       return;
     }
-    habits.push({ ...entry.habit, is_carryover: isCarryover });
+    (isCarryover ? carryover : program).push({ ...entry.habit, is_carryover: isCarryover });
   });
-  return habits;
+  return [...carryover.reverse(), ...program];
 };
 
 const isReorderEntry = (value: Habit | ReorderEntry): value is ReorderEntry =>

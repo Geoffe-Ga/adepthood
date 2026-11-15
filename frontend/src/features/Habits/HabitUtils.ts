@@ -115,7 +115,8 @@ const partitionByCarryover = (
 
 /**
  * Page view-model for the signed Habits grid. Negative pages slice the
- * carryover partition onto mirrored negative color slots; non-negative pages
+ * carryover partition onto mirrored negative color slots, deepest first, so a
+ * page reads forward in time the way its range label does; non-negative pages
  * slice the program partition onto its 0-based slots. `flatIndices` are each
  * habit's true position in `allHabits` (the seam icon editing writes through),
  * while `colorIndices` are the signed display slots the gradient reads.
@@ -128,11 +129,16 @@ export const buildPagedHabits = (
   const { program, carryover } = partitionByCarryover(allHabits);
   const negative = page < 0;
   const offset = (negative ? -page - 1 : page) * pageSize;
-  const sliced = (negative ? carryover : program).slice(offset, offset + pageSize);
+  const sliced = (negative ? carryover : program)
+    .slice(offset, offset + pageSize)
+    .map((entry, j) => ({ ...entry, slot: negative ? carryoverSlot(offset + j) : offset + j }));
+  // Carryover is stored nearest-first (index 0 is -1) but read in time order,
+  // matching the "-10 to -1" label: the deepest slot on the page comes first.
+  const ordered = negative ? sliced.reverse() : sliced;
   return {
-    habits: sliced.map((entry) => entry.habit),
-    flatIndices: sliced.map((entry) => entry.flatIndex),
-    colorIndices: sliced.map((_, j) => (negative ? carryoverSlot(offset + j) : offset + j)),
+    habits: ordered.map((entry) => entry.habit),
+    flatIndices: ordered.map((entry) => entry.flatIndex),
+    colorIndices: ordered.map((entry) => entry.slot),
   };
 };
 

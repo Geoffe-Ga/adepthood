@@ -406,7 +406,8 @@ describe('Habits screen negative carryover laps', () => {
     await pressPrev(tree);
     expect(uniqueTiles(tree)).toHaveLength(2);
 
-    // Display slot 0 on the negative lap is carryover id 101 at flat index 3.
+    // The negative lap reads deepest first, so its first tile is carryover id
+    // 102 (slot -2) at flat index 4 -- not display position 0.
     const { TouchableOpacity } = require('react-native');
     const iconButtons = tree
       .findAllByType(TouchableOpacity)
@@ -428,7 +429,7 @@ describe('Habits screen negative carryover laps', () => {
     });
 
     expect(habitsApi.update).toHaveBeenCalledWith(
-      101,
+      102,
       expect.objectContaining({ icon: '\u{1F389}' }),
     );
     expect(habitsApi.update).not.toHaveBeenCalledWith(
