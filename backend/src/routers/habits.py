@@ -23,6 +23,8 @@ from domain.habit_links import (
     clear_practice_habit_links,
 )
 from domain.habit_unlock_log import LockChange, record_lock_changes
+from domain.pass_rescaffold import settle_pending_pass
+from domain.stage_progress import get_user_progress
 from domain.ui_flags import clear_writing_habit_links
 from error_responses import build_router
 from errors import conflict, forbidden, not_found, unprocessable
@@ -248,6 +250,25 @@ async def _ensure_unique_name(session: AsyncSession, current_user: int, name: st
         raise conflict("duplicate_habit_name")
 
 
+async def _settle_before_logging(
+    session: AsyncSession, user_id: int, user_tz: str, *, will_log: bool
+) -> None:
+    """Open a pending pass whose day has come, before a write logs a lock change.
+
+    The unlock log tags each event with the live pass, so a write on or after
+    the pending day must close the old pass first or its event is stranded in
+    a pass that has already ended (issue #3725). Settling commits, so it runs
+    before the caller mutates or adds anything. An account with no progress
+    row has no pass to settle and is not provisioned one here. A write that
+    will log nothing (``will_log`` false) skips even the read.
+    """
+    if not will_log:
+        return
+    progress = await get_user_progress(session, user_id)
+    if progress is not None:
+        await settle_pending_pass(session, progress, tz=user_tz)
+
+
 async def _persist_habit_with_goals(
     session: AsyncSession, habit: Habit, goals: HabitGoalsCreate, user_tz: str
 ) -> int:
@@ -344,6 +365,9 @@ async def create_habit(
     """
     canonical_payload = payload.model_copy(update={"name": _sanitize_habit_name(payload.name)})
     goals = _goals_for_create(canonical_payload)
+    await _settle_before_logging(
+        session, current_user, user_tz, will_log=canonical_payload.revealed
+    )
     await _ensure_under_quota(session, current_user)
     await _ensure_unique_name(session, current_user, canonical_payload.name)
     habit = _new_habit(canonical_payload, current_user)
@@ -431,6 +455,7 @@ async def update_habit(
         raise unprocessable("habit_goals_create_only")
     canonical_payload = payload.model_copy(update={"name": _sanitize_habit_name(payload.name)})
     lock_changed = canonical_payload.revealed != habit.revealed
+    await _settle_before_logging(session, current_user, user_tz, will_log=lock_changed)
     # A manual accept or decline consumes the same one-shot invitation. Without
     # this, an early unlock followed by a re-lock would reopen at eligibility.
     _consume_auto_reveal_on_manual_change(habit, canonical_payload)
