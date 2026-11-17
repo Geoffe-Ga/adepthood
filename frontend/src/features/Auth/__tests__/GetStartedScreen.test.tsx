@@ -32,6 +32,14 @@ beforeEach(() => {
 });
 
 describe('GetStartedScreen', () => {
+  it('introduces the private journal and self-directed practice before the purchase invitation', () => {
+    const { getByText } = render(<GetStartedScreen navigation={mockNavigation} />);
+
+    expect(getByText('Your words. Your way forward.')).toBeTruthy();
+    expect(getByText(/A private journal to hear yourself clearly/)).toBeTruthy();
+    expect(getByText(/You choose your depth/)).toBeTruthy();
+  });
+
   it('is the pre-auth surface, identified by its own screen testID', () => {
     const { getByTestId } = render(<GetStartedScreen navigation={mockNavigation} />);
 

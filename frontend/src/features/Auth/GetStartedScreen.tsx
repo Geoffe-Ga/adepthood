@@ -10,7 +10,9 @@ import { CalloutBand } from '@/components/layout/CalloutBand';
 import { GUMROAD_PRODUCT_URL } from '@/config';
 import { openExternalUrl } from '@/utils/openExternalUrl';
 
-const TITLE = 'Choose your depth';
+const TITLE = 'Your words. Your way forward.';
+const INTRO =
+  'A private journal to hear yourself clearly. Explore practices, discover patterns, and grow at your own pace. You choose your depth.';
 
 // Gift economy first, price never. Nothing here should read as urgency,
 // scarcity, or a favour owed — the invitation has to be genuinely declinable.
@@ -50,6 +52,7 @@ export default function GetStartedScreen({ navigation }: Props): React.JSX.Eleme
     <AuthScreenContainer testID="get-started">
       <AuthBrandBand />
       <Text style={styles.title}>{TITLE}</Text>
+      <Text style={styles.lead}>{INTRO}</Text>
       <Text style={styles.lead}>{LEAD}</Text>
       <Text style={styles.body}>{BODY}</Text>
       <CalloutBand label={BUY_LABEL} onPress={handleBuy} testID="get-started-buy" />

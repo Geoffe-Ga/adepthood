@@ -21,3 +21,21 @@ describe('Safari Add to Home Screen icon', () => {
     expect(png.readUInt32BE(20)).toBe(180);
   });
 });
+
+describe('social share preview', () => {
+  it('exposes a public preview to crawlers before JavaScript runs', () => {
+    const html = readFileSync(resolve(__dirname, '../public/index.html'), 'utf8');
+    const head = html.split('</head>')[0];
+    const image = readFileSync(resolve(__dirname, '../public/social-preview.png'));
+
+    expect(head).toContain('property="og:type" content="website"');
+    expect(head).toContain('property="og:url" content="https://app.aptitude.guru/"');
+    expect(head).toContain('name="twitter:card" content="summary_large_image"');
+    for (const key of ['property="og:image"', 'name="twitter:image"']) {
+      expect(head).toContain(`${key} content="https://app.aptitude.guru/social-preview.png"`);
+    }
+    expect(image.subarray(0, 8).toString('hex')).toBe('89504e470d0a1a0a');
+    expect(image.readUInt32BE(16)).toBe(1200);
+    expect(image.readUInt32BE(20)).toBe(630);
+  });
+});
