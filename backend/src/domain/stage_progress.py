@@ -12,6 +12,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import col, select
 
 from domain.constants import TOTAL_STAGES
+from domain.dates import ensure_aware, to_user_date
+from domain.program_calendar import resolve_program_anchor
+from domain.program_pass import first_pass
 from domain.stage_authority import open_through
 from models.content_completion import ContentCompletion
 from models.course_stage import CourseStage
@@ -24,6 +27,7 @@ from models.stage_content import StageContent
 from models.stage_progress import StageProgress
 from models.user_practice import UserPractice
 from schemas.stage import CadenceUnit, HabitHistoryItem, PracticeHistoryItem
+from services.users import get_user_timezone
 
 # The stage every user starts at, and the only stage a row is ever created at.
 _STAGE_1 = 1
@@ -68,14 +72,23 @@ async def ensure_user_progress(session: AsyncSession, user_id: int) -> StageProg
     SAVEPOINT race must re-read the winner's committed row, and ``get_session``
     does not auto-commit. Callers must therefore not hold uncommitted writes
     across this call. Mirrors ``_create_initial_progress`` in ``stages.py``.
+
+    The new row opens the account's live pass 1 (``first_run``, issue #3723) in
+    the same SAVEPOINT, dated in the account's zone from the row's own anchor, so
+    a lost race discards both together and the winner's pass is the only one.
     """
     progress = await get_user_progress(session, user_id)
     if progress is not None:
         return progress
+    tz = await get_user_timezone(session, user_id)
     progress = StageProgress(user_id=user_id, current_stage=_STAGE_1, completed_stages=[])
+    opening = first_pass(
+        user_id,
+        started_on=to_user_date(tz, ensure_aware(resolve_program_anchor(progress))),
+    )
     try:
         async with session.begin_nested():
-            session.add(progress)
+            session.add_all([progress, opening])
         await session.commit()
         await session.refresh(progress)
     except IntegrityError as exc:

@@ -19,6 +19,7 @@ from domain.constants import STAGE_START_WEEKS, TOTAL_STAGES
 from domain.creek_vault import CreekVaultClient
 from domain.dates import day_bounds_in_tz, ensure_aware, to_user_date, today_in_tz
 from domain.program_calendar import calendar_stage, calendar_week, resolve_program_anchor
+from domain.program_pass import begin_next_pass, move_live_pass_start
 from domain.program_start import ProgramStartBounds, program_start_bounds, verdict_within
 from domain.stage_authority import reanchor_program, record_stage_entry
 from domain.stage_keys import STAGE_KEYS
@@ -383,6 +384,10 @@ async def set_program_start(
     Invitations already consumed stay consumed: a habit ring revealed under the
     old date is neither re-locked nor re-stamped.
 
+    The live pass (issue #3723) starts on the chosen day too, in the same
+    commit, so the record of this first pass measures from the date the person
+    actually began.
+
     Refused with 422 outside the range :mod:`domain.program_start` defines, and
     with 409 ``program_start_fixed_after_first_cycle`` once begin-again has run,
     because a later cycle's anchor is also its predecessor's recorded end.
@@ -395,6 +400,7 @@ async def set_program_start(
         raise conflict("program_start_fixed_after_first_cycle")
     anchor, _ = day_bounds_in_tz(user_tz, chosen)
     reanchor_program(progress, anchor, tz=user_tz)
+    await move_live_pass_start(session, current_user, chosen)
     session.add(progress)
     await session.commit()
     await session.refresh(progress)
@@ -493,7 +499,7 @@ def _retained_anchors(existing: StageProgress) -> list[str | None]:
     return [*_padded_anchors(existing), anchor.isoformat()]
 
 
-def _loop_to_next_cycle(existing: StageProgress) -> StageProgressRecord:
+def _loop_to_next_cycle(existing: StageProgress, now: datetime) -> StageProgressRecord:
     """Mutate a completed-cycle row in place for the next loop, returning its record.
 
     Retains the OUTGOING cycle's calendar anchor on ``past_cycle_anchors``
@@ -509,8 +515,11 @@ def _loop_to_next_cycle(existing: StageProgress) -> StageProgressRecord:
     silently discarded by the caller's commit. Both writes ride that one commit
     and the same ``FOR UPDATE`` row lock, so there is no instant in which the
     cycle advanced and its anchor did not survive.
+
+    ``now`` is passed in rather than read here so the pass record written
+    alongside (issue #3723) dates the incoming pass from the very instant that
+    becomes its anchor.
     """
-    now = datetime.now(UTC)
     existing.past_cycle_anchors = _retained_anchors(existing)
     existing.cycle_number += 1
     existing.current_stage = _FIRST_STAGE
@@ -530,6 +539,7 @@ def _loop_to_next_cycle(existing: StageProgress) -> StageProgressRecord:
 async def begin_again(
     current_user: Annotated[int, Depends(get_current_user)],
     session: Annotated[AsyncSession, Depends(get_session)],
+    user_tz: Annotated[str, Depends(current_user_timezone)],
 ) -> StageProgressRecord:
     """Loop the caller's completed program back to stage 1 as a new cycle.
 
@@ -544,6 +554,10 @@ async def begin_again(
     during that cycle can still be windowed against the calendar it was written
     about instead of losing its period forever.
 
+    The pass record moves in that commit too (issue #3723): the live pass is
+    closed the day before today in the caller's zone, with the stage and week it
+    reached measured from its own start, and the next pass opens today.
+
     Journal, habit streaks, goal completions, practice sessions, and energy are
     all untouched: the carry-over is automatic and there is no penalty. A user
     mid-cycle (``current_stage < TOTAL_STAGES``) is rejected with
@@ -557,7 +571,9 @@ async def begin_again(
     if existing.current_stage < TOTAL_STAGES:
         raise conflict("cycle_not_complete")
 
-    record = _loop_to_next_cycle(existing)
+    now = datetime.now(UTC)
+    await begin_next_pass(session, existing, now=now, tz=user_tz)
+    record = _loop_to_next_cycle(existing, now)
     session.add(existing)
     await session.commit()
     await session.refresh(existing)

@@ -46,6 +46,7 @@ from .practice_session import PracticeSession
 from .practice_session_idempotency import PracticeSessionSpend
 from .practice_share_link import PracticeShareLink
 from .practice_tag import PracticeTag
+from .program_pass import PassOrigin, ProgramPass
 from .promoted_quote import PromotedQuote
 from .prompt_dismissal import PromptDismissal
 from .prompt_response import PromptResponse
@@ -112,6 +113,7 @@ __all__ = [
     "OAuthAuthorizationCode",
     "OAuthClient",
     "OAuthRefreshToken",
+    "PassOrigin",
     "PasswordResetToken",
     "Practice",
     "PracticeRecipe",
@@ -120,6 +122,7 @@ __all__ = [
     "PracticeSessionSpend",
     "PracticeShareLink",
     "PracticeTag",
+    "ProgramPass",
     "PromotedQuote",
     "PromptDismissal",
     "PromptResponse",

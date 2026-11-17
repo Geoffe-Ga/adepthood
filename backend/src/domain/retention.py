@@ -573,6 +573,7 @@ RETENTION: Mapping[str, RetentionRule] = {
         )
     ),
     "practicetag": until_account_deletion("Tags the account defined."),
+    "programpass": until_account_deletion("Each pass the account made through the stages."),
     "promotedquote": until_account_deletion(
         "Passages the account promoted, each anchored to an entry, a letter, or a Course "
         "chapter, encrypted at rest. A letter quote goes with its margin note; a Course "
