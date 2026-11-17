@@ -1,8 +1,14 @@
 """Read-only whole-person calendar and engagement series."""
 
 from datetime import date, datetime
+from typing import Literal
 
 from pydantic import BaseModel, Field
+
+from models.program_pass import PassOrigin
+
+#: ``pending`` -- starts on a later day; ``live`` -- running now; ``ended`` -- closed.
+PassState = Literal["pending", "live", "ended"]
 
 
 class ArcStage(BaseModel):
@@ -52,6 +58,56 @@ class HabitBirth(BaseModel):
     unit_histories: list[HabitUnitHistory] = Field(default_factory=list)
 
 
+class PassMarker(BaseModel):
+    """A habit's most recent unlock in one pass, at the number it carried then."""
+
+    habit_id: int
+    name: str
+    icon: str
+    program_number: int = Field(
+        ge=1, description="The habit's program number stored on that unlock event."
+    )
+    week: int = Field(
+        ge=1, le=36, description="Week of the unlock, counted from this pass's own start."
+    )
+    unlocked_on: date = Field(description="The account-zone day of the unlock.")
+    currently_locked: bool = Field(
+        description=(
+            "True when the habit's latest event in this pass is a re-lock, "
+            "or the habit is locked now."
+        )
+    )
+
+
+class ArcPass(BaseModel):
+    """One recorded pass through the ten stages, measured from its own start."""
+
+    pass_number: int = Field(ge=1)
+    started_on: date
+    ended_on: date | None = Field(
+        description="The last day the pass ran; null while it is live or pending."
+    )
+    origin: PassOrigin
+    state: PassState = Field(
+        description="pending: starts on a later day; live: running now; ended: closed."
+    )
+    days_until_start: int = Field(ge=0, description="Whole days until a pending pass begins.")
+    reached_stage: int | None = Field(
+        ge=1,
+        le=10,
+        description="Stage reached; the stage as of today for a live pass; null when pending.",
+    )
+    reached_week: int | None = Field(
+        ge=1,
+        le=36,
+        description="Week reached; the current week for a live pass; null when pending.",
+    )
+    completed: bool = Field(description="Ran to the final day of stage 10. Display only.")
+    markers: list[PassMarker] = Field(
+        description="One per habit unlocked in this pass, ordered by week then program number."
+    )
+
+
 class ProgressArc(BaseModel):
     """The live programme anchor and its ten-stage shape."""
 
@@ -61,6 +117,12 @@ class ProgressArc(BaseModel):
     current_week: int | None = Field(ge=1, le=36)
     stages: list[ArcStage]
     habit_births: list[HabitBirth]
+    passes: list[ArcPass] = Field(
+        default_factory=list,
+        description=(
+            "One entry per pass, oldest first; a pending pass is last. Empty with habits off."
+        ),
+    )
 
 
 class RhythmDay(BaseModel):

@@ -27,7 +27,13 @@ from models.habit_unlock_event import HabitUnlockEvent, UnlockKind, UnlockSource
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
 
-__all__ = ["LockChange", "latest_unlocks", "program_numbers", "record_lock_changes"]
+__all__ = [
+    "LockChange",
+    "latest_events",
+    "latest_unlocks",
+    "program_numbers",
+    "record_lock_changes",
+]
 
 
 def _recency(event: HabitUnlockEvent) -> tuple[datetime, int]:
@@ -53,6 +59,16 @@ def latest_unlocks(events: Iterable[HabitUnlockEvent], pass_id: int) -> dict[int
     """
     in_pass = sorted((event for event in events if _is_unlock_in(event, pass_id)), key=_recency)
     # Ascending, so each habit's latest unlock is the last one written to the dict.
+    return {event.habit_id: event for event in in_pass}
+
+
+def latest_events(events: Iterable[HabitUnlockEvent], pass_id: int) -> dict[int, HabitUnlockEvent]:
+    """Per habit, its most recent event of either kind in pass ``pass_id``.
+
+    The lock state the habit was left in within that pass: a re-lock here
+    means the pass's last word on the habit was "locked".
+    """
+    in_pass = sorted((event for event in events if event.pass_id == pass_id), key=_recency)
     return {event.habit_id: event for event in in_pass}
 
 

@@ -319,6 +319,108 @@
         "title": "AppleOAuthRequest",
         "type": "object"
       },
+      "ArcPass": {
+        "description": "One recorded pass through the ten stages, measured from its own start.",
+        "properties": {
+          "completed": {
+            "description": "Ran to the final day of stage 10. Display only.",
+            "title": "Completed",
+            "type": "boolean"
+          },
+          "days_until_start": {
+            "description": "Whole days until a pending pass begins.",
+            "minimum": 0.0,
+            "title": "Days Until Start",
+            "type": "integer"
+          },
+          "ended_on": {
+            "anyOf": [
+              {
+                "format": "date",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The last day the pass ran; null while it is live or pending.",
+            "title": "Ended On"
+          },
+          "markers": {
+            "description": "One per habit unlocked in this pass, ordered by week then program number.",
+            "items": {
+              "$ref": "#/components/schemas/PassMarker"
+            },
+            "title": "Markers",
+            "type": "array"
+          },
+          "origin": {
+            "$ref": "#/components/schemas/PassOrigin"
+          },
+          "pass_number": {
+            "minimum": 1.0,
+            "title": "Pass Number",
+            "type": "integer"
+          },
+          "reached_stage": {
+            "anyOf": [
+              {
+                "maximum": 10.0,
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Stage reached; the stage as of today for a live pass; null when pending.",
+            "title": "Reached Stage"
+          },
+          "reached_week": {
+            "anyOf": [
+              {
+                "maximum": 36.0,
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Week reached; the current week for a live pass; null when pending.",
+            "title": "Reached Week"
+          },
+          "started_on": {
+            "format": "date",
+            "title": "Started On",
+            "type": "string"
+          },
+          "state": {
+            "description": "pending: starts on a later day; live: running now; ended: closed.",
+            "enum": [
+              "pending",
+              "live",
+              "ended"
+            ],
+            "title": "State",
+            "type": "string"
+          }
+        },
+        "required": [
+          "pass_number",
+          "started_on",
+          "ended_on",
+          "origin",
+          "state",
+          "days_until_start",
+          "reached_stage",
+          "reached_week",
+          "completed",
+          "markers"
+        ],
+        "title": "ArcPass",
+        "type": "object"
+      },
       "ArcStage": {
         "description": "One canonical stage with an honest, possibly unknown opening date.",
         "properties": {
@@ -6257,6 +6359,69 @@
         "title": "Page[FeedbackTriageSummary]",
         "type": "object"
       },
+      "PassMarker": {
+        "description": "A habit's most recent unlock in one pass, at the number it carried then.",
+        "properties": {
+          "currently_locked": {
+            "description": "True when the habit's latest event in this pass is a re-lock, or the habit is locked now.",
+            "title": "Currently Locked",
+            "type": "boolean"
+          },
+          "habit_id": {
+            "title": "Habit Id",
+            "type": "integer"
+          },
+          "icon": {
+            "title": "Icon",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "program_number": {
+            "description": "The habit's program number stored on that unlock event.",
+            "minimum": 1.0,
+            "title": "Program Number",
+            "type": "integer"
+          },
+          "unlocked_on": {
+            "description": "The account-zone day of the unlock.",
+            "format": "date",
+            "title": "Unlocked On",
+            "type": "string"
+          },
+          "week": {
+            "description": "Week of the unlock, counted from this pass's own start.",
+            "maximum": 36.0,
+            "minimum": 1.0,
+            "title": "Week",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "habit_id",
+          "name",
+          "icon",
+          "program_number",
+          "week",
+          "unlocked_on",
+          "currently_locked"
+        ],
+        "title": "PassMarker",
+        "type": "object"
+      },
+      "PassOrigin": {
+        "description": "How a pass began.",
+        "enum": [
+          "first_run",
+          "rescaffold",
+          "begin_again",
+          "backfill"
+        ],
+        "title": "PassOrigin",
+        "type": "string"
+      },
       "PassProvenance": {
         "description": "Who answered each operation of a resonance pass, and who paid for it (#3062).\n\n``notes`` is the reflection -- including one that answered with nothing, so\nan empty pass still says which source was empty. ``detection`` is the\ncompletion check, with ``detection_checked`` saying whether it actually\nreturned. ``paid_by`` is ``free`` for a demo and for a refunded empty pass,\n``own_key`` when the caller's key paid, and ``wallet`` when the deduction\nstands.\n\n``own_key_vendor`` is set only when the caller's own key was relayed to\ntheir vault and the vault wrote the notes with it (#3437): the vendor of\nthat key, so the client can say \"Written by your own Anthropic key, through\nyour vault\". ``None`` on every other pass.",
         "properties": {
@@ -7639,6 +7804,14 @@
               "$ref": "#/components/schemas/HabitBirth"
             },
             "title": "Habit Births",
+            "type": "array"
+          },
+          "passes": {
+            "description": "One entry per pass, oldest first; a pending pass is last. Empty with habits off.",
+            "items": {
+              "$ref": "#/components/schemas/ArcPass"
+            },
+            "title": "Passes",
             "type": "array"
           },
           "program_started_at": {

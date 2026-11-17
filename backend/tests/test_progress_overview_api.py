@@ -13,8 +13,10 @@ from sqlmodel import select
 from models.goal import Goal
 from models.goal_completion import GoalCompletion
 from models.habit import Habit
+from models.habit_unlock_event import HabitUnlockEvent, UnlockKind, UnlockSource
 from models.practice import Practice
 from models.practice_session import PracticeSession
+from models.program_pass import PassOrigin, ProgramPass
 from models.stage_progress import StageProgress
 from models.user_depth_preferences import UserDepthPreferences
 from models.user_practice import UserPractice
@@ -62,6 +64,35 @@ async def _habit(session: AsyncSession, owner: int) -> tuple[Habit, Goal]:
     await session.refresh(habit)
     await session.refresh(goal)
     return habit, goal
+
+
+async def _passes_for(
+    session: AsyncSession, owner: int, stranger: int
+) -> tuple[ProgramPass, ProgramPass]:
+    """A live pass 1 each for ``owner`` and ``stranger`` (the stranger's is a backfill)."""
+    own = ProgramPass(
+        user_id=owner, pass_number=1, started_on=date(2026, 1, 5), origin=PassOrigin.FIRST_RUN
+    )
+    foreign = ProgramPass(
+        user_id=stranger, pass_number=1, started_on=date(2026, 1, 5), origin=PassOrigin.BACKFILL
+    )
+    session.add_all([own, foreign])
+    await session.flush()
+    return own, foreign
+
+
+def _unlock(user_id: int, habit: Habit, pass_: ProgramPass, number: int) -> HabitUnlockEvent:
+    """An unlock on the programme's first day, stamped ``user_id``."""
+    return HabitUnlockEvent(
+        user_id=user_id,
+        habit_id=habit.id,
+        pass_id=pass_.id,
+        kind=UnlockKind.UNLOCKED,
+        occurred_at=datetime(2026, 1, 5, 9, tzinfo=UTC),
+        local_day=date(2026, 1, 5),
+        program_number=number,
+        source=UnlockSource.MANUAL,
+    )
 
 
 @pytest.mark.asyncio
@@ -133,9 +164,31 @@ async def test_overview_rejects_other_owners_history_at_every_join(
     db_session.add(
         PracticeSession(user_id=owner, user_practice_id=selected.id, duration_minutes=500)
     )
+    own_pass, foreign_pass = await _passes_for(db_session, owner, stranger)
+    foreign_habit = (
+        await db_session.execute(select(Habit).where(Habit.user_id == stranger))
+    ).scalar_one()
+    db_session.add_all(
+        [
+            _unlock(owner, own_habit, own_pass, 1),
+            # Owner-stamped events bridging to the stranger's pass or habit.
+            _unlock(owner, own_habit, foreign_pass, 7),
+            _unlock(owner, foreign_habit, own_pass, 8),
+            # Stranger-stamped events pointing at the owner's pass and habit.
+            _unlock(stranger, own_habit, own_pass, 9),
+            _unlock(stranger, foreign_habit, foreign_pass, 1),
+        ]
+    )
     await db_session.commit()
     body = (await async_client.get("/progress/overview", headers=headers)).json()
     assert [birth["habit_id"] for birth in body["arc"]["habit_births"]] == [own_habit.id]
+    assert [(row["pass_number"], row["origin"]) for row in body["arc"]["passes"]] == [
+        (1, "first_run")
+    ]
+    assert [
+        (marker["habit_id"], marker["program_number"])
+        for marker in body["arc"]["passes"][0]["markers"]
+    ] == [(own_habit.id, 1)]
     assert sum(week["net"] for week in body["energy"]["weeks"]) == 0
     assert body["rhythm"]["days"][0]["daily_met"] == 1
 

@@ -16,7 +16,9 @@ if TYPE_CHECKING:
     from models.goal import Goal
     from models.goal_completion import GoalCompletion
     from models.habit import Habit
+    from models.habit_unlock_event import HabitUnlockEvent
     from models.practice_session import PracticeSession
+    from models.program_pass import ProgramPass
     from models.stage_progress import StageProgress
 
 TIER_ORDER = ("low", "clear", "stretch")
@@ -50,6 +52,10 @@ class OverviewInput:
     habit_contexts: dict[int, OverviewHabitContext] = field(default_factory=dict)
     enable_habits: bool = True
     enable_practices: bool = True
+    #: The owner's recorded passes (issue #3726), in any order.
+    passes: Sequence[ProgramPass] = ()
+    #: The owner's unlock-log rows that belong to one of ``passes``.
+    unlock_events: Sequence[HabitUnlockEvent] = ()
 
 
 def minimum_goal(goals: Sequence[Goal]) -> Goal | None:
