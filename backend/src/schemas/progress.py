@@ -73,8 +73,8 @@ class PassMarker(BaseModel):
     unlocked_on: date = Field(description="The account-zone day of the unlock.")
     currently_locked: bool = Field(
         description=(
-            "True when the habit's latest event in this pass is a re-lock, "
-            "or the habit is locked now."
+            "Ended pass: the habit's latest event in this pass is a re-lock "
+            "(locked at the pass's end). Live pass: that, or the habit is locked now."
         )
     )
 
@@ -120,7 +120,8 @@ class ProgressArc(BaseModel):
     passes: list[ArcPass] = Field(
         default_factory=list,
         description=(
-            "One entry per pass, oldest first; a pending pass is last. Empty with habits off."
+            "One entry per pass, oldest first; at most one is pending, and it is last. "
+            "Empty with habits off."
         ),
     )
 

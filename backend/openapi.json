@@ -6363,7 +6363,7 @@
         "description": "A habit's most recent unlock in one pass, at the number it carried then.",
         "properties": {
           "currently_locked": {
-            "description": "True when the habit's latest event in this pass is a re-lock, or the habit is locked now.",
+            "description": "Ended pass: the habit's latest event in this pass is a re-lock (locked at the pass's end). Live pass: that, or the habit is locked now.",
             "title": "Currently Locked",
             "type": "boolean"
           },
@@ -7807,7 +7807,7 @@
             "type": "array"
           },
           "passes": {
-            "description": "One entry per pass, oldest first; a pending pass is last. Empty with habits off.",
+            "description": "One entry per pass, oldest first; at most one is pending, and it is last. Empty with habits off.",
             "items": {
               "$ref": "#/components/schemas/ArcPass"
             },

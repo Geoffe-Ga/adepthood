@@ -64,8 +64,14 @@ def _not_begun(number: int, started_on: date, origin: PassOrigin, today: date) -
 def _marker(
     row: ProgramPass, unlock: HabitUnlockEvent, habit: Habit, last: HabitUnlockEvent
 ) -> PassMarker:
-    """``habit``'s marker at ``unlock``, placed in ``row``'s own weeks."""
+    """``habit``'s marker at ``unlock``, placed in ``row``'s own weeks.
+
+    Locked means "locked at the pass's end" for an ended pass -- its last event
+    on the habit is a re-lock -- and the present state for the live pass,
+    which also counts a habit that is locked now.
+    """
     elapsed = max(0, (unlock.local_day - row.started_on).days)
+    locked_now = row.ended_on is None and not habit.revealed
     return PassMarker(
         habit_id=unlock.habit_id,
         name=habit.name,
@@ -73,7 +79,7 @@ def _marker(
         program_number=unlock.program_number,
         week=PROGRAM_CALENDAR.week_on(elapsed),
         unlocked_on=unlock.local_day,
-        currently_locked=last.kind == UnlockKind.RELOCKED or not habit.revealed,
+        currently_locked=last.kind == UnlockKind.RELOCKED or locked_now,
     )
 
 
@@ -151,13 +157,20 @@ def _pending_number(cycle_number: int, rows: Sequence[ProgramPass]) -> int:
     return highest + 1
 
 
+def _any_not_begun(rows: Sequence[ProgramPass], today: date) -> bool:
+    """Whether a recorded pass is itself still ahead (a first-cycle future start)."""
+    return any(_state(row, today) == "pending" for row in rows)
+
+
 def _pending(data: OverviewInput, rows: Sequence[ProgramPass]) -> ArcPass | None:
     """The pass a future scaffolding save is holding; it has no row until its day.
 
-    See :mod:`domain.pass_rescaffold`.
+    See :mod:`domain.pass_rescaffold`. At most one entry is ever pending: when
+    a recorded pass has not begun either, that one starts first and is the
+    entry drawn as ahead; the held save behind it is not drawn until it opens.
     """
     starts_on = _pending_day(data)
-    if starts_on is None or data.progress is None:
+    if starts_on is None or data.progress is None or _any_not_begun(rows, data.today):
         return None
     number = _pending_number(data.progress.cycle_number, rows)
     return _not_begun(number, starts_on, PassOrigin.RESCAFFOLD, data.today)

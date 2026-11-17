@@ -1,4 +1,9 @@
-"""Authorized, uncached whole-person series without provisioning side effects."""
+"""Authorized, uncached whole-person series.
+
+The read never provisions a progress row. Its one write is settling: a pending
+pass whose day has come is opened (and committed) before the series are read,
+as every other "person is present" reader does (issue #3725).
+"""
 
 from collections import defaultdict
 from collections.abc import Sequence

@@ -8,6 +8,10 @@ here reads the live anchor for an earlier pass, so moving it cannot move them.
 from dataclasses import replace
 from datetime import UTC, date, datetime, timedelta
 
+import pytest
+
+from domain.constants import STAGE_DURATIONS_DAYS
+from domain.program_pass import PROGRAM_CALENDAR, close_pass
 from domain.progress_overview import OverviewInput, build_progress_overview
 from domain.progress_passes import arc_passes
 from models.habit import Habit
@@ -340,3 +344,53 @@ def test_existing_arc_fields_are_untouched_by_passes() -> None:
     shipped = build_progress_overview(without).arc.model_dump(exclude={"passes"})
     assert build_progress_overview(with_passes).arc.model_dump(exclude={"passes"}) == shipped
     assert build_progress_overview(without).arc.passes == []
+
+
+def test_an_ended_pass_ignores_the_habits_lock_today() -> None:
+    """Unlocked in pass 1 and locked now: pass 1 ended with it open, so it is not locked there."""
+    first, _, third = _three_passes()
+    events = [_event(1, first, FIRST, number=1)]
+    result = arc_passes(_input([first, third], events, [_habit(1, revealed=False)]))
+    assert result[0].markers[0].currently_locked is False
+
+
+def test_an_ended_pass_keeps_a_relock_at_its_end_after_a_later_reopen() -> None:
+    """Re-locked at the end of pass 1 and reopened in pass 3: still locked on pass 1."""
+    first, _, third = _three_passes()
+    events = [
+        _event(1, first, FIRST, number=1),
+        _event(1, first, SECOND - timedelta(days=2), number=1, kind=UnlockKind.RELOCKED),
+        _event(1, third, THIRD + timedelta(days=4), number=1),
+    ]
+    result = arc_passes(_input([first, third], events))
+    assert result[0].markers[0].currently_locked is True
+    assert result[1].markers[0].currently_locked is False
+
+
+def test_a_future_first_pass_and_a_held_save_draw_one_pending_entry() -> None:
+    """Never two pending rows: the pass that starts first is the one shown as ahead."""
+    ahead = _pass(1, TODAY + timedelta(days=5), origin=PassOrigin.FIRST_RUN)
+    result = arc_passes(_input([ahead], [], pending=TODAY + timedelta(days=40)))
+    assert [(row.pass_number, row.state) for row in result] == [(1, "pending")]
+    assert result[0].started_on == TODAY + timedelta(days=5)
+
+
+@pytest.mark.parametrize(
+    "elapsed",
+    [
+        0,
+        STAGE_DURATIONS_DAYS[0],
+        PROGRAM_CALENDAR.total_days - 1,
+        PROGRAM_CALENDAR.total_days,
+    ],
+)
+def test_a_live_pass_reaches_what_closing_it_today_would_record(elapsed: int) -> None:
+    """Live ``reached_*`` and ``completed`` match ``close_pass(ended_on=today)`` exactly."""
+    started_on = TODAY - timedelta(days=elapsed)
+    (row,) = arc_passes(_input([_pass(1, started_on)], []))
+    closed = close_pass(_pass(1, started_on), ended_on=TODAY, calendar=PROGRAM_CALENDAR)
+    assert (row.reached_stage, row.reached_week, row.completed) == (
+        closed.reached_stage,
+        closed.reached_week,
+        closed.completed,
+    )

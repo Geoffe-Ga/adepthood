@@ -379,3 +379,52 @@ async def test_passes_and_events_are_each_read_once_however_many_habits(
     assert [len(row["markers"]) for row in body["arc"]["passes"]] == [5, 5, 5]
     assert len(pass_reads) == 1
     assert len(event_reads) == 1
+
+
+async def _pass_count(session: AsyncSession, owner: int) -> int:
+    """How many pass rows ``owner`` has, read fresh."""
+    session.expire_all()
+    rows = await session.execute(select(ProgramPass).where(ProgramPass.user_id == owner))
+    return len(rows.scalars().all())
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("pending_in_days", [None, 5])
+async def test_a_read_with_nothing_due_writes_no_pass(
+    async_client: AsyncClient, db_session: AsyncSession, pending_in_days: int | None
+) -> None:
+    """With no pending pass, or one not yet due, the overview creates no pass row."""
+    headers, owner = await _signup(async_client, f"passes_no_write_{pending_in_days}")
+    await _three_passes(db_session, owner)
+    progress = (
+        await db_session.execute(select(StageProgress).where(StageProgress.user_id == owner))
+    ).scalar_one()
+    if pending_in_days is not None:
+        progress.pending_pass_starts_on = today_in_tz("UTC") + timedelta(days=pending_in_days)
+    db_session.add(progress)
+    await db_session.commit()
+
+    await _overview(async_client, headers)
+    await _overview(async_client, headers)
+
+    assert await _pass_count(db_session, owner) == 3
+
+
+@pytest.mark.asyncio
+async def test_settling_writes_one_pass_and_a_second_read_writes_none(
+    async_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """The first read opens the arrived pass once; the next read adds nothing."""
+    headers, owner = await _signup(async_client, "passes_settle_once")
+    await _three_passes(db_session, owner)
+    progress = (
+        await db_session.execute(select(StageProgress).where(StageProgress.user_id == owner))
+    ).scalar_one()
+    progress.pending_pass_starts_on = today_in_tz("UTC")
+    db_session.add(progress)
+    await db_session.commit()
+
+    await _overview(async_client, headers)
+    assert await _pass_count(db_session, owner) == 4
+    await _overview(async_client, headers)
+    assert await _pass_count(db_session, owner) == 4
