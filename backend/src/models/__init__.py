@@ -25,6 +25,7 @@ from .goal_group import GoalGroup
 from .goal_log_event import GoalLogEvent
 from .gumroad_sale import GumroadSale
 from .habit import Habit
+from .habit_unlock_event import HabitUnlockEvent, UnlockKind, UnlockSource
 from .invitation_signal import InvitationSignal
 from .journal_entry import JournalEntry
 from .journal_withdrawal_note import JournalWithdrawalNote
@@ -99,6 +100,7 @@ __all__ = [
     "GoalLogEvent",
     "GumroadSale",
     "Habit",
+    "HabitUnlockEvent",
     "InvitationSignal",
     "JournalEntry",
     "JournalWithdrawalNote",
@@ -131,6 +133,8 @@ __all__ = [
     "RevokedToken",
     "StageContent",
     "StageProgress",
+    "UnlockKind",
+    "UnlockSource",
     "User",
     "UserDepthPreferences",
     "UserPractice",

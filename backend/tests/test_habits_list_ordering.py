@@ -16,6 +16,7 @@ from __future__ import annotations
 
 from collections.abc import Iterator
 from contextlib import contextmanager
+from datetime import timedelta
 from http import HTTPStatus
 
 import pytest
@@ -27,7 +28,11 @@ from sqlalchemy.engine.url import make_url
 from sqlalchemy.sql import ClauseElement, Select
 
 from conftest import test_engine
+from domain.dates import today_in_tz
 from tests.test_habits_api import sample_payload
+
+# Far enough ahead that no zone's "today" has reached the habit's start date.
+_DAYS_AHEAD = 30
 
 # The dialect production actually runs, resolved through the same registry a
 # real ``postgresql+asyncpg://`` URL goes through. Rendering the captured
@@ -83,7 +88,13 @@ async def _signup(client: AsyncClient, username: str = "orderer") -> dict[str, s
 async def test_list_habits_order_by_is_total(async_client: AsyncClient) -> None:
     """The emitted ORDER BY places NULLs first and breaks ties on ``id``."""
     headers = await _signup(async_client)
-    await async_client.post("/habits/", json=sample_payload(name="A"), headers=headers)
+    # A start date still ahead keeps the read from auto-revealing the habit, so
+    # the unlock log's own (equally total) program-number query stays out of
+    # the capture and the one clause left is the list's (#3724).
+    future = (today_in_tz("UTC") + timedelta(days=_DAYS_AHEAD)).isoformat()
+    await async_client.post(
+        "/habits/", json=sample_payload(name="A", start_date=future), headers=headers
+    )
     with _record_habit_list_order_by() as clauses:
         resp = await async_client.get("/habits/", headers=headers)
     assert resp.status_code == HTTPStatus.OK

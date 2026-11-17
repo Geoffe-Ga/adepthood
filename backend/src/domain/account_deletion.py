@@ -251,6 +251,9 @@ POLICY: Mapping[str, TablePolicy] = {
         clear_columns=("token_pack_credited_user_id",),
     ),
     "habit": _erase("user_id", "Every habit the account created, and its goals with it."),
+    "habitunlockevent": _erase(
+        "user_id", "Each time one of the account's habits was unlocked or locked again."
+    ),
     "invitationsignal": _erase("user_id", "Which invitations the account was shown or declined."),
     "journalentry": _erase(
         "user_id",

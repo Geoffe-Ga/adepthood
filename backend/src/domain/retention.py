@@ -456,6 +456,9 @@ RETENTION: Mapping[str, RetentionRule] = {
         )
     ),
     "habit": until_account_deletion("The account's habits."),
+    "habitunlockevent": until_account_deletion(
+        "Each time one of the account's habits was unlocked or locked again."
+    ),
     "invitationsignal": until_account_deletion("Which invitations the account saw."),
     "journalentry": until_account_deletion(
         "The writing. A live entry lives until the account is erased.",

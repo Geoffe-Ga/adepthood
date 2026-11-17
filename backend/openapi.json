@@ -20095,7 +20095,7 @@
         ]
       },
       "put": {
-        "description": "Replace a habit; 422 invisible name or a goals block, 409 on rename collision.",
+        "description": "Replace a habit; 422 invisible name or a goals block, 409 on rename collision.\n\nA change of ``revealed`` on a program habit appends to the unlock log (#3724).",
         "operationId": "update_habit_habits__habit_id__put",
         "parameters": [
           {

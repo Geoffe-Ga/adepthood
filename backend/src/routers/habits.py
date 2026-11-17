@@ -22,6 +22,7 @@ from domain.habit_links import (
     assert_units_allowed_if_linked,
     clear_practice_habit_links,
 )
+from domain.habit_unlock_log import LockChange, record_lock_changes
 from domain.ui_flags import clear_writing_habit_links
 from error_responses import build_router
 from errors import conflict, forbidden, not_found, unprocessable
@@ -30,6 +31,7 @@ from models.goal import Goal
 from models.goal_completion import GoalCompletion
 from models.goal_log_event import GoalLogEvent
 from models.habit import Habit
+from models.habit_unlock_event import UnlockSource
 from routers.auth import get_current_user
 from schemas import Page, PaginationParams, build_page
 from schemas.goal import Goal as GoalSchema
@@ -247,9 +249,13 @@ async def _ensure_unique_name(session: AsyncSession, current_user: int, name: st
 
 
 async def _persist_habit_with_goals(
-    session: AsyncSession, habit: Habit, goals: HabitGoalsCreate
+    session: AsyncSession, habit: Habit, goals: HabitGoalsCreate, user_tz: str
 ) -> int:
-    """Insert the habit + its three tier goals in a single savepoint."""
+    """Insert the habit + its three tier goals in a single savepoint.
+
+    A program habit created unlocked logs that unlock in the same savepoint
+    (#3724): its creation is its first unlock.
+    """
     try:
         async with session.begin_nested():
             session.add(habit)
@@ -259,6 +265,13 @@ async def _persist_habit_with_goals(
                 raise RuntimeError(msg)
             for goal in _build_goals(habit.id, habit.name, goals):
                 session.add(goal)
+            if habit.revealed:
+                await record_lock_changes(
+                    session,
+                    habit.user_id,
+                    [habit],
+                    LockChange(UnlockSource.CREATED_UNLOCKED, datetime.now(UTC), user_tz),
+                )
             new_id = habit.id
         await session.commit()
     except IntegrityError as exc:
@@ -334,7 +347,7 @@ async def create_habit(
     await _ensure_under_quota(session, current_user)
     await _ensure_unique_name(session, current_user, canonical_payload.name)
     habit = _new_habit(canonical_payload, current_user)
-    new_id = await _persist_habit_with_goals(session, habit, goals)
+    new_id = await _persist_habit_with_goals(session, habit, goals, user_tz)
     refreshed = await _refetch_with_goals(session, new_id, current_user)
     # Recompute the streak like the list/detail paths so POST mirrors GET instead
     # of returning the model default (0); a subtractive habit can already have a
@@ -407,12 +420,17 @@ async def update_habit(
     current_user: Annotated[int, Depends(get_current_user)],
     session: Annotated[AsyncSession, Depends(get_session)],
     habit: Annotated[Habit, Depends(require_owned_habit)],
+    user_tz: Annotated[str, Depends(current_user_timezone)],
 ) -> Habit:
-    """Replace a habit; 422 invisible name or a goals block, 409 on rename collision."""
+    """Replace a habit; 422 invisible name or a goals block, 409 on rename collision.
+
+    A change of ``revealed`` on a program habit appends to the unlock log (#3724).
+    """
     if payload.goals is not None:
         # Goals are create-only; silently dropping them would read as success.
         raise unprocessable("habit_goals_create_only")
     canonical_payload = payload.model_copy(update={"name": _sanitize_habit_name(payload.name)})
+    lock_changed = canonical_payload.revealed != habit.revealed
     # A manual accept or decline consumes the same one-shot invitation. Without
     # this, an early unlock followed by a re-lock would reopen at eligibility.
     _consume_auto_reveal_on_manual_change(habit, canonical_payload)
@@ -420,6 +438,15 @@ async def update_habit(
         setattr(habit, key, value)
     session.add(habit)
     try:
+        if lock_changed:
+            # Every flip is logged (#3724), in this commit, at the habit's
+            # program number after this request's own move.
+            await record_lock_changes(
+                session,
+                current_user,
+                [habit],
+                LockChange(UnlockSource.MANUAL, datetime.now(UTC), user_tz),
+            )
         await session.commit()
     except IntegrityError as exc:
         # The unique index on (user_id, lower(trim(name))) catches a
