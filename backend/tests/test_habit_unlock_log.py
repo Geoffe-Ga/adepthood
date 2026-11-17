@@ -9,23 +9,27 @@ the ribbon and log nothing. ``auto_revealed_at`` keeps its one-shot meaning.
 
 from __future__ import annotations
 
-from collections.abc import AsyncIterator
-from contextlib import asynccontextmanager
+from collections.abc import AsyncIterator, Iterator
+from contextlib import asynccontextmanager, contextmanager
 from datetime import timedelta
 from http import HTTPStatus
 
 import pytest
 from httpx import AsyncClient
+from sqlalchemy import event as sa_event
 from sqlalchemy import text
+from sqlalchemy.engine import Connection, ExecutionContext
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import col, select
 
+from conftest import test_engine
 from domain.dates import ensure_aware, to_user_date, today_in_tz
 from domain.habit_unlock_log import latest_unlocks
 from domain.program_pass import live_pass
 from domain.stage_progress import ensure_user_progress
 from models.habit import Habit
 from models.habit_unlock_event import HabitUnlockEvent, UnlockKind, UnlockSource
+from routers import habits as habits_router
 
 # UTC+14: the local day differs from the UTC day for ten hours of every day,
 # so a day stamped from the UTC calendar instead of the account's is caught.
@@ -349,3 +353,133 @@ async def test_deleting_a_habit_removes_its_events(
         surviving = [event.habit_id for event in await _events(db_session, user_id)]
 
     assert surviving == [kept["id"]]
+
+
+# ── Atomicity: a refused request leaves no log row behind ──────────────
+
+
+@pytest.mark.asyncio
+async def test_a_refused_rename_rolls_back_its_unlock_row(
+    async_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """Flipping the lock and renaming onto a taken name is one refused change: 409, no row."""
+    headers, user_id = await _signup(async_client, "refused_rename")
+    await _create(async_client, headers, "Run")
+    habit = await _create(async_client, headers, "Walk", sort_order=1)
+
+    resp = await async_client.put(
+        f"/habits/{habit['id']}",
+        json={**_payload("Run"), "revealed": True},
+        headers=headers,
+    )
+
+    assert resp.status_code == HTTPStatus.CONFLICT
+    assert resp.json()["detail"] == "duplicate_habit_name"
+    assert await _events(db_session, user_id) == []
+    persisted = await db_session.get(Habit, habit["id"])
+    assert persisted is not None
+    assert persisted.revealed is False
+
+
+@pytest.mark.asyncio
+async def test_a_duplicate_unlocked_create_logs_nothing(
+    async_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """The pre-check refuses the duplicate before anything is written."""
+    headers, user_id = await _signup(async_client, "duplicate_create")
+    await _create(async_client, headers, "Run")
+
+    resp = await async_client.post(
+        "/habits/", json=_payload("run", revealed=True, sort_order=1), headers=headers
+    )
+
+    assert resp.status_code == HTTPStatus.CONFLICT
+    assert resp.json()["detail"] == "duplicate_habit_name"
+    assert await _events(db_session, user_id) == []
+
+
+@pytest.mark.asyncio
+async def test_a_create_that_loses_the_name_race_logs_nothing(
+    async_client: AsyncClient, db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """With the pre-check raced past, the unique index refuses inside the savepoint: no row."""
+    headers, user_id = await _signup(async_client, "duplicate_race")
+    await _create(async_client, headers, "Run")
+
+    async def _race_past(*_args: object) -> None:
+        """Stand in for a concurrent request whose pre-check ran before the winner's insert."""
+
+    monkeypatch.setattr(habits_router, "_ensure_unique_name", _race_past)
+    resp = await async_client.post(
+        "/habits/", json=_payload("run", revealed=True, sort_order=1), headers=headers
+    )
+
+    assert resp.status_code == HTTPStatus.CONFLICT
+    assert resp.json()["detail"] == "duplicate_habit_name"
+    assert await _events(db_session, user_id) == []
+
+
+# ── One list read opening several habits ────────────────────────────────
+
+
+@contextmanager
+def _selects_starting(prefix: str) -> Iterator[list[str]]:
+    """Collect every executed SQL statement that begins with ``prefix``."""
+    seen: list[str] = []
+
+    def _before_cursor_execute(
+        _conn: Connection,
+        _cursor: object,
+        statement: str,
+        _params: object,
+        _context: ExecutionContext,
+        _executemany: bool,
+    ) -> None:
+        if statement.lstrip().startswith(prefix):
+            seen.append(statement)
+
+    sync_engine = test_engine.sync_engine
+    sa_event.listen(sync_engine, "before_cursor_execute", _before_cursor_execute)
+    try:
+        yield seen
+    finally:
+        sa_event.remove(sync_engine, "before_cursor_execute", _before_cursor_execute)
+
+
+@pytest.mark.asyncio
+async def test_one_read_opening_several_habits_logs_each_at_its_own_number(
+    async_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """Three habits open in one list read: three rows, numbered 1, 3 and 4.
+
+    A still-future habit holds slot 2, so the numbers are positions, not a count
+    of what opened. The program numbers and the live pass are each read once
+    for the whole batch, however many habits open.
+    """
+    headers, user_id = await _signup(async_client, "batch_reveal")
+    pass_id = await _live_pass_id(db_session, user_id)
+    past = (today_in_tz(_FAR_EAST_TZ) - timedelta(days=1)).isoformat()
+    opened = [
+        await _create(async_client, headers, "First", start_date=past, sort_order=0),
+        await _create(async_client, headers, "Third", start_date=past, sort_order=2),
+        await _create(async_client, headers, "Fourth", start_date=past, sort_order=3),
+    ]
+    await _create(async_client, headers, "Second", sort_order=1)
+
+    with (
+        _selects_starting("SELECT habit.id \nFROM habit") as number_reads,
+        _selects_starting("SELECT programpass.") as pass_reads,
+    ):
+        listed = await async_client.get("/habits/", headers=headers)
+    assert listed.status_code == HTTPStatus.OK
+
+    events = await _events(db_session, user_id)
+    assert {(event.habit_id, event.program_number) for event in events} == {
+        (opened[0]["id"], 1),
+        (opened[1]["id"], 3),
+        (opened[2]["id"], 4),
+    }
+    assert {event.source for event in events} == {UnlockSource.AUTO_REVEAL}
+    assert {event.pass_id for event in events} == {pass_id}
+    assert len(number_reads) == 1
+    assert len(pass_reads) == 1

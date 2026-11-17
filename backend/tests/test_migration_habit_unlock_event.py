@@ -385,3 +385,22 @@ def test_deleting_a_habit_deletes_its_events(migration_config: Config) -> None:
         conn.execute(text("DELETE FROM habit WHERE id = 1"))
 
     assert [row[0] for row in _events(migration_config)] == [2]
+
+
+@pytest.mark.parametrize(
+    "tz", [pytest.param("Not/AZone", id="unknown"), pytest.param("", id="empty")]
+)
+def test_a_zone_the_runtime_cannot_load_counts_in_utc(migration_config: Config, tz: str) -> None:
+    """An unknown or empty zone falls back to UTC, the app's own default.
+
+    23:30 UTC on 31 May is still 31 May in UTC, so the unlock lands in pass 1.
+    """
+    _account(migration_config, 1, tz=tz)
+    _habit(migration_config, _Habit(1, auto_revealed_at="2026-05-31 23:30:00.000000"))
+    _habit(migration_config, _Habit(2, sort_order=1, completions=(("2026-03-04", 1),)))
+
+    command.upgrade(migration_config, _REVISION)
+
+    stamped, completed = _events(migration_config)
+    assert stamped[1:4] == (_PASS_ONE + 100, "unlocked", date(2026, 5, 31))
+    assert completed[6] == datetime(2026, 3, 4, tzinfo=UTC)
