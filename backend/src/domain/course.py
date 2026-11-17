@@ -5,9 +5,13 @@ from __future__ import annotations
 import logging
 import math
 from datetime import UTC, datetime
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
-from domain.dates import ensure_aware
+from domain.dates import ensure_aware, to_user_date
+from domain.program_calendar import calendar_day_in_stage, days_until_start, effective_anchor
+
+if TYPE_CHECKING:
+    from models.stage_progress import StageProgress
 
 logger = logging.getLogger(__name__)
 
@@ -26,6 +30,48 @@ def compute_days_elapsed(stage_started_at: datetime) -> int:
         )
         return 0
     return delta.days
+
+
+#: The drip day of a program that has not begun: before day 1, so no chapter is open.
+NOT_BEGUN_DAY = 0
+
+
+def drip_day_in_stage(
+    progress: StageProgress,
+    stage_number: int,
+    *,
+    duration_days: int,
+    tz: str,
+    now: datetime | None = None,
+) -> int:
+    """The 1-based day ``progress`` stands on within ``stage_number`` for the drip.
+
+    The one rule the Course listing and the reading invitations share, so a
+    chapter the listing withholds is never recommended. Advancement is honored
+    so time can only widen access, never revoke it:
+
+    - a **past** stage returns its full ``duration_days`` → every chapter open;
+    - a program that has **not begun** (its start is still ahead, issue #3725)
+      returns :data:`NOT_BEGUN_DAY` → stage 1's first chapter waits for the day;
+    - the **current** stage runs on whichever is further along, the program
+      calendar or how long the user has actually sat on the stage;
+    - a **not-yet-current** stage the calendar has already opened uses the
+      calendar day.
+
+    The calendar counts from :func:`domain.program_calendar.effective_anchor`,
+    so while a pass is pending the running one keeps pacing the Course.
+    """
+    if progress.current_stage > stage_number:
+        return duration_days
+    moment = now if now is not None else datetime.now(UTC)
+    today = to_user_date(tz, ensure_aware(moment))
+    if days_until_start(progress, today, tz=tz) > 0:
+        return NOT_BEGUN_DAY
+    anchor = effective_anchor(progress, today, tz=tz)
+    calendar_day = calendar_day_in_stage(anchor, stage_number, moment, tz=tz)
+    if progress.current_stage == stage_number:
+        return max(calendar_day, compute_days_elapsed(progress.stage_started_at) + 1)
+    return calendar_day
 
 
 def unlocked_chapter_count(*, total: int, duration_days: int, day_in_stage: int) -> int:

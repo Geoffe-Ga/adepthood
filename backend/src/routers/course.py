@@ -18,13 +18,13 @@ from database import get_session
 from dependencies.timezone import current_user_timezone
 from domain.constants import STAGE_DURATIONS_DAYS
 from domain.course import (
-    compute_days_elapsed,
+    drip_day_in_stage,
     enrich_content_item,
     filter_content_for_user,
     next_unlock_day,
     unlocked_chapter_count,
 )
-from domain.program_calendar import calendar_day_in_stage, resolve_program_anchor
+from domain.pass_rescaffold import settle_pending_pass
 from domain.stage_authority import record_stage_entry
 from domain.stage_progress import ensure_user_progress, get_user_progress, is_stage_unlocked
 from domain.ui_flags import advance_course_reading_stage
@@ -108,33 +108,19 @@ async def _day_in_stage_for_user(
     via :func:`ensure_user_progress`, so the clock has a real anchor even
     for users who never explicitly advanced a stage.
 
-    Opening the reading is also how someone shows up inside the program, so
-    entry into whatever window the calendar has opened is recorded here
+    Opening the reading is also how someone shows up inside the program, so a
+    pending pass whose day has come is opened here
+    (:func:`domain.pass_rescaffold.settle_pending_pass`, issue #3725) and entry
+    into whatever window the calendar has opened is recorded
     (:func:`domain.stage_authority.record_stage_entry`) before the drip is
-    measured. It only ever moves the record forward to the calendar, so the
-    ``max`` below still decides the day and no chapter closes because of it.
-
-    Advancement is honored so time can only widen access, never revoke it:
-
-    - a **past** stage returns its full duration → every chapter open;
-    - the **current** stage runs on whichever is further along, the
-      program calendar or how long the user has actually sat on the stage
-      (``max`` of the two), so an early advancer is never penalized;
-    - a **not-yet-current** stage the calendar has already opened uses the
-      calendar day.  This is the fix for the old ``-1``: a stage unlocked
-      by ``calendar_stage`` (ahead of ``current_stage``) used to read as
-      "-1 days", locking every one of its chapters.
+    measured. The day itself is :func:`domain.course.drip_day_in_stage`.
     """
     provisioned = await ensure_user_progress(session, user_id)
-    progress = await record_stage_entry(session, provisioned, tz=tz)
-    duration = _stage_duration_days(stage_number)
-    if progress.current_stage > stage_number:
-        return duration
-    calendar_day = calendar_day_in_stage(resolve_program_anchor(progress), stage_number, tz=tz)
-    if progress.current_stage == stage_number:
-        started_day = compute_days_elapsed(progress.stage_started_at) + 1
-        return max(calendar_day, started_day)
-    return calendar_day
+    settled = await settle_pending_pass(session, provisioned, tz=tz)
+    progress = await record_stage_entry(session, settled, tz=tz)
+    return drip_day_in_stage(
+        progress, stage_number, duration_days=_stage_duration_days(stage_number), tz=tz
+    )
 
 
 async def _stage_content_count(session: AsyncSession, stage_id: int) -> int:

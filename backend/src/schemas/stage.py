@@ -117,7 +117,8 @@ class ProgramStartWindow(BaseModel):
     """The inclusive range of start dates the person may pick (issue #3097).
 
     Both ends are local calendar dates in the person's zone: ``latest`` is
-    today there, ``earliest`` is account creation minus one whole program.
+    one whole program after today there (issue #3725), ``earliest`` is
+    account creation minus one whole program.
     Computed by ``domain.program_start.program_start_bounds``, the same rule
     ``PUT /stages/program-calendar`` enforces, so a picker clamped to it never
     offers a date the server would refuse.
@@ -141,6 +142,15 @@ class ProgramCalendarResponse(BaseModel):
     frontend can seed its "Cycle N" indicator on cold start.
     ``program_start_window`` is the range the person may pick their start
     date from, or null once begin-again has fixed it (cycle 2 and later).
+
+    Issue #3725 adds the pass a scaffolding save opens. ``program_started_at``
+    is the anchor in force today (the running pass's, while another is
+    pending). ``days_until_start`` counts down to that anchor when it is
+    still ahead -- the "not yet begun" state, in which ``calendar_stage`` and
+    ``calendar_week`` read 1 -- and is 0 once begun. ``pending_pass_starts_on``
+    is the day a pass opened for the future will start, null when none is
+    pending. ``pass_start_window`` is the range ``POST /stages/passes``
+    accepts: the program range, floored at the running pass's own start.
     """
 
     program_started_at: datetime | None
@@ -149,6 +159,9 @@ class ProgramCalendarResponse(BaseModel):
     current_stage: int
     cycle_number: int = Field(default=1, ge=1)
     program_start_window: ProgramStartWindow | None = None
+    days_until_start: int = Field(default=0, ge=0)
+    pending_pass_starts_on: date | None = None
+    pass_start_window: ProgramStartWindow | None = None
 
 
 class ProgramStartRequest(BaseModel):
@@ -166,8 +179,27 @@ class ProgramStartRequest(BaseModel):
     program_start_date: date = Field(
         description=(
             "The calendar date the program starts on, in the caller's timezone. "
-            "No later than today and no earlier than one full program before "
-            "account creation."
+            "No later than one full program after today and no earlier than one "
+            "full program before account creation."
+        )
+    )
+
+
+class PassStartRequest(BaseModel):
+    """The day a new pass through the stages starts on (issue #3725).
+
+    A local calendar date in the caller's zone and nothing else -- no pass id,
+    no stage. Closed (``extra="forbid"``) so anything more is refused rather
+    than silently dropped.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    start_day: date = Field(
+        description=(
+            "The calendar date the new pass starts on, in the caller's timezone. "
+            "No earlier than the running pass's start or one full program before "
+            "account creation, and no later than one full program after today."
         )
     )
 

@@ -6304,6 +6304,23 @@
         "title": "PassProvenance",
         "type": "object"
       },
+      "PassStartRequest": {
+        "additionalProperties": false,
+        "description": "The day a new pass through the stages starts on (issue #3725).\n\nA local calendar date in the caller's zone and nothing else -- no pass id,\nno stage. Closed (``extra=\"forbid\"``) so anything more is refused rather\nthan silently dropped.",
+        "properties": {
+          "start_day": {
+            "description": "The calendar date the new pass starts on, in the caller's timezone. No earlier than the running pass's start or one full program before account creation, and no later than one full program after today.",
+            "format": "date",
+            "title": "Start Day",
+            "type": "string"
+          }
+        },
+        "required": [
+          "start_day"
+        ],
+        "title": "PassStartRequest",
+        "type": "object"
+      },
       "PasswordResetAccepted": {
         "description": "Generic 202 response shape for ``request`` -- identical on hit and miss.\n\nThe constant message body is part of the anti-enumeration contract\n(SPEC R4): an attacker who scrapes ``request`` cannot learn whether\nany email is registered because the bytes returned never differ.",
         "properties": {
@@ -7472,7 +7489,7 @@
         "type": "object"
       },
       "ProgramCalendarResponse": {
-        "description": "The server's date-derived program calendar.\n\nExposes the anchor and both answers so the frontend can drop its\nclient-only fallback if desired: ``calendar_stage``/``calendar_week``\nare derived from ``program_started_at`` against the shared\n``STAGE_DURATIONS_DAYS`` schedule and pace what the program *offers*;\n``current_stage`` is the record of what the user has *entered*, which\nthe endpoint brings up to the calendar before answering. Effective\nunlock is ``domain.stage_authority.open_through`` — the union of the\ntwo, never the record alone. ``cycle_number`` is exposed so the\nfrontend can seed its \"Cycle N\" indicator on cold start.\n``program_start_window`` is the range the person may pick their start\ndate from, or null once begin-again has fixed it (cycle 2 and later).",
+        "description": "The server's date-derived program calendar.\n\nExposes the anchor and both answers so the frontend can drop its\nclient-only fallback if desired: ``calendar_stage``/``calendar_week``\nare derived from ``program_started_at`` against the shared\n``STAGE_DURATIONS_DAYS`` schedule and pace what the program *offers*;\n``current_stage`` is the record of what the user has *entered*, which\nthe endpoint brings up to the calendar before answering. Effective\nunlock is ``domain.stage_authority.open_through`` — the union of the\ntwo, never the record alone. ``cycle_number`` is exposed so the\nfrontend can seed its \"Cycle N\" indicator on cold start.\n``program_start_window`` is the range the person may pick their start\ndate from, or null once begin-again has fixed it (cycle 2 and later).\n\nIssue #3725 adds the pass a scaffolding save opens. ``program_started_at``\nis the anchor in force today (the running pass's, while another is\npending). ``days_until_start`` counts down to that anchor when it is\nstill ahead -- the \"not yet begun\" state, in which ``calendar_stage`` and\n``calendar_week`` read 1 -- and is 0 once begun. ``pending_pass_starts_on``\nis the day a pass opened for the future will start, null when none is\npending. ``pass_start_window`` is the range ``POST /stages/passes``\naccepts: the program range, floored at the running pass's own start.",
         "properties": {
           "calendar_stage": {
             "title": "Calendar Stage",
@@ -7491,6 +7508,34 @@
             "minimum": 1.0,
             "title": "Cycle Number",
             "type": "integer"
+          },
+          "days_until_start": {
+            "default": 0,
+            "minimum": 0.0,
+            "title": "Days Until Start",
+            "type": "integer"
+          },
+          "pass_start_window": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ProgramStartWindow"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "pending_pass_starts_on": {
+            "anyOf": [
+              {
+                "format": "date",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pending Pass Starts On"
           },
           "program_start_window": {
             "anyOf": [
@@ -7529,7 +7574,7 @@
         "description": "The person's chosen program start date (issue #3097).\n\nA local calendar date and nothing else: the server stores its local\nmidnight in the caller's zone and derives both stage answers from it, so\nthere is no field through which a client could name a stage. Closed\n(``extra=\"forbid\"``) so an attempt to send one is refused rather than\nsilently dropped.",
         "properties": {
           "program_start_date": {
-            "description": "The calendar date the program starts on, in the caller's timezone. No later than today and no earlier than one full program before account creation.",
+            "description": "The calendar date the program starts on, in the caller's timezone. No later than one full program after today and no earlier than one full program before account creation.",
             "format": "date",
             "title": "Program Start Date",
             "type": "string"
@@ -7542,7 +7587,7 @@
         "type": "object"
       },
       "ProgramStartWindow": {
-        "description": "The inclusive range of start dates the person may pick (issue #3097).\n\nBoth ends are local calendar dates in the person's zone: ``latest`` is\ntoday there, ``earliest`` is account creation minus one whole program.\nComputed by ``domain.program_start.program_start_bounds``, the same rule\n``PUT /stages/program-calendar`` enforces, so a picker clamped to it never\noffers a date the server would refuse.",
+        "description": "The inclusive range of start dates the person may pick (issue #3097).\n\nBoth ends are local calendar dates in the person's zone: ``latest`` is\none whole program after today there (issue #3725), ``earliest`` is\naccount creation minus one whole program.\nComputed by ``domain.program_start.program_start_bounds``, the same rule\n``PUT /stages/program-calendar`` enforces, so a picker clamped to it never\noffers a date the server would refuse.",
         "properties": {
           "earliest": {
             "format": "date",
@@ -31202,7 +31247,7 @@
     },
     "/stages/begin-again": {
       "post": {
-        "description": "Loop the caller's completed program back to stage 1 as a new cycle.\n\nAn explicit, user-driven restart offered only to someone who has reached\nthe final stage: ``current_stage`` resets to 1 and ``completed_stages``\nclears while ``cycle_number`` increments, all carried on the single\nexisting row. The Stage-10 ``all_stages_completed`` advance signal is left\nintact — this is a separate, opt-in path, not a replacement for it.\n\nThe outgoing cycle's ``program_started_at`` is retained on\n``past_cycle_anchors`` in the same commit (issue #2894), so a review written\nduring that cycle can still be windowed against the calendar it was written\nabout instead of losing its period forever.\n\nThe pass record moves in that commit too (issue #3723): the live pass is\nclosed the day before today in the caller's zone, with the stage and week it\nreached measured from its own start, and the next pass opens today.\n\nJournal, habit streaks, goal completions, practice sessions, and energy are\nall untouched: the carry-over is automatic and there is no penalty. A user\nmid-cycle (``current_stage < TOTAL_STAGES``) is rejected with\n``cycle_not_complete``; a user with no progress row at all is rejected and\nno row is created as a side-effect. The row is read under ``FOR UPDATE`` so\na concurrent advance cannot interleave with the loop reset.",
+        "description": "Loop the caller's completed program back to stage 1 as a new cycle.\n\nAn explicit, user-driven restart offered only to someone who has reached\nthe final stage: ``current_stage`` resets to 1 and ``completed_stages``\nclears while ``cycle_number`` increments, all carried on the single\nexisting row. The Stage-10 ``all_stages_completed`` advance signal is left\nintact — this is a separate, opt-in path, not a replacement for it.\n\nThe outgoing cycle's ``program_started_at`` is retained on\n``past_cycle_anchors`` in the same commit (issue #2894), so a review written\nduring that cycle can still be windowed against the calendar it was written\nabout instead of losing its period forever.\n\nThe pass record moves in that commit too (issue #3723): the live pass is\nclosed the day before today in the caller's zone, with the stage and week it\nreached measured from its own start, and the next pass opens today. A pass\npending from a scaffolding save (issue #3725) is dropped by the loop; one\nwhose day has already come is opened first, which puts the person back at\nstage 1 and so refuses the loop.\n\nJournal, habit streaks, goal completions, practice sessions, and energy are\nall untouched: the carry-over is automatic and there is no penalty. A user\nmid-cycle (``current_stage < TOTAL_STAGES``) is rejected with\n``cycle_not_complete``; a user with no progress row at all is rejected and\nno row is created as a side-effect. The row is read under ``FOR UPDATE`` so\na concurrent advance cannot interleave with the loop reset.",
         "operationId": "begin_again_stages_begin_again_post",
         "parameters": [
           {
@@ -31424,6 +31469,126 @@
         ]
       }
     },
+    "/stages/passes": {
+      "post": {
+        "description": "Open a new pass through the stages on ``start_day`` -- an Energy Scaffolding save (#3725).\n\nAllowed in any cycle. Under the same ``FOR UPDATE`` lock the program-start\nPUT takes, the running pass is closed the day before ``start_day`` and the\nnext opens there with ``origin = rescaffold``; the cycle loops as\nbegin-again's does, so the closed cycle's recorded end stays true.\n\nA ``start_day`` still ahead is held as the pending pass\n(``pending_pass_starts_on``): the running pass keeps running, and keeps\ndriving stage, habit reveal and Course pacing, until the day before it, and\nis closed with what it actually reached on the first read on or after the\nday. A second save while one is pending replaces it.\n\nSomeone with no progress row has no pass to close, so their save starts\npass 1 on the day, exactly as the first-cycle PUT would.\n\nRefused with 422 ``program_start_in_future`` past one program ahead,\n``program_start_too_early`` before the back-date floor, and\n``pass_start_before_current_pass`` before the running pass's own start.",
+        "operationId": "open_program_pass_stages_passes_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PassStartRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProgramCalendarResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "The request body could not be parsed, or a value it carried was refused."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "No usable credential was presented."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "The caller is authenticated but does not own the resource."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "No such resource -- or none this caller is allowed to see."
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "The request conflicts with the resource's current state."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ValidationErrorResponse"
+                }
+              }
+            },
+            "description": "The request failed validation -- an array of rejected fields -- or a check applied after the schema refused it, as one snake_case code."
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "The caller went past a rate limit."
+          }
+        },
+        "summary": "Open Program Pass",
+        "tags": [
+          "stages"
+        ]
+      }
+    },
     "/stages/program-calendar": {
       "get": {
         "description": "The server's view of the date-derived program calendar.\n\nRegistered ABOVE ``/{stage_number}`` so the static path wins route\nmatching.  A user with no progress row yet sees the day-zero shape.\n\nAsking where the calendar has got to is a visit, so ``current_stage`` in\nthe response is the record *after* entry has been noted: someone who has\nbeen away for two months reads back the stage they have just walked into,\nnot the one they left.",
@@ -31534,7 +31699,7 @@
         ]
       },
       "put": {
-        "description": "Let the person pick, or change, the date their program starts on (#3097).\n\nThe anchor is stored as local midnight of ``program_start_date`` in the\ncaller's zone, so the calendar counts exactly the days the person sees.\nA person with no progress row yet -- a habits-only account the first time\nit needs an anchor -- gets one provisioned here, so the choice can be made\nbefore the server would otherwise stamp ``now``.\n\nThe record moves with the anchor in the same write\n(:func:`domain.stage_authority.reanchor_program`), so every reader --\nhabit reveal, course drip, prompts -- agrees from the next request on.\nInvitations already consumed stay consumed: a habit ring revealed under the\nold date is neither re-locked nor re-stamped.\n\nThe live pass (issue #3723) starts on the chosen day too, in the same\ncommit, so the record of this first pass measures from the date the person\nactually began.\n\nRefused with 422 outside the range :mod:`domain.program_start` defines, and\nwith 409 ``program_start_fixed_after_first_cycle`` once begin-again has run,\nbecause a later cycle's anchor is also its predecessor's recorded end.",
+        "description": "Let the person pick, or change, the date their program starts on (#3097).\n\nThe anchor is stored as local midnight of ``program_start_date`` in the\ncaller's zone, so the calendar counts exactly the days the person sees.\nA person with no progress row yet -- a habits-only account the first time\nit needs an anchor -- gets one provisioned here, so the choice can be made\nbefore the server would otherwise stamp ``now``.\n\nThe record moves with the anchor in the same write\n(:func:`domain.stage_authority.reanchor_program`), so every reader --\nhabit reveal, course drip, prompts -- agrees from the next request on.\nInvitations already consumed stay consumed: a habit ring revealed under the\nold date is neither re-locked nor re-stamped.\n\nThe live pass (issue #3723) starts on the chosen day too, in the same\ncommit, so the record of this first pass measures from the date the person\nactually began. It is a correction of the pass the person is in, not a new\npass (that is ``POST /stages/passes``, issue #3725), so a day still ahead\nleaves the program \"not yet begun\" until it comes, and any pass pending\nbehind this one is dropped -- the latest save wins.\n\nRefused with 422 outside the range :mod:`domain.program_start` defines, and\nwith 409 ``program_start_fixed_after_first_cycle`` once begin-again has run,\nbecause a later cycle's anchor is also its predecessor's recorded end.",
         "operationId": "set_program_start_stages_program_calendar_put",
         "parameters": [
           {

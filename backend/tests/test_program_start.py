@@ -20,7 +20,11 @@ from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import col, select
 
-from domain.constants import PROGRAM_START_BACKDATE_WINDOW_DAYS, TOTAL_PROGRAM_DAYS
+from domain.constants import (
+    PROGRAM_START_BACKDATE_WINDOW_DAYS,
+    PROGRAM_START_FORWARD_WINDOW_DAYS,
+    TOTAL_PROGRAM_DAYS,
+)
 from domain.dates import ensure_aware
 from domain.program_start import ProgramStartBounds, program_start_bounds, program_start_verdict
 from models.habit import Habit
@@ -125,7 +129,9 @@ def test_the_backdate_window_is_one_full_program() -> None:
 @pytest.mark.parametrize(
     ("offset_days", "expected"),
     [
-        (1, "future"),
+        (PROGRAM_START_FORWARD_WINDOW_DAYS + 1, "future"),
+        (PROGRAM_START_FORWARD_WINDOW_DAYS, "ok"),
+        (1, "ok"),
         (0, "ok"),
         (-PROGRAM_START_BACKDATE_WINDOW_DAYS, "ok"),
         (-PROGRAM_START_BACKDATE_WINDOW_DAYS - 1, "too_early"),
@@ -155,7 +161,8 @@ def test_program_start_bounds_name_the_range_the_verdict_enforces() -> None:
     bounds = program_start_bounds(today=today, account_created=created)
 
     assert bounds == ProgramStartBounds(
-        earliest=created - timedelta(days=PROGRAM_START_BACKDATE_WINDOW_DAYS), latest=today
+        earliest=created - timedelta(days=PROGRAM_START_BACKDATE_WINDOW_DAYS),
+        latest=today + timedelta(days=PROGRAM_START_FORWARD_WINDOW_DAYS),
     )
     one_day = timedelta(days=1)
     verdicts = [
@@ -302,14 +309,18 @@ async def test_re_picking_the_same_stage_keeps_the_entry_moment(
 
 
 @pytest.mark.asyncio
-async def test_a_future_date_is_rejected_and_nothing_is_written(
+async def test_a_date_past_the_forward_window_is_rejected_and_nothing_is_written(
     async_client: AsyncClient, db_session: AsyncSession
 ) -> None:
     account = await _account(db_session, "future@example.com")
 
     resp = await async_client.put(
         _PATH,
-        json={"program_start_date": (_today() + timedelta(days=1)).isoformat()},
+        json={
+            "program_start_date": (
+                _today() + timedelta(days=PROGRAM_START_FORWARD_WINDOW_DAYS + 1)
+            ).isoformat()
+        },
         headers=account.headers,
     )
 
@@ -413,7 +424,7 @@ async def test_a_person_with_no_progress_row_is_offered_the_window(
     assert body["program_started_at"] is None
     assert _window(body) == {
         "earliest": (created - timedelta(days=PROGRAM_START_BACKDATE_WINDOW_DAYS)).isoformat(),
-        "latest": _today().isoformat(),
+        "latest": (_today() + timedelta(days=PROGRAM_START_FORWARD_WINDOW_DAYS)).isoformat(),
     }
 
 
@@ -436,7 +447,12 @@ async def test_the_window_counts_today_in_the_persons_zone(
 
     window = _window(body)
     assert isinstance(window, dict)
-    assert window["latest"] == "2026-06-14"
+    # One program ahead of 2026-06-14, the LA date -- not of the UTC 2026-06-15.
+    assert window["latest"] == "2027-02-21"
+    assert (
+        window["latest"]
+        == (la_today + timedelta(days=PROGRAM_START_FORWARD_WINDOW_DAYS)).isoformat()
+    )
 
 
 @pytest.mark.asyncio

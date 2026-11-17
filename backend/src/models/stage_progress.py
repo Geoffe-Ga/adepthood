@@ -1,7 +1,7 @@
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from typing import TYPE_CHECKING
 
-from sqlalchemy import JSON, CheckConstraint, Column, DateTime, Integer
+from sqlalchemy import JSON, CheckConstraint, Column, Date, DateTime, Integer
 from sqlalchemy.dialects.postgresql import ARRAY
 from sqlmodel import Field, Relationship, SQLModel
 
@@ -60,6 +60,15 @@ class StageProgress(SQLModel, table=True):
     past_cycle_anchors: list[str | None] | None = Field(
         default=None, sa_column=Column(JSON, nullable=True)
     )
+    # The day a pass opened by ``POST /stages/passes`` will start, while that
+    # day is still ahead in the account's zone (issue #3725). NULL when no pass
+    # is pending. Until the day comes the pass already running keeps running
+    # and keeps driving every reader; on or after it, the first read closes
+    # that pass the day before and opens this one
+    # (``domain.pass_rescaffold.settle_pending_pass``). At most one pass is
+    # pending: a later save overwrites it, and begin-again and the first-cycle
+    # PUT clear it.
+    pending_pass_starts_on: date | None = Field(default=None, sa_column=Column(Date, nullable=True))
     # Lifetime high-water mark: the highest stage ever reached by advancement.
     # Monotone — bumped on advance, never cleared by begin-again — so a Return
     # stays eligible from any current stage once Blue was ever passed.

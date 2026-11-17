@@ -18,9 +18,26 @@ from dependencies.timezone import current_user_timezone
 from domain.constants import STAGE_START_WEEKS, TOTAL_STAGES
 from domain.creek_vault import CreekVaultClient
 from domain.dates import day_bounds_in_tz, ensure_aware, to_user_date, today_in_tz
-from domain.program_calendar import calendar_stage, calendar_week, resolve_program_anchor
-from domain.program_pass import begin_next_pass, move_live_pass_start
-from domain.program_start import ProgramStartBounds, program_start_bounds, verdict_within
+from domain.pass_rescaffold import (
+    arrive_pending_pass,
+    loop_to_next_cycle,
+    open_pass_on,
+    settle_pending_pass,
+)
+from domain.program_calendar import (
+    calendar_stage,
+    calendar_week,
+    days_until_start,
+    effective_anchor,
+)
+from domain.program_pass import begin_next_pass, live_pass_start, move_live_pass_start
+from domain.program_start import (
+    ProgramStartBounds,
+    pass_start_bounds,
+    pass_start_verdict,
+    program_start_bounds,
+    verdict_within,
+)
 from domain.stage_authority import reanchor_program, record_stage_entry
 from domain.stage_keys import STAGE_KEYS
 from domain.stage_progress import (
@@ -43,6 +60,7 @@ from routers.auth import get_current_user
 from schemas import Page, PaginationParams, build_page
 from schemas.pagination import paginate_query
 from schemas.stage import (
+    PassStartRequest,
     ProgramCalendarResponse,
     ProgramStartRequest,
     ProgramStartWindow,
@@ -187,6 +205,8 @@ async def _record_visit(session: AsyncSession, user_id: int, tz: str) -> StagePr
     """Note that the caller showed up, returning their (possibly advanced) row.
 
     Reading the Map is how someone shows up inside the program, so it is where
+    a pending pass whose day has come is opened
+    (:func:`domain.pass_rescaffold.settle_pending_pass`, issue #3725) and where
     :func:`domain.stage_authority.record_stage_entry` runs: entry into a window
     the calendar has already opened is recorded here, server-side, with nobody
     asking for it. A user with no progress row yet is left alone — these are
@@ -197,7 +217,8 @@ async def _record_visit(session: AsyncSession, user_id: int, tz: str) -> StagePr
     progress = await get_user_progress(session, user_id)
     if progress is None:
         return None
-    return await record_stage_entry(session, progress, tz=tz)
+    settled = await settle_pending_pass(session, progress, tz=tz)
+    return await record_stage_entry(session, settled, tz=tz)
 
 
 @router.get("", response_model=None)
@@ -306,8 +327,10 @@ async def get_program_calendar(
             current_stage=1,
             cycle_number=1,
             program_start_window=_window(bounds),
+            pass_start_window=_window(bounds),
         )
-    return _calendar_response(progress, user_tz, bounds)
+    floor = await live_pass_start(session, progress, tz=user_tz)
+    return _calendar_response(progress, user_tz, bounds, floor)
 
 
 def _window(bounds: ProgramStartBounds) -> ProgramStartWindow:
@@ -316,14 +339,17 @@ def _window(bounds: ProgramStartBounds) -> ProgramStartWindow:
 
 
 def _calendar_response(
-    progress: StageProgress, tz: str, bounds: ProgramStartBounds
+    progress: StageProgress, tz: str, bounds: ProgramStartBounds, pass_floor: date
 ) -> ProgramCalendarResponse:
     """Project a progress row onto the calendar contract, counted in ``tz``.
 
     The pickable window is offered only in the first cycle; after begin-again
     the anchor is fixed, so there is no range to offer and the window is null.
+    The window a new pass may open in (issue #3725) is offered in every cycle,
+    floored at ``pass_floor``, the running pass's own start.
     """
-    anchor = resolve_program_anchor(progress)
+    today = today_in_tz(tz)
+    anchor = effective_anchor(progress, today, tz=tz)
     return ProgramCalendarResponse(
         program_started_at=anchor,
         calendar_stage=calendar_stage(anchor, tz=tz),
@@ -331,6 +357,9 @@ def _calendar_response(
         current_stage=progress.current_stage,
         cycle_number=progress.cycle_number,
         program_start_window=_window(bounds) if progress.cycle_number <= _FIRST_CYCLE else None,
+        days_until_start=days_until_start(progress, today, tz=tz),
+        pending_pass_starts_on=progress.pending_pass_starts_on,
+        pass_start_window=_window(pass_start_bounds(bounds, current_pass_start=pass_floor)),
     )
 
 
@@ -349,6 +378,7 @@ async def _program_start_bounds(session: AsyncSession, user_id: int, tz: str) ->
 _PROGRAM_START_REFUSALS: dict[str, str] = {
     "future": "program_start_in_future",
     "too_early": "program_start_too_early",
+    "before_current_start": "pass_start_before_current_pass",
 }
 
 
@@ -357,9 +387,7 @@ async def _validate_program_start(
 ) -> ProgramStartBounds:
     """Refuse a date outside the pickable range with 422, before anything is written."""
     bounds = await _program_start_bounds(session, user_id, tz)
-    verdict = verdict_within(chosen, bounds)
-    if verdict != "ok":
-        raise unprocessable(_PROGRAM_START_REFUSALS[verdict])
+    _refuse_outside(verdict_within(chosen, bounds))
     return bounds
 
 
@@ -386,7 +414,10 @@ async def set_program_start(
 
     The live pass (issue #3723) starts on the chosen day too, in the same
     commit, so the record of this first pass measures from the date the person
-    actually began.
+    actually began. It is a correction of the pass the person is in, not a new
+    pass (that is ``POST /stages/passes``, issue #3725), so a day still ahead
+    leaves the program "not yet begun" until it comes, and any pass pending
+    behind this one is dropped -- the latest save wins.
 
     Refused with 422 outside the range :mod:`domain.program_start` defines, and
     with 409 ``program_start_fixed_after_first_cycle`` once begin-again has run,
@@ -396,19 +427,109 @@ async def set_program_start(
     bounds = await _validate_program_start(session, current_user, chosen, user_tz)
     progress = await ensure_user_progress(session, current_user)
     await session.refresh(progress, with_for_update=True)
+    await arrive_pending_pass(session, progress, now=datetime.now(UTC), tz=user_tz)
     if progress.cycle_number > _FIRST_CYCLE:
         raise conflict("program_start_fixed_after_first_cycle")
-    anchor, _ = day_bounds_in_tz(user_tz, chosen)
-    reanchor_program(progress, anchor, tz=user_tz)
-    await move_live_pass_start(session, current_user, chosen)
-    session.add(progress)
+    await _reanchor_first_pass(session, progress, chosen, user_tz)
     await session.commit()
     await session.refresh(progress)
     logger.info(
         "program_start_picked",
         extra={"user_id": current_user, "current_stage": progress.current_stage},
     )
-    return _calendar_response(progress, user_tz, bounds)
+    floor = await live_pass_start(session, progress, tz=user_tz)
+    return _calendar_response(progress, user_tz, bounds, floor)
+
+
+async def _reanchor_first_pass(
+    session: AsyncSession, progress: StageProgress, chosen: date, tz: str
+) -> None:
+    """Move the first cycle's anchor, record and live pass to ``chosen``; no commit.
+
+    A correction of the pass the person is in, not a new one, so it also drops
+    any pass pending behind it: the latest save wins, as a second pending save
+    replaces the first.
+    """
+    anchor, _ = day_bounds_in_tz(tz, chosen)
+    reanchor_program(progress, anchor, tz=tz)
+    await move_live_pass_start(session, progress.user_id, chosen)
+    progress.pending_pass_starts_on = None
+    session.add(progress)
+
+
+@router.post("/passes", response_model=ProgramCalendarResponse, status_code=status.HTTP_201_CREATED)
+async def open_program_pass(
+    payload: PassStartRequest,
+    current_user: Annotated[int, Depends(get_current_user)],
+    session: Annotated[AsyncSession, Depends(get_session)],
+    user_tz: Annotated[str, Depends(current_user_timezone)],
+) -> ProgramCalendarResponse:
+    """Open a new pass through the stages on ``start_day`` -- an Energy Scaffolding save (#3725).
+
+    Allowed in any cycle. Under the same ``FOR UPDATE`` lock the program-start
+    PUT takes, the running pass is closed the day before ``start_day`` and the
+    next opens there with ``origin = rescaffold``; the cycle loops as
+    begin-again's does, so the closed cycle's recorded end stays true.
+
+    A ``start_day`` still ahead is held as the pending pass
+    (``pending_pass_starts_on``): the running pass keeps running, and keeps
+    driving stage, habit reveal and Course pacing, until the day before it, and
+    is closed with what it actually reached on the first read on or after the
+    day. A second save while one is pending replaces it.
+
+    Someone with no progress row has no pass to close, so their save starts
+    pass 1 on the day, exactly as the first-cycle PUT would.
+
+    Refused with 422 ``program_start_in_future`` past one program ahead,
+    ``program_start_too_early`` before the back-date floor, and
+    ``pass_start_before_current_pass`` before the running pass's own start.
+    """
+    chosen = payload.start_day
+    bounds = await _program_start_bounds(session, current_user, user_tz)
+    if await get_user_progress(session, current_user) is None:
+        _refuse_outside(verdict_within(chosen, bounds))
+        progress = await ensure_user_progress(session, current_user)
+        await session.refresh(progress, with_for_update=True)
+        await _reanchor_first_pass(session, progress, chosen, user_tz)
+    else:
+        progress = await _open_pass_locked(session, current_user, chosen, bounds, user_tz)
+    await session.commit()
+    await session.refresh(progress)
+    logger.info(
+        "program_pass_opened",
+        extra={"user_id": current_user, "cycle_number": progress.cycle_number},
+    )
+    floor = await live_pass_start(session, progress, tz=user_tz)
+    return _calendar_response(progress, user_tz, bounds, floor)
+
+
+def _refuse_outside(verdict: str) -> None:
+    """Raise the 422 a non-``ok`` start-day verdict maps to."""
+    if verdict != "ok":
+        raise unprocessable(_PROGRAM_START_REFUSALS[verdict])
+
+
+async def _open_pass_locked(
+    session: AsyncSession, user_id: int, chosen: date, bounds: ProgramStartBounds, tz: str
+) -> StageProgress:
+    """Lock the row, then open (or hold as pending) a pass on ``chosen``; no commit.
+
+    A pending pass whose day has already come is opened first, so the floor is
+    measured against the pass actually running today.
+    """
+    progress = await get_user_progress_for_update(session, user_id)
+    if progress is None:
+        raise not_found("stage_progress")
+    now = datetime.now(UTC)
+    await arrive_pending_pass(session, progress, now=now, tz=tz)
+    floor = await live_pass_start(session, progress, tz=tz)
+    _refuse_outside(pass_start_verdict(chosen, bounds, current_pass_start=floor))
+    if chosen > to_user_date(tz, now):
+        progress.pending_pass_starts_on = chosen
+    else:
+        await open_pass_on(session, progress, chosen, now=now, tz=tz)
+    session.add(progress)
+    return progress
 
 
 @router.get("/wheel", response_model=WheelBalanceResponse)
@@ -468,64 +589,15 @@ async def get_stage_history(
     )
 
 
-_FIRST_STAGE = 1
-_FIRST_CYCLE_COMPLETED: tuple[int, ...] = ()
-
-
-def _padded_anchors(existing: StageProgress) -> list[str | None]:
-    """The row's retained anchors, left-padded with ``None`` to one per past cycle.
-
-    ``past_cycle_anchors`` holds one element per cycle already left behind, so a
-    row that looped before #2894 shipped is short by exactly the number of
-    anchors that were destroyed. Padding to ``cycle_number - 1`` before the new
-    anchor is appended is what makes "element ``i`` is cycle ``i + 1``'s start"
-    true BY CONSTRUCTION rather than by convention, and each pad records an
-    anchor that is unknown and not recoverable — never one that was guessed.
-    """
-    retained = list(existing.past_cycle_anchors or [])
-    missing = max(0, existing.cycle_number - 1 - len(retained))
-    return [None] * missing + retained
-
-
-def _retained_anchors(existing: StageProgress) -> list[str | None]:
-    """``existing``'s past-cycle anchors extended with the OUTGOING cycle's own.
-
-    Reads ``cycle_number`` BEFORE the loop bumps it, so the appended anchor lands
-    at the index of the cycle it actually belongs to. ``ensure_aware`` normalizes
-    the read — SQLite hands a ``DateTime(timezone=True)`` column back naive — so
-    the stored string always carries its UTC offset.
-    """
-    anchor = ensure_aware(resolve_program_anchor(existing))
-    return [*_padded_anchors(existing), anchor.isoformat()]
-
-
 def _loop_to_next_cycle(existing: StageProgress, now: datetime) -> StageProgressRecord:
-    """Mutate a completed-cycle row in place for the next loop, returning its record.
+    """Loop a completed-cycle row into the next cycle at ``now``, returning its record.
 
-    Retains the OUTGOING cycle's calendar anchor on ``past_cycle_anchors``
-    first (issue #2894), then resets the calendar anchors (``stage_started_at``
-    + ``program_started_at``) to now so the fresh cycle restarts its schedule
-    instead of instantly re-unlocking every stage, bumps ``cycle_number``, and
-    clears ``completed_stages`` back to stage 1. No engagement data is touched.
-
-    Order is load-bearing twice over. The retention reads the pre-bump
-    ``cycle_number``, so appending after the bump would file every anchor one
-    cycle late. And the retention is a REBIND, never an in-place ``.append``:
-    SQLAlchemy does not track mutation of a plain JSON column, so an append is
-    silently discarded by the caller's commit. Both writes ride that one commit
-    and the same ``FOR UPDATE`` row lock, so there is no instant in which the
-    cycle advanced and its anchor did not survive.
-
-    ``now`` is passed in rather than read here so the pass record written
-    alongside (issue #3723) dates the incoming pass from the very instant that
-    becomes its anchor.
+    The loop itself is :func:`domain.pass_rescaffold.loop_to_next_cycle`, shared
+    with the scaffolding re-run. ``now`` is passed in rather than read here so
+    the pass record written alongside (issue #3723) dates the incoming pass from
+    the very instant that becomes its anchor.
     """
-    existing.past_cycle_anchors = _retained_anchors(existing)
-    existing.cycle_number += 1
-    existing.current_stage = _FIRST_STAGE
-    existing.completed_stages = list(_FIRST_CYCLE_COMPLETED)
-    existing.stage_started_at = now
-    existing.program_started_at = now
+    loop_to_next_cycle(existing, now)
     return StageProgressRecord(
         id=existing.id,
         user_id=existing.user_id,
@@ -556,7 +628,10 @@ async def begin_again(
 
     The pass record moves in that commit too (issue #3723): the live pass is
     closed the day before today in the caller's zone, with the stage and week it
-    reached measured from its own start, and the next pass opens today.
+    reached measured from its own start, and the next pass opens today. A pass
+    pending from a scaffolding save (issue #3725) is dropped by the loop; one
+    whose day has already come is opened first, which puts the person back at
+    stage 1 and so refuses the loop.
 
     Journal, habit streaks, goal completions, practice sessions, and energy are
     all untouched: the carry-over is automatic and there is no penalty. A user
@@ -568,10 +643,11 @@ async def begin_again(
     existing = await get_user_progress_for_update(session, current_user)
     if existing is None:
         raise not_found("stage_progress")
+    now = datetime.now(UTC)
+    await arrive_pending_pass(session, existing, now=now, tz=user_tz)
     if existing.current_stage < TOTAL_STAGES:
         raise conflict("cycle_not_complete")
 
-    now = datetime.now(UTC)
     await begin_next_pass(session, existing, now=now, tz=user_tz)
     record = _loop_to_next_cycle(existing, now)
     session.add(existing)

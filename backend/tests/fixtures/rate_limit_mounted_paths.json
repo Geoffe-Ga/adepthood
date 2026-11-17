@@ -131,6 +131,7 @@
   "/stages",
   "/stages/begin-again",
   "/stages/correspondence",
+  "/stages/passes",
   "/stages/program-calendar",
   "/stages/wheel",
   "/stages/{stage_number}/history",
