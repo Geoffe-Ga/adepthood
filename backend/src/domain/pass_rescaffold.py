@@ -183,6 +183,11 @@ async def settle_pending_pass(
         return progress
     await session.refresh(progress, with_for_update=True)
     if not await arrive_pending_pass(session, progress, now=moment, tz=tz):
+        # A concurrent read opened it first. End the transaction to release the
+        # row lock now rather than hold it for the rest of the request. A commit,
+        # not a rollback: nothing is pending (the caller contract below), and a
+        # rollback would expire every instance the caller already loaded.
+        await session.commit()
         return progress
     session.add(progress)
     await session.commit()

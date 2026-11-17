@@ -20,6 +20,7 @@ from dependencies.timezone import current_user_timezone
 from domain.constants import STAGE_START_WEEKS, WEEKS_PER_STAGE
 from domain.dates import ensure_aware
 from domain.frequencies import FREQUENCY_COLORS, Frequency
+from domain.pass_rescaffold import settle_pending_pass
 from domain.practice_insights import build_insights
 from domain.practice_resolution import effective_config, effective_duration_minutes
 from domain.practice_story import PracticeStageScope, build_practice_story
@@ -475,9 +476,12 @@ async def _practice_stage_scope(
     stage population. Never use all earlier adoptions as a current-stage mean.
     """
     selection_id = cast("int", user_practice.id)
-    progress = await get_user_progress(session, current_user)
-    if progress is None:
+    stored = await get_user_progress(session, current_user)
+    if stored is None:
         return PracticeStageScope(selection_id)
+    # A pass whose day has come is opened first (issue #3725), so the stage
+    # window below is the new pass's, not the one that has just ended.
+    progress = await settle_pending_pass(session, stored, tz=tz)
     if progress.current_stage == user_practice.stage_number:
         # A slightly fast device may log through this instant under the write
         # policy. Its just-saved sit belongs in both the lifetime and stage facts.

@@ -42,6 +42,7 @@ from database import get_session
 from domain.constants import DAYS_PER_WEEK
 from domain.cycle_calendar import CycleAnchorStatus, cycle_week_bounds, resolve_cycle_window
 from domain.dates import ensure_aware, now_in_tz, to_user_date
+from domain.pass_rescaffold import settle_pending_pass
 from domain.program_calendar import (
     calendar_week,
     elapsed_days,
@@ -167,6 +168,7 @@ async def get_due_reflection(
     if progress is None:
         return ReflectionDueResponse(due=None)
     tz = await get_user_timezone(session, current_user)
+    progress = await settle_pending_pass(session, progress, tz=tz)
     anchor = resolve_program_anchor(progress)
     due = due_reflection(anchor, now_in_tz(tz), cycle=progress.cycle_number, tz=tz)
     if due is None:
@@ -202,6 +204,7 @@ async def get_current_reflections(
     if progress is None:
         return ReflectionCurrentResponse(scopes=[])
     tz = await get_user_timezone(session, current_user)
+    progress = await settle_pending_pass(session, progress, tz=tz)
     anchor = resolve_program_anchor(progress)
     scopes: list[ReflectionCurrentScope] = []
     for level, key in current_scopes(anchor, now_in_tz(tz), progress.cycle_number, tz=tz):

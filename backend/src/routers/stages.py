@@ -22,6 +22,7 @@ from domain.pass_rescaffold import (
     arrive_pending_pass,
     loop_to_next_cycle,
     open_pass_on,
+    pending_pass_due,
     settle_pending_pass,
 )
 from domain.program_calendar import (
@@ -427,8 +428,10 @@ async def set_program_start(
     bounds = await _validate_program_start(session, current_user, chosen, user_tz)
     progress = await ensure_user_progress(session, current_user)
     await session.refresh(progress, with_for_update=True)
-    await arrive_pending_pass(session, progress, now=datetime.now(UTC), tz=user_tz)
-    if progress.cycle_number > _FIRST_CYCLE:
+    # A pending pass whose day has come has already begun the next cycle, so it
+    # is refused like one -- checked before anything is mutated, so the refusal
+    # leaves nothing behind for the session to roll back.
+    if progress.cycle_number > _FIRST_CYCLE or pending_pass_due(progress, today_in_tz(user_tz)):
         raise conflict("program_start_fixed_after_first_cycle")
     await _reanchor_first_pass(session, progress, chosen, user_tz)
     await session.commit()
@@ -514,17 +517,23 @@ async def _open_pass_locked(
 ) -> StageProgress:
     """Lock the row, then open (or hold as pending) a pass on ``chosen``; no commit.
 
-    A pending pass whose day has already come is opened first, so the floor is
-    measured against the pass actually running today.
+    The floor is the start of the pass actually running today: a pending pass
+    whose day has come is that pass, though it is not opened until the day is
+    validated -- a refusal leaves nothing mutated behind it.
     """
     progress = await get_user_progress_for_update(session, user_id)
     if progress is None:
         raise not_found("stage_progress")
     now = datetime.now(UTC)
-    await arrive_pending_pass(session, progress, now=now, tz=tz)
-    floor = await live_pass_start(session, progress, tz=tz)
+    today = to_user_date(tz, now)
+    pending = progress.pending_pass_starts_on
+    if pending is not None and pending_pass_due(progress, today):
+        floor = pending
+    else:
+        floor = await live_pass_start(session, progress, tz=tz)
     _refuse_outside(pass_start_verdict(chosen, bounds, current_pass_start=floor))
-    if chosen > to_user_date(tz, now):
+    await arrive_pending_pass(session, progress, now=now, tz=tz)
+    if chosen > today:
         progress.pending_pass_starts_on = chosen
     else:
         await open_pass_on(session, progress, chosen, now=now, tz=tz)
@@ -630,8 +639,8 @@ async def begin_again(
     closed the day before today in the caller's zone, with the stage and week it
     reached measured from its own start, and the next pass opens today. A pass
     pending from a scaffolding save (issue #3725) is dropped by the loop; one
-    whose day has already come is opened first, which puts the person back at
-    stage 1 and so refuses the loop.
+    whose day has already come puts the person back at stage 1 of that pass,
+    so the loop is refused.
 
     Journal, habit streaks, goal completions, practice sessions, and energy are
     all untouched: the carry-over is automatic and there is no penalty. A user
@@ -644,8 +653,10 @@ async def begin_again(
     if existing is None:
         raise not_found("stage_progress")
     now = datetime.now(UTC)
-    await arrive_pending_pass(session, existing, now=now, tz=user_tz)
-    if existing.current_stage < TOTAL_STAGES:
+    # A pending pass whose day has come has put the person back at stage 1 of
+    # a new pass, so the loop is refused as mid-cycle -- without opening it here.
+    arrived = pending_pass_due(existing, to_user_date(user_tz, now))
+    if arrived or existing.current_stage < TOTAL_STAGES:
         raise conflict("cycle_not_complete")
 
     await begin_next_pass(session, existing, now=now, tz=user_tz)

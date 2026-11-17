@@ -20,6 +20,7 @@ from http import HTTPStatus
 
 import pytest
 from httpx import AsyncClient
+from sqlalchemy import update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import col, select
 
@@ -30,6 +31,7 @@ from domain.constants import (
     TOTAL_STAGES,
 )
 from domain.dates import day_bounds_in_tz, ensure_aware, to_user_date, today_in_tz
+from domain.pass_rescaffold import settle_pending_pass
 from domain.program_calendar import days_until_start, effective_anchor
 from domain.program_start import ProgramStartBounds, pass_start_verdict, program_start_bounds
 from domain.stage_progress import ensure_user_progress
@@ -650,3 +652,125 @@ async def test_the_calendar_offers_the_window_a_new_pass_may_open_in(
         "latest": (_today() + timedelta(days=PROGRAM_START_FORWARD_WINDOW_DAYS)).isoformat(),
     }
     assert body["program_start_window"]["latest"] == body["pass_start_window"]["latest"]
+
+
+# -- Settling a pass whose day has come --------------------------------------
+
+
+async def _arrived(
+    client: AsyncClient, session: AsyncSession, username: str
+) -> tuple[dict[str, str], int]:
+    """An account 76 days into pass 1 whose pass 2, saved 16 days ago, starts today."""
+    headers, user_id = await _signup(client, username)
+    await _pick(client, headers, _today() - timedelta(days=_SIXTY_DAYS))
+    await _open(client, headers, _today() + timedelta(days=_SIXTEEN_DAYS))
+    await _shift_back(session, user_id, _SIXTEEN_DAYS)
+    return headers, user_id
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("path", ["/reflections/due", "/reflections/current"])
+async def test_the_reflection_reads_settle_an_arrived_pass(
+    async_client: AsyncClient, db_session: AsyncSession, path: str
+) -> None:
+    """Opening only the Reflections still lands the person in the new pass."""
+    headers, user_id = await _arrived(async_client, db_session, f"settle_{path[-3:]}")
+
+    resp = await async_client.get(path, headers=headers)
+
+    assert resp.status_code == HTTPStatus.OK
+    assert [p.ended_on is None for p in await _passes(db_session, user_id)] == [False, True]
+    assert (await _progress(db_session, user_id)).cycle_number == 2
+
+
+@pytest.mark.asyncio
+async def test_the_current_reflections_name_the_new_passes_first_week(
+    async_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """The week the Reflections offer agrees with the prompt week: week 1 of cycle 2."""
+    headers, _ = await _arrived(async_client, db_session, "settle_current_week")
+
+    body = (await async_client.get("/reflections/current", headers=headers)).json()
+
+    weeks = [scope["scope_key"] for scope in body["scopes"] if scope["level"] == "week"]
+    assert weeks == ["c2:w1"]
+
+
+@pytest.mark.asyncio
+async def test_settling_twice_opens_the_pass_once(
+    async_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    _, user_id = await _arrived(async_client, db_session, "settle_twice")
+    progress = await _progress(db_session, user_id)
+
+    await settle_pending_pass(db_session, progress, tz=_TZ)
+    await settle_pending_pass(db_session, progress, tz=_TZ)
+
+    assert [p.origin for p in await _passes(db_session, user_id)] == [
+        PassOrigin.FIRST_RUN,
+        PassOrigin.RESCAFFOLD,
+    ]
+    assert (await _progress(db_session, user_id)).cycle_number == 2
+
+
+@pytest.mark.asyncio
+async def test_a_refused_save_after_an_arrived_pass_persists_nothing(
+    async_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """The arrival opened under the lock is rolled back with the 422 that follows it.
+
+    Today's arrival makes today the running pass's start, so yesterday is
+    before it; the refusal must not leave the arrival half-written.
+    """
+    headers, user_id = await _arrived(async_client, db_session, "settle_refused")
+
+    resp = await async_client.post(
+        _PASSES, json={"start_day": (_today() - _ONE_DAY).isoformat()}, headers=headers
+    )
+
+    assert resp.status_code == HTTPStatus.UNPROCESSABLE_ENTITY
+    assert resp.json()["detail"] == "pass_start_before_current_pass"
+    (only,) = await _passes(db_session, user_id)
+    assert only.ended_on is None
+    progress = await _progress(db_session, user_id)
+    assert (progress.cycle_number, progress.pending_pass_starts_on) == (1, _today())
+
+
+@pytest.mark.asyncio
+async def test_the_put_is_refused_once_a_pending_pass_has_arrived(
+    async_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """An arrived pass is a later cycle, so the first-cycle correction no longer applies."""
+    headers, user_id = await _arrived(async_client, db_session, "settle_put")
+
+    resp = await async_client.put(
+        _CALENDAR, json={"program_start_date": _today().isoformat()}, headers=headers
+    )
+
+    assert resp.status_code == HTTPStatus.CONFLICT
+    assert resp.json()["detail"] == "program_start_fixed_after_first_cycle"
+    assert len(await _passes(db_session, user_id)) == 1
+    assert (await _progress(db_session, user_id)).pending_pass_starts_on == _today()
+
+
+@pytest.mark.asyncio
+async def test_a_settle_that_lost_the_race_opens_nothing_and_ends_its_transaction(
+    async_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """The locked re-read finds the pass already opened: no second pass, lock released."""
+    _, user_id = await _arrived(async_client, db_session, "settle_lost_race")
+    stale = await _progress(db_session, user_id)
+    await db_session.execute(
+        update(StageProgress)
+        .where(col(StageProgress.user_id) == user_id)
+        .values(pending_pass_starts_on=None)
+        .execution_options(synchronize_session=False)
+    )
+    assert stale.pending_pass_starts_on == _today()
+
+    settled = await settle_pending_pass(db_session, stale, tz=_TZ)
+
+    assert settled.pending_pass_starts_on is None
+    assert settled.cycle_number == 1
+    assert not db_session.in_transaction()
+    assert len(await _passes(db_session, user_id)) == 1
