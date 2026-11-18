@@ -250,7 +250,11 @@ describe('OnboardingModal reorder step', () => {
         });
         fireEvent.press(result.getByTestId('finish-setup'));
 
-        expect(onSaveHabits).toHaveBeenCalledWith(expect.anything(), daysFromToday(LATER));
+        expect(onSaveHabits).toHaveBeenCalledWith(
+          expect.anything(),
+          daysFromToday(LATER),
+          expect.any(Function),
+        );
       });
     });
   });

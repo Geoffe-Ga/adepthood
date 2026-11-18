@@ -173,7 +173,35 @@ describe('useHabitActions timezone wiring', () => {
         await result.current.actions.onboardingSave([], '2026-10-29');
       });
 
-      expect(onboardingSave).toHaveBeenCalledWith([], expect.any(Function), zone, '2026-10-29');
+      expect(onboardingSave).toHaveBeenCalledWith(
+        [],
+        expect.any(Function),
+        zone,
+        '2026-10-29',
+        undefined,
+      );
+    } finally {
+      onboardingSave.mockRestore();
+    }
+  });
+
+  it("forwards the modal's notice callback, so a start-date message renders on web (#3728)", async () => {
+    const onboardingSave = jest.spyOn(habitManager, 'onboardingSave').mockResolvedValue(undefined);
+    const { result } = renderActions('UTC');
+    const notify = jest.fn();
+
+    try {
+      await act(async () => {
+        await result.current.actions.onboardingSave([], '2026-10-29', notify);
+      });
+
+      expect(onboardingSave).toHaveBeenCalledWith(
+        [],
+        expect.any(Function),
+        'UTC',
+        '2026-10-29',
+        notify,
+      );
     } finally {
       onboardingSave.mockRestore();
     }

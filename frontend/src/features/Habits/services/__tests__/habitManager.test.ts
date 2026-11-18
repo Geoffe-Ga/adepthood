@@ -6072,6 +6072,36 @@ describe("the program start date is the server's (#3097)", () => {
     });
   });
 
+  it("hands a refused PUT and an offline first pick to the caller's notice (#3728)", async () => {
+    const notify = jest.fn();
+    (stagesApi.setProgramStart as jest.Mock)
+      .mockRejectedValueOnce(new ApiError(422, 'program_start_too_early') as never)
+      .mockRejectedValueOnce(new TypeError('Failed to fetch') as never);
+
+    await habitManager.onboardingSave(
+      [pick(parseISODate('2026-10-29'))],
+      undefined,
+      ZONE,
+      '2026-10-29',
+      notify,
+    );
+    useProgramStore.setState({ programStartDay: null, anchorSource: null });
+    useHabitStore.setState({ habits: [] });
+    await habitManager.onboardingSave(
+      [pick(parseISODate('2026-10-30'))],
+      undefined,
+      ZONE,
+      '2026-10-30',
+      notify,
+    );
+
+    expect(notify.mock.calls.map((call) => call[0])).toEqual([
+      expect.stringMatching(/earliest/i),
+      PROGRAM_START_PENDING_COPY,
+    ]);
+    expect(Alert.alert).not.toHaveBeenCalled();
+  });
+
   it('a refused pick still saves the habits, keeps the prior anchor and says so', async () => {
     useProgramStore.getState().setProgramStartDay('2026-01-05');
     (stagesApi.setProgramStart as jest.Mock).mockRejectedValueOnce(
@@ -6393,6 +6423,39 @@ describe("the program start date is the server's (#3097)", () => {
       expect(Alert.alert).toHaveBeenCalledWith(expect.any(String), PASS_START_NOT_SAVED_COPY);
       await expect(loadPendingProgramStart()).resolves.toBeNull();
       expect(useProgramStore.getState().programStartDay).toBe(RUNNING_DAY);
+    });
+
+    it("hands a refused pass to the caller's notice, not to Alert, which web never shows", async () => {
+      openPass().mockRejectedValueOnce(
+        new ApiError(422, 'pass_start_before_current_pass') as never,
+      );
+      const notify = jest.fn();
+
+      await habitManager.onboardingSave(
+        [pick(parseISODate(FUTURE_DAY))],
+        undefined,
+        ZONE,
+        FUTURE_DAY,
+        notify,
+      );
+
+      expect(notify).toHaveBeenCalledTimes(1);
+      expect(notify).toHaveBeenCalledWith(expect.stringMatching(/before the pass you.re in/i));
+      expect(Alert.alert).not.toHaveBeenCalled();
+    });
+
+    it('says nothing when the pass opens', async () => {
+      const notify = jest.fn();
+
+      await habitManager.onboardingSave(
+        [pick(parseISODate(FUTURE_DAY))],
+        undefined,
+        ZONE,
+        FUTURE_DAY,
+        notify,
+      );
+
+      expect(notify).not.toHaveBeenCalled();
     });
 
     it('a first save with no habits still corrects pass 1 through the PUT', async () => {

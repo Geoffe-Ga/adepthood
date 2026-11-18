@@ -91,6 +91,7 @@ import type {
   HabitMergePlan,
   OnboardingHabit,
   SaveOrderOptions,
+  ScaffoldSaveNotify,
 } from '../Habits.types';
 import {
   getGoalTier,
@@ -576,15 +577,19 @@ const layFromAccountDay = (plan: HabitMergePlan, laidDay: string, zone: string):
  * device -- and the pending key -- may now belong to someone else, and the
  * caller writes nothing further for an account that is no longer here.
  */
-const commitScaffoldStart = async (day: string | null, zone: string): Promise<boolean> => {
+const commitScaffoldStart = async (
+  day: string | null,
+  zone: string,
+  notify: ScaffoldSaveNotify,
+): Promise<boolean> => {
   if (day === null || !needsScaffoldPut(day)) return true;
   const firstPick = useProgramStore.getState().programStartDay === null;
   const scope = captureAuthScope();
   const outcome = await commitProgramStart(day, { tz: zone });
   if (!isAuthScopeCurrent(scope)) return false;
   if (outcome.kind === 'saved') return true;
-  if (outcome.kind === 'unsaved' && firstPick) return holdFirstPick(day, scope);
-  Alert.alert(SYNC_FAILURE_TITLE, outcome.message);
+  if (outcome.kind === 'unsaved' && firstPick) return holdFirstPick(day, scope, notify);
+  notify(outcome.message);
   return true;
 };
 
@@ -598,7 +603,11 @@ const needsScaffoldPut = (day: string): boolean => {
  * Hold an unsent first pick for the account that made it, and count from it
  * meanwhile. ``false`` when that session ended while the hold was written.
  */
-const holdFirstPick = async (day: string, scope: AuthScope): Promise<boolean> => {
+const holdFirstPick = async (
+  day: string,
+  scope: AuthScope,
+  notify: ScaffoldSaveNotify,
+): Promise<boolean> => {
   const held = useProgramStore.getState();
   await holdPendingProgramStart({
     owner: scope.owner,
@@ -607,8 +616,18 @@ const holdFirstPick = async (day: string, scope: AuthScope): Promise<boolean> =>
   });
   if (!isAuthScopeCurrent(scope)) return false;
   useProgramStore.getState().setProgramStartDay(day);
-  Alert.alert(SYNC_FAILURE_TITLE, PROGRAM_START_PENDING_COPY);
+  notify(PROGRAM_START_PENDING_COPY);
   return true;
+};
+
+/**
+ * Where a scaffolding save's start-day message goes when its caller names no
+ * place: a native alert. The modal always names one -- ``Alert.alert`` shows
+ * nothing on react-native-web (#3728) -- so this is the fallback for callers
+ * that drive the save directly.
+ */
+const alertScaffoldNotice: ScaffoldSaveNotify = (message) => {
+  Alert.alert(SYNC_FAILURE_TITLE, message);
 };
 
 /**
@@ -622,12 +641,16 @@ const holdFirstPick = async (day: string, scope: AuthScope): Promise<boolean> =>
  *
  * Resolves ``false`` when the session that saved ended while the POST was out.
  */
-const commitScaffoldPass = async (day: string | null, zone: string): Promise<boolean> => {
+const commitScaffoldPass = async (
+  day: string | null,
+  zone: string,
+  notify: ScaffoldSaveNotify,
+): Promise<boolean> => {
   if (day === null) return true;
   const scope = captureAuthScope();
   const outcome = await commitPassStart(day, { tz: zone });
   if (!isAuthScopeCurrent(scope)) return false;
-  if (outcome.kind !== 'saved') Alert.alert(SYNC_FAILURE_TITLE, outcome.message);
+  if (outcome.kind !== 'saved') notify(outcome.message);
   return true;
 };
 
@@ -2587,12 +2610,16 @@ export const habitManager = {
    *
    * ``programStartDay`` is the ``YYYY-MM-DD`` the modal's start-date picker
    * showed: the day the program is anchored to, sent as picked (#3097).
+   * ``notify`` receives the one message to show when that day did not take --
+   * a refusal, or a pick that never reached the server (#3728); the modal
+   * renders it, because ``Alert.alert`` shows nothing on the web.
    */
   onboardingSave: async (
     input: readonly OnboardingHabit[] | HabitMergePlan,
     showToast?: ShowToast,
     tz?: string,
     programStartDay?: string,
+    notify: ScaffoldSaveNotify = alertScaffoldNotice,
   ): Promise<void> => {
     const existing = getHabits();
     const zone = tz ?? detectDeviceTimezone();
@@ -2616,8 +2643,12 @@ export const habitManager = {
     // before this pass's rows landed. A session that ended while it was out
     // writes nothing more under whoever holds the device now.
     const anchored = scaffoldOpensPassNow(existing)
-      ? await commitScaffoldPass(programStartDay ?? laidDay, zone)
-      : await commitScaffoldStart(scaffoldStartDay(pickedHabits(plan), laidDay, zone), zone);
+      ? await commitScaffoldPass(programStartDay ?? laidDay, zone, notify)
+      : await commitScaffoldStart(
+          scaffoldStartDay(pickedHabits(plan), laidDay, zone),
+          zone,
+          notify,
+        );
     if (!anchored) return;
     const stillHere = await commitHabitMerge(ops, zone);
     if (stillHere.length > 0) setHabits([...getHabits(), ...stillHere]);

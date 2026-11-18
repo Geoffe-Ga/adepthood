@@ -612,3 +612,62 @@ describe('OnboardingModal review step names the pass a save opens (#3728)', () =
     expect(result.getByTestId('review-new-pass')).toHaveTextContent(new RegExp(today));
   });
 });
+
+describe('OnboardingModal shows a start-date message the save reports (#3728)', () => {
+  beforeEach(() => {
+    jest.useFakeTimers();
+  });
+
+  afterEach(() => {
+    jest.useRealTimers();
+    act(() => {
+      useProgramStore.getState().reset();
+    });
+  });
+
+  const REFUSAL =
+    "A new pass can't start before the pass you're in began. Pick that day or a later one; your current pass keeps running.";
+
+  /** Finish a one-pick first run, returning the notice callback the save was handed. */
+  const finishFirstRun = async (onSaveHabits: jest.Mock) => {
+    const result = renderModal([], onSaveHabits);
+    const input = result.getByTestId('habit-input');
+    fireEvent.changeText(input, 'Stretch');
+    fireEvent(input, 'onKeyPress', { nativeEvent: { key: 'Enter' } });
+    pressContinue(result);
+    fireEvent.press(result.getByTestId('continue-button'));
+    act(() => {
+      fireEvent.press(result.getByTestId('continue-button'));
+    });
+    act(() => {
+      jest.advanceTimersByTime(REVEAL_TOTAL_MS);
+    });
+    await act(async () => {
+      fireEvent.press(result.getByTestId('continue-to-templates'));
+      await jest.advanceTimersByTimeAsync(10);
+    });
+    fireEvent.press(result.getByTestId('finish-setup'));
+    const notify = onSaveHabits.mock.calls[0]?.[2] as (_message: string) => void;
+    return { result, notify };
+  };
+
+  it('renders the copy in a dialog, not a native alert that web drops', async () => {
+    const { result, notify } = await finishFirstRun(jest.fn());
+
+    expect(typeof notify).toBe('function');
+    act(() => notify(REFUSAL));
+
+    expect(result.getByTestId('start-day-notice')).toBeTruthy();
+    expect(result.getByText(REFUSAL)).toBeTruthy();
+  });
+
+  it('offers one way out, and it closes the dialog', async () => {
+    const { result, notify } = await finishFirstRun(jest.fn());
+    act(() => notify(REFUSAL));
+
+    expect(result.queryByTestId('start-day-notice-cancel')).toBeNull();
+    fireEvent.press(result.getByTestId('start-day-notice-ok'));
+
+    expect(result.queryByTestId('start-day-notice')).toBeNull();
+  });
+});

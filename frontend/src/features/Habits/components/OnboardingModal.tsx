@@ -477,6 +477,9 @@ interface ReorderHeaderProps {
 
 const START_DATE_LABEL = 'Beige begins on:';
 
+/** The dialog title over a start day that did not take; the message says why. */
+const START_DAY_NOTICE_TITLE = "Your start day didn't save";
+
 const ReorderHeader = ({ startDate, onDateChange, postReveal, range }: ReorderHeaderProps) => (
   <>
     <Text style={styles.onboardingTitle}>
@@ -1234,10 +1237,14 @@ const useOnboardingPieces = (
   useOnboardingEffects(step, cs.scrollRef, revealParts.prepareHabitsForReorder);
   const review = useScaffoldReview(visible, existingHabits, cs);
   const input = useHabitInput(habits, setHabits, setStep);
+  // A start day that did not take is said here, in a dialog this component
+  // owns (#3728): it outlives the modal's close, and unlike ``Alert.alert`` it
+  // renders on the web.
+  const [startDayNotice, setStartDayNotice] = useState<string | null>(null);
   // The picked day goes with the picks, as picked: the program is anchored to
   // this YYYY-MM-DD, never to a day read back out of a device-local instant.
   const saveWithStartDay: OnboardingModalProps['onSaveHabits'] = (result) =>
-    onSaveHabits(result, toISODate(startDate));
+    onSaveHabits(result, toISODate(startDate), setStartDayNotice);
   const nav = useOnboardingNavigation(
     review.buildResult,
     review.resetToEntry,
@@ -1262,6 +1269,8 @@ const useOnboardingPieces = (
     input,
     nav,
     act,
+    startDayNotice,
+    dismissStartDayNotice: () => setStartDayNotice(null),
     // A chip the user is taking off the add-habits step may be a habit they
     // already had, and dropping one of those from the list is a release the
     // plain filter would perform without ever asking.
@@ -1276,13 +1285,17 @@ const useOnboardingState = (
   visible: boolean,
   userTimezone: string,
 ) => {
-  const { cs, revealParts, review, input, nav, act, removeHabit } = useOnboardingPieces(
-    onClose,
-    onSaveHabits,
-    existingHabits,
-    visible,
-    userTimezone,
-  );
+  const {
+    cs,
+    revealParts,
+    review,
+    input,
+    nav,
+    act,
+    removeHabit,
+    startDayNotice,
+    dismissStartDayNotice,
+  } = useOnboardingPieces(onClose, onSaveHabits, existingHabits, visible, userTimezone);
   return {
     step: cs.step,
     setStep: cs.setStep,
@@ -1302,6 +1315,8 @@ const useOnboardingState = (
     ...review,
     // After the spreads, deliberately: this one overrides `act.removeHabit`.
     removeHabit,
+    startDayNotice,
+    dismissStartDayNotice,
   };
 };
 
@@ -1434,9 +1449,29 @@ const ReleaseConfirmDialog = ({ s }: { s: ReturnType<typeof useOnboardingState> 
   />
 );
 
+/**
+ * What a save said about its start day (#3728): a refusal, or a pick that never
+ * reached the server. Information, not a decision -- the habits saved either
+ * way -- so it has one way out.
+ */
+const StartDayNoticeDialog = ({ s }: { s: ReturnType<typeof useOnboardingState> }) => (
+  <ConfirmDialog
+    visible={s.startDayNotice !== null}
+    title={START_DAY_NOTICE_TITLE}
+    message={s.startDayNotice ?? undefined}
+    testID="start-day-notice"
+    confirmTestID="start-day-notice-ok"
+    cancelLabel={null}
+    confirmLabel="OK"
+    onCancel={s.dismissStartDayNotice}
+    onConfirm={s.dismissStartDayNotice}
+  />
+);
+
 const OnboardingDialogs = ({ s }: { s: ReturnType<typeof useOnboardingState> }) => (
   <>
     <ReleaseConfirmDialog s={s} />
+    <StartDayNoticeDialog s={s} />
     <ConfirmDialog
       visible={s.showDiscardDialog}
       title="Discard all changes?"
