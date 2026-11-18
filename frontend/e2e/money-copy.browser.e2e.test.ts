@@ -26,6 +26,14 @@ const BODY = 'The willow bent all night and did not break. I woke grateful besid
 const ARTIFACTS =
   process.env.MONEY_COPY_ARTIFACTS ?? join(__dirname, 'artifacts', 'money-copy-3262');
 const WIDTHS = [390, 1280];
+// Per-step budgets for the own-key pass, each well inside the 60s test timeout
+// so a stall reports the step that stalled instead of the test timeout.
+const STEP_TIMEOUT_MS = 10_000;
+// Measured from before the press: the enabled check and the click come first.
+const PASS_SENT_TIMEOUT_MS = 2 * STEP_TIMEOUT_MS;
+// Under the client's own FETCH_TIMEOUT_MS (30s), so a pass that never settles
+// is reported here as unanswered rather than as a silent client abort.
+const PASS_SETTLED_TIMEOUT_MS = 25_000;
 
 function lane() {
   const state = readLaneState();
@@ -1170,32 +1178,58 @@ for (const width of WIDTHS) {
     const proceed = page.getByTestId('resonance-explainer-continue');
     await reachable(proceed);
     await capture(page, `app-own-key-reading-${width}-200-percent`);
-    const settled = page.waitForResponse(
-      (response) =>
-        new URL(response.url()).pathname === `/journal/${id}/resonance` &&
-        response.request().method() === 'POST',
-    );
+    const isPass = (request: Request): boolean =>
+      new URL(request.url()).pathname === `/journal/${id}/resonance` && request.method() === 'POST';
+    // Each wait carries its own budget, well inside the 60s test timeout, so a
+    // stall names the step that stalled. Without them every hang surfaced as
+    // the test timeout pinned on whatever ran next (the receipt-reflection reset).
+    const sent = page.waitForRequest(isPass, { timeout: PASS_SENT_TIMEOUT_MS });
+    const settled = page.waitForResponse((response) => isPass(response.request()), {
+      timeout: PASS_SETTLED_TIMEOUT_MS,
+    });
+    // An early failure must not leave these to reject unobserved after the test.
+    sent.catch(() => undefined);
+    settled.catch(() => undefined);
     expect(
       (await page.request.post(`${lane().providerUrl}/__lane/enable-receipt-reflection`)).status(),
     ).toBe(200);
+    let passFailure: Error | undefined;
     try {
-      await proceed.click();
-      const response = await settled;
-      expect(response.status()).toBe(200);
-      expect(Boolean(response.request().headers()['x-llm-api-key'])).toBe(true);
-      expect((await response.json()).provenance.paid_by).toBe('own_key');
-      expect(
-        await (
-          await page.request.get(`${backendUrl()}/user/usage`, { headers: bearer(token) })
-        ).json(),
-      ).toEqual(before);
-    } finally {
-      expect(
-        (
-          await page.request.post(`${lane().providerUrl}/__lane/disable-receipt-reflection`)
-        ).status(),
-      ).toBe(200);
+      await test.step('Continue is enabled, then pressed', async () => {
+        await expect(proceed, 'Continue must be enabled before the press').toBeEnabled({
+          timeout: STEP_TIMEOUT_MS,
+        });
+        await proceed.click({ timeout: STEP_TIMEOUT_MS });
+      });
+      await test.step('the press sends the resonance POST (not swallowed)', async () => {
+        await sent;
+      });
+      await test.step('the resonance POST is answered (no client abort)', async () => {
+        const response = await settled;
+        expect(response.status()).toBe(200);
+        expect(Boolean(response.request().headers()['x-llm-api-key'])).toBe(true);
+        expect((await response.json()).provenance.paid_by).toBe('own_key');
+      });
+      await test.step('the wallet is untouched', async () => {
+        const usage = await page.request.get(`${backendUrl()}/user/usage`, {
+          headers: bearer(token),
+          timeout: STEP_TIMEOUT_MS,
+        });
+        expect(await usage.json()).toEqual(before);
+      });
+    } catch (error) {
+      passFailure = error instanceof Error ? error : new Error(String(error));
     }
+    // The reset always runs, but its own error never replaces the failure that
+    // explains the run: that one is rethrown first.
+    const reset = await page.request
+      .post(`${lane().providerUrl}/__lane/disable-receipt-reflection`, {
+        timeout: STEP_TIMEOUT_MS,
+      })
+      .catch((error: unknown) => (error instanceof Error ? error : new Error(String(error))));
+    if (passFailure !== undefined) throw passFailure;
+    if (reset instanceof Error) throw reset;
+    expect(reset.status()).toBe(200);
     await removeKeyFrames(page, width);
   });
 
