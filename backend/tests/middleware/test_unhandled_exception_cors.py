@@ -18,6 +18,7 @@ of a layer in that app's stack is the entire subject.
 from __future__ import annotations
 
 from collections.abc import AsyncGenerator, Iterator
+from contextlib import contextmanager
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -26,6 +27,8 @@ from sqlalchemy.exc import ProgrammingError
 from sqlalchemy.ext.asyncio import AsyncSession
 from starlette.types import Message, Receive, Scope, Send
 
+from conftest import test_session_factory as sqlite_session_factory
+from database import engine as production_engine
 from database import get_session
 from errors import DECRYPTION_FAILURE, ERROR_KEY, INTERNAL_ERROR, REQUEST_ID_KEY
 from main import app as main_app
@@ -77,9 +80,9 @@ def failing_session() -> Iterator[None]:
         main_app.dependency_overrides.pop(get_session, None)
 
 
-@pytest.fixture
-def cors_client() -> Iterator[TestClient]:
-    """Client that returns the app's 500 rather than re-raising into the test.
+@contextmanager
+def _hermetic_client() -> Iterator[TestClient]:
+    """Boot ``main.app`` with every lifespan database read on the suite's SQLite.
 
     ``raise_server_exceptions=False`` is what a browser sees: the transport
     delivers whatever bytes the app produced.
@@ -87,11 +90,40 @@ def cors_client() -> Iterator[TestClient]:
     # This fixture owns a synthetic request failure, not a database. Keep the
     # production startup guard enabled everywhere except this explicit test
     # boundary, just as the lifespan-specific suites isolate their test engine.
+    # The lifespan's recovery reads go to the suite's SQLite engine too: left on
+    # the production factory they dialled ``DATABASE_URL``'s default
+    # ``localhost:5432``, and any unrelated Postgres there without an
+    # ``aptitude`` database failed every test with ``InvalidCatalogNameError``.
     with (
+        patch("main.async_session_factory", new=sqlite_session_factory),
         patch("main.require_database_schema_current", new=AsyncMock()),
         TestClient(main_app, raise_server_exceptions=False) as client,
     ):
         yield client
+
+
+@pytest.fixture
+def cors_client() -> Iterator[TestClient]:
+    """Client that returns the app's 500 rather than re-raising into the test."""
+    with _hermetic_client() as client:
+        yield client
+
+
+def test_booting_the_client_never_dials_the_production_database() -> None:
+    """Whatever listens on ``DATABASE_URL``'s host must not decide these tests.
+
+    The production engine is made to fail loudly on any connection attempt, so
+    a lifespan read that slipped back onto it fails here on every machine --
+    not only on one that happens to run an unrelated Postgres on port 5432.
+    """
+    refuse = AssertionError("the CORS suite dialled the production database")
+    with (
+        patch.object(production_engine.sync_engine, "connect", side_effect=refuse) as dial,
+        _hermetic_client() as client,
+    ):
+        assert client.get("/health/live").status_code == 200
+
+    dial.assert_not_called()
 
 
 @pytest.mark.usefixtures("failing_session")
