@@ -136,17 +136,31 @@ function RibbonTrack({ width }: { width: number }) {
  * week's numbered badges sit, and stops short of them; on the plain arc it
  * marks the week's start and reaches down to the birth dots.
  */
-function HereLine({ x, numbered }: { x: number; numbered: boolean }) {
+function HereLine({ x, passRow }: { x: number; passRow: boolean }) {
+  const y2 = chartLayout.ribbonHeight + (passRow ? 0 : chartLayout.plotInset);
   return (
-    <Line
-      testID="ribbon-here"
-      x1={x}
-      x2={x}
-      y1={0}
-      y2={chartLayout.ribbonHeight + (numbered ? chartLayout.gap : chartLayout.plotInset)}
-      stroke={accent.primary}
-      strokeWidth={chartLayout.lineWidth}
-    />
+    <>
+      {passRow ? (
+        <Line
+          testID="ribbon-here-halo"
+          x1={x}
+          x2={x}
+          y1={0}
+          y2={y2}
+          stroke={surface.canvas}
+          strokeWidth={chartLayout.haloWidth}
+        />
+      ) : null}
+      <Line
+        testID="ribbon-here"
+        x1={x}
+        x2={x}
+        y1={0}
+        y2={y2}
+        stroke={accent.primary}
+        strokeWidth={chartLayout.lineWidth}
+      />
+    </>
   );
 }
 
@@ -161,17 +175,21 @@ function RibbonMarks({
   markers: readonly RibbonMarker[];
   weeks: number;
   width: number;
-  /** A pass row (#3727) measures every mark from the middle of its week. */
+  /**
+   * A pass row (#3727) measures every mark from the middle of its week, stops
+   * the you-are-here line at the track and haloes it.
+   */
   passRow: boolean;
 }) {
   const x = (week: number) => Math.max(0, Math.min(1, (week - 1) / Math.max(1, weeks))) * width;
   const numbered = isNumbered(markers);
+  const pass = passRow || numbered;
   return (
     <>
       {currentWeek === undefined ? null : (
         <HereLine
-          x={passRow || numbered ? weekCenter(currentWeek, weeks, width) : x(currentWeek)}
-          numbered={numbered}
+          x={pass ? weekCenter(currentWeek, weeks, width) : x(currentWeek)}
+          passRow={pass}
         />
       )}
       {numbered
@@ -326,6 +344,8 @@ export function Ribbon({
       title={title}
       onLayout={size.onLayout}
       interactive={isNumbered(markers)}
+      // A pass row's header starts where its track does (#3727).
+      inset={drawnWeeks !== undefined || isNumbered(markers) ? chartLayout.plotInset : undefined}
       rows={tableRows(stageRows, markerRows, currentWeek, isNumbered(markers))}
       headers={['Arc position']}
     >

@@ -4,14 +4,14 @@
  * in lanes so none overlap, and reachable by touch, hover and keyboard.
  */
 import React, { useState, type KeyboardEvent, type MouseEvent } from 'react';
-import { Platform, Pressable, StyleSheet, Text } from 'react-native';
+import { Platform, Pressable, StyleSheet, Text, View } from 'react-native';
 import { Circle, G, Text as SvgText } from 'react-native-svg';
 
 import { chartStyles } from './chartStyles';
 import { markerLanes, type MarkerSlot } from './geometry';
 import type { ChartTableRow } from './types';
 
-import { accent, chartLayout, fonts, ink } from '@/design/tokens';
+import { accent, chartLayout, fonts, ink, SPACING } from '@/design/tokens';
 
 export interface RibbonMarker {
   week: number;
@@ -266,15 +266,16 @@ export function MarkerReadout({
   testID?: string;
 }) {
   const overflow = overflowLine(markers, layout.overflow);
+  if (!inspection.detail && !overflow) return null;
   return (
-    <>
+    <View testID={`${testID}-notes`} style={styles.notes}>
       {inspection.detail ? (
         <Text testID={`${testID}-value`} style={[chartStyles.tick, styles.detail]}>
           {inspection.detail}
         </Text>
       ) : null}
       {overflow ? <Text style={chartStyles.caption}>{overflow}</Text> : null}
-    </>
+    </View>
   );
 }
 
@@ -288,4 +289,8 @@ export const TRACK = {
   dash: `${chartLayout.trackDash} ${chartLayout.trackDash}`,
 } as const;
 
-const styles = StyleSheet.create({ detail: { color: ink.primary } });
+const styles = StyleSheet.create({
+  detail: { color: ink.primary },
+  // The frame's own rhythm, and the track's left edge (#3727).
+  notes: { gap: SPACING.sm, marginTop: SPACING.sm, paddingLeft: chartLayout.plotInset },
+});

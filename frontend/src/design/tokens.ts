@@ -752,6 +752,8 @@ export const chartLayout = {
   markerLanes: 3,
   /** Dash and gap of the unfilled track, so it never reads as a pale stage block. */
   trackDash: 4,
+  /** A canvas outline under a you-are-here line, so it reads on any stage colour. */
+  haloWidth: 4,
   plotInset: 8,
   ribbonHeight: 20,
   secondaryRibbonHeight: 6,

@@ -1,13 +1,13 @@
 import { describe, expect, it } from '@jest/globals';
 import { fireEvent, render, within } from '@testing-library/react-native';
 import React from 'react';
-import { Text } from 'react-native';
-import { Circle, Rect, Text as SvgText } from 'react-native-svg';
+import { StyleSheet, Text } from 'react-native';
+import { Circle, Line, Rect, Text as SvgText } from 'react-native-svg';
 
 import { markerLanes, weekCenter } from '../geometry';
 import { Ribbon, type RibbonMarker } from '../Ribbon';
 
-import { accent, chartLayout, STAGE_COLORS } from '@/design/tokens';
+import { accent, chartLayout, SPACING, STAGE_COLORS, surface } from '@/design/tokens';
 
 /** The arc's real shape: four three-week stages, then six of four. */
 const WEEKS = [3, 3, 3, 3, 4, 4, 4, 4, 4, 4];
@@ -116,6 +116,64 @@ describe('a pass ribbon', () => {
     expect(Number(here.props.y2)).toBeLessThan(
       Number(markerNode(view, 2).props.cy) - chartLayout.markerRadius,
     );
+  });
+
+  it('stops the you-are-here line at the track and haloes it so it reads on any stage', () => {
+    const view = render(
+      <Ribbon blocks={blocks} markers={markers} currentWeek={8} width={NARROW} summary="Pass 4." />,
+    );
+    const here = view.getByTestId('ribbon-here', { includeHiddenElements: true });
+    expect(Number(here.props.y2)).toBe(chartLayout.ribbonHeight);
+    const halo = view
+      .UNSAFE_getAllByType(Line)
+      .find((node) => node.props.testID === 'ribbon-here-halo')!;
+    expect(halo.props.x1).toBe(here.props.x1);
+    expect(halo.props.y2).toBe(here.props.y2);
+    expect(halo.props.stroke).toBe(surface.canvas);
+    expect(Number(halo.props.strokeWidth)).toBe(chartLayout.haloWidth);
+    expect(chartLayout.haloWidth).toBeGreaterThan(chartLayout.lineWidth);
+  });
+
+  it('keeps the plain arc’s you-are-here line as it was', () => {
+    const view = render(<Ribbon blocks={blocks} currentWeek={8} width={360} summary="Arc." />);
+    const here = view.getByTestId('ribbon-here', { includeHiddenElements: true });
+    expect(Number(here.props.y2)).toBe(chartLayout.ribbonHeight + chartLayout.plotInset);
+    expect(view.queryByTestId('ribbon-here-halo', { includeHiddenElements: true })).toBeNull();
+  });
+
+  it('starts a pass row’s label, readout and caption on the track’s first pixel', () => {
+    const crowd = Array.from({ length: 4 }, (_, index) => ({
+      week: 8,
+      number: index + 1,
+      label: `Habit ${index + 1} · Habit`,
+      unlocked: '20 Jul',
+    }));
+    const view = render(
+      <Ribbon
+        testID="pass"
+        title="Pass 1 · began 5 Jan"
+        blocks={blocks}
+        drawnWeeks={21}
+        markers={crowd}
+        width={NARROW}
+        summary="Pass 1."
+      />,
+    );
+    const header = StyleSheet.flatten(view.getByTestId('pass-header').props.style);
+    expect(header.paddingLeft).toBe(chartLayout.plotInset);
+    const notes = StyleSheet.flatten(view.getByTestId('pass-notes').props.style);
+    expect(notes.paddingLeft).toBe(chartLayout.plotInset);
+    // The readout and the overflow caption keep the frame's rhythm, apart and below the badges.
+    expect(notes.gap).toBe(SPACING.sm);
+    expect(notes.marginTop).toBe(SPACING.sm);
+  });
+
+  it('leaves the plain arc’s header where it was', () => {
+    const view = render(<Ribbon testID="arc" title="Week 8" blocks={blocks} summary="Arc." />);
+    expect(view.queryByTestId('arc-header')).toBeNull();
+    const row = StyleSheet.flatten(view.getByText('Week 8').parent?.parent?.props.style);
+    expect(row.paddingLeft).toBeUndefined();
+    expect(row.flexDirection).toBe('row');
   });
 
   it('centres the you-are-here line on its week on a pass row with no habits yet', () => {

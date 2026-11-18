@@ -71,6 +71,8 @@ interface ChartFrameProps extends ChartBaseProps {
   aside?: string;
   /** A glyph before the table toggle that opens a fuller view of the same thing. */
   door?: ChartDoor;
+  /** Starts the header row this far in, to line its title up with an inset plot. */
+  inset?: number;
 }
 
 /** Glyph size for the chart/table toggle, inside a full touch target. */
@@ -118,6 +120,33 @@ function TableToggle({ showTable, onPress }: { showTable: boolean; onPress: () =
   );
 }
 
+/** One row: what the chart shows, its current figure, a door, and the table toggle. */
+function ChartHeader({
+  testID,
+  title,
+  aside,
+  door,
+  inset,
+  showTable,
+  onToggle,
+}: Pick<ChartFrameProps, 'testID' | 'title' | 'aside' | 'door' | 'inset'> & {
+  showTable: boolean;
+  onToggle: () => void;
+}) {
+  return (
+    <View
+      // Named only when inset, so no other chart grows a testID its callers match on.
+      testID={testID && inset !== undefined ? `${testID}-header` : undefined}
+      style={[chartStyles.header, inset === undefined ? undefined : { paddingLeft: inset }]}
+    >
+      <Text style={[chartStyles.caption, chartStyles.headerTitle]}>{title ?? ''}</Text>
+      {aside ? <Text style={chartStyles.aside}>{aside}</Text> : null}
+      {door ? <HeaderGlyph {...door} /> : null}
+      <TableToggle showTable={showTable} onPress={onToggle} />
+    </View>
+  );
+}
+
 /** Static charts never introduce entrance motion, including under reduced motion. */
 export function ChartFrame({
   summary,
@@ -131,6 +160,7 @@ export function ChartFrame({
   title,
   aside,
   door,
+  inset,
 }: ChartFrameProps) {
   const [showTable, setShowTable] = useState(false);
   return (
@@ -139,12 +169,15 @@ export function ChartFrame({
       onLayout={onLayout}
       style={[chartStyles.frame, width === undefined ? undefined : { width }]}
     >
-      <View style={chartStyles.header}>
-        <Text style={[chartStyles.caption, chartStyles.headerTitle]}>{title ?? ''}</Text>
-        {aside ? <Text style={chartStyles.aside}>{aside}</Text> : null}
-        {door ? <HeaderGlyph {...door} /> : null}
-        <TableToggle showTable={showTable} onPress={() => setShowTable(!showTable)} />
-      </View>
+      <ChartHeader
+        testID={testID}
+        title={title}
+        aside={aside}
+        door={door}
+        inset={inset}
+        showTable={showTable}
+        onToggle={() => setShowTable(!showTable)}
+      />
       <View
         accessibilityRole={interactive ? undefined : 'image'}
         accessibilityLabel={summary}
