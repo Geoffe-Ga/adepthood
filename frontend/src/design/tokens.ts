@@ -743,6 +743,17 @@ export const chartLayout = {
   columnMaxWidth: 24,
   columnRadius: 4,
   dotRadius: 4,
+  /** A numbered habit marker on a pass ribbon (#3727): room for two digits. */
+  markerRadius: 9,
+  markerLabelSize: 11,
+  /** Clear space between a pass ribbon and its first lane of badges. */
+  markerOffset: 4,
+  /** Markers crowding one stretch of weeks stack this deep, then are counted. */
+  markerLanes: 3,
+  /** Dash and gap of the unfilled track, so it never reads as a pale stage block. */
+  trackDash: 4,
+  /** A canvas outline under a you-are-here line, so it reads on any stage colour. */
+  haloWidth: 4,
   plotInset: 8,
   ribbonHeight: 20,
   secondaryRibbonHeight: 6,

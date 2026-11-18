@@ -2176,3 +2176,40 @@ export type FeedbackTriageSummaryT = z.infer<typeof feedbackTriageSummarySchema>
 export type FeedbackTriageDetailT = z.infer<typeof feedbackTriageDetailSchema>;
 export type FeedbackOperatorNoteT = z.infer<typeof feedbackOperatorNoteSchema>;
 export type FeedbackIssueDraftT = z.infer<typeof feedbackIssueDraftSchema>;
+
+// ---------------------------------------------------------------------------
+// One ribbon per pass (#3726 / #3727) — nested in GET /progress/overview's arc
+// ---------------------------------------------------------------------------
+
+/** How a pass began. */
+export const passOriginSchema = z.enum(['first_run', 'rescaffold', 'begin_again', 'backfill']);
+
+/** A habit's most recent unlock in one pass, at the program number it carried then. */
+export const passMarkerSchema = z.object({
+  habit_id: z.number().int(),
+  name: z.string(),
+  icon: z.string(),
+  program_number: z.number().int(),
+  /** Counted from this pass's own start, 1..36. */
+  week: z.number().int(),
+  unlocked_on: isoDate,
+  /** Ended pass: locked at its end. Live pass: locked now. */
+  currently_locked: z.boolean(),
+});
+
+/** One recorded (or held) pass through the ten stages, oldest first in the arc. */
+export const arcPassSchema = z.object({
+  pass_number: z.number().int(),
+  started_on: isoDate,
+  ended_on: isoDate.nullable(),
+  origin: passOriginSchema,
+  state: z.enum(['pending', 'live', 'ended']),
+  days_until_start: z.number().int(),
+  reached_stage: z.number().int().nullable(),
+  reached_week: z.number().int().nullable(),
+  completed: z.boolean(),
+  markers: z.array(passMarkerSchema),
+});
+
+export type PassMarkerT = z.infer<typeof passMarkerSchema>;
+export type ArcPassT = z.infer<typeof arcPassSchema>;

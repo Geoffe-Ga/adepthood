@@ -9,7 +9,7 @@ import type { ChartPoint, Dumbbell, RibbonBlock, RibbonMarker } from '@/componen
 import { formatHistoryValue } from '@/components/charts/HistoryPlot';
 import { chart, STAGE_COLORS } from '@/design/tokens';
 import { storedStageColorName } from '@/store/stageColorName';
-import { dayKeyToInstant } from '@/utils/dateUtils';
+import { addDaysInTZ, dayKeyToInstant } from '@/utils/dateUtils';
 
 /** The rhythm has no shape to show before four weeks of days (D09). */
 export const RHYTHM_MIN_DAYS = 28;
@@ -43,6 +43,147 @@ export const birthMarkers = (overview: ApiProgressOverview): RibbonMarker[] =>
       ? []
       : [{ week: birth.week, label: `${birth.name} began` }],
   );
+
+type ArcPass = NonNullable<ApiProgressOverview['arc']['passes']>[number];
+type PassMarker = ArcPass['markers'][number];
+
+/** One pass drawn as one ribbon row (#3727): oldest on top, aligned week for week. */
+export interface PassRow {
+  key: string;
+  /** The row's header: `Pass 2 · began 1 Jun · in progress — week 8`. */
+  label: string;
+  blocks: RibbonBlock[];
+  /** Weeks drawn in stage colour; the rest of the arc is an unfilled track. */
+  drawnWeeks: number;
+  /** The live pass's week, drawn as the you-are-here line. */
+  currentWeek?: number;
+  markers: RibbonMarker[];
+  /** The whole row as one sentence for screen readers. */
+  summary: string;
+}
+
+const ONE_DAY_BACK = -1;
+const arcWeeks = (overview: ApiProgressOverview): number =>
+  overview.arc.stages.reduce((sum, stage) => sum + stage.weeks, 0);
+const dayShort = (date: string): string => format(date, { day: 'numeric', month: 'short' });
+const dayLong = (date: string): string =>
+  format(date, { day: 'numeric', month: 'long', year: 'numeric' });
+const dayBefore = (date: string): string => addDaysInTZ(date, ONE_DAY_BACK, 'UTC');
+const capitalise = (text: string): string => text.charAt(0).toUpperCase() + text.slice(1);
+const plural = (count: number, word: string): string => `${count} ${word}${count === 1 ? '' : 's'}`;
+
+/**
+ * How far an ended pass got. The server sends ``reached_*`` for every begun
+ * pass, but the schema allows null, so a missing figure is left unsaid rather
+ * than printed: the stage and week, the week alone, or just the day it ended.
+ */
+function ended(pass: ArcPass): string {
+  if (pass.completed) return 'completed';
+  const { reached_stage: stage, reached_week: week } = pass;
+  if (week === null) return pass.ended_on ? `ended ${dayShort(pass.ended_on)}` : 'ended';
+  return stage === null ? `reached week ${week}` : `reached stage ${stage}, week ${week}`;
+}
+
+/** How far a begun pass got, in the row's words. */
+function reach(pass: ArcPass, until: string | null): string {
+  if (pass.state !== 'live') return ended(pass);
+  const week = pass.reached_week === null ? '' : ` — week ${pass.reached_week}`;
+  return `in progress${week}${until ? `, until ${dayShort(until)}` : ''}`;
+}
+
+/** The sentence's middle: where the pass is, or how far it got, out of the arc's weeks. */
+function whereSentence(pass: ArcPass, weeks: number): string {
+  const week = pass.reached_week;
+  if (pass.state === 'live')
+    return `In progress${week === null ? '' : `, week ${week} of ${weeks}`}.`;
+  if (pass.completed) return `Completed all ${weeks} weeks.`;
+  return `${capitalise(ended(pass))}${week === null ? '' : ` of ${weeks}`}.`;
+}
+
+/** What a marker's ring means: locked by the pass's end, or locked now on the live pass. */
+const lockNote = (pass: ArcPass): string =>
+  pass.state === 'live' ? 'locked now' : 'locked by the pass’s end';
+
+const passMarker = (pass: ArcPass, marker: PassMarker): RibbonMarker => ({
+  week: marker.week,
+  number: marker.program_number,
+  hollow: marker.currently_locked,
+  label: `Habit ${marker.program_number} · ${marker.name}`,
+  unlocked: dayShort(marker.unlocked_on),
+  ...(marker.currently_locked ? { note: lockNote(pass) } : {}),
+});
+
+function passSentence(pass: ArcPass, weeks: number, numbered: boolean): string {
+  const lead = numbered ? `Pass ${pass.pass_number}, began` : 'Began';
+  const where = whereSentence(pass, weeks);
+  const habits = pass.markers.map(
+    (marker) =>
+      `habit ${marker.program_number}, ${marker.name}, week ${marker.week}${marker.currently_locked ? `, ${lockNote(pass)}` : ''}`,
+  );
+  const unlocked =
+    habits.length === 0 ? 'No habits unlocked.' : `Habits unlocked: ${habits.join('; ')}.`;
+  return `${lead} ${dayLong(pass.started_on)}. ${where} ${unlocked}`;
+}
+
+function pendingRow(pass: ArcPass, base: Omit<PassRow, 'label' | 'summary'>, numbered: boolean) {
+  const begins = numbered ? `Pass ${pass.pass_number} begins` : 'Begins';
+  return {
+    ...base,
+    drawnWeeks: 0,
+    markers: [],
+    label: numbered
+      ? `Pass ${pass.pass_number} · begins ${dayShort(pass.started_on)}`
+      : `Begins ${dayShort(pass.started_on)}`,
+    summary: `${begins} ${dayLong(pass.started_on)}, in ${plural(pass.days_until_start, 'day')}.`,
+  };
+}
+
+/** A lone live pass reads as today's ribbon did, `Week 8 · Red`, saying only what is known. */
+function soleLabel(pass: ArcPass): string {
+  if (pass.state !== 'live')
+    return capitalise(`began ${dayShort(pass.started_on)} · ${reach(pass, null)}`);
+  const { reached_stage: stage, reached_week: week } = pass;
+  if (week === null) return 'In progress';
+  return stage === null ? `Week ${week}` : `Week ${week} · ${stageName(stage)}`;
+}
+
+function passRow(
+  overview: ApiProgressOverview,
+  pass: ArcPass,
+  next: ArcPass | undefined,
+  numbered: boolean,
+): PassRow {
+  const weeks = arcWeeks(overview);
+  const base = {
+    key: `pass-${pass.pass_number}`,
+    blocks: ribbonBlocks(overview),
+    drawnWeeks: pass.state === 'ended' && !pass.completed ? (pass.reached_week ?? 0) : weeks,
+    markers: pass.markers.map((marker) => passMarker(pass, marker)),
+  };
+  if (pass.state === 'pending') return pendingRow(pass, base, numbered);
+  const until = next?.state === 'pending' ? dayBefore(next.started_on) : null;
+  return {
+    ...base,
+    ...(pass.state === 'live' && pass.reached_week !== null
+      ? { currentWeek: pass.reached_week }
+      : {}),
+    label: numbered
+      ? `Pass ${pass.pass_number} · began ${dayShort(pass.started_on)} · ${reach(pass, until)}`
+      : soleLabel(pass),
+    summary: passSentence(pass, weeks, numbered),
+  };
+}
+
+/**
+ * One row per pass, oldest first (#3727). Empty for an older server or with
+ * the habits ring off, so the screen keeps the single ribbon. A lone pass is
+ * not numbered: a first-time reader sees today's ribbon, plus numbers.
+ */
+export function passRows(overview: ApiProgressOverview): PassRow[] {
+  const passes = overview.arc.passes ?? [];
+  const numbered = passes.length > 1;
+  return passes.map((pass, index) => passRow(overview, pass, passes[index + 1], numbered));
+}
 
 export const carryovers = (overview: ApiProgressOverview): string[] =>
   overview.arc.habit_births.filter((birth) => birth.is_carryover).map((birth) => birth.name);
