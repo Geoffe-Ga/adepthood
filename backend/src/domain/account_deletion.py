@@ -362,6 +362,9 @@ POLICY: Mapping[str, TablePolicy] = {
         "owner_user_id",
         "Tags the account defined. System tags carry no owner and are untouched.",
     ),
+    "programpass": _erase(
+        "user_id", "Each pass the account made through the stages, and how far it got."
+    ),
     "promotedquote": _erase(
         "user_id", "Passages the account promoted from its entries, its letters, or the Course."
     ),

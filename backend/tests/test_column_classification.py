@@ -149,6 +149,8 @@ _PLAINTEXT_COLUMNS: dict[str, frozenset[str]] = {
             "marginalia.source_provider",
             "marginalia.status",
             "practicesession.mode",
+            # How a pass through the stages began: a CHECK-constrained origin (#3723).
+            "programpass.origin",
             # Which kind of source a promoted quote was lifted from (#3656).
             "promotedquote.source_kind",
             "user.timezone",

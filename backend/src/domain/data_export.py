@@ -62,6 +62,7 @@ from models.practice import Practice
 from models.practice_recipe import PracticeRecipe, PracticeRecipeStep
 from models.practice_session import PracticeSession
 from models.practice_tag import PracticeTag
+from models.program_pass import ProgramPass
 from models.promoted_quote import PromotedQuote
 from models.prompt_dismissal import PromptDismissal
 from models.prompt_response import PromptResponse
@@ -449,6 +450,12 @@ MANIFEST: Mapping[str, ExportRule] = {
         PracticeTag,
         "Tags the account defined. System tags carry no owner.",
         column="owner_user_id",
+    ),
+    "programpass": _include(
+        "program_passes",
+        ProgramPass,
+        "Each pass the account made through the stages: the day it began and "
+        "ended, how it began, and the stage and week it reached.",
     ),
     "promotedquote": _include(
         "promoted_passages",
