@@ -30,6 +30,7 @@ from domain.progress_inputs import (
     stage_number,
     start_day,
 )
+from domain.progress_passes import arc_passes
 from domain.progress_rhythm import (
     DayCount,
     Population,
@@ -161,6 +162,7 @@ def _arc(data: OverviewInput) -> ProgressArc:
         current_week=_current_week(data, start),
         stages=_arc_stages(data, start),
         habit_births=_births(data, start),
+        passes=arc_passes(data),
     )
 
 

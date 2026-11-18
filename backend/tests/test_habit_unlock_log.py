@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from collections.abc import AsyncIterator, Iterator
 from contextlib import asynccontextmanager, contextmanager
-from datetime import timedelta
+from datetime import date, timedelta
 from http import HTTPStatus
 
 import pytest
@@ -23,12 +23,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import col, select
 
 from conftest import test_engine
-from domain.dates import ensure_aware, to_user_date, today_in_tz
+from domain.dates import day_bounds_in_tz, ensure_aware, to_user_date, today_in_tz
 from domain.habit_unlock_log import latest_unlocks
 from domain.program_pass import live_pass
 from domain.stage_progress import ensure_user_progress
 from models.habit import Habit
 from models.habit_unlock_event import HabitUnlockEvent, UnlockKind, UnlockSource
+from models.program_pass import ProgramPass
+from models.stage_progress import StageProgress
 from routers import habits as habits_router
 
 # UTC+14: the local day differs from the UTC day for ten hours of every day,
@@ -483,3 +485,88 @@ async def test_one_read_opening_several_habits_logs_each_at_its_own_number(
     assert {event.pass_id for event in events} == {pass_id}
     assert len(number_reads) == 1
     assert len(pass_reads) == 1
+
+
+# ── A pending pass whose day has come is opened before a write logs ─────
+
+
+async def _due_pending_pass(session: AsyncSession, user_id: int) -> tuple[int, date]:
+    """Back-date the live pass a month and hold a pass pending on today.
+
+    Returns the old live pass's id and the account's today.
+    """
+    old_id = await _live_pass_id(session, user_id)
+    today = today_in_tz(_FAR_EAST_TZ)
+    began = today - timedelta(days=30)
+    old = await session.get(ProgramPass, old_id)
+    progress = (
+        await session.execute(select(StageProgress).where(col(StageProgress.user_id) == user_id))
+    ).scalar_one()
+    assert old is not None
+    anchor, _ = day_bounds_in_tz(_FAR_EAST_TZ, began)
+    old.started_on = began
+    progress.program_started_at = anchor
+    progress.stage_started_at = anchor
+    progress.pending_pass_starts_on = today
+    session.add_all([old, progress])
+    await session.commit()
+    return old_id, today
+
+
+async def _assert_logged_in_the_new_pass(
+    session: AsyncSession, user_id: int, old_id: int, today: date
+) -> None:
+    """The one event is tagged with the pass opening today; the old one ended yesterday."""
+    (event,) = await _events(session, user_id)
+    current = await live_pass(session, user_id)
+    old = await session.get(ProgramPass, old_id)
+    assert current is not None
+    assert old is not None
+    assert current.started_on == today
+    assert event.pass_id == current.id
+    assert event.pass_id != old_id
+    assert old.ended_on == today - timedelta(days=1)
+
+
+@pytest.mark.asyncio
+async def test_a_put_unlock_on_the_pending_day_is_logged_in_the_new_pass(
+    async_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """The write settles the arrived pass first, so the event is not stranded in the old one."""
+    headers, user_id = await _signup(async_client, "put_on_pending_day")
+    habit = await _create(async_client, headers, "Walk")
+    old_id, today = await _due_pending_pass(db_session, user_id)
+
+    await _put(async_client, headers, {**habit, "revealed": True})
+
+    await _assert_logged_in_the_new_pass(db_session, user_id, old_id, today)
+
+
+@pytest.mark.asyncio
+async def test_a_create_unlocked_on_the_pending_day_is_logged_in_the_new_pass(
+    async_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """A habit created already unlocked on the day opens the pass before logging."""
+    headers, user_id = await _signup(async_client, "create_on_pending_day")
+    old_id, today = await _due_pending_pass(db_session, user_id)
+
+    await _create(async_client, headers, "Read", revealed=True)
+
+    await _assert_logged_in_the_new_pass(db_session, user_id, old_id, today)
+
+
+@pytest.mark.asyncio
+async def test_a_write_with_no_progress_row_provisions_none(
+    async_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """Settling is skipped, not forced, for an account that never began the program."""
+    headers, user_id = await _signup(async_client, "write_without_progress")
+    habit = await _create(async_client, headers, "Sit", revealed=True)
+    await _put(async_client, headers, {**habit, "revealed": False})
+
+    db_session.expire_all()
+    progress = await db_session.execute(
+        select(StageProgress).where(col(StageProgress.user_id) == user_id)
+    )
+    assert progress.scalar_one_or_none() is None
+    assert {event.pass_id for event in await _events(db_session, user_id)} == {None}

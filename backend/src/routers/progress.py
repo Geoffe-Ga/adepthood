@@ -1,4 +1,9 @@
-"""Authorized, uncached whole-person series without provisioning side effects."""
+"""Authorized, uncached whole-person series.
+
+The read never provisions a progress row. Its one write is settling: a pending
+pass whose day has come is opened (and committed) before the series are read,
+as every other "person is present" reader does (issue #3725).
+"""
 
 from collections import defaultdict
 from collections.abc import Sequence
@@ -11,6 +16,7 @@ from sqlmodel import col, select
 from database import get_session
 from dependencies.timezone import current_user_timezone
 from domain.dates import today_in_tz
+from domain.pass_rescaffold import settle_pending_pass
 from domain.progress_overview import (
     OverviewHabitContext,
     OverviewInput,
@@ -22,8 +28,10 @@ from error_responses import build_router
 from models.goal import Goal
 from models.goal_completion import GoalCompletion
 from models.habit import Habit
+from models.habit_unlock_event import HabitUnlockEvent
 from models.practice import Practice
 from models.practice_session import PracticeSession
+from models.program_pass import ProgramPass
 from models.stage_progress import StageProgress
 from models.user_depth_preferences import UserDepthPreferences
 from models.user_practice import UserPractice
@@ -83,11 +91,55 @@ async def _practice_asks(session: AsyncSession) -> dict[int, float]:
     }
 
 
-async def _read_values(session: AsyncSession, owner: int, timezone: str) -> OverviewInput:
-    """Bulk-load every owner boundary, including both sides of session adoptions."""
+async def _passes(session: AsyncSession, owner: int) -> Sequence[ProgramPass]:
+    """The owner's recorded passes, oldest first, in one query."""
+    result = await session.execute(
+        select(ProgramPass)
+        .where(ProgramPass.user_id == owner)
+        .order_by(col(ProgramPass.pass_number))
+    )
+    return result.scalars().all()
+
+
+async def _unlock_events(session: AsyncSession, owner: int) -> Sequence[HabitUnlockEvent]:
+    """The owner's unlock-log rows in the owner's own passes on the owner's own habits.
+
+    One query however many habits. The inner join on the pass also drops a row
+    with no pass, which is never drawn (issue #3726).
+    """
+    result = await session.execute(
+        select(HabitUnlockEvent)
+        .join(ProgramPass, col(HabitUnlockEvent.pass_id) == col(ProgramPass.id))
+        .join(Habit, col(HabitUnlockEvent.habit_id) == col(Habit.id))
+        .where(
+            HabitUnlockEvent.user_id == owner,
+            ProgramPass.user_id == owner,
+            Habit.user_id == owner,
+        )
+        .order_by(col(HabitUnlockEvent.occurred_at), col(HabitUnlockEvent.id))
+    )
+    return result.scalars().all()
+
+
+async def _settled_progress(
+    session: AsyncSession, owner: int, timezone: str
+) -> StageProgress | None:
+    """The owner's progress row, with a pending pass whose day has come opened first.
+
+    Reading the overview is someone showing up, as the Map, Course and habit
+    list reads are (issue #3725), so the pass rows read next are current.
+    """
     progress = (
         await session.execute(select(StageProgress).where(StageProgress.user_id == owner))
     ).scalar_one_or_none()
+    if progress is None:
+        return None
+    return await settle_pending_pass(session, progress, tz=timezone)
+
+
+async def _read_values(session: AsyncSession, owner: int, timezone: str) -> OverviewInput:
+    """Bulk-load every owner boundary, including both sides of session adoptions."""
+    progress = await _settled_progress(session, owner, timezone)
     preferences = (
         await session.execute(
             select(UserDepthPreferences).where(UserDepthPreferences.user_id == owner)
@@ -155,6 +207,8 @@ async def _read_values(session: AsyncSession, owner: int, timezone: str) -> Over
         habit_contexts=_habit_contexts(habits, goals),
         enable_habits=preferences.enable_habits if preferences else True,
         enable_practices=preferences.enable_practices if preferences else True,
+        passes=await _passes(session, owner),
+        unlock_events=await _unlock_events(session, owner),
     )
 
 
