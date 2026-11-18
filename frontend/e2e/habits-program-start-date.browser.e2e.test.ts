@@ -9,25 +9,30 @@ import {
   openHabits,
   seedHabit,
   sessionFor,
+  setProgramAnchorDaysAgo,
   signUp,
 } from './journalHabitsBrowserSupport';
 import { instantAt } from './zonedClock';
 
 /**
- * #3097: a habits-only person picks the day their program began, and every
- * reader counts from that one day.
+ * #3097, #3728: a person with habits re-runs Energy Scaffolding and opens their
+ * next pass on a day that has not come yet; the pass they are in keeps running.
  *
- * The server owns the anchor (`program_started_at`); the client used to keep a
- * second one of its own, set from the Energy Scaffolding picker and never sent
- * anywhere, while the picker itself offered only future dates the server would
- * now refuse. Here the real client drives the real server:
+ * The server owns the anchor (`program_started_at`). Here the real client
+ * drives the real server:
  *
- *  - the scaffolding picker offers nothing after today, and refuses tomorrow;
- *  - a past pick sends exactly one `PUT /stages/program-calendar`, carrying the
- *    date and nothing else, and a real `GET` reads that anchor back;
- *  - the Settings "Program start date" row -- reachable with or without habits
- *    -- changes it, sends a second PUT, re-lays the program habit from the new
- *    day, and re-paces the Map without a reload.
+ *  - the scaffolding picker offers days up to the served `pass_start_window`,
+ *    one whole program ahead, and opens on today -- a new pass, not the
+ *    running one;
+ *  - saving a future pick sends exactly one `POST /stages/passes` carrying the
+ *    day and nothing else, and no `PUT /stages/program-calendar`; a real `GET`
+ *    reads the day back as `pending_pass_starts_on` while `program_started_at`
+ *    stays on the running pass;
+ *  - the Habits screen says when the next pass begins, and the Map still paces
+ *    from the running pass;
+ *  - the Settings "Program start date" row -- which corrects the pass the
+ *    person is in -- changes it with a PUT, re-lays the program habit from the
+ *    new day, and re-paces the Map without a reload.
  *
  * The zone is pinned to UTC and checked against the server's record, and the
  * page clock is installed at midday on the host's today, so the oracle, the
@@ -37,14 +42,17 @@ import { instantAt } from './zonedClock';
 const PINNED_ZONE = 'UTC';
 const PINNED_WALL = '12:00';
 const PROGRAM_CALENDAR_PATH = '/stages/program-calendar';
+const PASSES_PATH = '/stages/passes';
 const HABITS_PATH = '/habits/';
 const HABIT_NAME = 'Dawn sit';
-/** The scaffolding pick: inside the first stage. */
-const FIRST_PICK_DAYS_BACK = 10;
+/** The running pass: inside the first stage. */
+const RUNNING_DAYS_BACK = 10;
+/** The next pass, held for a day that has not come. */
+const FUTURE_PICK_DAYS_AHEAD = 13;
 /** The Settings edit: two 21-day stages have closed, so stage 3 is open. */
 const EDIT_DAYS_BACK = 50;
 const EDITED_STAGE = 3;
-/** A stage still ahead of both picks, whose countdown the Map shows. */
+/** A stage still ahead of both anchors, whose countdown the Map shows. */
 const OBSERVED_STAGE = 4;
 const OBSERVED_STAGE_OPENS_ON_DAY = STAGE_DURATIONS_DAYS.slice(0, OBSERVED_STAGE - 1).reduce(
   (sum, days) => sum + days,
@@ -65,14 +73,34 @@ function addDaysToKey(dayKey: string, days: number): string {
 const countdown = (daysBack: number): string =>
   `Opens in ${OBSERVED_STAGE_OPENS_ON_DAY - daysBack} days`;
 
+const isPost = (response: Response, path: string): boolean =>
+  response.request().method() === 'POST' && new URL(response.url()).pathname === path;
+
 const isProgramStartPut = (response: Response): boolean =>
   response.request().method() === 'PUT' &&
   new URL(response.url()).pathname === PROGRAM_CALENDAR_PATH;
+
+interface CalendarRead {
+  program_started_at: string;
+  calendar_stage: number;
+  pending_pass_starts_on: string | null;
+  pass_start_window: { earliest: string; latest: string } | null;
+}
+
+async function readCalendar(page: Page, token: string): Promise<CalendarRead> {
+  const read = await page.request.get(`${backendUrl()}${PROGRAM_CALENDAR_PATH}`, {
+    headers: bearer(token),
+  });
+  expect(read.ok()).toBe(true);
+  return (await read.json()) as CalendarRead;
+}
 
 /** Drive the scaffolding pass to its reorder step, where the start date is picked. */
 async function openScaffoldingDate(page: Page): Promise<void> {
   await openHabits(page);
   await page.getByRole('button', { name: 'Start Energy Scaffolding' }).click();
+  // The habit already held means this save opens a new pass, and says so.
+  await expect(page.getByTestId('review-new-pass')).toBeVisible();
   await page.getByTestId('review-continue').click();
   await page.getByTestId('continue-button').click();
   await page.getByTestId('count-warning-continue').click();
@@ -87,7 +115,7 @@ async function openMapFromHabits(page: Page): Promise<void> {
   await expect(page.getByRole('button', { name: 'Open Map menu' })).toBeVisible();
 }
 
-test('a habits-only person picks the day their program began and every reader counts from it', async ({
+test('a person with habits opens their next pass on a future day while the current one keeps running', async ({
   page,
 }) => {
   const pinned = instantAt(
@@ -101,53 +129,57 @@ test('a habits-only person picks the day their program began and every reader co
   const { token, timezone } = await sessionFor(page.request, email);
   expect(timezone, 'the account did not take the pinned zone').toBe(PINNED_ZONE);
   await seedHabit(page.request, token, HABIT_NAME, todayKey);
+  // The pass the person is in began RUNNING_DAYS_BACK ago (faked in the lane DB).
+  setProgramAnchorDaysAgo(email, RUNNING_DAYS_BACK);
+  const runningDay = addDaysToKey(todayKey, -RUNNING_DAYS_BACK);
 
-  const sent: unknown[] = [];
+  const puts: unknown[] = [];
+  const posts: unknown[] = [];
   page.on('request', (request) => {
-    if (request.method() === 'PUT' && new URL(request.url()).pathname === PROGRAM_CALENDAR_PATH) {
-      sent.push(request.postDataJSON());
-    }
+    const path = new URL(request.url()).pathname;
+    if (request.method() === 'PUT' && path === PROGRAM_CALENDAR_PATH)
+      puts.push(request.postDataJSON());
+    if (request.method() === 'POST' && path === PASSES_PATH) posts.push(request.postDataJSON());
   });
   await page.reload();
 
-  // --- The scaffolding picker offers only days the program can have begun on.
+  // --- The scaffolding picker offers the served pass window, future days included.
+  const before = await readCalendar(page, token);
   await openScaffoldingDate(page);
   const dateInput = page.getByLabel('Date', { exact: true });
-  await expect(dateInput).toHaveAttribute('max', todayKey);
-  const tomorrow = addDaysToKey(todayKey, 1);
-  await dateInput.fill(tomorrow);
-  await expect(dateInput).not.toHaveValue(tomorrow);
-  const firstPick = addDaysToKey(todayKey, -FIRST_PICK_DAYS_BACK);
-  await dateInput.fill(firstPick);
-  await expect(dateInput).toHaveValue(firstPick);
+  await expect(dateInput).toHaveValue(todayKey);
+  await expect(dateInput).toHaveAttribute('max', before.pass_start_window!.latest);
+  expect(before.pass_start_window!.latest > todayKey).toBe(true);
+  const futurePick = addDaysToKey(todayKey, FUTURE_PICK_DAYS_AHEAD);
+  await dateInput.fill(futurePick);
+  await expect(dateInput).toHaveValue(futurePick);
 
   await page.getByTestId('continue-to-templates').click();
-  const [scaffolded] = await Promise.all([
-    page.waitForResponse(isProgramStartPut),
+  const [opened] = await Promise.all([
+    page.waitForResponse((response) => isPost(response, PASSES_PATH)),
     page.getByTestId('finish-setup').click(),
   ]);
-  expect(scaffolded.ok(), 'the server refused the scaffolding pick').toBe(true);
-  expect(sent).toEqual([{ program_start_date: firstPick }]);
+  expect(opened.ok(), 'the server refused the new pass').toBe(true);
+  expect(posts).toEqual([{ start_day: futurePick }]);
+  expect(puts).toEqual([]);
 
-  const read = await page.request.get(`${backendUrl()}${PROGRAM_CALENDAR_PATH}`, {
-    headers: bearer(token),
-  });
-  expect(read.ok()).toBe(true);
-  const calendar = (await read.json()) as { program_started_at: string | null };
-  expect(dayKeyIn(calendar.program_started_at!, PINNED_ZONE)).toBe(firstPick);
+  const held = await readCalendar(page, token);
+  expect(held.pending_pass_starts_on).toBe(futurePick);
+  expect(dayKeyIn(held.program_started_at, PINNED_ZONE)).toBe(runningDay);
 
+  // --- The Habits screen names the day; the Map still paces the running pass.
+  await expect(page.getByTestId('pass-begins-notice')).toContainText('Your next pass begins');
   await openMapFromHabits(page);
   await expect(page.getByTestId(`stage-unlock-${OBSERVED_STAGE}`)).toHaveText(
-    countdown(FIRST_PICK_DAYS_BACK),
+    countdown(RUNNING_DAYS_BACK),
   );
 
-  // --- Settings changes it afterwards, with no reload.
+  // --- Settings corrects the pass the person is in, with no reload.
   await page.getByRole('button', { name: 'Open settings' }).filter({ visible: true }).click();
   await page.getByTestId('settings-row-program-start').click();
   await expect(page.getByTestId('program-start-settings-screen')).toBeVisible();
   const settingsInput = page.getByLabel('Date', { exact: true });
-  await expect(settingsInput).toHaveValue(firstPick);
-  await expect(settingsInput).toHaveAttribute('max', todayKey);
+  await expect(settingsInput).toHaveValue(runningDay);
   const edit = addDaysToKey(todayKey, -EDIT_DAYS_BACK);
   await settingsInput.fill(edit);
   const [edited] = await Promise.all([
@@ -156,12 +188,10 @@ test('a habits-only person picks the day their program began and every reader co
   ]);
   expect(edited.ok(), 'the server refused the Settings edit').toBe(true);
   await expect(page.getByTestId('program-start-status')).toBeVisible();
-  expect(sent).toEqual([{ program_start_date: firstPick }, { program_start_date: edit }]);
+  expect(puts).toEqual([{ program_start_date: edit }]);
+  expect(posts).toHaveLength(1);
 
-  const reread = await page.request.get(`${backendUrl()}${PROGRAM_CALENDAR_PATH}`, {
-    headers: bearer(token),
-  });
-  const after = (await reread.json()) as { program_started_at: string; calendar_stage: number };
+  const after = await readCalendar(page, token);
   expect(dayKeyIn(after.program_started_at, PINNED_ZONE)).toBe(edit);
   expect(after.calendar_stage).toBe(EDITED_STAGE);
 
