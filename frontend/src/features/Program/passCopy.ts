@@ -44,3 +44,10 @@ const countdown = (daysUntil: number): string =>
 /** The Habits notice while a first pass placed in the future has not begun. */
 export const programBeginsNotice = (day: string, daysUntil: number): string =>
   `Your program begins ${formatNearDay(day)}, ${countdown(daysUntil)}.`;
+
+/**
+ * Why a start-date picker is not offered while a next pass is pending: a
+ * correction would drop that pass, so the line says where its day is changed.
+ */
+export const pendingPassLockCopy = (day: string): string =>
+  `Your next pass begins ${formatPassDay(day)}. To change that day, save Energy Scaffolding again.`;

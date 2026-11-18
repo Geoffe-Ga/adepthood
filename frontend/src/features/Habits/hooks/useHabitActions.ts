@@ -10,7 +10,7 @@ import type {
   HabitMergePlan,
   HabitsActions,
   OnboardingHabit,
-  ScaffoldSaveNotify,
+  ScaffoldSaveOptions,
 } from '../Habits.types';
 import {
   GOAL_UNITS_NOT_SAVED_COPY,
@@ -266,8 +266,8 @@ export const useHabitActions = (
     (
       input: readonly OnboardingHabit[] | HabitMergePlan,
       programStartDay?: string,
-      notify?: ScaffoldSaveNotify,
-    ) => habitManager.onboardingSave(input, showToast, tz, programStartDay, notify),
+      options?: ScaffoldSaveOptions,
+    ) => habitManager.onboardingSave(input, showToast, tz, programStartDay, options),
     [showToast, tz],
   );
 

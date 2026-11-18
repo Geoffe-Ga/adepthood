@@ -43,6 +43,7 @@ describe('programStartRange', () => {
       maxDay: '2027-07-18',
       today: '2026-11-08',
       locked: false,
+      pendingPassDay: null,
     });
   });
 
@@ -53,28 +54,66 @@ describe('programStartRange', () => {
   it('carries the lock through', () => {
     expect(programStartRange(null, true, todayInUserTZ(ZONE), ZONE).locked).toBe(true);
   });
+
+  it('locks while a pass is pending, naming its day, because a correction would drop it', () => {
+    const range = programStartRange(
+      { earliest: '2026-01-02', latest: '2027-07-18' },
+      false,
+      todayInUserTZ(ZONE),
+      ZONE,
+      '2026-12-01',
+    );
+    expect(range.locked).toBe(true);
+    expect(range.pendingPassDay).toBe('2026-12-01');
+  });
 });
 
 describe('passStartRange (#3728)', () => {
   const TODAY = '2026-11-08';
+  const RUNNING_START = '2026-09-13';
 
   it('is the served pass window, never locked, in any cycle', () => {
-    expect(passStartRange({ earliest: '2026-09-13', latest: '2027-07-18' }, TODAY)).toEqual({
-      minDay: '2026-09-13',
+    expect(
+      passStartRange({ earliest: '2026-10-01', latest: '2027-07-18' }, TODAY, RUNNING_START),
+    ).toEqual({
+      minDay: '2026-10-01',
       maxDay: '2027-07-18',
       today: TODAY,
       locked: false,
+      pendingPassDay: null,
     });
   });
 
-  it('offers only today when no pass window has been served', () => {
-    // Today is never before the running pass and never past the ceiling, so it
-    // is the one day the client can offer without computing a window itself.
-    expect(passStartRange(null, TODAY)).toEqual({
+  it("never offers the running pass's own start: a pass there would run no days", () => {
+    const range = passStartRange(
+      { earliest: RUNNING_START, latest: '2027-07-18' },
+      TODAY,
+      RUNNING_START,
+    );
+    expect(range.minDay).toBe('2026-09-14');
+  });
+
+  it('floors at tomorrow when the running pass began today (a second save the same day)', () => {
+    const range = passStartRange({ earliest: TODAY, latest: '2027-07-18' }, TODAY, TODAY);
+    expect(range.minDay).toBe('2026-11-09');
+    expect(scaffoldOpeningDay(null, range)).toBe('2026-11-09');
+  });
+
+  it('offers only today when no pass window has been served and the running pass began earlier', () => {
+    expect(passStartRange(null, TODAY, RUNNING_START)).toMatchObject({
       minDay: TODAY,
       maxDay: TODAY,
-      today: TODAY,
-      locked: false,
+    });
+  });
+
+  it('offers only tomorrow with no window when the running pass began today or is unknown', () => {
+    expect(passStartRange(null, TODAY, TODAY)).toMatchObject({
+      minDay: '2026-11-09',
+      maxDay: '2026-11-09',
+    });
+    expect(passStartRange(null, TODAY, null)).toMatchObject({
+      minDay: '2026-11-09',
+      maxDay: '2026-11-09',
     });
   });
 });
@@ -93,7 +132,13 @@ describe('notAfterLatest', () => {
 });
 
 describe('scaffoldOpeningDay (#3728)', () => {
-  const range = { minDay: '2026-09-13', maxDay: '2027-07-18', today: '2026-11-08', locked: false };
+  const range = {
+    minDay: '2026-09-13',
+    maxDay: '2027-07-18',
+    today: '2026-11-08',
+    locked: false,
+    pendingPassDay: null,
+  };
 
   it('opens on today when no pass is held', () => {
     expect(scaffoldOpeningDay(null, range)).toBe('2026-11-08');

@@ -253,7 +253,7 @@ describe('OnboardingModal reorder step', () => {
         expect(onSaveHabits).toHaveBeenCalledWith(
           expect.anything(),
           daysFromToday(LATER),
-          expect.any(Function),
+          expect.objectContaining({ opensPass: true, notify: expect.any(Function) }),
         );
       });
     });

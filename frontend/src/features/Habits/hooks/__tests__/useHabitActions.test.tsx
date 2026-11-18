@@ -188,11 +188,11 @@ describe('useHabitActions timezone wiring', () => {
   it("forwards the modal's notice callback, so a start-date message renders on web (#3728)", async () => {
     const onboardingSave = jest.spyOn(habitManager, 'onboardingSave').mockResolvedValue(undefined);
     const { result } = renderActions('UTC');
-    const notify = jest.fn();
+    const options = { notify: jest.fn(), opensPass: true };
 
     try {
       await act(async () => {
-        await result.current.actions.onboardingSave([], '2026-10-29', notify);
+        await result.current.actions.onboardingSave([], '2026-10-29', options);
       });
 
       expect(onboardingSave).toHaveBeenCalledWith(
@@ -200,7 +200,7 @@ describe('useHabitActions timezone wiring', () => {
         expect.any(Function),
         'UTC',
         '2026-10-29',
-        notify,
+        options,
       );
     } finally {
       onboardingSave.mockRestore();

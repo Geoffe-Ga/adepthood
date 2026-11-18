@@ -70,6 +70,9 @@ export function PassBeginsNotice({
   );
 }
 
+/** The terracotta rule down the notice's leading edge, in logical pixels. */
+const ACCENT_RULE_WIDTH = 4;
+
 // The recessed Candle-and-Ink well the dropped-check-in notice uses, with the
 // terracotta accent as its rule: a note about the program, not a warning. The
 // static (light) tokens, like that notice's, because the Habits ground it sits
@@ -79,7 +82,7 @@ const styles = StyleSheet.create({
   notice: {
     backgroundColor: surface.sunken,
     borderLeftColor: accent.primary,
-    borderLeftWidth: SPACING.xs,
+    borderLeftWidth: ACCENT_RULE_WIDTH,
     borderRadius: BORDER_RADIUS.md,
     paddingVertical: SPACING.sm,
     paddingHorizontal: SPACING.md,

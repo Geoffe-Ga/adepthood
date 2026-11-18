@@ -5,9 +5,10 @@
  * ``POST /stages/passes`` -- except the very first one of a first cycle, which
  * has no pass behind it to keep: that save corrects pass 1's own start through
  * ``PUT /stages/program-calendar``, where a future day leaves the program "not
- * yet begun" -- and so does every save until that unbegun pass starts. The PUT is refused once any pass has been opened (the cycle moves
- * on), so the split is decided here once and read by both the modal -- which
- * picker window to offer -- and the save itself.
+ * yet begun" -- and so does every save until that unbegun pass starts. The
+ * PUT is refused once any pass has been opened (the cycle moves on), so the
+ * split is decided here once, by the modal -- which picker window to offer --
+ * and handed to the save, which follows it.
  */
 import { useProgramStore } from '../../../store/useProgramStore';
 import type { Habit } from '../Habits.types';

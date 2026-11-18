@@ -3272,7 +3272,8 @@ export const stages = {
   },
   /**
    * Open a new pass through the stages on ``startDay`` (``YYYY-MM-DD``, account
-   * zone) -- an Energy Scaffolding save (#3725). A day today or earlier closes
+   * zone): the endpoint #3725 added, which an Energy Scaffolding save calls
+   * (#3728). A day today or earlier closes
    * the running pass the day before and opens the new one; a later day is held
    * as ``pending_pass_starts_on`` while the running pass keeps going, and a
    * second save replaces it. The body is the day and nothing else (the server

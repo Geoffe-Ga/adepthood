@@ -24,36 +24,64 @@ export interface ProgramStartRange {
   maxDay: string;
   /** Today in the account zone, the day a picker with nothing held opens on. */
   today: string;
-  /** Cycle 2 and later: the date is fixed and no picker is offered. */
+  /**
+   * No picker is offered: in cycle 2 and later the date is fixed, and while a
+   * next pass is pending a correction would drop it (#3728).
+   */
   locked: boolean;
+  /** The day a pending next pass begins, when that is what locks the date. */
+  pendingPassDay: string | null;
 }
 
+/**
+ * The range that corrects the pass the person is in. ``pendingPassDay`` locks
+ * it as well: the server drops a pending pass on any correction, so that day
+ * is changed by saving Energy Scaffolding again instead (#3728).
+ */
 export function programStartRange(
   window: ProgramStartWindow | null,
   locked: boolean,
   today: string,
   tz: string,
+  pendingPassDay: string | null = null,
 ): ProgramStartRange {
   const minDay = window?.earliest ?? addDaysInTZ(today, -PROGRAM_START_BACKDATE_WINDOW_DAYS, tz);
-  return { minDay, maxDay: window?.latest ?? today, today, locked };
+  return {
+    minDay,
+    maxDay: window?.latest ?? today,
+    today,
+    locked: locked || pendingPassDay !== null,
+    pendingPassDay,
+  };
 }
 
+/** The calendar day after ``day``, both ``YYYY-MM-DD`` (zone-free day arithmetic). */
+const dayAfter = (day: string): string => addDaysInTZ(day, 1, 'UTC');
+
 /**
- * The range a scaffolding save may open a new pass in (#3728): the served
- * ``pass_start_window``, in any cycle -- opening a pass is never locked. With
- * none served it is today alone, the one day that is neither before the running
- * pass nor past the ceiling, so the client offers nothing the server refuses.
+ * The range a scaffolding save may open a new pass in (#3728), in any cycle --
+ * opening a pass is never locked.
+ *
+ * The served ``pass_start_window`` reaches down to the running pass's own
+ * start, which the server accepts; a pass opened there would close the running
+ * one before it ran a single day. So the floor moves one day up whenever it IS
+ * that start (``runningStart``, the anchor in force) -- which also covers a
+ * second save on the day a pass began. With no window served, the one day
+ * offered is today, or tomorrow when the running pass began today or its start
+ * is unknown: never the running start, never before it.
  */
 export function passStartRange(
   window: ProgramStartWindow | null,
   today: string,
+  runningStart: string | null,
 ): ProgramStartRange {
-  return {
-    minDay: window?.earliest ?? today,
-    maxDay: window?.latest ?? today,
-    today,
-    locked: false,
-  };
+  const base = { today, locked: false, pendingPassDay: null };
+  if (window === null) {
+    const only = runningStart === null || runningStart === today ? dayAfter(today) : today;
+    return { ...base, minDay: only, maxDay: only };
+  }
+  const minDay = window.earliest === runningStart ? dayAfter(window.earliest) : window.earliest;
+  return { ...base, minDay, maxDay: window.latest };
 }
 
 /**
@@ -98,20 +126,31 @@ export function pickerFloor(
 export function useProgramStartRange(tz: string): ProgramStartRange {
   const window = useProgramStore((s) => s.programStartWindow);
   const locked = useProgramStore((s) => s.programStartLocked);
+  const pending = useProgramStore((s) => s.pendingPassStartsOn);
   const today = useDayKey(tz);
-  return useMemo(() => programStartRange(window, locked, today, tz), [window, locked, today, tz]);
+  return useMemo(
+    () => programStartRange(window, locked, today, tz, pending),
+    [window, locked, today, tz, pending],
+  );
 }
 
 /**
  * The range the Energy Scaffolding picker offers (#3728): the pass window when
  * the save opens a new pass, the program window when it is the first save of a
- * first cycle and so corrects pass 1 itself.
+ * first cycle and so corrects pass 1 itself. That correction is never locked
+ * by a pending pass: a pending pass means the save opens one instead.
  */
 export function useScaffoldStartRange(tz: string, opensPass: boolean): ProgramStartRange {
-  const programRange = useProgramStartRange(tz);
+  const window = useProgramStore((s) => s.programStartWindow);
+  const locked = useProgramStore((s) => s.programStartLocked);
   const passWindow = useProgramStore((s) => s.passStartWindow);
+  const runningStart = useProgramStore((s) => s.programStartDay);
+  const today = useDayKey(tz);
   return useMemo(
-    () => (opensPass ? passStartRange(passWindow, programRange.today) : programRange),
-    [opensPass, passWindow, programRange],
+    () =>
+      opensPass
+        ? passStartRange(passWindow, today, runningStart)
+        : programStartRange(window, locked, today, tz),
+    [opensPass, passWindow, today, runningStart, window, locked, tz],
   );
 }

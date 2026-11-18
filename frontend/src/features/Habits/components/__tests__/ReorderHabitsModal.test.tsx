@@ -148,6 +148,9 @@ const resetProgramStore = () =>
     programStartDate: null,
     anchorSource: null,
     programStartWindow: null,
+    pendingPassStartsOn: null,
+    passStartWindow: null,
+    daysUntilStart: 0,
     programStartLocked: false,
   });
 
@@ -1395,6 +1398,39 @@ describe('ReorderHabitsModal — the server decides the start date (#3097)', () 
     fireEvent.press(result.getByTestId('modal-datetime-confirm'));
 
     expect(result.queryByTestId('reorder-start-date-notice')).toBeNull();
+  });
+
+  it('locks the date while a next pass is pending, so no PUT can drop it (#3728)', async () => {
+    act(() =>
+      useProgramStore.getState().adoptServerProgramStart({
+        day: '2026-03-10',
+        window: { earliest: '2026-01-02', latest: SERVED_LATEST },
+        locked: false,
+        pass: {
+          daysUntilStart: 0,
+          pendingPassStartsOn: '2026-12-01',
+          passStartWindow: { earliest: '2026-03-10', latest: SERVED_LATEST },
+        },
+      }),
+    );
+    const onSaveOrder = jest.fn((_habits: Habit[]) => Promise.resolve(true));
+    const result = render(
+      <ReorderHabitsModal visible habits={HABITS} onClose={jest.fn()} onSaveOrder={onSaveOrder} />,
+    );
+
+    expect(result.queryByTestId('reorder-start-date')).toBeNull();
+    expect(result.getByTestId('program-start-fixed')).toBeTruthy();
+    expect(
+      result.getByText(
+        'Your next pass begins December 1, 2026. To change that day, save Energy Scaffolding again.',
+      ),
+    ).toBeTruthy();
+
+    await act(async () => {
+      fireEvent.press(result.getByText('Save Order'));
+    });
+    expect(mockCommitProgramStart).not.toHaveBeenCalled();
+    expect(onSaveOrder).toHaveBeenCalledTimes(1);
   });
 
   it('shows a fixed date, not a picker, once begin-again has run', async () => {

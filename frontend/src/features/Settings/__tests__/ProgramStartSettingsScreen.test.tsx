@@ -67,6 +67,9 @@ afterEach(() => {
     anchorSource: null,
     programStartWindow: null,
     programStartLocked: false,
+    pendingPassStartsOn: null,
+    passStartWindow: null,
+    daysUntilStart: 0,
   });
 });
 
@@ -192,6 +195,33 @@ describe('ProgramStartSettingsScreen (#3097)', () => {
 
     expect(result.UNSAFE_queryByType(DatePicker)).toBeNull();
     expect(result.getByText(/begin again/i)).toBeTruthy();
+  });
+
+  it('locks the date while a next pass is pending, and says where that day is changed (#3728)', () => {
+    // A PUT here would quietly drop the pass held for December 1.
+    act(() =>
+      useProgramStore.getState().adoptServerProgramStart({
+        day: HELD_DAY,
+        window: WINDOW,
+        locked: false,
+        pass: {
+          daysUntilStart: 0,
+          pendingPassStartsOn: '2026-12-01',
+          passStartWindow: { earliest: HELD_DAY, latest: WINDOW.latest },
+        },
+      }),
+    );
+
+    const result = render(<ProgramStartSettingsScreen />);
+
+    expect(result.UNSAFE_queryByType(DatePicker)).toBeNull();
+    expect(result.queryByTestId('save-program-start-button')).toBeNull();
+    expect(
+      result.getByText(
+        'Your next pass begins December 1, 2026. To change that day, save Energy Scaffolding again.',
+      ),
+    ).toBeTruthy();
+    expect(mockChangeProgramStart).not.toHaveBeenCalled();
   });
 
   it('shows the fixed date and no picker once begin-again has run', () => {

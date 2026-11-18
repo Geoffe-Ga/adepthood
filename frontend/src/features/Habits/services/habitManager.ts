@@ -92,6 +92,7 @@ import type {
   OnboardingHabit,
   SaveOrderOptions,
   ScaffoldSaveNotify,
+  ScaffoldSaveOptions,
 } from '../Habits.types';
 import {
   getGoalTier,
@@ -653,6 +654,29 @@ const commitScaffoldPass = async (
   if (outcome.kind !== 'saved') notify(outcome.message);
   return true;
 };
+
+interface ScaffoldAnchorWrite {
+  /** The save opens a new pass (#3728) rather than correcting pass 1's start. */
+  opensPass: boolean;
+  /** The day the picker showed: what a new pass opens on, as picked. */
+  pickedDay: string | null;
+  /** The day a correction anchors pass 1 to (an earlier kept habit's, if any). */
+  correctionDay: string | null;
+  zone: string;
+  notify: ScaffoldSaveNotify;
+}
+
+/**
+ * Send a scaffolding save's day before any row is written: as a new pass on
+ * the picked day once there is a pass to keep (#3728) -- a save that keeps
+ * every habit and adds none included -- else as pass 1's own start, so the
+ * Map, Practice, Course, Journal and habit reveal all count from the day the
+ * person chose. ``false`` when the session that saved has ended.
+ */
+const commitScaffoldAnchor = (write: ScaffoldAnchorWrite): Promise<boolean> =>
+  write.opensPass
+    ? commitScaffoldPass(write.pickedDay, write.zone, write.notify)
+    : commitScaffoldStart(write.correctionDay, write.zone, write.notify);
 
 const syncOnboardingHabits = async (fullHabits: readonly Habit[], tz: string): Promise<void> => {
   for (const habit of fullHabits) {
@@ -2610,16 +2634,18 @@ export const habitManager = {
    *
    * ``programStartDay`` is the ``YYYY-MM-DD`` the modal's start-date picker
    * showed: the day the program is anchored to, sent as picked (#3097).
-   * ``notify`` receives the one message to show when that day did not take --
-   * a refusal, or a pick that never reached the server (#3728); the modal
-   * renders it, because ``Alert.alert`` shows nothing on the web.
+   * ``options.notify`` receives the one message to show when that day did not
+   * take -- a refusal, or a pick that never reached the server (#3728); the
+   * modal renders it, because ``Alert.alert`` shows nothing on the web.
+   * ``options.opensPass`` is the decision the modal showed (pass window or
+   * pass 1's own), so the save cannot decide differently from what was seen.
    */
   onboardingSave: async (
     input: readonly OnboardingHabit[] | HabitMergePlan,
     showToast?: ShowToast,
     tz?: string,
     programStartDay?: string,
-    notify: ScaffoldSaveNotify = alertScaffoldNotice,
+    options: ScaffoldSaveOptions = {},
   ): Promise<void> => {
     const existing = getHabits();
     const zone = tz ?? detectDeviceTimezone();
@@ -2636,19 +2662,16 @@ export const habitManager = {
       icon: '\u{1F449}',
       duration: INSTRUCTIONAL_TOAST_DURATION_MS,
     });
-    // The picked day reaches the server before any row is created (#3097): as
-    // a new pass on that day once there is one to keep (#3728), else as pass
-    // 1's own start, so the Map, Practice, Course, Journal and habit reveal all
-    // count from the day the person chose. Decided against the store as it was
-    // before this pass's rows landed. A session that ended while it was out
-    // writes nothing more under whoever holds the device now.
-    const anchored = scaffoldOpensPassNow(existing)
-      ? await commitScaffoldPass(programStartDay ?? laidDay, zone, notify)
-      : await commitScaffoldStart(
-          scaffoldStartDay(pickedHabits(plan), laidDay, zone),
-          zone,
-          notify,
-        );
+    // The picked day reaches the server before any row is created (#3097). A
+    // session that ended while it was out writes nothing more under whoever
+    // holds the device now.
+    const anchored = await commitScaffoldAnchor({
+      opensPass: options.opensPass ?? scaffoldOpensPassNow(existing),
+      pickedDay: programStartDay ?? laidDay,
+      correctionDay: scaffoldStartDay(pickedHabits(plan), laidDay, zone),
+      zone,
+      notify: options.notify ?? alertScaffoldNotice,
+    });
     if (!anchored) return;
     const stillHere = await commitHabitMerge(ops, zone);
     if (stillHere.length > 0) setHabits([...getHabits(), ...stillHere]);

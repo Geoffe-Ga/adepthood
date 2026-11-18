@@ -1245,7 +1245,10 @@ const useOnboardingPieces = (
   // The picked day goes with the picks, as picked: the program is anchored to
   // this YYYY-MM-DD, never to a day read back out of a device-local instant.
   const saveWithStartDay: OnboardingModalProps['onSaveHabits'] = (result) =>
-    onSaveHabits(result, toISODate(startDate), setStartDayNotice);
+    onSaveHabits(result, toISODate(startDate), {
+      notify: setStartDayNotice,
+      opensPass: cs.opensPass,
+    });
   const nav = useOnboardingNavigation(
     review.buildResult,
     review.resetToEntry,

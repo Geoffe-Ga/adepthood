@@ -113,6 +113,23 @@ const pressContinue = (result: ReturnType<typeof render>) => {
   if (warn) fireEvent.press(warn);
 };
 
+/** From the add-habits step, run the flow to its end and press Finish. */
+const runToFinish = async (result: ReturnType<typeof render>) => {
+  pressContinue(result);
+  fireEvent.press(result.getByTestId('continue-button'));
+  act(() => {
+    fireEvent.press(result.getByTestId('continue-button'));
+  });
+  act(() => {
+    jest.advanceTimersByTime(REVEAL_TOTAL_MS);
+  });
+  await act(async () => {
+    fireEvent.press(result.getByTestId('continue-to-templates'));
+    await jest.advanceTimersByTimeAsync(10);
+  });
+  fireEvent.press(result.getByTestId('finish-setup'));
+};
+
 describe('OnboardingModal review step', () => {
   it('offers each existing habit a keep checkbox before the add-habits step', () => {
     const { getByTestId, getByText, queryByTestId, queryByPlaceholderText } = renderModal([
@@ -434,22 +451,6 @@ describe('OnboardingModal review step, what the save is handed', () => {
     });
   });
 
-  const runToFinish = async (result: ReturnType<typeof render>) => {
-    pressContinue(result);
-    fireEvent.press(result.getByTestId('continue-button'));
-    act(() => {
-      fireEvent.press(result.getByTestId('continue-button'));
-    });
-    act(() => {
-      jest.advanceTimersByTime(REVEAL_TOTAL_MS);
-    });
-    await act(async () => {
-      fireEvent.press(result.getByTestId('continue-to-templates'));
-      await jest.advanceTimersByTimeAsync(10);
-    });
-    fireEvent.press(result.getByTestId('finish-setup'));
-  };
-
   it('states a plan naming every habit the user decided about', async () => {
     const { onSaveHabits, ...result } = renderModal([habit(), carried, second]);
 
@@ -602,6 +603,12 @@ describe('OnboardingModal review step names the pass a save opens (#3728)', () =
   });
 
   it('names today when no pass is held yet', () => {
+    act(() => {
+      useProgramStore.setState({
+        programStartDay: '2026-01-01',
+        passStartWindow: { earliest: '2026-01-01', latest: '2099-12-31' },
+      });
+    });
     const result = renderModal([habit()]);
 
     const today = new Date().toLocaleDateString('en-US', {
@@ -647,7 +654,8 @@ describe('OnboardingModal shows a start-date message the save reports (#3728)', 
       await jest.advanceTimersByTimeAsync(10);
     });
     fireEvent.press(result.getByTestId('finish-setup'));
-    const notify = onSaveHabits.mock.calls[0]?.[2] as (_message: string) => void;
+    const options = onSaveHabits.mock.calls[0]?.[2] as { notify: (_message: string) => void };
+    const notify = options.notify;
     return { result, notify };
   };
 
@@ -669,5 +677,38 @@ describe('OnboardingModal shows a start-date message the save reports (#3728)', 
     fireEvent.press(result.getByTestId('start-day-notice-ok'));
 
     expect(result.queryByTestId('start-day-notice')).toBeNull();
+  });
+});
+
+describe('OnboardingModal hands the save the decision it showed (#3728)', () => {
+  beforeEach(() => {
+    jest.useFakeTimers();
+  });
+
+  afterEach(() => {
+    jest.useRealTimers();
+    act(() => {
+      useProgramStore.getState().reset();
+    });
+  });
+
+  it('says the save opens a pass when it showed the pass window', async () => {
+    const onSaveHabits = jest.fn();
+    const result = renderModal([habit()], onSaveHabits);
+    fireEvent.press(result.getByTestId('review-continue'));
+    await runToFinish(result);
+
+    expect(onSaveHabits.mock.calls[0]?.[2]).toMatchObject({ opensPass: true });
+  });
+
+  it('says the save corrects pass 1 on a first run', async () => {
+    const onSaveHabits = jest.fn();
+    const result = renderModal([], onSaveHabits);
+    const input = result.getByTestId('habit-input');
+    fireEvent.changeText(input, 'Stretch');
+    fireEvent(input, 'onKeyPress', { nativeEvent: { key: 'Enter' } });
+    await runToFinish(result);
+
+    expect(onSaveHabits.mock.calls[0]?.[2]).toMatchObject({ opensPass: false });
   });
 });

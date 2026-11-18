@@ -6083,7 +6083,7 @@ describe("the program start date is the server's (#3097)", () => {
       undefined,
       ZONE,
       '2026-10-29',
-      notify,
+      { notify },
     );
     useProgramStore.setState({ programStartDay: null, anchorSource: null });
     useHabitStore.setState({ habits: [] });
@@ -6092,7 +6092,7 @@ describe("the program start date is the server's (#3097)", () => {
       undefined,
       ZONE,
       '2026-10-30',
-      notify,
+      { notify },
     );
 
     expect(notify.mock.calls.map((call) => call[0])).toEqual([
@@ -6436,7 +6436,7 @@ describe("the program start date is the server's (#3097)", () => {
         undefined,
         ZONE,
         FUTURE_DAY,
-        notify,
+        { notify },
       );
 
       expect(notify).toHaveBeenCalledTimes(1);
@@ -6452,7 +6452,7 @@ describe("the program start date is the server's (#3097)", () => {
         undefined,
         ZONE,
         FUTURE_DAY,
-        notify,
+        { notify },
       );
 
       expect(notify).not.toHaveBeenCalled();
@@ -6477,6 +6477,51 @@ describe("the program start date is the server's (#3097)", () => {
       // The same day is no write at all; a different one moves the unbegun pass.
       expect(stagesApi.setProgramStart).toHaveBeenCalledTimes(1);
       expect((stagesApi.setProgramStart as jest.Mock).mock.calls[0]![0]).toBe('2026-12-08');
+    });
+
+    it('a save that keeps every habit and adds none still opens the pass on the picked day', async () => {
+      const carried = makeServerHabit({
+        id: 8,
+        name: 'Evening read',
+        is_carryover: true,
+        start_date: new Date('2019-03-04'),
+      });
+      useHabitStore.setState({ habits: [carried] });
+      const rows = buildReviewRows([carried]);
+
+      await habitManager.onboardingSave(
+        buildMergePlan([], rows, [carried]),
+        undefined,
+        ZONE,
+        FUTURE_DAY,
+      );
+
+      expect(openPass()).toHaveBeenCalledTimes(1);
+      expect(openPass().mock.calls[0]![0]).toBe(FUTURE_DAY);
+    });
+
+    it('follows the decision the modal showed, not a fresh read of the store', async () => {
+      // The store holds a server habit, but the modal offered pass 1's own
+      // window: the save corrects pass 1, as the person was shown.
+      await habitManager.onboardingSave(
+        [pick(parseISODate(FUTURE_DAY))],
+        undefined,
+        ZONE,
+        FUTURE_DAY,
+        { opensPass: false },
+      );
+      expect(openPass()).not.toHaveBeenCalled();
+      expect(stagesApi.setProgramStart).toHaveBeenCalledTimes(1);
+
+      useHabitStore.setState({ habits: [] });
+      await habitManager.onboardingSave(
+        [pick(parseISODate(FUTURE_DAY), 'Journal')],
+        undefined,
+        ZONE,
+        FUTURE_DAY,
+        { opensPass: true },
+      );
+      expect(openPass()).toHaveBeenCalledTimes(1);
     });
 
     it('a first save with no habits still corrects pass 1 through the PUT', async () => {

@@ -295,7 +295,14 @@ const ReorderDateButton = ({
   onOpenPicker,
   onSelectDate,
 }: ReorderDateButtonProps) => {
-  if (range.locked) return <ProgramStartFixed label={START_DATE_LABEL} date={startDate} />;
+  if (range.locked)
+    return (
+      <ProgramStartFixed
+        label={START_DATE_LABEL}
+        date={startDate}
+        pendingPassDay={range.pendingPassDay}
+      />
+    );
   return (
     <>
       <View style={styles.datePickerContainer}>
