@@ -52,6 +52,11 @@ _ALWAYS = "always()"
 _AGGREGATE_CONDITION = (
     "${{ always() && (needs.changes.result != 'success' || needs.changes.outputs.e2e != 'false') }}"
 )
+# The success barrier reads the shards' own result. ``success()`` would also
+# demand success of every ancestor, including the ``changes`` job the shards
+# deliberately fail open on, so a timed-out ``changes`` skipped the barrier
+# after every shard passed (PR #3732, E2E run 44165328944).
+_BARRIER_CONDITION = "${{ !cancelled() && needs.browser-journey-shards.result == 'success' }}"
 
 # The browser job's own ``timeout-minutes``, at the job's key indentation.
 _JOB_TIMEOUT = re.compile(r"^    timeout-minutes:\s*(?P<minutes>\d+)\s*(?:#.*)?$", re.MULTILINE)
@@ -219,7 +224,7 @@ jobs:
 
   browser-journey-complete:
     needs: browser-journey-shards
-    if: ${{ success() }}
+    if: BARRIER_CONDITION
     runs-on: ubuntu-latest
     steps:
       - name: Record success of every browser shard
@@ -234,7 +239,7 @@ jobs:
         env:
           SHARD_RESULT: ${{ needs.browser-journey-complete.result }}
         run: test "$SHARD_RESULT" = success
-""".replace("SELECTED_LANE", _AGGREGATE_CONDITION)
+""".replace("SELECTED_LANE", _AGGREGATE_CONDITION).replace("BARRIER_CONDITION", _BARRIER_CONDITION)
 
 _COMPLIANT_CONFIG = """\
   fullyParallel: false,
@@ -304,7 +309,7 @@ def _assert_stable_browser_check(workflow: str) -> None:
     workflow_jobs = jobs(without_comment_lines(workflow))
     barrier = workflow_jobs.get("browser-journey-complete", "")
     assert "    needs: browser-journey-shards" in barrier
-    assert "    if: ${{ success() }}" in barrier
+    assert f"    if: {_BARRIER_CONDITION}" in barrier
     assert "continue-on-error" not in barrier
     job = workflow_jobs.get("browser-journey", "")
     assert "    needs: [changes, browser-journey-complete]" in job
@@ -391,7 +396,7 @@ def test_diagnostics_reject_a_missing_json_reporter() -> None:
         ("always() &&", "success() &&"),
         ("  browser-journey-complete:\n", "  renamed-completion:\n"),
         ("    needs: browser-journey-shards\n", "    needs: changes\n"),
-        ("if: ${{ success() }}", "if: ${{ always() }}"),
+        (_BARRIER_CONDITION, "${{ always() }}"),
         (
             "  browser-journey-complete:\n",
             "  browser-journey-complete:\n    continue-on-error: true\n",
@@ -407,6 +412,38 @@ def test_required_check_rejects_renaming_and_masked_shard_failures(before: str, 
 def test_cancelled_dependencies_cannot_skip_the_required_check() -> None:
     """A skipped required job passes protection, so the aggregate must survive cancellation."""
     workflow = _COMPLIANT.replace("always() &&", "!cancelled() &&")
+    with pytest.raises(AssertionError):
+        _assert_stable_browser_check(workflow)
+
+
+@pytest.mark.parametrize(
+    "condition",
+    [
+        # The regression itself: success() also demands the fail-open
+        # ``changes`` job's success, so its timeout skips a green barrier.
+        "${{ success() }}",
+        "",
+        # Without !cancelled() a cancelled workflow can still record a pass.
+        "${{ needs.browser-journey-shards.result == 'success' }}",
+        # ``!= 'failure'`` lets a skipped or cancelled shard through.
+        "${{ !cancelled() && needs.browser-journey-shards.result != 'failure' }}",
+        "${{ !cancelled() && needs.changes.result == 'success' }}",
+        "${{ always() && needs.browser-journey-shards.result == 'success' }}",
+    ],
+    ids=[
+        "success-walks-ancestors",
+        "implicit-success",
+        "no-cancel-guard",
+        "skipped-shard-passes",
+        "wrong-job",
+        "always",
+    ],
+)
+def test_barrier_depends_on_the_shards_alone(condition: str) -> None:
+    """Only the shards' own success may open the barrier, and never in a cancelled run."""
+    replacement = f"if: {condition}" if condition else ""
+    workflow = _COMPLIANT.replace(f"if: {_BARRIER_CONDITION}", replacement)
+    assert workflow != _COMPLIANT
     with pytest.raises(AssertionError):
         _assert_stable_browser_check(workflow)
 

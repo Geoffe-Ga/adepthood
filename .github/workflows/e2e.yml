@@ -262,12 +262,20 @@ jobs:
           if-no-files-found: warn
           retention-days: 14
 
-  # Keep success() separate from the always-running aggregate. Reading the
-  # matrix result directly there can forget another shard's earlier failure
-  # when a maintainer selectively reruns only one failed matrix job.
+  # Keep the barrier separate from the always-running aggregate: the aggregate
+  # reads only this job's result, never the matrix directly.
+  #
+  # The barrier reads the shards' own result, not success(). success() walks the
+  # whole ancestor chain, so a `changes` job that timed out (cancelled) -- which
+  # the shards deliberately fail open on -- skipped this barrier after all four
+  # shards passed and turned the required check red (PR #3732, E2E run
+  # 44165328944). A skipped, failed or cancelled shard still leaves the result
+  # short of 'success', and !cancelled() keeps a cancelled workflow from
+  # recording a pass. Guarded by
+  # backend/tests/scripts/test_browser_lane_artifact_uploads.py.
   browser-journey-complete:
     needs: browser-journey-shards
-    if: ${{ success() }}
+    if: ${{ !cancelled() && needs.browser-journey-shards.result == 'success' }}
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
