@@ -62,11 +62,11 @@ describe('ProgressScreen', () => {
     const tree = render(<ProgressScreen />);
     const arc = within(tree.getByTestId('progress-arc'));
     expect(arc.queryByTestId('progress-ribbon')).toBeNull();
-    const rows = ['progress-pass-1', 'progress-pass-2', 'progress-pass-4'];
-    const json = JSON.stringify(tree.toJSON());
-    const at = rows.map((id) => json.indexOf(`"testID":"${id}"`));
-    expect(at.every((index) => index >= 0)).toBe(true);
-    expect([...at].sort((a, b) => a - b)).toEqual(at);
+    expect(arc.getAllByTestId(/^progress-pass-\d+$/).map((row) => row.props.testID)).toEqual([
+      'progress-pass-1',
+      'progress-pass-2',
+      'progress-pass-4',
+    ]);
     expect(arc.getByText('Pass 1 · began 5 Jan · reached stage 7, week 21')).toBeTruthy();
     expect(arc.getByText('Pass 2 · began 1 Jun · completed')).toBeTruthy();
     expect(arc.getByText('Pass 4 · began 1 Jun · in progress — week 8')).toBeTruthy();

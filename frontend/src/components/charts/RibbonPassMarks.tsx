@@ -241,7 +241,11 @@ export function MarkerInspector({
   );
 }
 
-/** `2 more in week 8, listed in the table.` — one sentence per crowded week. */
+/**
+ * `2 more in week 8: use the arrow keys or the table.` — one sentence per
+ * crowded week. A marker with no badge cannot be hovered or tapped, so the
+ * caption names the two ways that do reach it.
+ */
 export function overflowLine(markers: readonly RibbonMarker[], overflow: readonly number[]) {
   const byWeek = new Map<number, number>();
   for (const index of overflow) {
@@ -249,7 +253,7 @@ export function overflowLine(markers: readonly RibbonMarker[], overflow: readonl
     byWeek.set(week, (byWeek.get(week) ?? 0) + 1);
   }
   return [...byWeek]
-    .map(([week, count]) => `${count} more in week ${week}, listed in the table.`)
+    .map(([week, count]) => `${count} more in week ${week}: use the arrow keys or the table.`)
     .join(' ');
 }
 

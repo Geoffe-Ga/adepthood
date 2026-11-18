@@ -325,8 +325,73 @@ test('the Map door opens the arc, rhythm and energy ledger the server computed',
 
 /** Issue #3727: a re-scaffold leaves the old pass as its own ribbon above the new one. */
 const FIRST_PASS_DAYS_AGO = 100;
+/** The held pass begins this many days ahead, so it is drawn as pending. */
+const PENDING_IN_DAYS = 12;
 const FIRST_HABIT = 'Breathwork';
 const SECOND_HABIT = 'Night reading';
+const THIRD_HABIT = 'Cold water';
+
+type Pass = NonNullable<ApiProgressOverview['arc']['passes']>[number];
+type Marker = Pass['markers'][number];
+
+const spoken = (marker: Marker): string =>
+  `Habit ${marker.program_number} · ${marker.name} · unlocked `;
+
+/** Open a pass on `daysAgo` (negative: ahead) through the real route. */
+async function openPass(request: APIRequestContext, token: string, daysAgo: number) {
+  const opened = await request.post(`${backendUrl()}/stages/passes`, {
+    headers: bearer(token),
+    data: { start_day: isoDaysAgo(daysAgo) },
+  });
+  expect(opened.status(), await opened.text()).toBe(201);
+}
+
+/** The badge's centre on the page: where a pointer or a finger would land on it. */
+async function badgeCentre(row: Locator, index: number): Promise<{ x: number; y: number }> {
+  const badge = row.getByTestId(`ribbon-marker-${index}`);
+  await badge.scrollIntoViewIfNeeded();
+  const box = await badge.boundingBox();
+  expect(box).not.toBeNull();
+  return { x: box!.x + box!.width / 2, y: box!.y + box!.height / 2 };
+}
+
+/** Hover, touch and keys each reach the live row's markers and read them out. */
+async function inspectMarkers(page: Page, row: Locator, markers: readonly Marker[]) {
+  const value = row.locator('[data-testid$="-value"]');
+  const plot = row.locator('[data-testid$="-inspect"]');
+  const last = markers.length - 1;
+  // Hover the last badge, then the first.
+  for (const index of [last, 0]) {
+    const centre = await badgeCentre(row, index);
+    await page.mouse.move(centre.x, centre.y);
+    await expect(value).toContainText(spoken(markers[index]!));
+  }
+  // Move the selection away by keyboard, then a tap on the first badge brings it back.
+  await plot.press('End');
+  await expect(value).toContainText(spoken(markers[last]!));
+  const first = await badgeCentre(row, 0);
+  await page.touchscreen.tap(first.x, first.y);
+  await expect(value).toContainText(spoken(markers[0]!));
+  // Keys: Home, ArrowRight, End, and ArrowRight held at the end.
+  await plot.press('Home');
+  await expect(value).toContainText(spoken(markers[0]!));
+  await plot.press('ArrowRight');
+  await expect(value).toContainText(spoken(markers[Math.min(1, last)]!));
+  await plot.press('End');
+  await expect(value).toContainText(spoken(markers[last]!));
+  await plot.press('ArrowRight');
+  await expect(value).toContainText(spoken(markers[last]!));
+}
+
+/** An ended pass stops where it got to; a pending one is the bare, dashed track. */
+async function verifyExtents(older: Locator, pending: Locator) {
+  await expect(older).toContainText(/reached stage \d+, week \d+/);
+  await expect(older.getByTestId('ribbon-track')).toHaveAttribute('stroke-dasharray', /4[ ,]+4/);
+  await expect(pending).toContainText(/Pass \d+ · begins \d{1,2} \w+/);
+  await expect(pending.getByTestId('ribbon-track')).toHaveAttribute('stroke-dasharray', /4[ ,]+4/);
+  await expect(pending.locator('[data-testid^="ribbon-block-"]')).toHaveCount(0);
+  await expect(pending.locator('[data-testid^="ribbon-marker-"]')).toHaveCount(0);
+}
 
 test('a re-scaffold stacks one numbered ribbon per pass, oldest on top', async ({
   page,
@@ -335,28 +400,34 @@ test('a re-scaffold stacks one numbered ribbon per pass, oldest on top', async (
   const token = await tokenFor(page.request, email);
   await startProgramDaysAgo(page.request, token, FIRST_PASS_DAYS_AGO);
   await seedUnlockedHabit(page.request, token, FIRST_HABIT);
-  const opened = await page.request.post(`${backendUrl()}/stages/passes`, {
-    headers: bearer(token),
-    data: { start_day: isoDaysAgo(0) },
-  });
-  expect(opened.status(), await opened.text()).toBe(201);
+  await openPass(page.request, token, 0);
   await seedUnlockedHabit(page.request, token, SECOND_HABIT);
+  await seedUnlockedHabit(page.request, token, THIRD_HABIT);
+  await openPass(page.request, token, -PENDING_IN_DAYS);
   await page.reload();
 
   const overview = await openProgressFromMap(page);
   const passes = overview.arc.passes ?? [];
-  expect(passes.map((pass) => pass.state)).toEqual(['ended', 'live']);
-  const [first, second] = passes as [(typeof passes)[number], (typeof passes)[number]];
+  expect(passes.map((pass) => pass.state)).toEqual(['ended', 'live', 'pending']);
+  const [first, second, held] = passes as [Pass, Pass, Pass];
   expect(first.markers.map((marker) => marker.name)).toContain(FIRST_HABIT);
-  expect(second.markers.map((marker) => marker.name)).toContain(SECOND_HABIT);
+  expect(second.markers.map((marker) => marker.name)).toEqual(
+    expect.arrayContaining([SECOND_HABIT, THIRD_HABIT]),
+  );
+  expect(held.markers).toEqual([]);
 
   const screen = page.getByTestId('progress-screen');
   const older = screen.getByTestId(`progress-pass-${first.pass_number}`);
   const live = screen.getByTestId(`progress-pass-${second.pass_number}`);
+  const pending = screen.getByTestId(`progress-pass-${held.pass_number}`);
   await expect(older).toContainText(`Pass ${first.pass_number} · began`);
   await expect(live).toContainText(`Pass ${second.pass_number} · began`);
-  await expect(live).toContainText('in progress — week 1');
-  expect((await older.boundingBox())!.y).toBeLessThan((await live.boundingBox())!.y);
+  await expect(live).toContainText('in progress — week 1, until ');
+  await verifyExtents(older, pending);
+  const tops = await Promise.all(
+    [older, live, pending].map(async (row) => (await row.boundingBox())!.y),
+  );
+  expect([...tops].sort((a, b) => a - b)).toEqual(tops);
 
   for (const viewport of VIEWPORTS) {
     await page.setViewportSize({ width: viewport.width, height: viewport.height });
@@ -368,14 +439,15 @@ test('a re-scaffold stacks one numbered ribbon per pass, oldest on top', async (
       const marker = pass.markers[0]!;
       // Each badge carries its program number as text, not colour alone.
       await expect(row.locator('svg text').first()).toHaveText(String(marker.program_number));
+      // Keyboard reaches the first marker and reads it out.
+      await row.locator('[data-testid$="-inspect"]').press('Home');
+      await expect(row.locator('[data-testid$="-value"]')).toContainText(spoken(marker));
+    }
+    await inspectMarkers(page, live, second.markers);
+    for (const row of [older, live, pending]) {
       const bounds = await row.boundingBox();
       expect(bounds!.x).toBeGreaterThanOrEqual(0);
       expect(bounds!.x + bounds!.width).toBeLessThanOrEqual(viewport.width);
-      // Keyboard reaches the first marker and reads it out.
-      await row.locator('[data-testid$="-inspect"]').press('Home');
-      await expect(row.locator('[data-testid$="-value"]')).toContainText(
-        `Habit ${marker.program_number} · ${marker.name} · unlocked `,
-      );
     }
     await page.screenshot({ path: testInfo.outputPath(`map-passes-${viewport.name}.png`) });
   }

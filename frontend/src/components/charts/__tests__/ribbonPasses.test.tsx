@@ -1,4 +1,4 @@
-import { describe, expect, it } from '@jest/globals';
+import { afterEach, beforeEach, describe, expect, it, jest } from '@jest/globals';
 import { fireEvent, render, within } from '@testing-library/react-native';
 import React from 'react';
 import { StyleSheet, Text } from 'react-native';
@@ -249,9 +249,86 @@ describe('a pass ribbon', () => {
     const view = render(
       <Ribbon testID="pass" blocks={blocks} markers={crowd} width={NARROW} summary="Crowded." />,
     );
+    // Hover and touch cannot reach a marker with no badge; the caption says what can.
     expect(
-      within(view.getByTestId('pass')).getByText('2 more in week 8, listed in the table.'),
+      within(view.getByTestId('pass')).getByText(
+        '2 more in week 8: use the arrow keys or the table.',
+      ),
     ).toBeTruthy();
     expect(view.UNSAFE_getAllByType(SvgText)).toHaveLength(chartLayout.markerLanes);
+    fireEvent(view.getByTestId('pass-inspect'), 'accessibilityAction', {
+      nativeEvent: { actionName: 'increment' },
+    });
+    for (let step = 0; step < crowd.length; step += 1)
+      fireEvent(view.getByTestId('pass-inspect'), 'accessibilityAction', {
+        nativeEvent: { actionName: 'increment' },
+      });
+    expect(view.getByTestId('pass-value')).toHaveTextContent(/^Habit 5 · Habit/);
+  });
+});
+
+describe('a pass ribbon on the web', () => {
+  const Platform = require('react-native').Platform as { OS: string };
+  let originalOS: string;
+  beforeEach(() => {
+    originalOS = Platform.OS;
+    Platform.OS = 'web';
+  });
+  afterEach(() => {
+    Platform.OS = originalOS;
+  });
+
+  const renderWeb = () =>
+    render(
+      <Ribbon testID="pass" blocks={blocks} markers={markers} width={NARROW} summary="Pass 4." />,
+    );
+  const key = (view: ReturnType<typeof render>, name: string) => {
+    const event = { key: name, preventDefault: jest.fn() };
+    fireEvent(view.getByTestId('pass-inspect'), 'keyDown', event);
+    return event.preventDefault;
+  };
+  const readout = (view: ReturnType<typeof render>) =>
+    view.getByTestId('pass-value').props.children as string;
+
+  it('walks the markers with the arrow keys, Home and End, clamped at both ends', () => {
+    const view = renderWeb();
+    expect(key(view, 'End')).toHaveBeenCalled();
+    expect(readout(view)).toMatch(/^Habit 5 · Meditation/);
+    key(view, 'ArrowRight');
+    expect(readout(view)).toMatch(/^Habit 5 · Meditation/);
+    key(view, 'ArrowLeft');
+    expect(readout(view)).toMatch(/^Habit 2 · Evening walk/);
+    key(view, 'Home');
+    expect(readout(view)).toMatch(/^Habit 1 · Morning pages/);
+    key(view, 'ArrowLeft');
+    expect(readout(view)).toMatch(/^Habit 1 · Morning pages/);
+    key(view, 'ArrowRight');
+    expect(readout(view)).toMatch(/^Habit 2 · Evening walk/);
+  });
+
+  it('leaves every other key to the page', () => {
+    const view = renderWeb();
+    expect(key(view, 'Tab')).not.toHaveBeenCalled();
+    expect(view.queryByTestId('pass-value')).toBeNull();
+  });
+
+  it('reads the badge under the pointer on hover', () => {
+    const view = renderWeb();
+    const plot = NARROW - 2 * chartLayout.plotInset;
+    const left = 40;
+    const top = 100;
+    const lane = (index: number) => Number(markerNode(view, index).props.cy);
+    const hover = (x: number, y: number) =>
+      fireEvent(view.getByTestId('pass-inspect'), 'mouseMove', {
+        clientX: left + x,
+        clientY: top + y,
+        currentTarget: { getBoundingClientRect: () => ({ left, top }) },
+      });
+    hover(chartLayout.plotInset + weekCenter(8, ARC_WEEKS, plot), lane(2));
+    expect(readout(view)).toMatch(/^Habit 5 · Meditation/);
+    hover(chartLayout.plotInset + weekCenter(1, ARC_WEEKS, plot), lane(1));
+    expect(readout(view)).toMatch(/^Habit 2 · Evening walk/);
+    hover(Number.NaN, lane(0));
+    expect(readout(view)).toMatch(/^Habit 2 · Evening walk/);
   });
 });

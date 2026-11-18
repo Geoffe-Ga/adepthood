@@ -72,13 +72,32 @@ const dayBefore = (date: string): string => addDaysInTZ(date, ONE_DAY_BACK, 'UTC
 const capitalise = (text: string): string => text.charAt(0).toUpperCase() + text.slice(1);
 const plural = (count: number, word: string): string => `${count} ${word}${count === 1 ? '' : 's'}`;
 
+/**
+ * How far an ended pass got. The server sends ``reached_*`` for every begun
+ * pass, but the schema allows null, so a missing figure is left unsaid rather
+ * than printed: the stage and week, the week alone, or just the day it ended.
+ */
+function ended(pass: ArcPass): string {
+  if (pass.completed) return 'completed';
+  const { reached_stage: stage, reached_week: week } = pass;
+  if (week === null) return pass.ended_on ? `ended ${dayShort(pass.ended_on)}` : 'ended';
+  return stage === null ? `reached week ${week}` : `reached stage ${stage}, week ${week}`;
+}
+
 /** How far a begun pass got, in the row's words. */
 function reach(pass: ArcPass, until: string | null): string {
+  if (pass.state !== 'live') return ended(pass);
+  const week = pass.reached_week === null ? '' : ` — week ${pass.reached_week}`;
+  return `in progress${week}${until ? `, until ${dayShort(until)}` : ''}`;
+}
+
+/** The sentence's middle: where the pass is, or how far it got, out of the arc's weeks. */
+function whereSentence(pass: ArcPass, weeks: number): string {
+  const week = pass.reached_week;
   if (pass.state === 'live')
-    return `in progress — week ${pass.reached_week}${until ? `, until ${dayShort(until)}` : ''}`;
-  return pass.completed
-    ? 'completed'
-    : `reached stage ${pass.reached_stage}, week ${pass.reached_week}`;
+    return `In progress${week === null ? '' : `, week ${week} of ${weeks}`}.`;
+  if (pass.completed) return `Completed all ${weeks} weeks.`;
+  return `${capitalise(ended(pass))}${week === null ? '' : ` of ${weeks}`}.`;
 }
 
 /** What a marker's ring means: locked by the pass's end, or locked now on the live pass. */
@@ -96,12 +115,7 @@ const passMarker = (pass: ArcPass, marker: PassMarker): RibbonMarker => ({
 
 function passSentence(pass: ArcPass, weeks: number, numbered: boolean): string {
   const lead = numbered ? `Pass ${pass.pass_number}, began` : 'Began';
-  const where =
-    pass.state === 'live'
-      ? `In progress, week ${pass.reached_week} of ${weeks}.`
-      : pass.completed
-        ? `Completed all ${weeks} weeks.`
-        : `Reached stage ${pass.reached_stage}, week ${pass.reached_week} of ${weeks}.`;
+  const where = whereSentence(pass, weeks);
   const habits = pass.markers.map(
     (marker) =>
       `habit ${marker.program_number}, ${marker.name}, week ${marker.week}${marker.currently_locked ? `, ${lockNote(pass)}` : ''}`,
@@ -124,10 +138,13 @@ function pendingRow(pass: ArcPass, base: Omit<PassRow, 'label' | 'summary'>, num
   };
 }
 
+/** A lone live pass reads as today's ribbon did, `Week 8 · Red`, saying only what is known. */
 function soleLabel(pass: ArcPass): string {
-  if (pass.state === 'live')
-    return `Week ${pass.reached_week} · ${stageName(pass.reached_stage ?? 1)}`;
-  return capitalise(`began ${dayShort(pass.started_on)} · ${reach(pass, null)}`);
+  if (pass.state !== 'live')
+    return capitalise(`began ${dayShort(pass.started_on)} · ${reach(pass, null)}`);
+  const { reached_stage: stage, reached_week: week } = pass;
+  if (week === null) return 'In progress';
+  return stage === null ? `Week ${week}` : `Week ${week} · ${stageName(stage)}`;
 }
 
 function passRow(

@@ -121,6 +121,28 @@ describe('one ribbon per pass (#3727)', () => {
     expect(passRows(withPasses([pending]))[0]!.label).toBe('Begins 31 Aug');
   });
 
+  it('never prints a missing reach: a live or ended pass without its week still reads', () => {
+    const [ended, , live] = passesFixture();
+    const unmeasured = [
+      { ...ended!, reached_stage: null, reached_week: null },
+      { ...live!, reached_stage: null, reached_week: null },
+    ];
+    const [first, second] = passRows(withPasses(unmeasured));
+    expect(first!.label).toBe('Pass 1 · began 5 Jan · ended 31 May');
+    expect(first!.drawnWeeks).toBe(0);
+    expect(first!.summary).toMatch(/^Pass 1, began 5 January 2025\. Ended 31 May\. Habits/);
+    expect(second!.label).toBe('Pass 4 · began 1 Jun · in progress');
+    expect(second!.currentWeek).toBeUndefined();
+    expect(second!.summary).toMatch(/^Pass 4, began 1 June 2026\. In progress\. Habits/);
+    for (const row of [first!, second!]) expect(`${row.label} ${row.summary}`).not.toMatch(/null/);
+    const weekOnly = { ...ended!, reached_stage: null };
+    expect(passRows(withPasses([weekOnly, live!]))[0]!.label).toBe(
+      'Pass 1 · began 5 Jan · reached week 21',
+    );
+    expect(passRows(withPasses([{ ...live!, reached_stage: null }]))[0]!.label).toBe('Week 8');
+    expect(passRows(withPasses([unmeasured[1]!]))[0]!.label).toBe('In progress');
+  });
+
   it('says a pending pass that starts tomorrow in the singular', () => {
     const pending = { ...passesFixture()[3]!, days_until_start: 1 };
     expect(passRows(withPasses([pending]))[0]!.summary).toBe('Begins 31 August 2026, in 1 day.');
