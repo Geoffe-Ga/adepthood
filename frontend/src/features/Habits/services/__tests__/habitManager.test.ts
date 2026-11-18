@@ -6458,6 +6458,27 @@ describe("the program start date is the server's (#3097)", () => {
       expect(notify).not.toHaveBeenCalled();
     });
 
+    it('corrects a first pass that has not begun through the PUT, never a zero-day pass', async () => {
+      const NOT_YET = '2026-12-01';
+      useProgramStore
+        .getState()
+        .adoptServerProgramStart({ day: NOT_YET, window: null, locked: false });
+      useProgramStore.setState({ daysUntilStart: 13 });
+
+      await habitManager.onboardingSave([pick(parseISODate(NOT_YET))], undefined, ZONE, NOT_YET);
+      await habitManager.onboardingSave(
+        [pick(parseISODate('2026-12-08'), 'Journal')],
+        undefined,
+        ZONE,
+        '2026-12-08',
+      );
+
+      expect(openPass()).not.toHaveBeenCalled();
+      // The same day is no write at all; a different one moves the unbegun pass.
+      expect(stagesApi.setProgramStart).toHaveBeenCalledTimes(1);
+      expect((stagesApi.setProgramStart as jest.Mock).mock.calls[0]![0]).toBe('2026-12-08');
+    });
+
     it('a first save with no habits still corrects pass 1 through the PUT', async () => {
       useHabitStore.setState({ habits: [] });
 

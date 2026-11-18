@@ -1024,8 +1024,9 @@ const useComposedState = (
   const anchor = useProgramStore(selectProgramStartDate);
   const programStartLocked = useProgramStore((s) => s.programStartLocked);
   const pending = useProgramStore((s) => s.pendingPassStartsOn);
+  const daysUntilStart = useProgramStore((s) => s.daysUntilStart);
   const opensPass = scaffoldOpensPass(
-    { programStartLocked, pendingPassStartsOn: pending },
+    { programStartLocked, pendingPassStartsOn: pending, daysUntilStart },
     existingHabits,
   );
   const range = useScaffoldStartRange(userTimezone, opensPass);
