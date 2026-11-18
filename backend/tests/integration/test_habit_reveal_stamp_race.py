@@ -70,10 +70,14 @@ class _RaceProbe:
             return await real_locked(*args, **kwargs)
 
         async def _recorded_persist(
-            session: AsyncSession, habits: list[Habit], moment: datetime
+            session: AsyncSession,
+            user_id: int,
+            habits: list[Habit],
+            moment: datetime,
+            user_tz: str,
         ) -> int:
             self.stamped.extend(habit.name for habit in habits)
-            return await real_persist(session, habits, moment)
+            return await real_persist(session, user_id, habits, moment, user_tz)
 
         monkeypatch.setattr(habit_auto_reveal, _LOCKED, _held_locked)
         monkeypatch.setattr(habit_auto_reveal, _PERSIST, _recorded_persist)
