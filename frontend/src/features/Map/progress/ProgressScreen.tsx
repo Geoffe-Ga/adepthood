@@ -14,6 +14,7 @@ import {
   energySummary,
   habitHistories,
   habitRange,
+  passRows,
   percent,
   percentFigure,
   ribbonBlocks,
@@ -52,7 +53,35 @@ function useText() {
   };
 }
 
+/** One ribbon per pass (#3727), oldest on top so time reads downward. */
+function PassRibbons({ rows }: { rows: ReturnType<typeof passRows> }) {
+  return (
+    <View style={styles.passes}>
+      {rows.map((row) => (
+        <Ribbon
+          key={row.key}
+          testID={`progress-${row.key}`}
+          title={row.label}
+          blocks={row.blocks}
+          drawnWeeks={row.drawnWeeks}
+          currentWeek={row.currentWeek}
+          markers={row.markers}
+          summary={row.summary}
+          showKey={false}
+        />
+      ))}
+    </View>
+  );
+}
+
 function ArcSection({ overview }: { overview: Overview }) {
+  const rows = passRows(overview);
+  if (rows.length > 0)
+    return (
+      <EditorialSection title="The arc" testID="progress-arc">
+        <PassRibbons rows={rows} />
+      </EditorialSection>
+    );
   return (
     <EditorialSection title="The arc" testID="progress-arc">
       <Ribbon
@@ -237,6 +266,7 @@ const styles = StyleSheet.create({
   body: { color: ink.soft },
   caption: { color: ink.muted },
   error: { marginTop: rhythm.sectionGap },
+  passes: { gap: rhythm.blockGap },
   rows: { gap: rhythm.blockGap, marginTop: rhythm.blockGap },
   subsection: { marginTop: rhythm.sectionGap },
 });

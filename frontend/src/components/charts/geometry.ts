@@ -136,3 +136,44 @@ export function ribbonGeometry(blocks: readonly RibbonBlock[], width: number) {
     return rect;
   });
 }
+
+/** The middle of a 1-based week across `weeks`, kept inside the plot. */
+export const weekCenter = (week: number, weeks: number, width: number): number =>
+  Math.max(0, Math.min(1, (week - 1 / 2) / Math.max(1, weeks))) * width;
+
+export interface MarkerSlot {
+  /** The marker's index in the caller's list. */
+  index: number;
+  x: number;
+  lane: number;
+}
+
+/**
+ * Numbered markers in week order, each in the first lane where it clears its
+ * neighbour by a badge and a gap, so none overlap however narrow the plot.
+ * Those that find no lane within `maxLanes` overflow, to be counted instead.
+ */
+export function markerLanes(
+  weeksOf: readonly number[],
+  weeks: number,
+  width: number,
+  maxLanes: number = chartLayout.markerLanes,
+) {
+  const clearance = 2 * chartLayout.markerRadius + chartLayout.gap;
+  const edges: number[] = [];
+  const slots: MarkerSlot[] = [];
+  const overflow: number[] = [];
+  const order = weeksOf.map((week, index) => ({ week, index })).sort((a, b) => a.week - b.week);
+  for (const { week, index } of order) {
+    const x = weekCenter(week, weeks, width);
+    const free = edges.findIndex((edge) => x - edge >= clearance);
+    const lane = free === -1 ? edges.length : free;
+    if (lane >= maxLanes) {
+      overflow.push(index);
+      continue;
+    }
+    edges[lane] = x;
+    slots.push({ index, x, lane });
+  }
+  return { slots, overflow, lanes: edges.length };
+}

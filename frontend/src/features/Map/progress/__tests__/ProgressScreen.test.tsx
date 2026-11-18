@@ -6,7 +6,10 @@ import { Pressable, ScrollView, StyleSheet, Text } from 'react-native';
 import { HELD_OVERVIEW_OPACITY, ProgressScreen } from '../ProgressScreen';
 
 import type { ApiProgressOverview } from '@/api';
-import { progressOverviewFixture } from '@/features/Map/testSupport/progressOverviewFixture';
+import {
+  passesFixture,
+  progressOverviewFixture,
+} from '@/features/Map/testSupport/progressOverviewFixture';
 
 interface Read {
   overview: ApiProgressOverview | null;
@@ -52,6 +55,53 @@ beforeEach(() => {
 });
 
 describe('ProgressScreen', () => {
+  it('stacks one ribbon per pass, oldest on top, in place of the single ribbon (#3727)', () => {
+    const overview = progressOverviewFixture();
+    overview.arc.passes = passesFixture().slice(0, 3);
+    mockRead = read({ overview });
+    const tree = render(<ProgressScreen />);
+    const arc = within(tree.getByTestId('progress-arc'));
+    expect(arc.queryByTestId('progress-ribbon')).toBeNull();
+    const rows = ['progress-pass-1', 'progress-pass-2', 'progress-pass-4'];
+    const json = JSON.stringify(tree.toJSON());
+    const at = rows.map((id) => json.indexOf(`"testID":"${id}"`));
+    expect(at.every((index) => index >= 0)).toBe(true);
+    expect([...at].sort((a, b) => a - b)).toEqual(at);
+    expect(arc.getByText('Pass 1 · began 5 Jan · reached stage 7, week 21')).toBeTruthy();
+    expect(arc.getByText('Pass 2 · began 1 Jun · completed')).toBeTruthy();
+    expect(arc.getByText('Pass 4 · began 1 Jun · in progress — week 8')).toBeTruthy();
+    const live = tree.getByTestId('progress-pass-4-inspect');
+    expect(live.props.accessibilityLabel).toMatch(/^Pass 4, began 1 June 2026\./);
+    fireEvent(live, 'accessibilityAction', { nativeEvent: { actionName: 'increment' } });
+    expect(tree.getByTestId('progress-pass-4-value')).toHaveTextContent(
+      'Habit 1 · Morning pages · unlocked 1 Jun, week 1',
+    );
+  });
+
+  it('lists a pass’s habits in its table twin', () => {
+    const overview = progressOverviewFixture();
+    overview.arc.passes = passesFixture();
+    mockRead = read({ overview });
+    const tree = render(<ProgressScreen />);
+    const live = within(tree.getByTestId('progress-pass-4'));
+    fireEvent.press(live.getByRole('button', { name: 'Show as table' }));
+    expect(live.getByText('Habit 5 · Meditation')).toBeTruthy();
+    expect(live.getByText('Unlocked 20 Jul')).toBeTruthy();
+    expect(live.getByText('Locked now')).toBeTruthy();
+    expect(
+      within(tree.getByTestId('progress-pass-5')).getByText('Pass 5 · begins 31 Aug'),
+    ).toBeTruthy();
+  });
+
+  it('keeps the single ribbon when the server sends no passes', () => {
+    const overview = progressOverviewFixture();
+    overview.arc.passes = [];
+    mockRead = read({ overview });
+    const tree = render(<ProgressScreen />);
+    expect(tree.getByTestId('progress-ribbon')).toBeTruthy();
+    expect(tree.queryByTestId('progress-pass-1')).toBeNull();
+  });
+
   it('keeps all sections in the scroll container when the arc table expands', () => {
     const tree = render(<ProgressScreen />);
     const scroller = tree.UNSAFE_getByType(ScrollView);

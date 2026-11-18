@@ -101,3 +101,97 @@ export function progressOverviewFixture(
     ...overrides,
   };
 }
+
+type Pass = NonNullable<ApiProgressOverview['arc']['passes']>[number];
+type Marker = Pass['markers'][number];
+
+const WEEK_DAYS = 7;
+const PAGES = [1, 'Morning pages'] as const;
+const WALK = [2, 'Evening walk'] as const;
+const SITTING = [3, 'Meditation'] as const;
+const PARTIAL_START = '2025-01-05';
+const COMPLETE_START = '2025-06-01';
+const LIVE_START = '2026-06-01';
+
+const marker = (
+  started: string,
+  [habitId, name]: readonly [number, string],
+  programNumber: number,
+  week: number,
+  locked = false,
+): Marker => ({
+  habit_id: habitId,
+  name,
+  icon: '•',
+  program_number: programNumber,
+  week,
+  unlocked_on: dateAt(started, (week - 1) * WEEK_DAYS),
+  currently_locked: locked,
+});
+
+/** A begun pass; `reached` is `[stage, week]`. */
+const begun = (
+  [passNumber, startedOn, endedOn]: [number, string, string | null],
+  origin: Pass['origin'],
+  [stage, week]: [number, number],
+  markers: Marker[],
+): Pass => ({
+  pass_number: passNumber,
+  started_on: startedOn,
+  ended_on: endedOn,
+  origin,
+  state: endedOn === null ? 'live' : 'ended',
+  days_until_start: 0,
+  reached_stage: stage,
+  reached_week: week,
+  completed: week === WEEKS.reduce((sum, weeks) => sum + weeks, 0),
+  markers,
+});
+
+/**
+ * Four passes, oldest first: one that stopped in stage 7, one that ran all
+ * 36 weeks, the live one in week 8 (pass 3 was never recorded, so numbers
+ * skip), and one held to begin later.
+ */
+export function passesFixture(): Pass[] {
+  return [
+    begun(
+      [1, PARTIAL_START, '2025-05-31'],
+      'first_run',
+      [7, 21],
+      [
+        marker(PARTIAL_START, PAGES, 1, 1),
+        marker(PARTIAL_START, WALK, 2, 4),
+        marker(PARTIAL_START, SITTING, 3, 8, true),
+      ],
+    ),
+    begun(
+      [2, COMPLETE_START, '2026-02-07'],
+      'begin_again',
+      [10, 36],
+      [marker(COMPLETE_START, PAGES, 1, 1)],
+    ),
+    begun(
+      [4, LIVE_START, null],
+      'rescaffold',
+      [3, 8],
+      [
+        marker(LIVE_START, PAGES, 1, 1),
+        marker(LIVE_START, WALK, 2, 1),
+        marker(LIVE_START, SITTING, 5, 8, true),
+      ],
+    ),
+    {
+      pass_number: 5,
+      started_on: '2026-08-31',
+      ended_on: null,
+      origin: 'rescaffold',
+      state: 'pending',
+      days_until_start: 12,
+      reached_stage: null,
+      reached_week: null,
+      completed: false,
+      markers: [],
+    },
+  ];
+}
