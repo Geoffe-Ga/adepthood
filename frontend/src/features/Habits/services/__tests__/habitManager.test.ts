@@ -45,6 +45,21 @@ jest.mock('../../../../api', () => ({
         program_start_window: { earliest: '2025-01-01', latest: '2026-12-31' },
       }),
     ),
+    // The pass seam (#3728): by default the server opens the pass on the
+    // picked day and echoes it back as the anchor in force.
+    openPass: jest.fn((day: string) =>
+      Promise.resolve({
+        program_started_at: `${day}T12:00:00Z`,
+        calendar_stage: 1,
+        calendar_week: 1,
+        current_stage: 1,
+        cycle_number: 2,
+        program_start_window: null,
+        days_until_start: 0,
+        pending_pass_starts_on: null,
+        pass_start_window: { earliest: '2025-01-01', latest: '2027-12-31' },
+      }),
+    ),
     programCalendar: jest.fn(() => Promise.reject(new Error('not stubbed'))),
     listAll: jest.fn(() => Promise.resolve([])),
   },
@@ -131,7 +146,10 @@ import {
 } from '../../../../api';
 import { beginAuthSession } from '../../../../api/sessionToken';
 import { parseISODate, toISODate } from '../../../../components/DatePicker';
-import { PROGRAM_START_PENDING_COPY } from '../../../../features/Program/programAnchor';
+import {
+  PASS_START_NOT_SAVED_COPY,
+  PROGRAM_START_PENDING_COPY,
+} from '../../../../features/Program/programAnchor';
 import type * as HabitStorageModule from '../../../../storage/habitStorage';
 import {
   saveHabits,
@@ -5949,7 +5967,7 @@ describe("the program start date is the server's (#3097)", () => {
     await saving;
     expect(Alert.alert).toHaveBeenCalledWith(
       expect.any(String),
-      expect.stringMatching(/today or earlier/i),
+      expect.stringMatching(/further ahead/i),
     );
     expect(habitsApi.create).toHaveBeenCalled();
   });
@@ -6066,7 +6084,7 @@ describe("the program start date is the server's (#3097)", () => {
     expect(useProgramStore.getState().programStartDay).toBe('2026-01-05');
     expect(Alert.alert).toHaveBeenCalledWith(
       expect.any(String),
-      expect.stringMatching(/today or earlier/i),
+      expect.stringMatching(/further ahead/i),
     );
   });
 
@@ -6195,13 +6213,201 @@ describe("the program start date is the server's (#3097)", () => {
     });
   });
 
-  it('sends no PUT once begin-again has fixed the date', async () => {
+  it('sends no PUT once begin-again has fixed the date, and opens a pass instead (#3728)', async () => {
     useProgramStore.setState({ programStartLocked: true });
 
     await habitManager.onboardingSave([pick(daysAgo(DAYS_BACK))], undefined, ZONE);
 
     expect(stagesApi.setProgramStart).not.toHaveBeenCalled();
+    expect(stagesApi.openPass).toHaveBeenCalledTimes(1);
     expect(habitsApi.create).toHaveBeenCalled();
+  });
+
+  describe('a scaffolding save that opens a pass (#3728)', () => {
+    const RUNNING_DAY = '2026-09-13';
+    const FUTURE_DAY = '2026-12-01';
+    const openPass = () => stagesApi.openPass as jest.Mock;
+
+    /** The echo of a future pick: the running pass keeps answering, the pick is held. */
+    const pendingEcho = (pending: string) => ({
+      program_started_at: `${RUNNING_DAY}T12:00:00Z`,
+      calendar_stage: 4,
+      calendar_week: 10,
+      current_stage: 4,
+      cycle_number: 1,
+      program_start_window: { earliest: '2025-01-01', latest: '2027-12-31' },
+      days_until_start: 0,
+      pending_pass_starts_on: pending,
+      pass_start_window: { earliest: RUNNING_DAY, latest: '2027-12-31' },
+    });
+
+    const holdRunningPass = () =>
+      useProgramStore
+        .getState()
+        .adoptServerProgramStart({ day: RUNNING_DAY, window: null, locked: false });
+
+    beforeEach(() => {
+      holdRunningPass();
+      useHabitStore.setState({
+        habits: [
+          makeServerHabit({ id: 7, name: 'Already here', start_date: new Date('2026-09-13') }),
+        ],
+      });
+    });
+
+    it('POSTs the picked day once, not the PUT, when habits already exist in the first cycle', async () => {
+      openPass().mockResolvedValueOnce(pendingEcho(FUTURE_DAY) as never);
+
+      await habitManager.onboardingSave(
+        [pick(parseISODate(FUTURE_DAY))],
+        undefined,
+        ZONE,
+        FUTURE_DAY,
+      );
+
+      expect(stagesApi.setProgramStart).not.toHaveBeenCalled();
+      expect(openPass()).toHaveBeenCalledTimes(1);
+      expect(openPass().mock.calls[0]![0]).toBe(FUTURE_DAY);
+    });
+
+    it('holds every habit write until the POST has answered', async () => {
+      const answer = deferred<unknown>();
+      openPass().mockReturnValueOnce(answer.promise as never);
+
+      const saving = habitManager.onboardingSave(
+        [pick(parseISODate(FUTURE_DAY))],
+        undefined,
+        ZONE,
+        FUTURE_DAY,
+      );
+      await flushMicrotasks();
+
+      expect(openPass()).toHaveBeenCalledTimes(1);
+      expect(habitsApi.create).not.toHaveBeenCalled();
+      answer.resolve(pendingEcho(FUTURE_DAY));
+      await saving;
+      expect(habitsApi.create).toHaveBeenCalled();
+    });
+
+    it('lays the new rows from the future day while every reader stays on the running pass', async () => {
+      openPass().mockResolvedValueOnce(pendingEcho(FUTURE_DAY) as never);
+      const deviceStart = parseISODate(FUTURE_DAY);
+
+      await habitManager.onboardingSave(
+        [
+          pick(calculateHabitStartDate(deviceStart, 0), 'Meditate'),
+          pick(calculateHabitStartDate(deviceStart, 1), 'Journal'),
+        ],
+        undefined,
+        'UTC',
+        FUTURE_DAY,
+      );
+
+      const posted = (habitsApi.create as jest.Mock).mock.calls.map(
+        (call) => (call[0] as { start_date: string }).start_date,
+      );
+      expect(posted).toEqual([FUTURE_DAY, '2026-12-22']);
+      expect(useProgramStore.getState().programStartDay).toBe(RUNNING_DAY);
+      expect(useProgramStore.getState().pendingPassStartsOn).toBe(FUTURE_DAY);
+    });
+
+    it('sends the day as picked, whatever the device zone', async () => {
+      await habitManager.onboardingSave(
+        [pick(parseISODate(FUTURE_DAY))],
+        undefined,
+        'America/Los_Angeles',
+        FUTURE_DAY,
+      );
+
+      expect(openPass().mock.calls[0]![0]).toBe(FUTURE_DAY);
+    });
+
+    it('sends the picked day, never an earlier kept habit, which would start before the pass', async () => {
+      const begun: OnboardingHabit = {
+        ...pick(new Date('2026-09-20T04:00:00Z'), 'Begun'),
+        keepsOwnBeginning: true,
+      };
+
+      await habitManager.onboardingSave(
+        [begun, pick(parseISODate(FUTURE_DAY))],
+        undefined,
+        ZONE,
+        FUTURE_DAY,
+      );
+
+      expect(openPass().mock.calls[0]![0]).toBe(FUTURE_DAY);
+    });
+
+    it('opens a pass even on the day the server already holds: every save opens one', async () => {
+      await habitManager.onboardingSave(
+        [pick(parseISODate(RUNNING_DAY))],
+        undefined,
+        ZONE,
+        RUNNING_DAY,
+      );
+
+      expect(openPass()).toHaveBeenCalledTimes(1);
+    });
+
+    it('opens a pass while one is pending, even with no habits, replacing the held day', async () => {
+      useHabitStore.setState({ habits: [] });
+      useProgramStore.setState({ pendingPassStartsOn: FUTURE_DAY });
+      const REPLACED = '2026-12-08';
+
+      await habitManager.onboardingSave([pick(parseISODate(REPLACED))], undefined, ZONE, REPLACED);
+
+      expect(stagesApi.setProgramStart).not.toHaveBeenCalled();
+      expect(openPass().mock.calls[0]![0]).toBe(REPLACED);
+    });
+
+    it('a refused pass still saves the habits, keeps the running pass and says why', async () => {
+      openPass().mockRejectedValueOnce(
+        new ApiError(422, 'pass_start_before_current_pass') as never,
+      );
+
+      await habitManager.onboardingSave(
+        [pick(parseISODate(FUTURE_DAY))],
+        undefined,
+        ZONE,
+        FUTURE_DAY,
+      );
+
+      expect(habitsApi.create).toHaveBeenCalled();
+      expect(useProgramStore.getState().programStartDay).toBe(RUNNING_DAY);
+      expect(Alert.alert).toHaveBeenCalledWith(
+        expect.any(String),
+        expect.stringMatching(/before the pass you.re in/i),
+      );
+    });
+
+    it('an offline save says the pass did not open and holds nothing for replay', async () => {
+      openPass().mockRejectedValueOnce(new TypeError('Failed to fetch') as never);
+
+      await habitManager.onboardingSave(
+        [pick(parseISODate(FUTURE_DAY))],
+        undefined,
+        ZONE,
+        FUTURE_DAY,
+      );
+
+      expect(Alert.alert).toHaveBeenCalledWith(expect.any(String), PASS_START_NOT_SAVED_COPY);
+      await expect(loadPendingProgramStart()).resolves.toBeNull();
+      expect(useProgramStore.getState().programStartDay).toBe(RUNNING_DAY);
+    });
+
+    it('a first save with no habits still corrects pass 1 through the PUT', async () => {
+      useHabitStore.setState({ habits: [] });
+
+      await habitManager.onboardingSave(
+        [pick(parseISODate(FUTURE_DAY))],
+        undefined,
+        ZONE,
+        FUTURE_DAY,
+      );
+
+      expect(openPass()).not.toHaveBeenCalled();
+      expect(stagesApi.setProgramStart).toHaveBeenCalledTimes(1);
+    });
   });
 
   it('sends no PUT when the pick is the anchor the server already holds', async () => {

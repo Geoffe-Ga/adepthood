@@ -11,6 +11,14 @@ import { STAGE_ORDER } from '../../HabitUtils';
 
 const OnboardingModal = require('../OnboardingModal').default;
 
+/** Long enough for the stubbed template fetch to settle and the step to advance. */
+const TEMPLATES_SETTLE_MS = 10;
+
+jest.mock('../../../../api', () => ({
+  ...(jest.requireActual('../../../../api') as Record<string, unknown>),
+  goalGroups: { list: jest.fn(() => Promise.resolve([])) },
+}));
+
 jest.mock('../../constants', () => ({
   ...(jest.requireActual('../../constants') as Record<string, unknown>),
   DEFAULT_ICONS: ['⭐'],
@@ -67,13 +75,18 @@ describe('OnboardingModal reorder step', () => {
       anchorSource: null,
       programStartWindow: null,
       programStartLocked: false,
+      pendingPassStartsOn: null,
+      passStartWindow: null,
+      daysUntilStart: 0,
     });
   });
 
   const REVEAL_TOTAL_MS = 150 * 2 + 500 + 100; // 2 habits × 150ms stagger + 500ms pause + 100ms settle
 
-  const setupToReorder = () => {
-    const result = render(<OnboardingModal visible onClose={jest.fn()} onSaveHabits={jest.fn()} />);
+  const setupToReorder = (onSaveHabits: jest.Mock = jest.fn()) => {
+    const result = render(
+      <OnboardingModal visible onClose={jest.fn()} onSaveHabits={onSaveHabits} />,
+    );
     const input = result.getByPlaceholderText('Enter habit name');
     fireEvent.changeText(input, 'Habit A');
     fireEvent(input, 'onKeyPress', { nativeEvent: { key: 'Enter' } });
@@ -150,48 +163,95 @@ describe('OnboardingModal reorder step', () => {
     expect(found?.height).toBe('90%');
   });
 
-  describe('the start date is clamped to what the server accepts (#3097)', () => {
+  describe('the start date is clamped to what the server accepts (#3097, #3728)', () => {
     const datePickerProps = (result: ReturnType<typeof setupToReorder>) =>
       result.UNSAFE_getByType(DatePicker).props as {
         value: string;
         minDate?: string;
         maxDate?: string;
       };
+    const todayKey = () => toISODate(new Date());
+    const daysFromToday = (days: number) => {
+      const d = new Date();
+      d.setDate(d.getDate() + days);
+      return toISODate(d);
+    };
+    const AHEAD = 252;
+    const LATER = 30;
 
-    it('offers nothing after today and reaches back before it', () => {
-      const today = toISODate(new Date());
+    it('offers nothing after today, and reaches back before it, until a window is served', () => {
+      const picker = datePickerProps(setupToReorder());
+
+      expect(picker.maxDate).toBe(todayKey());
+      expect(picker.minDate).toBeDefined();
+      expect(picker.minDate! < todayKey()).toBe(true);
+    });
+
+    it('takes both ends from the served window on a first save, future days included', () => {
+      useProgramStore.setState({
+        programStartWindow: { earliest: '2025-12-01', latest: daysFromToday(AHEAD) },
+      });
 
       const picker = datePickerProps(setupToReorder());
 
-      expect(picker.maxDate).toBe(today);
-      expect(picker.minDate).toBeDefined();
-      expect(picker.minDate! < today).toBe(true);
+      expect(picker.minDate).toBe('2025-12-01');
+      expect(picker.maxDate).toBe(daysFromToday(AHEAD));
     });
 
-    it('takes the floor from the server window when one is held', () => {
-      useProgramStore.setState({
-        programStartWindow: { earliest: '2025-12-01', latest: '2026-01-01' },
-      });
-
-      expect(datePickerProps(setupToReorder()).minDate).toBe('2025-12-01');
-    });
-
-    it('pulls a legacy future anchor back to today rather than offering a refused date', () => {
+    it('pulls a held anchor past the window back to its end rather than offering a refused date', () => {
       const future = new Date();
-      future.setDate(future.getDate() + 30);
+      future.setDate(future.getDate() + LATER);
       useProgramStore.getState().setProgramStartDate(future);
 
-      expect(datePickerProps(setupToReorder()).value).toBe(toISODate(new Date()));
+      expect(datePickerProps(setupToReorder()).value).toBe(todayKey());
     });
 
-    it('shows a fixed date, not a picker, once begin-again has run', () => {
-      useProgramStore.setState({ programStartLocked: true });
+    describe('in a later cycle, where a save opens a new pass', () => {
+      const PASS_WINDOW = { earliest: '2026-09-13', latest: daysFromToday(AHEAD) };
 
-      const result = setupToReorder();
+      beforeEach(() => {
+        useProgramStore.setState({
+          programStartLocked: true,
+          programStartWindow: null,
+          passStartWindow: PASS_WINDOW,
+        });
+      });
 
-      expect(result.UNSAFE_queryByType(DatePicker)).toBeNull();
-      expect(result.getByTestId('program-start-fixed')).toBeTruthy();
-      expect(result.getByText(/begin again/i)).toBeTruthy();
+      it('offers a picker over the pass window, never the fixed date', () => {
+        const result = setupToReorder();
+
+        expect(result.queryByTestId('program-start-fixed')).toBeNull();
+        expect(datePickerProps(result)).toMatchObject({
+          minDate: PASS_WINDOW.earliest,
+          maxDate: PASS_WINDOW.latest,
+        });
+      });
+
+      it('opens on today, not on the running pass it would replace', () => {
+        useProgramStore.getState().setProgramStartDay('2026-09-13');
+
+        expect(datePickerProps(setupToReorder()).value).toBe(todayKey());
+      });
+
+      it('opens on the day already held for the next pass, so saving again keeps it', () => {
+        useProgramStore.setState({ pendingPassStartsOn: daysFromToday(LATER) });
+
+        expect(datePickerProps(setupToReorder()).value).toBe(daysFromToday(LATER));
+      });
+
+      it('hands the picked future day to the save as picked', async () => {
+        const onSaveHabits = jest.fn();
+        const result = setupToReorder(onSaveHabits);
+
+        act(() => result.UNSAFE_getByType(DatePicker).props.onChange(daysFromToday(LATER)));
+        await act(async () => {
+          fireEvent.press(result.getByTestId('continue-to-templates'));
+          await jest.advanceTimersByTimeAsync(TEMPLATES_SETTLE_MS);
+        });
+        fireEvent.press(result.getByTestId('finish-setup'));
+
+        expect(onSaveHabits).toHaveBeenCalledWith(expect.anything(), daysFromToday(LATER));
+      });
     });
   });
 });

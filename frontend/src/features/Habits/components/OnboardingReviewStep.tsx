@@ -2,6 +2,7 @@ import React from 'react';
 import { SafeAreaView, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 
 import { colors } from '../../../design/tokens';
+import { newPassSentence } from '../../Program/passCopy';
 import styles from '../Habits.styles';
 
 import type { ReviewDestination, ReviewRow } from './onboardingReview';
@@ -110,6 +111,12 @@ export interface OnboardingReviewStepProps {
   onToggleKeep: (_habitId: number) => void;
   onSelectDestination: (_habitId: number, _destination: ReviewDestination) => void;
   onContinue: () => void;
+  /**
+   * The day the save opens a new pass on (#3728), or null when the save
+   * corrects pass 1 instead. Named in one sentence, with no extra modal: the
+   * current pass is kept, so nothing here is a loss to confirm.
+   */
+  newPassDay?: string | null;
 }
 
 export const OnboardingReviewStep = ({
@@ -117,6 +124,7 @@ export const OnboardingReviewStep = ({
   onToggleKeep,
   onSelectDestination,
   onContinue,
+  newPassDay = null,
 }: OnboardingReviewStepProps) => (
   <SafeAreaView style={styles.onboardingStep} testID="review-step">
     <Text style={styles.onboardingTitle}>The habits you already have</Text>
@@ -124,6 +132,11 @@ export const OnboardingReviewStep = ({
       Keep the ones that are still yours, and say where each one belongs. Unticking one lets it go
       for good.
     </Text>
+    {newPassDay !== null && (
+      <Text style={styles.onboardingSubtitle} testID="review-new-pass">
+        {newPassSentence(newPassDay)}
+      </Text>
+    )}
     <ScrollView>
       {rows.map((row) => (
         <ReviewRowTile

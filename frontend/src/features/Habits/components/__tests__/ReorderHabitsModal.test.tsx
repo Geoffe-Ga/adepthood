@@ -6,9 +6,10 @@ import React from 'react';
 import { Modal, StyleSheet } from 'react-native';
 
 import { messageForCode } from '../../../../api/errorMessages';
+import { TOTAL_PROGRAM_DAYS } from '../../../../constants/program';
 import { accent, STAGE_COLORS } from '../../../../design/tokens';
 import { useProgramStore } from '../../../../store/useProgramStore';
-import { dayKeyInTZ, todayInUserTZ } from '../../../../utils/dateUtils';
+import { addDaysInTZ, dayKeyInTZ, todayInUserTZ } from '../../../../utils/dateUtils';
 import type { ProgramStartOutcome } from '../../../Program/programAnchor';
 import type { Habit } from '../../Habits.types';
 import { HABIT_ROWS_NOT_MOVED_COPY } from '../../services/habitManager';
@@ -94,6 +95,10 @@ jest.mock('react-native-modal-datetime-picker', () => {
 });
 
 const ReorderHabitsModal = require('../ReorderHabitsModal').default;
+
+const DEVICE_ZONE = Intl.DateTimeFormat().resolvedOptions().timeZone;
+/** The served ceiling: one whole program past today (#3725). */
+const SERVED_LATEST = addDaysInTZ(todayInUserTZ(DEVICE_ZONE), TOTAL_PROGRAM_DAYS, DEVICE_ZONE);
 
 const makeHabit = (id: number, stage: string, name: string): Habit => ({
   id,
@@ -384,10 +389,10 @@ describe('ReorderHabitsModal — date picker visibility (BUG: picker invisible i
     expect(result.getByTestId('modal-datetime-picker-root')).toBeTruthy();
   });
 
-  it('clamps the native picker to what the server accepts (#3097)', () => {
+  it('clamps the native picker to what the server accepts (#3097, #3728)', () => {
     act(() =>
       useProgramStore.setState({
-        programStartWindow: { earliest: '2026-01-02', latest: '2026-01-02' },
+        programStartWindow: { earliest: '2026-01-02', latest: SERVED_LATEST },
       }),
     );
     const result = render(
@@ -397,7 +402,6 @@ describe('ReorderHabitsModal — date picker visibility (BUG: picker invisible i
     fireEvent.press(result.getByTestId('reorder-start-date'));
 
     const props = lastModalDatePickerProps.current!;
-    const today = todayInUserTZ(Intl.DateTimeFormat().resolvedOptions().timeZone);
     const asDay = (d: unknown) => {
       const date = d as Date;
       return [
@@ -406,7 +410,8 @@ describe('ReorderHabitsModal — date picker visibility (BUG: picker invisible i
         String(date.getDate()).padStart(2, '0'),
       ].join('-');
     };
-    expect(asDay(props.maximumDate)).toBe(today);
+    // The ceiling is the served window's end, a whole program ahead -- no longer today.
+    expect(asDay(props.maximumDate)).toBe(SERVED_LATEST);
     expect(asDay(props.minimumDate)).toBe('2026-01-02');
   });
 
@@ -1024,10 +1029,10 @@ describe('ReorderHabitsModal — date picker on web', () => {
     expect(stored.getDate()).toBe(1);
   });
 
-  it('bounds the web date input to the server window and today (#3097)', () => {
+  it('bounds the web date input to the server window (#3097, #3728)', () => {
     act(() =>
       useProgramStore.setState({
-        programStartWindow: { earliest: '2026-01-02', latest: '2026-01-02' },
+        programStartWindow: { earliest: '2026-01-02', latest: SERVED_LATEST },
       }),
     );
     act(() => useProgramStore.getState().hydrateProgramStartDate(new Date(2026, 2, 10)));
@@ -1038,7 +1043,7 @@ describe('ReorderHabitsModal — date picker on web', () => {
     const input = result.UNSAFE_root.findByProps({ type: 'date' });
 
     expect(input.props.min).toBe('2026-01-02');
-    expect(input.props.max).toBe(todayInUserTZ(Intl.DateTimeFormat().resolvedOptions().timeZone));
+    expect(input.props.max).toBe(SERVED_LATEST);
   });
 
   it('ignores an empty web date-input change and leaves the anchor where it was', () => {

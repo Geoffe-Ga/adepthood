@@ -9,7 +9,7 @@ import { useEffect } from 'react';
 import { create } from 'zustand';
 
 import type { ProgramStartWindow } from '../api';
-import { STAGE_DURATIONS_DAYS, TOTAL_PROGRAM_DAYS } from '../constants/program';
+import { DAYS_PER_WEEK, STAGE_DURATIONS_DAYS, TOTAL_PROGRAM_WEEKS } from '../constants/program';
 import { clearPendingProgramStart } from '../storage/pendingProgramStart';
 import {
   clearProgramStartDate,
@@ -22,10 +22,8 @@ import { registerStoreReset } from './registry';
 
 import { reportDiagnostic } from '@/observability/diagnostics';
 
-const DAYS_PER_WEEK = 7;
 const STAGE_COUNT = STAGE_DURATIONS_DAYS.length;
-// Integer-pinned so a future non-7-multiple change to STAGE_DURATIONS_DAYS can't silently leak fractional weeks.
-export const TOTAL_PROGRAM_WEEKS = Math.floor(TOTAL_PROGRAM_DAYS / DAYS_PER_WEEK);
+export { TOTAL_PROGRAM_WEEKS };
 
 /**
  * Where the anchor on hand came from. ``server`` outranks the others: once the
@@ -41,7 +39,28 @@ export interface ServerProgramStart {
   window: ProgramStartWindow | null;
   /** Cycle 2 and later: the start date is fixed. */
   locked: boolean;
+  /**
+   * The pass a scaffolding save opens (#3728). Optional so a caller that only
+   * knows the anchor -- an older fixture, say -- reads as "nothing pending".
+   */
+  pass?: ServerPassState;
 }
+
+/** The server's view of the pass a scaffolding save opens (#3725), adopted with the anchor. */
+export interface ServerPassState {
+  /** Whole days until a first pass placed in the future begins; 0 once it has. */
+  daysUntilStart: number;
+  /** The YYYY-MM-DD a pass held for the future begins on, or null when none is held. */
+  pendingPassStartsOn: string | null;
+  /** The range ``POST /stages/passes`` accepts, or null when the server sent none. */
+  passStartWindow: ProgramStartWindow | null;
+}
+
+const NO_PASS: ServerPassState = {
+  daysUntilStart: 0,
+  pendingPassStartsOn: null,
+  passStartWindow: null,
+};
 
 export interface ProgramStoreState {
   /** Canonical calendar identity; Dates cannot preserve this across unlike account/device zones. */
@@ -50,6 +69,19 @@ export interface ProgramStoreState {
   anchorSource: ProgramAnchorSource | null;
   programStartWindow: ProgramStartWindow | null;
   programStartLocked: boolean;
+  /**
+   * Whole days until the anchor in force begins (#3728): positive only for a
+   * first pass placed in the future, the "not yet begun" state. A pass pending
+   * behind a running one leaves this at 0 -- the running pass is under way.
+   */
+  daysUntilStart: number;
+  /**
+   * The day a pass opened for the future begins (#3728). Every reader keeps
+   * counting from ``programStartDay`` -- the running pass -- until then.
+   */
+  pendingPassStartsOn: string | null;
+  /** The range a scaffolding save may open a pass in, offered in every cycle. */
+  passStartWindow: ProgramStartWindow | null;
   setProgramStartDate: (_date: Date | null) => void;
   /** Set an already-zoned YYYY-MM-DD received or derived at an API boundary. */
   setProgramStartDay: (_day: string | null) => void;
@@ -67,6 +99,7 @@ const INITIAL_STATE = {
   anchorSource: null as ProgramAnchorSource | null,
   programStartWindow: null as ProgramStartWindow | null,
   programStartLocked: false,
+  ...NO_PASS,
 };
 
 const normalize = (date: Date): Date => {
@@ -138,8 +171,8 @@ export const useProgramStore = create<ProgramStoreState>((set, get) => ({
       anchorSource: normalized === null ? null : 'storage',
     });
   },
-  adoptServerProgramStart: ({ day, window, locked }) => {
-    set({ programStartWindow: window, programStartLocked: locked });
+  adoptServerProgramStart: ({ day, window, locked, pass = NO_PASS }) => {
+    set({ programStartWindow: window, programStartLocked: locked, ...pass });
     if (day === null) return;
     const next = dayState(day);
     if (next.programStartDate === null) return;

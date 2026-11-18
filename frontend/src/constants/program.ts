@@ -4,6 +4,12 @@ export const STAGE_DURATIONS_DAYS = [21, 21, 21, 21, 21, 21, 21, 21, 42, 42] as 
 // The whole 36-week program, in days.
 export const TOTAL_PROGRAM_DAYS = STAGE_DURATIONS_DAYS.reduce((sum, d) => sum + d, 0);
 
+export const DAYS_PER_WEEK = 7;
+
+// The whole program, in weeks. Integer-pinned so a future non-7-multiple change
+// to STAGE_DURATIONS_DAYS can't silently leak fractional weeks.
+export const TOTAL_PROGRAM_WEEKS = Math.floor(TOTAL_PROGRAM_DAYS / DAYS_PER_WEEK);
+
 // How far before account creation a person may say their program began (#3097).
 // CROSS-STACK CONTRACT: mirrors ``PROGRAM_START_BACKDATE_WINDOW_DAYS`` in
 // ``backend/src/domain/constants.py``. The client prefers the exact window the

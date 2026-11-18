@@ -1,10 +1,12 @@
 /**
- * Pick, change and reconcile the program start date (#3097).
+ * Pick, change and reconcile the program start date (#3097), and open a pass (#3728).
  *
  * ``commitProgramStart`` is the one place the client asks the server to move
- * the anchor; ``reconcileProgramAnchor`` is the one place it re-reads it outside
- * the existing calendar reads. Both adopt through ``adoptProgramCalendar``, so
- * the store is only ever written with what the server actually holds.
+ * the anchor of the pass the person is in; ``commitPassStart`` is the one place
+ * it asks the server to open a new pass; ``reconcileProgramAnchor`` is the one
+ * place it re-reads the anchor outside the existing calendar reads. All three
+ * adopt through ``adoptProgramCalendar``, so the store is only ever written
+ * with what the server actually holds.
  */
 import { stages, type ProgramCalendar } from '../../api';
 import { formatApiError } from '../../api/errorMessages';
@@ -29,6 +31,13 @@ export const PROGRAM_START_NOT_SAVED_COPY =
   "Your start date didn't save. Check your connection and try again; your earlier start date still stands.";
 
 /**
+ * Copy for a scaffolding save whose new pass never reached the server (#3728).
+ * Nothing moved: the pass the person is in keeps running from its own day.
+ */
+export const PASS_START_NOT_SAVED_COPY =
+  "Your new pass didn't open. Check your connection and save again; your current pass keeps running.";
+
+/**
  * Copy for a first pick that never reached the server. There is no earlier date
  * to fall back on, so it says the pick is held and will be sent again.
  */
@@ -48,10 +57,10 @@ const isRefusal = (err: unknown): boolean => {
   return status === HTTP_UNPROCESSABLE || status === HTTP_CONFLICT;
 };
 
-const failureOutcome = (err: unknown): ProgramStartOutcome =>
+const failureOutcome = (err: unknown, unsavedCopy: string): ProgramStartOutcome =>
   isRefusal(err)
     ? { kind: 'refused', message: formatApiError(err) }
-    : { kind: 'unsaved', message: PROGRAM_START_NOT_SAVED_COPY };
+    : { kind: 'unsaved', message: unsavedCopy };
 
 /**
  * Bumped when a commit adopts its echo. A reconcile read that started before
@@ -89,14 +98,50 @@ export async function commitProgramStart(
   day: string,
   { tz, token }: CommitProgramStartOptions,
 ): Promise<ProgramStartOutcome> {
+  return sendAndAdopt(() => stages.setProgramStart(day, token), PROGRAM_START_NOT_SAVED_COPY, {
+    tz,
+    token,
+  });
+}
+
+/**
+ * Ask the server to open a new pass on ``day`` (``YYYY-MM-DD``, account zone)
+ * -- the Energy Scaffolding save (#3728). A day today or earlier opens the pass
+ * now; a later one is held as the pending pass while the running pass keeps
+ * going, and the echo keeps every reader on that running pass until the day.
+ *
+ * Pessimistic like ``commitProgramStart``: nothing is written until the server
+ * agrees, and the outcome kinds are the same. Nothing is held for replay -- a
+ * pass is opened deliberately, and the person who saw it fail can save again.
+ */
+export async function commitPassStart(
+  day: string,
+  { tz, token }: CommitProgramStartOptions,
+): Promise<ProgramStartOutcome> {
+  return sendAndAdopt(() => stages.openPass(day, token), PASS_START_NOT_SAVED_COPY, {
+    tz,
+    token,
+  });
+}
+
+/**
+ * Send one anchor write, adopt its echo and re-pace the Map. An echo that lands
+ * after the session that sent it ended is not adopted: it describes an account
+ * that is no longer signed in here.
+ */
+async function sendAndAdopt(
+  send: () => Promise<ProgramCalendar>,
+  unsavedCopy: string,
+  { tz, token }: CommitProgramStartOptions,
+): Promise<ProgramStartOutcome> {
   const scope = captureAuthScope();
   try {
-    const calendar = await stages.setProgramStart(day, token);
+    const calendar = await send();
     if (!isAuthScopeCurrent(scope)) return { kind: 'saved' };
     anchorEpoch += 1;
     adoptProgramCalendar(calendar, tz);
   } catch (err) {
-    return failureOutcome(err);
+    return failureOutcome(err, unsavedCopy);
   }
   // The server now holds a deliberate pick; an older held one must not override it.
   swallowStorageFailure(clearPendingProgramStart());

@@ -3,6 +3,7 @@ import { render, fireEvent, act, within } from '@testing-library/react-native';
 import React from 'react';
 import type { ReactElement, ReactNode } from 'react';
 
+import { toISODate } from '../../../../components/DatePicker';
 import { useProgramStore } from '../../../../store/useProgramStore';
 import type { Habit, HabitMergePlan, OnboardingHabit } from '../../Habits.types';
 
@@ -521,10 +522,10 @@ describe('OnboardingModal start-date seed', () => {
     });
   };
 
-  it('opens the picker on the day the program already begins, not on today', () => {
-    // Saving a scaffolding pass is an explicit anchor write. A picker seeded
-    // with today re-answers a question the user already answered, and moves the
-    // whole course calendar for a returning user who never touched it.
+  it('with habits already saved, opens on today: the save starts a new pass (#3728)', () => {
+    // Every scaffolding save opens a pass. Seeding the picker with the running
+    // pass's own day would open a new pass that replaces it on the very day it
+    // began; today is the day a pass started now would begin.
     useProgramStore.getState().hydrateProgramStartDate(new Date(2026, 0, 15));
     const result = renderModal([habit()]);
 
@@ -532,6 +533,21 @@ describe('OnboardingModal start-date seed', () => {
     advanceToReorder(result);
 
     expect(result.getByText('Beige begins on:')).toBeTruthy();
+    expect(result.UNSAFE_queryByProps({ value: '2026-01-15' })).toBeNull();
+    expect(result.UNSAFE_getByProps({ value: toISODate(new Date()) })).toBeTruthy();
+  });
+
+  it('on a first save, opens on the day the program already begins, not on today', () => {
+    // The first save corrects pass 1 itself (#3097): a picker seeded with today
+    // would re-answer a question the user already answered.
+    useProgramStore.getState().hydrateProgramStartDate(new Date(2026, 0, 15));
+    const result = renderModal([]);
+
+    const input = result.getByTestId('habit-input');
+    fireEvent.changeText(input, 'Stretch');
+    fireEvent(input, 'onKeyPress', { nativeEvent: { key: 'Enter' } });
+    advanceToReorder(result);
+
     // The picker can always give back the day it is showing, even below the
     // offline fallback floor.
     expect(result.UNSAFE_getByProps({ value: '2026-01-15' }).props.minDate).toBe('2026-01-15');
@@ -552,11 +568,47 @@ describe('OnboardingModal start-date seed', () => {
     fireEvent(input, 'onKeyPress', { nativeEvent: { key: 'Enter' } });
     advanceToReorder(result);
 
-    // Today is the ceiling now, not the floor: a program cannot start on a day
-    // that has not come, but it may have started before the person signed up
-    // (#3097).
+    // With no window served yet, today is the ceiling: the client never
+    // computes the server's window itself (#3728), but the program may have
+    // started before the person signed up (#3097).
     const picker = result.UNSAFE_getByProps({ value: iso }).props;
     expect(picker.maxDate).toBe(iso);
     expect(picker.minDate < iso).toBe(true);
+  });
+});
+
+describe('OnboardingModal review step names the pass a save opens (#3728)', () => {
+  afterEach(() => {
+    act(() => {
+      useProgramStore.getState().reset();
+    });
+  });
+
+  const PENDING_DAY = '2026-12-01';
+
+  it('says in one sentence that saving starts a new pass and the current one is kept', () => {
+    act(() => {
+      useProgramStore.setState({
+        pendingPassStartsOn: PENDING_DAY,
+        passStartWindow: { earliest: '2026-01-01', latest: '2099-12-31' },
+      });
+    });
+    const result = renderModal([habit()]);
+
+    const notice = result.getByTestId('review-new-pass');
+    expect(notice).toHaveTextContent(
+      'Saving starts a new pass on December 1, 2026; your current pass stays on Stats and progress.',
+    );
+  });
+
+  it('names today when no pass is held yet', () => {
+    const result = renderModal([habit()]);
+
+    const today = new Date().toLocaleDateString('en-US', {
+      month: 'long',
+      day: 'numeric',
+      year: 'numeric',
+    });
+    expect(result.getByTestId('review-new-pass')).toHaveTextContent(new RegExp(today));
   });
 });

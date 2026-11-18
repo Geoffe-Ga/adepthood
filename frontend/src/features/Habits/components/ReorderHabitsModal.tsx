@@ -909,8 +909,9 @@ export const ReorderHabitsModal = ({
         isVisible={visible && state.pickerVisible}
         mode="date"
         date={state.startDate}
-        // Clamped to what the server accepts (#3097): nothing after today, and
-        // back to the server's floor -- or to the date on display, if earlier.
+        // Clamped to what the server accepts (#3097): up to the window's end, a
+        // whole program ahead (#3728), and back to the server's floor -- or to
+        // the date on display, if earlier.
         minimumDate={parseISODate(pickerFloor(state.range, toISODate(state.startDate)))}
         maximumDate={parseISODate(state.range.maxDay)}
         onConfirm={state.handleConfirmDate}

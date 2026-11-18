@@ -754,6 +754,31 @@ describe('stageService', () => {
       expect(mockList).not.toHaveBeenCalled();
       expect(state.cycleNumber).toBe(1);
     });
+
+    it('a begin-again a pass that has already begun overtook reloads the Map rather than failing (#3728)', async () => {
+      const consoleError = jest.spyOn(console, 'error').mockImplementation(() => undefined);
+      // The server's 409: the pending pass's day came, so this is no finished cycle.
+      const overtaken = Object.assign(new Error('Request failed with status 409'), {
+        status: 409,
+        detail: 'cycle_not_complete',
+      });
+      mockBeginAgainClient.mockRejectedValueOnce(overtaken);
+      mockList.mockResolvedValue([]);
+      const { stageService } = require('../stageService');
+      const { useStageStore } = require('../../../../store/useStageStore');
+
+      await act(async () => {
+        await expect(stageService.beginAgain()).resolves.toBeUndefined();
+      });
+
+      // Nothing failed: the person is at the start of the pass they set ahead.
+      // The Map re-reads, so the stale begin-again prompt gives way to that pass,
+      // instead of a "couldn't refresh" banner that would blame the connection.
+      expect(useStageStore.getState().error).toBeNull();
+      expect(mockList).toHaveBeenCalledTimes(1);
+      expect(consoleError).not.toHaveBeenCalledWith('map_begin_again_failed');
+      consoleError.mockRestore();
+    });
   });
 
   describe("begin-again re-anchors the start day in the account's zone (#3702)", () => {

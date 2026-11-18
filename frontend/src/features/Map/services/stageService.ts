@@ -31,6 +31,17 @@ export const MAP_LOAD_FAILED_MESSAGE = "The map didn't come through this time.";
 /** The same, for a fresh cycle that could not be opened. */
 export const BEGIN_AGAIN_FAILED_MESSAGE = "Beginning again didn't go through this time.";
 
+const HTTP_CONFLICT = 409;
+
+/**
+ * The server's 409 ``cycle_not_complete`` to a begin-again: read structurally
+ * off ``status`` and ``detail``, the shape ``formatApiError`` reads too.
+ */
+const isPassAlreadyBegun = (err: unknown): boolean => {
+  const { status, detail } = (err ?? {}) as { status?: unknown; detail?: unknown };
+  return status === HTTP_CONFLICT && detail === 'cycle_not_complete';
+};
+
 /**
  * Clamp a backend-supplied progress fraction into ``[0, 1]`` (BUG-FE-MAP-003).
  * NaN / Infinity / missing values resolve to 0; values above 1 are
@@ -199,6 +210,13 @@ export const stageService = {
       useStageStore.getState().setCycleNumber(record.cycle_number);
     } catch (err) {
       if (isStale(generation)) return;
+      // A pass the person set ahead has already begun (#3728): there is no
+      // finished cycle to loop, and nothing failed. Re-read so the Map shows
+      // that pass and the begin-again prompt it overtook goes away.
+      if (isPassAlreadyBegun(err)) {
+        await stageService.loadStages(token, tz);
+        return;
+      }
       reportDiagnostic('map_begin_again_failed');
       const message = formatApiError(err, { fallback: BEGIN_AGAIN_FAILED_MESSAGE });
       useStageStore.getState().setError(message);

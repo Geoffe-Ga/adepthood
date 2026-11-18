@@ -24,17 +24,18 @@ import DatePicker, { parseISODate, toISODate } from '../../../components/DatePic
 import { colors, STAGE_COLORS } from '../../../design/tokens';
 import { selectProgramStartDate, useProgramStore } from '../../../store/useProgramStore';
 import { detectDeviceTimezone } from '../../../utils/dateUtils';
-import { ProgramStartFixed } from '../../Program/ProgramStartFixed';
 import {
-  notAfterToday,
+  notAfterLatest,
   pickerFloor,
-  useProgramStartRange,
+  scaffoldOpeningDay,
+  useScaffoldStartRange,
   type ProgramStartRange,
 } from '../../Program/programStartRange';
 import { MAX_HABITS } from '../constants';
 import styles from '../Habits.styles';
 import type { Habit, HabitMergePlan, OnboardingHabit, OnboardingModalProps } from '../Habits.types';
 import { calculateHabitStartDate, calculateNetEnergy, stageAtIndex } from '../HabitUtils';
+import { scaffoldOpensPass } from '../services/scaffoldPass';
 
 import { ConfirmDialog } from './ConfirmDialog';
 import HabitEmojiPicker from './HabitEmojiPicker';
@@ -466,7 +467,11 @@ interface ReorderHeaderProps {
   startDate: Date;
   onDateChange: (_iso: string) => void;
   postReveal?: boolean;
-  /** What the server accepts: nothing after today, nothing before its floor (#3097). */
+  /**
+   * What the server accepts (#3097): the pass window when the save opens a new
+   * pass, the program window on a first save (#3728). Never locked -- a
+   * scaffolding save always has a day to choose.
+   */
   range: ProgramStartRange;
 }
 
@@ -482,19 +487,15 @@ const ReorderHeader = ({ startDate, onDateChange, postReveal, range }: ReorderHe
         ? 'Sorted by energy efficiency. You can drag to reorder if needed.'
         : 'Habits are ordered by energy efficiency. You can drag to reorder if needed.'}
     </Text>
-    {range.locked ? (
-      <ProgramStartFixed label={START_DATE_LABEL} date={startDate} />
-    ) : (
-      <View style={styles.startDateContainer}>
-        <Text style={styles.startDateLabel}>{START_DATE_LABEL}</Text>
-        <DatePicker
-          value={toISODate(startDate)}
-          minDate={pickerFloor(range, toISODate(startDate))}
-          maxDate={range.maxDay}
-          onChange={onDateChange}
-        />
-      </View>
-    )}
+    <View style={styles.startDateContainer}>
+      <Text style={styles.startDateLabel}>{START_DATE_LABEL}</Text>
+      <DatePicker
+        value={toISODate(startDate)}
+        minDate={pickerFloor(range, toISODate(startDate))}
+        maxDate={range.maxDay}
+        onChange={onDateChange}
+      />
+    </View>
   </>
 );
 
@@ -977,25 +978,36 @@ const useRevealIntegration = (
   return { reveal, unsortedHabits, prepareHabitsForReorder };
 };
 
+/** What the start-date seed reads: the server's answers, as the store holds them now. */
+interface StartSeed {
+  anchor: Date | null;
+  range: ProgramStartRange;
+  /** The save opens a new pass (#3728) rather than correcting pass 1. */
+  opensPass: boolean;
+  /** The day a pass already held for the future begins, if one is. */
+  pending: string | null;
+}
+
 /**
- * Where the modal opens, for a user with habits and for one without.
+ * The day the picker opens on.
  *
- * The start date is seeded from the program anchor the user already chose, not
- * from today. Saving a scaffolding pass is an explicit anchor write -- it
- * records a day the user picked -- so a picker that quietly re-answers it with
- * today moves the whole program calendar for a returning user who never touched
- * it. Today is right only when there is no answer yet.
+ * A save that opens a new pass (#3728) opens on the pass already held for the
+ * future, else today: the running pass's own day would open a pass replacing
+ * it on the day it began. A first save corrects pass 1 itself, so it opens on
+ * the anchor the user already chose (#3097) -- a picker that quietly re-answered
+ * it with today would move the whole program calendar -- and on today only
+ * when there is no answer yet. Either way it is pulled inside the window, so a
+ * date the server refuses is never shown and then saved.
  */
-const entryStateFor = (
-  existingHabits: readonly Habit[],
-  anchor: Date | null,
-  range: ProgramStartRange,
-) => {
+const seededDay = ({ anchor, range, opensPass, pending }: StartSeed): string => {
+  if (opensPass) return scaffoldOpeningDay(pending, range);
+  return notAfterLatest(anchor === null ? range.today : toISODate(anchor), range);
+};
+
+/** Where the modal opens, for a user with habits and for one without. */
+const entryStateFor = (existingHabits: readonly Habit[], seed: StartSeed) => {
   const rows = buildReviewRows(existingHabits);
-  // Capped at today: a returning user whose anchor the old, future-only picker
-  // set must not be shown -- and then save -- a date the server refuses (#3097).
-  const seeded = notAfterToday(toISODate(anchor ?? new Date()), range);
-  return { rows, step: entryStepFor(rows), startDate: parseISODate(seeded) };
+  return { rows, step: entryStepFor(rows), startDate: parseISODate(seededDay(seed)) };
 };
 
 type EntryState = ReturnType<typeof entryStateFor>;
@@ -1007,8 +1019,15 @@ const useComposedState = (
   userTimezone: string,
 ) => {
   const anchor = useProgramStore(selectProgramStartDate);
-  const range = useProgramStartRange(userTimezone);
-  const [entry] = useState<EntryState>(() => entryStateFor(existingHabits, anchor, range));
+  const programStartLocked = useProgramStore((s) => s.programStartLocked);
+  const pending = useProgramStore((s) => s.pendingPassStartsOn);
+  const opensPass = scaffoldOpensPass(
+    { programStartLocked, pendingPassStartsOn: pending },
+    existingHabits,
+  );
+  const range = useScaffoldStartRange(userTimezone, opensPass);
+  const seed: StartSeed = { anchor, range, opensPass, pending };
+  const [entry] = useState<EntryState>(() => entryStateFor(existingHabits, seed));
   const [step, setStep] = useState(entry.step);
   const [habits, setHabits] = useState<OnboardingHabit[]>([]);
   const [reviewRows, setReviewRows] = useState<readonly ReviewRow[]>(entry.rows);
@@ -1024,8 +1043,9 @@ const useComposedState = (
     setHabits,
     reviewRows,
     setReviewRows,
-    anchor,
+    seed,
     range,
+    opensPass,
     startDate,
     setStartDate,
     showEmojiPicker,
@@ -1130,12 +1150,11 @@ const useReviewActions = (handle: ReviewStateHandle) => {
 const useEntryReset = (
   visible: boolean,
   existingHabits: readonly Habit[],
-  anchor: Date | null,
-  range: ProgramStartRange,
+  seed: StartSeed,
   apply: (_entry: EntryState) => void,
 ) => {
-  const latest = useRef({ existingHabits, anchor, range, apply });
-  latest.current = { existingHabits, anchor, range, apply };
+  const latest = useRef({ existingHabits, seed, apply });
+  latest.current = { existingHabits, seed, apply };
   const wasOpen = useRef(false);
   useEffect(() => {
     if (!visible) {
@@ -1145,7 +1164,7 @@ const useEntryReset = (
     if (wasOpen.current) return;
     wasOpen.current = true;
     const current = latest.current;
-    current.apply(entryStateFor(current.existingHabits, current.anchor, current.range));
+    current.apply(entryStateFor(current.existingHabits, current.seed));
   }, [visible]);
 };
 
@@ -1160,7 +1179,7 @@ const useScaffoldReview = (
   existingHabits: readonly Habit[],
   cs: ReturnType<typeof useComposedState>,
 ) => {
-  const { setStep, setHabits, setReviewRows, setStartDate, reviewRows, habits, anchor, range } = cs;
+  const { setStep, setHabits, setReviewRows, setStartDate, reviewRows, habits, seed } = cs;
   const review = useReviewActions({
     reviewRows,
     setReviewRows,
@@ -1177,10 +1196,10 @@ const useScaffoldReview = (
     },
     [setReviewRows, setStep, setStartDate, setHabits],
   );
-  useEntryReset(visible, existingHabits, anchor, range, applyEntry);
+  useEntryReset(visible, existingHabits, seed, applyEntry);
   return {
     ...review,
-    resetToEntry: () => applyEntry(entryStateFor(existingHabits, anchor, range)),
+    resetToEntry: () => applyEntry(entryStateFor(existingHabits, seed)),
     buildResult: (): readonly OnboardingHabit[] | HabitMergePlan =>
       reviewRows.length > 0 ? buildMergePlan(habits, reviewRows, existingHabits) : habits,
   };
@@ -1271,6 +1290,7 @@ const useOnboardingState = (
     reviewRows: cs.reviewRows,
     startDate: cs.startDate,
     range: cs.range,
+    opensPass: cs.opensPass,
     showEmojiPicker: cs.showEmojiPicker,
     selectedHabitIndex: cs.selectedHabitIndex,
     scrollRef: cs.scrollRef,
@@ -1291,6 +1311,7 @@ const OnboardingStepReview = ({ s }: { s: ReturnType<typeof useOnboardingState> 
     onToggleKeep={s.handleToggleKeep}
     onSelectDestination={s.handleSelectDestination}
     onContinue={s.handleContinueFromReview}
+    newPassDay={s.opensPass ? toISODate(s.startDate) : null}
   />
 );
 

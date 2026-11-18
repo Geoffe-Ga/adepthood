@@ -3271,6 +3271,22 @@ export const stages = {
     });
   },
   /**
+   * Open a new pass through the stages on ``startDay`` (``YYYY-MM-DD``, account
+   * zone) -- an Energy Scaffolding save (#3725). A day today or earlier closes
+   * the running pass the day before and opens the new one; a later day is held
+   * as ``pending_pass_starts_on`` while the running pass keeps going, and a
+   * second save replaces it. The body is the day and nothing else (the server
+   * forbids extra fields). Refused with 422 outside ``pass_start_window``.
+   */
+  openPass(startDay: string, token?: string): Promise<ProgramCalendarT> {
+    return request<ProgramCalendarT>('/stages/passes', {
+      method: 'POST',
+      body: { start_day: startDay },
+      token,
+      schema: programCalendarSchema,
+    });
+  },
+  /**
    * Every stage's canonical correspondences (category, aspect, persona and the
    * rest), unpaginated. Global and visit-free: unlike ``listAll`` it records no
    * program visit, so a screen that only needs the vocabulary -- the Journal

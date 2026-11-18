@@ -15,6 +15,8 @@
  * place that turns those contract strings into copy that a real person can
  * act on. If you add a new backend error code, add its translation here too.
  */
+import { TOTAL_PROGRAM_WEEKS } from '../constants/program';
+
 import { isDeviceKnownOffline } from './networkSignal';
 
 import { ApiError, ApiTimeoutError, ApiValidationError } from './index';
@@ -241,12 +243,21 @@ export const USER_FACING_ERROR_MESSAGES: Readonly<Record<string, string>> = Obje
   // --- Program start date (#3097) --------------------------------------
   // The person picks the day their program began. Each refusal names the
   // range, or why there is none, and says the earlier date still stands.
-  program_start_in_future:
-    'Your program can start today or earlier, not on a future day. Pick another date; your earlier start date still stands.',
+  // A start may now be set ahead of today (#3728), but no further than one
+  // whole program: the server's window ends there.
+  program_start_in_future: `That day is further ahead than a start date can be set: it has to fall within ${TOTAL_PROGRAM_WEEKS} weeks of today. Pick an earlier day; your earlier start date still stands.`,
   program_start_too_early:
     "That's before the earliest start date we can offer. Pick a later date; your earlier start date still stands.",
   program_start_fixed_after_first_cycle:
     "Your start date is set once you begin again, because each cycle starts where the last one ended. It can't be changed now.",
+  // A scaffolding save opens a new pass (#3728); it may start on the day the
+  // running pass did, or later, never before it.
+  pass_start_before_current_pass:
+    "A new pass can't start before the pass you're in began. Pick that day or a later one; your current pass keeps running.",
+  // Begin-again with no finished cycle to loop -- most often because a pass the
+  // person set ahead has already begun (#3728), putting them at its start.
+  cycle_not_complete:
+    'There is no finished cycle to begin again yet: the pass you are in is still under way. Nothing has changed.',
 
   // --- Wallet / BotMason quota -----------------------------------------
   payment_required: MONTHLY_FREE_MESSAGES_USED,

@@ -14,7 +14,7 @@ import { habitManager } from '@/features/Habits/services/habitManager';
 import { reconcileProgramAnchor } from '@/features/Program/programAnchor';
 import { PROGRAM_START_FIXED_COPY } from '@/features/Program/ProgramStartFixed';
 import {
-  notAfterToday,
+  notAfterLatest,
   pickerFloor,
   useProgramStartRange,
   type ProgramStartRange,
@@ -33,7 +33,7 @@ import { useProgramStore } from '@/store/useProgramStore';
  */
 
 const INTRO_COPY =
-  'The day your 36-week program began. Course readings, practices and the map count their weeks from it. ' +
+  'The day your 36-week program starts. Course readings, practices and the map count their weeks from it. ' +
   'Change it if you began before you joined, or picked the wrong day.';
 
 const NO_DATE_COPY =
@@ -65,9 +65,12 @@ const CurrentDateCard = ({ day }: { day: string | null }): React.JSX.Element => 
   );
 };
 
-/** The day the picker opens on: the held date (never after today), else today. */
+/**
+ * The day the picker opens on: the held date (never past the window's end),
+ * else today -- not the window's end, which reaches a whole program ahead (#3728).
+ */
 const openingDay = (held: string | null, range: ProgramStartRange): string =>
-  held === null ? range.maxDay : notAfterToday(held, range);
+  held === null ? range.today : notAfterLatest(held, range);
 
 /**
  * Keep the draft on the held date until the person edits it, so the server's
