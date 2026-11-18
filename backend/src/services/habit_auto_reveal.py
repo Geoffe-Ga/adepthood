@@ -10,11 +10,17 @@ from sqlmodel import col, select
 from domain.dates import to_user_date
 from domain.frequencies import frequency_for_color
 from domain.habit_unlock_log import LockChange, record_lock_changes
+from domain.pass_rescaffold import pending_pass_due, settle_pending_pass
+from domain.program_calendar import days_until_start
 from domain.stage_authority import open_through
 from domain.stage_progress import ensure_user_progress, get_user_progress
 from models.habit import Habit
 from models.habit_unlock_event import UnlockSource
 from models.metta_return_habit_release import MettaReturnHabitRelease
+from models.stage_progress import StageProgress
+
+#: The open stage of a program that has not begun: below stage 1, so no ring opens.
+_NOTHING_OPEN = 0
 
 
 def _stage_number(colour: str) -> int | None:
@@ -146,6 +152,42 @@ async def _persist_reveals(
     return len(habits)
 
 
+def _open_stage(progress: StageProgress | None, moment: datetime, user_tz: str) -> int:
+    """The highest ring the program has opened as of ``moment``.
+
+    :func:`open_through` -- except before the program begins (its start is
+    still ahead in the person's zone, issue #3725), when no ring is open yet:
+    the calendar floors that wait at stage 1, and reading it as "stage 1 is
+    open" would unlock the first ring the moment a future start was saved.
+    """
+    if progress is not None and days_until_start(
+        progress, to_user_date(user_tz, moment), tz=user_tz
+    ):
+        return _NOTHING_OPEN
+    return open_through(progress, moment, tz=user_tz)
+
+
+async def _settled_candidates(
+    session: AsyncSession, user_id: int, user_tz: str, moment: datetime
+) -> list[Habit]:
+    """Read the anchored candidates, opening a pending pass whose day has come first.
+
+    Otherwise a reveal -- and the unlock log entry tagged with the running
+    pass -- would be written against the pass that has just ended (issue
+    #3725). With no candidate there is nothing to reveal, so nothing is read.
+    Settling commits, so the candidates are read again after it, as
+    :func:`_anchored_candidates` does after provisioning.
+    """
+    candidates = await _anchored_candidates(session, user_id)
+    if not candidates:
+        return candidates
+    progress = await get_user_progress(session, user_id)
+    if progress is None or not pending_pass_due(progress, to_user_date(user_tz, moment)):
+        return candidates
+    await settle_pending_pass(session, progress, tz=user_tz, now=moment)
+    return await _unconsumed_candidates(session, user_id)
+
+
 async def _open_candidates(
     session: AsyncSession,
     user_id: int,
@@ -157,7 +199,7 @@ async def _open_candidates(
     if not candidates:
         return []
     progress = await get_user_progress(session, user_id)
-    open_stage = open_through(progress, moment, tz=user_tz)
+    open_stage = _open_stage(progress, moment, user_tz)
     candidate_ids = [habit.id for habit in candidates if habit.id is not None]
     released_ids = await _live_release_ids(session, user_id, candidate_ids)
     return _newly_open(
@@ -213,12 +255,13 @@ async def reconcile_habit_auto_reveals(
     future manual re-lock to remain locked.
 
     The first read may provision the calendar anchor (see
-    :func:`_anchored_candidates`), which commits: callers must hold no
+    :func:`_anchored_candidates`) or open a pending pass whose day has come
+    (:func:`_settled_candidates`), both of which commit: callers must hold no
     uncommitted writes across this call, and ``list_habits`` calls it before
     anything else.
     """
     moment = now or datetime.now(UTC)
-    candidates = await _anchored_candidates(session, user_id)
+    candidates = await _settled_candidates(session, user_id, user_tz, moment)
     prospective = await _open_candidates(session, user_id, user_tz, candidates, moment)
     prospective_ids = [habit.id for habit in prospective if habit.id is not None]
     if not prospective_ids:

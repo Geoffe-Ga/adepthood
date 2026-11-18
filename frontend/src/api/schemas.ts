@@ -600,6 +600,15 @@ export const programCalendarSchema = z.object({
   // a fixture written before the field existed still validates; the live
   // backend always sends it.
   program_start_window: programStartWindowSchema.nullable().optional(),
+  // A pass a scaffolding save opens (#3725). Each is optional so a fixture
+  // written before the fields existed still validates; the live backend always
+  // sends all three. ``days_until_start`` counts down to an anchor still ahead
+  // (a first pass placed in the future), ``pending_pass_starts_on`` is the day
+  // a pass held for the future begins, and ``pass_start_window`` is the range
+  // ``POST /stages/passes`` accepts, offered in every cycle.
+  days_until_start: z.number().int().nonnegative().optional(),
+  pending_pass_starts_on: z.string().nullable().optional(),
+  pass_start_window: programStartWindowSchema.nullable().optional(),
 });
 
 export type ProgramCalendarT = z.infer<typeof programCalendarSchema>;

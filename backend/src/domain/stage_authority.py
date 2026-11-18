@@ -74,7 +74,8 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
-from domain.program_calendar import calendar_stage, resolve_program_anchor
+from domain.dates import ensure_aware, to_user_date
+from domain.program_calendar import calendar_stage, effective_anchor
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
@@ -82,6 +83,7 @@ if TYPE_CHECKING:
     from models.stage_progress import StageProgress
 
 __all__ = [
+    "FIRST_STAGE",
     "StageStanding",
     "open_through",
     "reanchor_program",
@@ -128,10 +130,14 @@ def stage_standing(
 
     The offer is computed in ``tz`` (UTC when None) so the server counts the
     same local midnights the client does and never reports a window shut that
-    the user can see is open.
+    the user can see is open. The calendar counts from
+    :func:`domain.program_calendar.effective_anchor`, so while a pass is pending
+    the one still running keeps making the offer (issue #3725).
     """
+    moment = now if now is not None else datetime.now(UTC)
+    anchor = effective_anchor(progress, to_user_date(tz, ensure_aware(moment)), tz=tz)
     return StageStanding(
-        offered=calendar_stage(resolve_program_anchor(progress), now, tz=tz),
+        offered=calendar_stage(anchor, moment, tz=tz),
         entered=progress.current_stage,
     )
 
@@ -231,8 +237,17 @@ def reanchor_program(
     A re-pick that lands in the stage the record already holds rewrites only the
     anchor: ``stage_started_at`` is the moment that threshold was crossed, and
     nudging the date within a window crosses none.
+
+    An anchor still ahead (issue #3725) is the exception: the program has not
+    begun, so stage 1 is entered AT the anchor. Leaving the old entry moment
+    would let the drip's "how long has the person sat on this stage" count days
+    before the program began, opening chapters on the very first day.
     """
+    moment = now if now is not None else datetime.now(UTC)
     progress.program_started_at = anchor
-    offered = calendar_stage(anchor, now, tz=tz)
+    if ensure_aware(anchor) > moment:
+        _enter(progress, FIRST_STAGE, ensure_aware(anchor))
+        return
+    offered = calendar_stage(anchor, moment, tz=tz)
     if offered != progress.current_stage:
-        _enter(progress, offered, now if now is not None else datetime.now(UTC))
+        _enter(progress, offered, moment)

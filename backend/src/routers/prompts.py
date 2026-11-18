@@ -16,7 +16,8 @@ from sqlmodel import col, select
 from bounds import PromptOrdinalPath, StageNumberPath, WeekNumberPath
 from database import get_session
 from dependencies.timezone import current_user_timezone
-from domain.program_calendar import calendar_week, resolve_program_anchor
+from domain.dates import ensure_aware, to_user_date
+from domain.program_calendar import calendar_week, effective_anchor
 from domain.prompt_history import past_prompt_weeks
 from domain.stage_progress import get_user_progress
 from domain.weekly_prompts import (
@@ -79,7 +80,11 @@ async def _get_user_week(
     completed = int(result.scalar() or 0)
     completion_week = completed + 1
     progress = await get_user_progress(session, user_id)
-    time_week = calendar_week(resolve_program_anchor(progress), now, tz=tz) if progress else 1
+    moment = now if now is not None else datetime.now(UTC)
+    today = to_user_date(tz, ensure_aware(moment))
+    time_week = (
+        calendar_week(effective_anchor(progress, today, tz=tz), moment, tz=tz) if progress else 1
+    )
     return int(max(1, min(max(completion_week, time_week), TOTAL_WEEKS)))
 
 

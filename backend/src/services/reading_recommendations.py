@@ -15,11 +15,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import col, select
 
 from domain.constants import STAGE_DURATIONS_DAYS
-from domain.course import compute_days_elapsed, unlocked_chapter_count
+from domain.course import drip_day_in_stage, unlocked_chapter_count
 from domain.creek_vault import CreekVaultClient, CreekVaultError, tier_ceiling_for, wire_ceiling_for
 from domain.depth_preferences import DepthRing, load_enabled_rings
 from domain.privacy_tier import egress_eligible_clause
-from domain.program_calendar import calendar_day_in_stage, resolve_program_anchor
 from domain.reading_recommendations import (
     ReadingCandidate,
     ReadingRecommendation,
@@ -87,17 +86,10 @@ def _unread(items: list[StageContent], completed: set[int]) -> list[StageContent
 
 
 def _day_in_stage(progress: StageProgress | None, stage: int, tz: str) -> int:
-    """Use the same calendar/record union as an explicit course visit."""
+    """Use the same drip rule as an explicit course visit."""
     if progress is None:
         return 1
-    if progress.current_stage > stage:
-        return STAGE_DURATIONS_DAYS[stage - 1]
-    day = calendar_day_in_stage(resolve_program_anchor(progress), stage, tz=tz)
-    return (
-        max(day, compute_days_elapsed(progress.stage_started_at) + 1)
-        if progress.current_stage == stage
-        else day
-    )
+    return drip_day_in_stage(progress, stage, duration_days=STAGE_DURATIONS_DAYS[stage - 1], tz=tz)
 
 
 def _source(entry: JournalEntry, body: str) -> ReadingSource:

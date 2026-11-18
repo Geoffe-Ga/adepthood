@@ -27,7 +27,7 @@ class PassOrigin(StrEnum):
 
     #: The pass opened when the account's progress row was first provisioned.
     FIRST_RUN = "first_run"
-    #: Re-running Energy Scaffolding opened it. Accepted now, written by a later issue.
+    #: Re-running Energy Scaffolding opened it (``POST /stages/passes``, issue #3725).
     RESCAFFOLD = "rescaffold"
     #: ``POST /stages/begin-again`` opened it.
     BEGIN_AGAIN = "begin_again"

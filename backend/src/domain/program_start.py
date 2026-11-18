@@ -9,9 +9,15 @@ local midnight.
 
 The range is closed at both ends:
 
-* **No later than today.** A future anchor would put the person before the
-  program's first day, where every reader floors at day zero anyway; it would
-  look like a choice and change nothing until it silently arrived.
+* **No later than one whole program after today**
+  (:data:`domain.constants.PROGRAM_START_FORWARD_WINDOW_DAYS`, issue #3725).
+  A future day used to be refused because every reader floored at day zero, so
+  it would have looked like a choice and changed nothing until it silently
+  arrived. It now changes something visible: until the day comes the program
+  has not begun (:func:`domain.program_calendar.days_until_start`) -- nothing
+  on the ladder auto-unlocks and the Course withholds its first chapter -- or,
+  for a new pass opened while another runs, that pass is pending and the one
+  before it keeps running until the day before.
 * **No earlier than account creation minus one whole program**
   (:data:`domain.constants.PROGRAM_START_BACKDATE_WINDOW_DAYS`). Someone who
   began on paper before they signed up may say so; an anchor before that window
@@ -27,17 +33,24 @@ from dataclasses import dataclass
 from datetime import date, timedelta
 from typing import Literal
 
-from domain.constants import PROGRAM_START_BACKDATE_WINDOW_DAYS
+from domain.constants import (
+    PROGRAM_START_BACKDATE_WINDOW_DAYS,
+    PROGRAM_START_FORWARD_WINDOW_DAYS,
+)
 
 __all__ = [
+    "PassStartVerdict",
     "ProgramStartBounds",
     "ProgramStartVerdict",
+    "pass_start_bounds",
+    "pass_start_verdict",
     "program_start_bounds",
     "program_start_verdict",
     "verdict_within",
 ]
 
 ProgramStartVerdict = Literal["ok", "future", "too_early"]
+PassStartVerdict = Literal["ok", "future", "too_early", "before_current_start"]
 
 
 @dataclass(frozen=True)
@@ -56,7 +69,7 @@ def program_start_bounds(*, today: date, account_created: date) -> ProgramStartB
     """
     return ProgramStartBounds(
         earliest=account_created - timedelta(days=PROGRAM_START_BACKDATE_WINDOW_DAYS),
-        latest=today,
+        latest=today + timedelta(days=PROGRAM_START_FORWARD_WINDOW_DAYS),
     )
 
 
@@ -75,3 +88,34 @@ def program_start_verdict(
     """Classify ``chosen`` against the pickable range; both endpoints are inclusive."""
     bounds = program_start_bounds(today=today, account_created=account_created)
     return verdict_within(chosen, bounds)
+
+
+def pass_start_bounds(
+    bounds: ProgramStartBounds, *, current_pass_start: date
+) -> ProgramStartBounds:
+    """The range a NEW pass may start in: ``bounds``, floored at the running pass's start.
+
+    A pass ends the day before the next one starts, so a new pass that began
+    before the running one would end that one before it began and overlap the
+    record of the passes behind it. Starting on the very day the running pass
+    did is allowed: that pass ran no days, as when begin-again runs on the day
+    a pass opened.
+    """
+    return ProgramStartBounds(
+        earliest=max(bounds.earliest, current_pass_start), latest=bounds.latest
+    )
+
+
+def pass_start_verdict(
+    chosen: date, bounds: ProgramStartBounds, *, current_pass_start: date
+) -> PassStartVerdict:
+    """Classify a new pass's ``chosen`` start against ``bounds`` and the running pass.
+
+    The program range is checked first so a day outside it keeps the refusal
+    the program-start PUT gives; only a day inside it but before the running
+    pass is ``before_current_pass``.
+    """
+    verdict = verdict_within(chosen, bounds)
+    if verdict == "ok" and chosen < current_pass_start:
+        return "before_current_start"
+    return verdict

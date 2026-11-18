@@ -1,7 +1,8 @@
 """The lifecycle of a pass through the stages (issue #3723).
 
-A pass opens when the account's progress row is first provisioned and again
-every time begin-again runs; begin-again also closes the pass it leaves. Closing
+A pass opens when the account's progress row is first provisioned, every time
+begin-again runs, and every time Energy Scaffolding opens one on a chosen day
+(issue #3725); each of the last two also closes the pass it leaves. Closing
 records the last day the pass ran -- the day before the next one starts -- and
 how far it got, measured from the pass's OWN ``started_on`` by
 :func:`close_pass`. The live anchor is never consulted for a closed pass: by the
@@ -41,7 +42,9 @@ __all__ = [
     "close_pass",
     "first_pass",
     "live_pass",
+    "live_pass_start",
     "move_live_pass_start",
+    "open_next_pass",
 ]
 
 #: The number every account's first pass carries.
@@ -152,20 +155,39 @@ async def move_live_pass_start(session: AsyncSession, user_id: int, started_on: 
         session.add(current)
 
 
-async def begin_next_pass(
-    session: AsyncSession, progress: StageProgress, *, now: datetime, tz: str
+async def live_pass_start(session: AsyncSession, progress: StageProgress, *, tz: str) -> date:
+    """The day ``progress``'s running pass started, in ``tz``.
+
+    Read from the live pass row; a row written before that table existed has
+    none, so its live anchor's day stands in -- the same start
+    :func:`open_next_pass` would record for it.
+    """
+    current = await live_pass(session, progress.user_id)
+    if current is not None:
+        return current.started_on
+    return to_user_date(tz, ensure_aware(resolve_program_anchor(progress)))
+
+
+async def open_next_pass(
+    session: AsyncSession,
+    progress: StageProgress,
+    *,
+    started_on: date,
+    origin: PassOrigin,
+    tz: str,
 ) -> ProgramPass:
-    """Close ``progress``'s live pass and open the next, both dated in ``tz``.
+    """Close ``progress``'s live pass the day before ``started_on`` and open the next there.
 
     Call BEFORE the cycle loop rewrites ``progress``: a row that has no live
     pass recorded -- one written by a build that predates this table -- has its
     outgoing pass recorded from the still-current anchor and cycle number (as a
     backfill) before it is closed, so the loop never drops the pass it ends.
 
-    The incoming pass starts on ``now``'s day and the outgoing one ends the day
-    before. Numbering continues past the highest recorded pass.
+    Numbering continues past the highest recorded pass. ``started_on`` is never
+    before the outgoing pass's own start -- callers refuse that
+    (:func:`domain.program_start.pass_start_verdict`) -- so a pass ends no
+    earlier than the day before it began, which is a pass that ran no days.
     """
-    today = to_user_date(tz, ensure_aware(now))
     highest = await _highest_pass_number(session, progress.user_id)
     outgoing = await live_pass(session, progress.user_id)
     if outgoing is None:
@@ -175,12 +197,25 @@ async def begin_next_pass(
             started_on=to_user_date(tz, ensure_aware(resolve_program_anchor(progress))),
             origin=PassOrigin.BACKFILL,
         )
-    close_pass(outgoing, ended_on=today - _ONE_DAY, calendar=PROGRAM_CALENDAR)
+    close_pass(outgoing, ended_on=started_on - _ONE_DAY, calendar=PROGRAM_CALENDAR)
     incoming = ProgramPass(
         user_id=progress.user_id,
         pass_number=max(highest, outgoing.pass_number) + 1,
-        started_on=today,
-        origin=PassOrigin.BEGIN_AGAIN,
+        started_on=started_on,
+        origin=origin,
     )
     session.add_all([outgoing, incoming])
     return incoming
+
+
+async def begin_next_pass(
+    session: AsyncSession, progress: StageProgress, *, now: datetime, tz: str
+) -> ProgramPass:
+    """Begin-again's pass: the next one starts on ``now``'s day in ``tz``.
+
+    See :func:`open_next_pass` for the closing rule and the backfill.
+    """
+    today = to_user_date(tz, ensure_aware(now))
+    return await open_next_pass(
+        session, progress, started_on=today, origin=PassOrigin.BEGIN_AGAIN, tz=tz
+    )

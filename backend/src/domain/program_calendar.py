@@ -15,7 +15,7 @@ calendar.
 from __future__ import annotations
 
 from bisect import bisect_right
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 from itertools import accumulate
 from typing import TYPE_CHECKING
 
@@ -176,3 +176,40 @@ def resolve_program_anchor(progress: StageProgress) -> datetime:
     :mod:`domain.cycle_calendar` (issue #2894).
     """
     return progress.program_started_at or progress.stage_started_at
+
+
+def effective_anchor(progress: StageProgress, today: date, *, tz: str | None = None) -> datetime:
+    """The anchor every "where is this person NOW" reader counts from on ``today``.
+
+    The one statement of the pending-pass rule (issue #3725): while a pass
+    opened for a future day is pending, the pass already running keeps
+    answering -- its stage, its week, its Course pacing -- until that day. From
+    the pending day on, the answer is the new pass's own start (local midnight
+    of that day in ``tz``), even before a read has closed the old pass
+    (:func:`domain.pass_rescaffold.settle_pending_pass`), so no reader can see
+    the old pass run a day past its end.
+
+    ``today`` is the person's own calendar day in ``tz``. Readers windowing a
+    CYCLE (reviews, :mod:`domain.cycle_calendar`) keep reading the materialized
+    :func:`resolve_program_anchor`: they pair it with ``cycle_number``, which
+    moves only when the pending pass is settled.
+    """
+    pending = progress.pending_pass_starts_on
+    if pending is not None and pending <= today:
+        start, _ = day_bounds_in_tz(tz, pending)
+        return start
+    return resolve_program_anchor(progress)
+
+
+def days_until_start(progress: StageProgress, today: date, *, tz: str | None = None) -> int:
+    """Whole days until the program as of ``today`` begins; 0 once it has.
+
+    Positive only when the anchor in force is itself after ``today`` -- a
+    first-cycle start placed in the future. That is the "not yet begun" state:
+    the calendar still reads stage 1, week 1 (every reader floors at day 0),
+    but nothing on the ladder auto-unlocks and the Course withholds stage 1's
+    first chapter until the day arrives. A pass pending behind a running one is
+    NOT this state: the running pass is under way and keeps answering.
+    """
+    begins = to_user_date(tz, ensure_aware(effective_anchor(progress, today, tz=tz)))
+    return max(0, (begins - today).days)

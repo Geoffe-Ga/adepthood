@@ -30,6 +30,11 @@ TOTAL_PROGRAM_DAYS = sum(STAGE_DURATIONS_DAYS)
 # with the 36-week cadence already finished, so there is nothing to pace.
 PROGRAM_START_BACKDATE_WINDOW_DAYS = TOTAL_PROGRAM_DAYS
 
+# How far after today a person may place the start of a pass (issue #3725,
+# epic #3722 decision 5): one whole program, mirroring the back-date window.
+# Until that day arrives the pass is pending and nothing it would open opens.
+PROGRAM_START_FORWARD_WINDOW_DAYS = TOTAL_PROGRAM_DAYS
+
 DAYS_PER_WEEK = 7
 
 # Weeks each stage lasts, in stage order: (3, 3, 3, 3, 3, 3, 3, 3, 6, 6).
