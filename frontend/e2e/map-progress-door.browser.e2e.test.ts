@@ -2,14 +2,7 @@ import { expect, test, type APIRequestContext, type Locator, type Page } from '@
 
 import type { ApiProgressOverview } from '../src/api';
 
-import {
-  backendUrl,
-  bearer,
-  isoDaysAgo,
-  setProgramAnchorDaysAgo,
-  signUp,
-  tokenFor,
-} from './journalHabitsBrowserSupport';
+import { backendUrl, bearer, isoDaysAgo, signUp, tokenFor } from './journalHabitsBrowserSupport';
 
 /**
  * Issue #3528 — the Map's "Your progress" door opens the whole arc, drawn from
@@ -19,8 +12,12 @@ import {
  * month of real check-ins through `POST /goal_completions/`, become
  * `GET /progress/overview`, which the Progress screen reached from the Map's
  * drawer turns into the ribbon's you-are-here line, the rhythm and the energy
- * ledger with its formula printed beside it. The anchor is the one out-of-band
- * arrange: no request schema moves `program_started_at`.
+ * ledger with its formula printed beside it. The anchor is moved through the
+ * real `PUT /stages/program-calendar`, which carries the live pass with it, so
+ * the arc and its one pass ribbon (#3727) measure from the same day.
+ *
+ * A second journey re-scaffolds through `POST /stages/passes` and reads two
+ * stacked pass ribbons, each with its own numbered habit markers.
  */
 
 test.use({ hasTouch: true });
@@ -74,6 +71,48 @@ async function seedWalks(request: APIRequestContext, token: string): Promise<voi
     });
     expect(logged.ok(), `logging ${daysAgo} days ago failed: ${await logged.text()}`).toBe(true);
   }
+}
+
+/** Start the first cycle `daysAgo` days back through the real route; the live pass moves too. */
+async function startProgramDaysAgo(
+  request: APIRequestContext,
+  token: string,
+  daysAgo: number,
+): Promise<void> {
+  const moved = await request.put(`${backendUrl()}/stages/program-calendar`, {
+    headers: bearer(token),
+    data: { program_start_date: isoDaysAgo(daysAgo) },
+  });
+  expect(moved.ok(), `moving the program start failed: ${await moved.text()}`).toBe(true);
+}
+
+/** A revealed habit with one goal, so its unlock is logged in the pass running now. */
+async function seedUnlockedHabit(
+  request: APIRequestContext,
+  token: string,
+  name: string,
+): Promise<void> {
+  const created = await request.post(`${backendUrl()}/habits/`, {
+    headers: bearer(token),
+    data: {
+      name,
+      icon: '•',
+      energy_cost: 1,
+      energy_return: 1,
+      stage: '0',
+      start_date: isoDaysAgo(0),
+      revealed: true,
+      goals: {
+        target_unit: 'minutes',
+        frequency: 1,
+        frequency_unit: 'per_day',
+        low: 1,
+        clear: 5,
+        stretch: 10,
+      },
+    },
+  });
+  expect(created.ok(), `seeding ${name} failed: ${await created.text()}`).toBe(true);
 }
 
 async function openProgressFromMap(page: Page): Promise<ApiProgressOverview> {
@@ -192,15 +231,18 @@ test('the Map door opens the arc, rhythm and energy ledger the server computed',
     data: { goal_id: purpleGoal, completed_units: 5 },
   });
   expect(sat.ok(), await sat.text()).toBe(true);
-  setProgramAnchorDaysAgo(email, ANCHOR_DAYS_AGO);
+  await startProgramDaysAgo(page.request, token, ANCHOR_DAYS_AGO);
   await page.reload();
 
   const overview = await openProgressFromMap(page);
   verifyServedHistories(overview);
   const screen = page.getByTestId('progress-screen');
-  await expect(screen.getByTestId('progress-ribbon')).toContainText(
+  // One pass and none pending: a single row, not labelled "Pass 1" (#3727).
+  expect(overview.arc.passes).toHaveLength(1);
+  await expect(screen.getByTestId('progress-pass-1')).toContainText(
     new RegExp(`Week ${CURRENT_WEEK} · \\w+`),
   );
+  await expect(screen.getByTestId('progress-pass-1')).not.toContainText('Pass 1');
   await expect(screen.getByTestId('progress-energy')).toContainText(
     'Energy returned minus effort spent, by week',
   );
@@ -244,7 +286,7 @@ test('the Map door opens the arc, rhythm and energy ledger the server computed',
     await expect(screen.getByTestId('progress-wave-value')).toContainText(' kept');
     await screen.getByTestId('progress-wave-inspect').press('Home');
     await expect(screen.getByTestId('progress-wave-value')).toContainText(' · 0% · 0 of ');
-    for (const id of ['progress-ribbon', 'progress-wave', 'progress-energy-columns']) {
+    for (const id of ['progress-pass-1', 'progress-wave', 'progress-energy-columns']) {
       const bounds = await screen.getByTestId(id).boundingBox();
       expect(bounds!.x).toBeGreaterThanOrEqual(0);
       expect(bounds!.x + bounds!.width).toBeLessThanOrEqual(viewport.width);
@@ -260,13 +302,15 @@ test('the Map door opens the arc, rhythm and energy ledger the server computed',
     });
 
     await screen.evaluate((element) => element.scrollTo(0, 0));
-    const ribbon = screen.getByTestId('progress-ribbon');
+    const ribbon = screen.getByTestId('progress-pass-1');
     await ribbon.getByRole('button', { name: 'Show as table' }).click();
     await expect(ribbon).toContainText('Weeks 1–3');
     await expect(ribbon).toContainText('Weeks 4–6');
     await expect(ribbon).toContainText('Weeks 31–36');
-    await expect(ribbon).toContainText(`${HABIT} began`);
-    await expect(ribbon).toContainText('Week 1');
+    // Habits seeded before the account had a pass log no pass, so this row may
+    // carry no markers; any it does carry are listed with their numbers.
+    for (const marker of overview.arc.passes![0]!.markers)
+      await expect(ribbon).toContainText(`Habit ${marker.program_number} · ${marker.name}`);
     await expect(ribbon).toContainText('You are here');
     await expect(ribbon).toContainText(`Week ${CURRENT_WEEK}`);
     await expect(ribbon).not.toContainText('Weeks / week');
@@ -277,4 +321,69 @@ test('the Map door opens the arc, rhythm and energy ledger the server computed',
   }
 
   await openStoryFromProgress(page, testInfo.outputPath('map-progress-story-phone.png'));
+});
+
+/** Issue #3727: a re-scaffold leaves the old pass as its own ribbon above the new one. */
+const FIRST_PASS_DAYS_AGO = 100;
+const FIRST_HABIT = 'Breathwork';
+const SECOND_HABIT = 'Night reading';
+
+test('a re-scaffold stacks one numbered ribbon per pass, oldest on top', async ({
+  page,
+}, testInfo) => {
+  const email = await signUp(page, 'map-passes');
+  const token = await tokenFor(page.request, email);
+  await startProgramDaysAgo(page.request, token, FIRST_PASS_DAYS_AGO);
+  await seedUnlockedHabit(page.request, token, FIRST_HABIT);
+  const opened = await page.request.post(`${backendUrl()}/stages/passes`, {
+    headers: bearer(token),
+    data: { start_day: isoDaysAgo(0) },
+  });
+  expect(opened.status(), await opened.text()).toBe(201);
+  await seedUnlockedHabit(page.request, token, SECOND_HABIT);
+  await page.reload();
+
+  const overview = await openProgressFromMap(page);
+  const passes = overview.arc.passes ?? [];
+  expect(passes.map((pass) => pass.state)).toEqual(['ended', 'live']);
+  const [first, second] = passes as [(typeof passes)[number], (typeof passes)[number]];
+  expect(first.markers.map((marker) => marker.name)).toContain(FIRST_HABIT);
+  expect(second.markers.map((marker) => marker.name)).toContain(SECOND_HABIT);
+
+  const screen = page.getByTestId('progress-screen');
+  const older = screen.getByTestId(`progress-pass-${first.pass_number}`);
+  const live = screen.getByTestId(`progress-pass-${second.pass_number}`);
+  await expect(older).toContainText(`Pass ${first.pass_number} · began`);
+  await expect(live).toContainText(`Pass ${second.pass_number} · began`);
+  await expect(live).toContainText('in progress — week 1');
+  expect((await older.boundingBox())!.y).toBeLessThan((await live.boundingBox())!.y);
+
+  for (const viewport of VIEWPORTS) {
+    await page.setViewportSize({ width: viewport.width, height: viewport.height });
+    await screen.evaluate((element) => element.scrollTo(0, 0));
+    for (const [row, pass] of [
+      [older, first],
+      [live, second],
+    ] as const) {
+      const marker = pass.markers[0]!;
+      // Each badge carries its program number as text, not colour alone.
+      await expect(row.locator('svg text').first()).toHaveText(String(marker.program_number));
+      const bounds = await row.boundingBox();
+      expect(bounds!.x).toBeGreaterThanOrEqual(0);
+      expect(bounds!.x + bounds!.width).toBeLessThanOrEqual(viewport.width);
+      // Keyboard reaches the first marker and reads it out.
+      await row.locator('[data-testid$="-inspect"]').press('Home');
+      await expect(row.locator('[data-testid$="-value"]')).toContainText(
+        `Habit ${marker.program_number} · ${marker.name} · unlocked `,
+      );
+    }
+    await page.screenshot({ path: testInfo.outputPath(`map-passes-${viewport.name}.png`) });
+  }
+
+  // The table twin lists each habit with its unlock day and week.
+  await live.getByRole('button', { name: 'Show as table' }).click();
+  const newest = second.markers.find((marker) => marker.name === SECOND_HABIT)!;
+  await expect(live).toContainText(`Habit ${newest.program_number} · ${SECOND_HABIT}`);
+  await expect(live).toContainText(`Week ${newest.week}`);
+  await expect(live).toContainText('Unlocked ');
 });
