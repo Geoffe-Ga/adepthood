@@ -53,6 +53,7 @@ from models.goal_completion import GoalCompletion
 from models.goal_group import GoalGroup
 from models.goal_log_event import GoalLogEvent
 from models.habit import Habit
+from models.habit_unlock_event import HabitUnlockEvent
 from models.journal_entry import JournalEntry
 from models.marginalia import Marginalia
 from models.metta_return_arc import MettaReturnArc
@@ -329,6 +330,12 @@ MANIFEST: Mapping[str, ExportRule] = {
         "habits",
         Habit,
         "Every habit the account built, and its goals with it.",
+    ),
+    "habitunlockevent": _include(
+        "habit_unlock_events",
+        HabitUnlockEvent,
+        "Each time a program habit was unlocked or locked again: when, which "
+        "writer did it, the pass it happened in, and the habit's number then.",
     ),
     "invitationsignal": Omitted(
         "Which invitations the interface showed and how they were dismissed. "

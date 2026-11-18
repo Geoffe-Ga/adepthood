@@ -138,6 +138,9 @@ _PLAINTEXT_COLUMNS: dict[str, frozenset[str]] = {
             "gumroadsale.resource_name",
             "habit.notification_frequency",
             "habit.stage",
+            # Which way a habit's lock moved, and which writer moved it (#3724).
+            "habitunlockevent.kind",
+            "habitunlockevent.source",
             "invitationsignal.kind",
             "invitationsignal.target_type",
             "journalentry.reflection_level",

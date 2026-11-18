@@ -9,9 +9,11 @@ from sqlmodel import col, select
 
 from domain.dates import to_user_date
 from domain.frequencies import frequency_for_color
+from domain.habit_unlock_log import LockChange, record_lock_changes
 from domain.stage_authority import open_through
 from domain.stage_progress import ensure_user_progress, get_user_progress
 from models.habit import Habit
+from models.habit_unlock_event import UnlockSource
 from models.metta_return_habit_release import MettaReturnHabitRelease
 
 
@@ -121,14 +123,25 @@ def _newly_open(
     ]
 
 
-async def _persist_reveals(session: AsyncSession, habits: list[Habit], moment: datetime) -> int:
-    """Stamp and commit ``habits``; leave an empty read transaction untouched."""
+async def _persist_reveals(
+    session: AsyncSession, user_id: int, habits: list[Habit], moment: datetime, user_tz: str
+) -> int:
+    """Stamp and commit ``habits``; leave an empty read transaction untouched.
+
+    Only a habit that was still locked is a lock-state change, so only those
+    are logged (#3724); stamping one already unlocked consumes its invitation
+    and nothing more.
+    """
     if not habits:
         return 0
+    opened = [habit for habit in habits if not habit.revealed]
     for habit in habits:
         habit.revealed = True
         habit.auto_revealed_at = moment
     session.add_all(habits)
+    await record_lock_changes(
+        session, user_id, opened, LockChange(UnlockSource.AUTO_REVEAL, moment, user_tz)
+    )
     await session.commit()
     return len(habits)
 
@@ -212,4 +225,4 @@ async def reconcile_habit_auto_reveals(
         return 0
     locked = await _locked_candidates(session, user_id, prospective_ids)
     opened = await _open_candidates(session, user_id, user_tz, locked, moment)
-    return await _persist_reveals(session, opened, moment)
+    return await _persist_reveals(session, user_id, opened, moment, user_tz)
