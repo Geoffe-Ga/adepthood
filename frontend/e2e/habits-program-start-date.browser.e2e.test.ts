@@ -15,24 +15,26 @@ import {
 import { instantAt } from './zonedClock';
 
 /**
- * #3097, #3728: a person with habits re-runs Energy Scaffolding and opens their
- * next pass on a day that has not come yet; the pass they are in keeps running.
+ * #3097, #3728: a person with habits corrects the pass they are in, then opens
+ * their next pass on a day that has not come yet, and replaces that day.
  *
  * The server owns the anchor (`program_started_at`). Here the real client
  * drives the real server:
  *
+ *  - with nothing pending, the Settings "Program start date" row corrects the
+ *    running pass with a PUT, re-lays the program habit from the new day, and
+ *    re-paces the Map without a reload;
  *  - the scaffolding picker offers days up to the served `pass_start_window`,
  *    one whole program ahead, and opens on today -- a new pass, not the
- *    running one;
- *  - saving a future pick sends exactly one `POST /stages/passes` carrying the
- *    day and nothing else, and no `PUT /stages/program-calendar`; a real `GET`
- *    reads the day back as `pending_pass_starts_on` while `program_started_at`
- *    stays on the running pass;
+ *    running one; saving a future pick sends exactly one `POST /stages/passes`
+ *    carrying the day and nothing else, and no PUT; a real `GET` reads the day
+ *    back as `pending_pass_starts_on` while `program_started_at` stays on the
+ *    running pass;
  *  - the Habits screen says when the next pass begins, and the Map still paces
  *    from the running pass;
- *  - the Settings "Program start date" row -- which corrects the pass the
- *    person is in -- changes it with a PUT, re-lays the program habit from the
- *    new day, and re-paces the Map without a reload.
+ *  - while the pass is pending, Settings offers no picker -- a correction would
+ *    drop it -- and says where its day is changed; the pending day survives;
+ *  - a second scaffolding save opens on the held day and replaces it.
  *
  * The zone is pinned to UTC and checked against the server's record, and the
  * page clock is installed at midday on the host's today, so the oracle, the
@@ -49,6 +51,9 @@ const HABIT_NAME = 'Dawn sit';
 const RUNNING_DAYS_BACK = 10;
 /** The next pass, held for a day that has not come. */
 const FUTURE_PICK_DAYS_AHEAD = 13;
+/** The day a second save replaces it with. */
+const REPLACED_PICK_DAYS_AHEAD = 20;
+const PENDING_LOCK_HINT = 'To change that day, save Energy Scaffolding again.';
 /** The Settings edit: two 21-day stages have closed, so stage 3 is open. */
 const EDIT_DAYS_BACK = 50;
 const EDITED_STAGE = 3;
@@ -95,9 +100,8 @@ async function readCalendar(page: Page, token: string): Promise<CalendarRead> {
   return (await read.json()) as CalendarRead;
 }
 
-/** Drive the scaffolding pass to its reorder step, where the start date is picked. */
+/** From the Habits screen, drive the scaffolding pass to its reorder step. */
 async function openScaffoldingDate(page: Page): Promise<void> {
-  await openHabits(page);
   await page.getByRole('button', { name: 'Start Energy Scaffolding' }).click();
   // The habit already held means this save opens a new pass, and says so.
   await expect(page.getByTestId('review-new-pass')).toBeVisible();
@@ -109,13 +113,42 @@ async function openScaffoldingDate(page: Page): Promise<void> {
   await expect(page.getByText('Beige begins on:', { exact: true })).toBeVisible();
 }
 
+/** From the reorder step, finish the pass and return the one POST it sent. */
+async function finishScaffolding(page: Page): Promise<void> {
+  await page.getByTestId('continue-to-templates').click();
+  const [opened] = await Promise.all([
+    page.waitForResponse((response) => isPost(response, PASSES_PATH)),
+    page.getByTestId('finish-setup').click(),
+  ]);
+  expect(opened.ok(), 'the server refused the new pass').toBe(true);
+}
+
 async function openMapFromHabits(page: Page): Promise<void> {
   await page.getByRole('button', { name: 'Open Habits menu' }).click();
   await page.getByRole('dialog').getByRole('button', { name: 'Map', exact: true }).click();
   await expect(page.getByRole('button', { name: 'Open Map menu' })).toBeVisible();
 }
 
-test('a person with habits opens their next pass on a future day while the current one keeps running', async ({
+async function openHabitsFromMap(page: Page): Promise<void> {
+  await page.getByRole('button', { name: 'Open Map menu' }).click();
+  await page.getByRole('dialog').getByRole('button', { name: 'Habits', exact: true }).click();
+  await expect(page.getByTestId('habits-list')).toBeVisible();
+}
+
+async function openProgramStartSettings(page: Page): Promise<void> {
+  await page.getByRole('button', { name: 'Open settings' }).filter({ visible: true }).click();
+  await page.getByTestId('settings-row-program-start').click();
+  await expect(page.getByTestId('program-start-settings-screen')).toBeVisible();
+}
+
+/** Leave Settings for the Map it was opened from. */
+async function backToMap(page: Page): Promise<void> {
+  await page.getByRole('link', { name: 'Go back' }).click();
+  await page.goBack();
+  await expect(page.getByRole('button', { name: 'Open Map menu' })).toBeVisible();
+}
+
+test('a person with habits corrects their pass, then holds and replaces the next one', async ({
   page,
 }) => {
   const pinned = instantAt(
@@ -131,7 +164,6 @@ test('a person with habits opens their next pass on a future day while the curre
   await seedHabit(page.request, token, HABIT_NAME, todayKey);
   // The pass the person is in began RUNNING_DAYS_BACK ago (faked in the lane DB).
   setProgramAnchorDaysAgo(email, RUNNING_DAYS_BACK);
-  const runningDay = addDaysToKey(todayKey, -RUNNING_DAYS_BACK);
 
   const puts: unknown[] = [];
   const posts: unknown[] = [];
@@ -143,43 +175,15 @@ test('a person with habits opens their next pass on a future day while the curre
   });
   await page.reload();
 
-  // --- The scaffolding picker offers the served pass window, future days included.
-  const before = await readCalendar(page, token);
-  await openScaffoldingDate(page);
-  const dateInput = page.getByLabel('Date', { exact: true });
-  await expect(dateInput).toHaveValue(todayKey);
-  await expect(dateInput).toHaveAttribute('max', before.pass_start_window!.latest);
-  expect(before.pass_start_window!.latest > todayKey).toBe(true);
-  const futurePick = addDaysToKey(todayKey, FUTURE_PICK_DAYS_AHEAD);
-  await dateInput.fill(futurePick);
-  await expect(dateInput).toHaveValue(futurePick);
-
-  await page.getByTestId('continue-to-templates').click();
-  const [opened] = await Promise.all([
-    page.waitForResponse((response) => isPost(response, PASSES_PATH)),
-    page.getByTestId('finish-setup').click(),
-  ]);
-  expect(opened.ok(), 'the server refused the new pass').toBe(true);
-  expect(posts).toEqual([{ start_day: futurePick }]);
-  expect(puts).toEqual([]);
-
-  const held = await readCalendar(page, token);
-  expect(held.pending_pass_starts_on).toBe(futurePick);
-  expect(dayKeyIn(held.program_started_at, PINNED_ZONE)).toBe(runningDay);
-
-  // --- The Habits screen names the day; the Map still paces the running pass.
-  await expect(page.getByTestId('pass-begins-notice')).toContainText('Your next pass begins');
+  // --- With nothing pending, Settings corrects the pass the person is in.
+  await openHabits(page);
   await openMapFromHabits(page);
   await expect(page.getByTestId(`stage-unlock-${OBSERVED_STAGE}`)).toHaveText(
     countdown(RUNNING_DAYS_BACK),
   );
-
-  // --- Settings corrects the pass the person is in, with no reload.
-  await page.getByRole('button', { name: 'Open settings' }).filter({ visible: true }).click();
-  await page.getByTestId('settings-row-program-start').click();
-  await expect(page.getByTestId('program-start-settings-screen')).toBeVisible();
+  await openProgramStartSettings(page);
   const settingsInput = page.getByLabel('Date', { exact: true });
-  await expect(settingsInput).toHaveValue(runningDay);
+  await expect(settingsInput).toHaveValue(addDaysToKey(todayKey, -RUNNING_DAYS_BACK));
   const edit = addDaysToKey(todayKey, -EDIT_DAYS_BACK);
   await settingsInput.fill(edit);
   const [edited] = await Promise.all([
@@ -189,12 +193,10 @@ test('a person with habits opens their next pass on a future day while the curre
   expect(edited.ok(), 'the server refused the Settings edit').toBe(true);
   await expect(page.getByTestId('program-start-status')).toBeVisible();
   expect(puts).toEqual([{ program_start_date: edit }]);
-  expect(posts).toHaveLength(1);
 
-  const after = await readCalendar(page, token);
-  expect(dayKeyIn(after.program_started_at, PINNED_ZONE)).toBe(edit);
-  expect(after.calendar_stage).toBe(EDITED_STAGE);
-
+  const corrected = await readCalendar(page, token);
+  expect(dayKeyIn(corrected.program_started_at, PINNED_ZONE)).toBe(edit);
+  expect(corrected.calendar_stage).toBe(EDITED_STAGE);
   // The program habit is re-laid from the new day through the reorder commit.
   await expect
     .poll(async () => {
@@ -205,11 +207,56 @@ test('a person with habits opens their next pass on a future day while the curre
       return rows.find((row) => row.name === HABIT_NAME)?.start_date;
     })
     .toBe(edit);
-
-  // Back to the Map it was opened from: it counts from the new day already.
-  await page.getByRole('link', { name: 'Go back' }).click();
-  await page.goBack();
+  await backToMap(page);
   await expect(page.getByTestId(`stage-unlock-${OBSERVED_STAGE}`)).toHaveText(
     countdown(EDIT_DAYS_BACK),
   );
+
+  // --- The scaffolding picker offers the served pass window, future days included.
+  await openHabitsFromMap(page);
+  await openScaffoldingDate(page);
+  const dateInput = page.getByLabel('Date', { exact: true });
+  await expect(dateInput).toHaveValue(todayKey);
+  await expect(dateInput).toHaveAttribute('max', corrected.pass_start_window!.latest);
+  expect(corrected.pass_start_window!.latest > todayKey).toBe(true);
+  const futurePick = addDaysToKey(todayKey, FUTURE_PICK_DAYS_AHEAD);
+  await dateInput.fill(futurePick);
+  await expect(dateInput).toHaveValue(futurePick);
+  await finishScaffolding(page);
+  expect(posts).toEqual([{ start_day: futurePick }]);
+  expect(puts).toHaveLength(1);
+
+  const held = await readCalendar(page, token);
+  expect(held.pending_pass_starts_on).toBe(futurePick);
+  expect(dayKeyIn(held.program_started_at, PINNED_ZONE)).toBe(edit);
+
+  // --- Habits names the day; the Map still paces the running pass.
+  await expect(page.getByTestId('pass-begins-notice')).toContainText('Your next pass begins');
+  await openMapFromHabits(page);
+  await expect(page.getByTestId(`stage-unlock-${OBSERVED_STAGE}`)).toHaveText(
+    countdown(EDIT_DAYS_BACK),
+  );
+
+  // --- While it is pending, Settings offers no correction that would drop it.
+  await openProgramStartSettings(page);
+  await expect(page.getByText(PENDING_LOCK_HINT, { exact: false })).toBeVisible();
+  await expect(page.getByLabel('Date', { exact: true })).toHaveCount(0);
+  await expect(page.getByTestId('save-program-start-button')).toHaveCount(0);
+  const survived = await readCalendar(page, token);
+  expect(survived.pending_pass_starts_on).toBe(futurePick);
+  expect(puts).toHaveLength(1);
+
+  // --- A second save opens on the held day and replaces it.
+  await backToMap(page);
+  await openHabitsFromMap(page);
+  await openScaffoldingDate(page);
+  const again = page.getByLabel('Date', { exact: true });
+  await expect(again).toHaveValue(futurePick);
+  const replacement = addDaysToKey(todayKey, REPLACED_PICK_DAYS_AHEAD);
+  await again.fill(replacement);
+  await finishScaffolding(page);
+  expect(posts).toEqual([{ start_day: futurePick }, { start_day: replacement }]);
+  const replaced = await readCalendar(page, token);
+  expect(replaced.pending_pass_starts_on).toBe(replacement);
+  expect(dayKeyIn(replaced.program_started_at, PINNED_ZONE)).toBe(edit);
 });
