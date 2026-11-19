@@ -5866,6 +5866,26 @@ describe('dismissDroppedCheckIns', () => {
   });
 });
 
+/**
+ * Record each created row's ``start_date`` as POSTed beside the same row in the
+ * store at that moment, both as ``"<name> <YYYY-MM-DD>"`` read in ``zone``.
+ */
+const capturePosts = (zone: string) => {
+  const seen: { posted: string; stored: string | undefined }[] = [];
+  (habitsApi.create as jest.Mock).mockImplementation(((payload: {
+    name: string;
+    start_date: string;
+  }) => {
+    const row = useHabitStore.getState().habits.find((h) => h.name === payload.name);
+    seen.push({
+      posted: `${payload.name} ${payload.start_date}`,
+      stored: row === undefined ? undefined : `${row.name} ${dayKeyInTZ(row.start_date, zone)}`,
+    });
+    return Promise.resolve({});
+  }) as never);
+  return seen;
+};
+
 describe("the program start date is the server's (#3097)", () => {
   const ZONE = 'America/New_York';
   const DAYS_BACK = 10;
@@ -6100,6 +6120,77 @@ describe("the program start date is the server's (#3097)", () => {
       PROGRAM_START_PENDING_COPY,
     ]);
     expect(Alert.alert).not.toHaveBeenCalled();
+  });
+
+  describe('a refused PUT leaves the new habits on the running anchor (#3748)', () => {
+    const HELD = '2026-10-20';
+    const REFUSED = '2026-10-29';
+
+    beforeEach(() => {
+      useProgramStore
+        .getState()
+        .adoptServerProgramStart({ day: HELD, window: null, locked: false });
+    });
+
+    it('POSTs and stores the new rows laid from the held anchor, as if no day had been picked', async () => {
+      (stagesApi.setProgramStart as jest.Mock).mockRejectedValueOnce(
+        new ApiError(422, 'program_start_in_future') as never,
+      );
+      const notify = jest.fn();
+      const seen = capturePosts(ZONE);
+      const deviceStart = parseISODate(REFUSED);
+
+      await habitManager.onboardingSave(
+        [
+          pick(calculateHabitStartDate(deviceStart, 0), 'Meditate'),
+          pick(calculateHabitStartDate(deviceStart, 1), 'Journal'),
+        ],
+        undefined,
+        ZONE,
+        REFUSED,
+        { notify },
+      );
+
+      expect((stagesApi.setProgramStart as jest.Mock).mock.calls[0]![0]).toBe(REFUSED);
+      expect(seen).toEqual([
+        { posted: 'Meditate 2026-10-20', stored: 'Meditate 2026-10-20' },
+        { posted: 'Journal 2026-11-10', stored: 'Journal 2026-11-10' },
+      ]);
+      expect(useProgramStore.getState().programStartDay).toBe(HELD);
+      expect(notify).toHaveBeenCalledWith(expect.stringMatching(/further ahead/i));
+    });
+
+    it('leaves a habit whose beginning is kept on its own date', async () => {
+      (stagesApi.setProgramStart as jest.Mock).mockRejectedValueOnce(
+        new ApiError(422, 'program_start_too_early') as never,
+      );
+      const seen = capturePosts(ZONE);
+      const begun: OnboardingHabit = {
+        ...pick(new Date('2026-10-25T04:00:00Z'), 'Begun'),
+        keepsOwnBeginning: true,
+      };
+
+      await habitManager.onboardingSave(
+        [begun, pick(parseISODate(REFUSED))],
+        undefined,
+        ZONE,
+        REFUSED,
+        { notify: jest.fn() },
+      );
+
+      expect(seen).toEqual([
+        { posted: 'Begun 2026-10-25', stored: 'Begun 2026-10-25' },
+        { posted: 'Meditate 2026-10-20', stored: 'Meditate 2026-10-20' },
+      ]);
+    });
+
+    it('a PUT that is saved still lays the new rows from the picked day', async () => {
+      const seen = capturePosts(ZONE);
+
+      await habitManager.onboardingSave([pick(parseISODate(REFUSED))], undefined, ZONE, REFUSED);
+
+      expect(seen).toEqual([{ posted: 'Meditate 2026-10-29', stored: 'Meditate 2026-10-29' }]);
+    });
   });
 
   it('a refused pick still saves the habits, keeps the prior anchor and says so', async () => {
@@ -6408,6 +6499,80 @@ describe("the program start date is the server's (#3097)", () => {
         expect.any(String),
         expect.stringMatching(/before the pass you.re in/i),
       );
+    });
+
+    describe('a refused POST leaves the new habits on the running pass (#3748)', () => {
+      const twoPicks = () => {
+        const deviceStart = parseISODate(FUTURE_DAY);
+        return [
+          pick(calculateHabitStartDate(deviceStart, 0), 'Meditate'),
+          pick(calculateHabitStartDate(deviceStart, 1), 'Journal'),
+        ];
+      };
+
+      it('POSTs and stores the new rows laid from the running pass, as if no day had been picked', async () => {
+        openPass().mockRejectedValueOnce(
+          new ApiError(422, 'pass_start_before_current_pass') as never,
+        );
+        const notify = jest.fn();
+        const seen = capturePosts(ZONE);
+
+        await habitManager.onboardingSave(twoPicks(), undefined, ZONE, FUTURE_DAY, { notify });
+
+        expect(openPass().mock.calls[0]![0]).toBe(FUTURE_DAY);
+        expect(seen).toEqual([
+          { posted: 'Meditate 2026-09-13', stored: 'Meditate 2026-09-13' },
+          { posted: 'Journal 2026-10-04', stored: 'Journal 2026-10-04' },
+        ]);
+        expect(notify).toHaveBeenCalledWith(expect.stringMatching(/before the pass you.re in/i));
+        expect(useProgramStore.getState().programStartDay).toBe(RUNNING_DAY);
+      });
+
+      it('leaves the kept rows exactly as they were', async () => {
+        openPass().mockRejectedValueOnce(
+          new ApiError(422, 'pass_start_before_current_pass') as never,
+        );
+        const seen = capturePosts(ZONE);
+        const before = useHabitStore.getState().habits.find((h) => h.id === 7)!;
+        let keptAtCreate: Habit | undefined;
+        (habitsApi.create as jest.Mock).mockImplementationOnce(((payload: {
+          name: string;
+          start_date: string;
+        }) => {
+          keptAtCreate = useHabitStore.getState().habits.find((h) => h.id === 7);
+          seen.push({ posted: `${payload.name} ${payload.start_date}`, stored: undefined });
+          return Promise.resolve({});
+        }) as never);
+        const begun: OnboardingHabit = {
+          ...pick(new Date('2026-10-25T04:00:00Z'), 'Begun'),
+          keepsOwnBeginning: true,
+        };
+
+        await habitManager.onboardingSave([begun, ...twoPicks()], undefined, ZONE, FUTURE_DAY, {
+          notify: jest.fn(),
+        });
+
+        expect(keptAtCreate).toEqual(before);
+        expect(seen.map((entry) => entry.posted)).toEqual([
+          'Begun 2026-10-25',
+          'Meditate 2026-09-13',
+          'Journal 2026-10-04',
+        ]);
+      });
+
+      it('an offline POST keeps the picked day: the pass may yet open, and the person saves again', async () => {
+        openPass().mockRejectedValueOnce(new TypeError('Failed to fetch') as never);
+        const seen = capturePosts(ZONE);
+
+        await habitManager.onboardingSave(twoPicks(), undefined, ZONE, FUTURE_DAY, {
+          notify: jest.fn(),
+        });
+
+        expect(seen.map((entry) => entry.posted)).toEqual([
+          'Meditate 2026-12-01',
+          'Journal 2026-12-22',
+        ]);
+      });
     });
 
     it('an offline save says the pass did not open and holds nothing for replay', async () => {

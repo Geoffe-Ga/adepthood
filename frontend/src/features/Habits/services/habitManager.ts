@@ -543,9 +543,23 @@ const scaffoldStartDay = (
  * place on the cadence -- only the base instant moves. A habit whose beginning
  * is kept is left exactly as it is.
  */
-const layFromAccountDay = (plan: HabitMergePlan, laidDay: string, zone: string): HabitMergePlan => {
-  const deviceStart = new Date(`${laidDay}T00:00:00`).getTime();
-  const accountStart = dayKeyToInstant(laidDay, zone).getTime();
+const layFromAccountDay = (plan: HabitMergePlan, laidDay: string, zone: string): HabitMergePlan =>
+  layOntoDay(plan, laidDay, laidDay, zone);
+
+/**
+ * ``layFromAccountDay`` with the base moved: rows the modal laid from the
+ * device midnight of ``pickedDay`` keep their whole-day place on the cadence
+ * and are laid from the account-zone instant of ``ontoDay`` instead. A habit
+ * whose beginning is kept is left exactly as it is.
+ */
+const layOntoDay = (
+  plan: HabitMergePlan,
+  pickedDay: string,
+  ontoDay: string,
+  zone: string,
+): HabitMergePlan => {
+  const deviceStart = new Date(`${pickedDay}T00:00:00`).getTime();
+  const accountStart = dayKeyToInstant(ontoDay, zone).getTime();
   const relay = (start: Date): Date => {
     const days = Math.floor((new Date(start).getTime() - deviceStart) / MS_PER_DAY);
     return new Date(accountStart + days * MS_PER_DAY);
@@ -560,20 +574,73 @@ const layFromAccountDay = (plan: HabitMergePlan, laidDay: string, zone: string):
   );
 };
 
+/** What a scaffolding save's anchor write came to, as the row save reads it. */
+type ScaffoldAnchorResult =
+  /** The picked day stands -- sent, not needed, or held/unsent: rows keep it. */
+  | 'stands'
+  /** The server refused the day: the running anchor stands, and rows follow it (#3748). */
+  | 'refused'
+  /** The session that saved ended while the write was out: write nothing more. */
+  | 'ended';
+
+/**
+ * The merge a scaffolding save writes once its anchor write has answered. When
+ * the picked day stands that is the merge already laid. A REFUSED day (#3748)
+ * leaves the new rows laid from the running pass's own day instead, exactly as
+ * a save that picked no new day would lay them, and moves the optimistic store
+ * onto those dates. Nothing changes when no rows were laid, the device holds no
+ * running day, or the running day is the one picked. Only ``start_date`` is reconciled, by id: the
+ * re-plan mints the same ids over the same snapshot and differs in nothing
+ * else, so no row is added, dropped or duplicated.
+ */
+const layFromRunningPass = (
+  anchored: ScaffoldAnchorResult,
+  picked: HabitMergePlan,
+  existing: readonly Habit[],
+  laid: { ops: HabitMergeOps; laidDay: string | null; zone: string },
+): HabitMergeOps => {
+  const runningDay = useProgramStore.getState().programStartDay;
+  if (
+    anchored !== 'refused' ||
+    laid.laidDay === null ||
+    runningDay === null ||
+    runningDay === laid.laidDay
+  )
+    return laid.ops;
+  const relaid = planHabitMerge(layOntoDay(picked, laid.laidDay, runningDay, laid.zone), existing);
+  const laidAt = new Map(laid.ops.nextStore.map((row) => [row.id, row.start_date]));
+  const moved = new Map(
+    relaid.nextStore
+      .filter((row) => laidAt.get(row.id) !== row.start_date)
+      .map((row) => [row.id, row.start_date]),
+  );
+  setHabits(
+    getHabits().map((row) => {
+      const start = moved.get(row.id);
+      return start === undefined ? row : { ...row, start_date: start };
+    }),
+  );
+  return relaid;
+};
+
 /**
  * Send the scaffolding pass's start date to the server before any row is
  * created (#3097), so the anchor every reader counts from is the day the person
  * picked rather than the day the server would otherwise stamp. Skipped once
  * begin-again has fixed the date, and when the server already holds this day.
- * A refusal or a dropped connection keeps the prior anchor and says so; the
- * habits themselves still save.
+ *
+ * A REFUSAL keeps the prior anchor, says so, and resolves ``'refused'``: the
+ * habits still save, laid from that prior anchor rather than the refused day
+ * (#3748), so they are exactly what a save that picked no new day would write.
+ * A dropped connection keeps the prior anchor and says so too, but resolves
+ * ``'stands'``: the PUT may have landed, and the habits keep the day picked.
  *
  * A FIRST pick that could not be sent has no prior anchor to keep: it is held
  * for the next session's reconcile to send again, the device counts from it
- * meanwhile, and the copy says so rather than promising an earlier date that
- * does not exist.
+ * meanwhile -- so the habits keep it (``'stands'``) -- and the copy says so
+ * rather than promising an earlier date that does not exist.
  *
- * Resolves ``false`` when the session that made the pick ended while the PUT
+ * Resolves ``'ended'`` when the session that made the pick ended while the PUT
  * was out (#3097 re-review): nothing is held, written or said, because the
  * device -- and the pending key -- may now belong to someone else, and the
  * caller writes nothing further for an account that is no longer here.
@@ -582,16 +649,18 @@ const commitScaffoldStart = async (
   day: string | null,
   zone: string,
   notify: ScaffoldSaveNotify,
-): Promise<boolean> => {
-  if (day === null || !needsScaffoldPut(day)) return true;
+): Promise<ScaffoldAnchorResult> => {
+  if (day === null || !needsScaffoldPut(day)) return 'stands';
   const firstPick = useProgramStore.getState().programStartDay === null;
   const scope = captureAuthScope();
   const outcome = await commitProgramStart(day, { tz: zone });
-  if (!isAuthScopeCurrent(scope)) return false;
-  if (outcome.kind === 'saved') return true;
-  if (outcome.kind === 'unsaved' && firstPick) return holdFirstPick(day, scope, notify);
+  if (!isAuthScopeCurrent(scope)) return 'ended';
+  if (outcome.kind === 'saved') return 'stands';
+  if (outcome.kind === 'unsaved' && firstPick) {
+    return (await holdFirstPick(day, scope, notify)) ? 'stands' : 'ended';
+  }
   notify(outcome.message);
-  return true;
+  return outcome.kind === 'refused' ? 'refused' : 'stands';
 };
 
 /** Whether ``day`` needs sending: not once begin-again fixed it, nor when the server holds it. */
@@ -635,24 +704,30 @@ const alertScaffoldNotice: ScaffoldSaveNotify = (message) => {
  * Open the pass a scaffolding save asks for (#3728): ``POST /stages/passes``
  * with the picked day, exactly once, before any habit row is written. Every
  * such save opens one -- the same day the server already holds included --
- * so nothing is skipped. A refusal or a dropped connection leaves the running
- * pass running and says so; the habits themselves still save, as a refused PUT
- * leaves them. Nothing is held for replay: unlike a first pick there is a pass
- * to fall back on, and the person who saw it fail can save again.
+ * so nothing is skipped.
  *
- * Resolves ``false`` when the session that saved ended while the POST was out.
+ * A REFUSAL leaves the running pass running, says so, and resolves
+ * ``'refused'``: the habits still save, laid from the running pass's own day
+ * rather than the refused one (#3748), so a refusal leaves them exactly as a
+ * save that picked no new day would. A dropped connection says so too but
+ * resolves ``'stands'``: the POST may have landed, so the habits keep the day
+ * picked. Nothing is held for replay: unlike a first pick there is a pass to
+ * fall back on, and the person who saw it fail can save again.
+ *
+ * Resolves ``'ended'`` when the session that saved ended while the POST was out.
  */
 const commitScaffoldPass = async (
   day: string | null,
   zone: string,
   notify: ScaffoldSaveNotify,
-): Promise<boolean> => {
-  if (day === null) return true;
+): Promise<ScaffoldAnchorResult> => {
+  if (day === null) return 'stands';
   const scope = captureAuthScope();
   const outcome = await commitPassStart(day, { tz: zone });
-  if (!isAuthScopeCurrent(scope)) return false;
-  if (outcome.kind !== 'saved') notify(outcome.message);
-  return true;
+  if (!isAuthScopeCurrent(scope)) return 'ended';
+  if (outcome.kind === 'saved') return 'stands';
+  notify(outcome.message);
+  return outcome.kind === 'refused' ? 'refused' : 'stands';
 };
 
 interface ScaffoldAnchorWrite {
@@ -671,9 +746,11 @@ interface ScaffoldAnchorWrite {
  * the picked day once there is a pass to keep (#3728) -- a save that keeps
  * every habit and adds none included -- else as pass 1's own start, so the
  * Map, Practice, Course, Journal and habit reveal all count from the day the
- * person chose. ``false`` when the session that saved has ended.
+ * person chose. ``'refused'`` when the server turned the day down, so the rows
+ * are laid from the running anchor instead (#3748); ``'ended'`` when the
+ * session that saved has ended.
  */
-const commitScaffoldAnchor = (write: ScaffoldAnchorWrite): Promise<boolean> =>
+const commitScaffoldAnchor = (write: ScaffoldAnchorWrite): Promise<ScaffoldAnchorResult> =>
   write.opensPass
     ? commitScaffoldPass(write.pickedDay, write.zone, write.notify)
     : commitScaffoldStart(write.correctionDay, write.zone, write.notify);
@@ -2672,8 +2749,10 @@ export const habitManager = {
       zone,
       notify: options.notify ?? alertScaffoldNotice,
     });
-    if (!anchored) return;
-    const stillHere = await commitHabitMerge(ops, zone);
+    if (anchored === 'ended') return;
+    // A refused day leaves the habits as if it had never been picked (#3748).
+    const saving = layFromRunningPass(anchored, picked, existing, { ops, laidDay, zone });
+    const stillHere = await commitHabitMerge(saving, zone);
     if (stillHere.length > 0) setHabits([...getHabits(), ...stillHere]);
     // Persist BEFORE the reload, which is the only order that survives a pass
     // that released everything: ``loadHabits`` reads this cache back, and its
