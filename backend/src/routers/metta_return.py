@@ -26,6 +26,8 @@ from sqlmodel import col, select
 
 from database import get_session
 from dependencies.ownership import resolve_owned_habits
+from dependencies.timezone import current_user_timezone
+from domain.habit_unlock_log import LockChange, record_lock_changes
 from domain.metta_return import (
     RETURN_SEQUENCE,
     active_return_week,
@@ -35,10 +37,12 @@ from domain.metta_return import (
     offer_episode_identity,
     resumed_start,
 )
+from domain.pass_rescaffold import settle_pending_pass
 from domain.stage_progress import get_user_progress
 from error_responses import build_router
 from errors import conflict, not_found
 from models.habit import Habit
+from models.habit_unlock_event import UnlockSource
 from models.metta_return_arc import MettaReturnArc
 from models.metta_return_habit_release import MettaReturnHabitRelease
 from models.metta_return_offer_dismissal import MettaReturnOfferDismissal
@@ -473,12 +477,15 @@ async def _record_releases(
     user_id: int,
     arc_id: int,
     habits: list[Habit],
+    change: LockChange,
 ) -> None:
-    """Pause each releasable habit and record (or re-arm) its release row.
+    """Pause each releasable habit, record (or re-arm) its release row, and log the flip.
 
     Every releasable habit is flipped to ``revealed=False`` (a soft pause that
     keeps its goals and completions), so repeat releases stay idempotent while a
     re-committed habit released again is re-armed rather than duplicated.
+    Releasable habits are all still unlocked, so each one is a real flip, and
+    each is logged to the unlock log (#3745) in the caller's transaction.
     """
     existing = await _existing_releases_by_habit(
         session,
@@ -487,6 +494,21 @@ async def _record_releases(
     )
     for habit in habits:
         _apply_release(session, user_id, arc_id, habit, existing)
+    await record_lock_changes(session, user_id, habits, change)
+
+
+async def _settle_before_logging(session: AsyncSession, user_id: int, user_tz: str) -> None:
+    """Open a pending pass whose day has come, before a release or recommit logs a flip.
+
+    The unlock log tags each event with the live pass, so a flip on or after
+    the pending day must close the old pass first or its event is stranded in
+    a pass that has already ended -- the same order ``PUT /habits/{id}`` keeps.
+    Settling commits, so it runs before the arc row is locked or anything is
+    mutated. An account with no progress row is not provisioned one here.
+    """
+    progress = await get_user_progress(session, user_id)
+    if progress is not None:
+        await settle_pending_pass(session, progress, tz=user_tz)
 
 
 @router.post("/arc/release", response_model=list[ReleasedHabitResponse])
@@ -494,6 +516,7 @@ async def release_habits(
     request: ReleaseHabitsRequest,
     user_id: Annotated[int, Depends(get_current_user)],
     session: Annotated[AsyncSession, Depends(get_session)],
+    user_tz: Annotated[str, Depends(current_user_timezone)],
 ) -> list[ReleasedHabitResponse]:
     """Release a batch of the caller's habits within their active Return arc.
 
@@ -511,15 +534,49 @@ async def release_habits(
     and no ``IntegrityError`` catch is needed — one (which would abort the whole
     transaction, not a single item) would be dead code that misleadingly implies
     per-item recovery.
+
+    Each flip is logged as a ``metta_return`` re-lock (#3745) in the same commit.
     """
+    await _settle_before_logging(session, user_id, user_tz)
     arc = await _active_arc_for_update(session, user_id)
     if arc is None or arc.id is None:
         raise not_found("return_arc")
     arc_id = arc.id
     habits = await _releasable_habits(session, user_id, request.habit_ids)
-    await _record_releases(session, user_id, arc_id, habits)
+    change = LockChange(UnlockSource.METTA_RETURN, datetime.now(UTC), user_tz)
+    await _record_releases(session, user_id, arc_id, habits, change)
     await session.commit()
     return await _released_habits(session, user_id)
+
+
+def _recommit(
+    session: AsyncSession, release: MettaReturnHabitRelease, habit: Habit, now: datetime
+) -> bool:
+    """Stamp ``release`` re-committed and unlock its habit; whether the lock actually moved."""
+    release.recommitted_at = now
+    session.add(release)
+    if habit.revealed:
+        return False
+    habit.revealed = True
+    session.add(habit)
+    return True
+
+
+async def _recommit_owned(
+    session: AsyncSession, user_id: int, habit_ids: list[int], now: datetime
+) -> list[Habit]:
+    """Re-commit the caller's live releases among ``habit_ids``; the habits whose lock opened.
+
+    Ownership of every id is decided by :func:`resolve_owned_habits` first, so a
+    cross-tenant id is audited and dropped before anything is written.
+    """
+    owned = await resolve_owned_habits(session, habit_ids, user_id)
+    owned_ids = [habit.id for habit in owned if habit.id is not None]
+    return [
+        habit
+        for release, habit in await _live_releases(session, user_id, owned_ids)
+        if _recommit(session, release, habit, now)
+    ]
 
 
 @router.post("/arc/recommit", response_model=list[ReleasedHabitResponse])
@@ -527,6 +584,7 @@ async def recommit_habits(
     request: ReleaseHabitsRequest,
     user_id: Annotated[int, Depends(get_current_user)],
     session: Annotated[AsyncSession, Depends(get_session)],
+    user_tz: Annotated[str, Depends(current_user_timezone)],
 ) -> list[ReleasedHabitResponse]:
     """Re-commit a batch of the caller's habits released in any of their Return arcs.
 
@@ -546,17 +604,17 @@ async def recommit_habits(
     itself. Ownership of every id in the body is decided explicitly by
     :func:`resolve_owned_habits` before any write, so a cross-tenant id is
     audited and dropped rather than silently relied on the query filter.
+
+    A habit whose lock actually opens is logged as a ``metta_return`` unlock
+    (#3745) in the same commit; one already unlocked elsewhere is stamped but
+    not logged, because its lock did not move.
     """
+    await _settle_before_logging(session, user_id, user_tz)
     if not await _caller_has_arc_for_update(session, user_id):
         raise not_found("return_arc")
-    owned = await resolve_owned_habits(session, request.habit_ids, user_id)
-    owned_ids = [habit.id for habit in owned if habit.id is not None]
-    now = datetime.now(UTC)
-    for release, habit in await _live_releases(session, user_id, owned_ids):
-        release.recommitted_at = now
-        habit.revealed = True
-        session.add(release)
-        session.add(habit)
+    change = LockChange(UnlockSource.METTA_RETURN, datetime.now(UTC), user_tz)
+    opened = await _recommit_owned(session, user_id, request.habit_ids, change.moment)
+    await record_lock_changes(session, user_id, opened, change)
     await session.commit()
     return await _released_habits(session, user_id)
 

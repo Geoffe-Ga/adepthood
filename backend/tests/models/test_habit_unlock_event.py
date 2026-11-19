@@ -44,13 +44,14 @@ def test_the_log_is_registered_with_owner_habit_and_pass_keys() -> None:
 
 
 def test_the_vocabularies_match_the_issue() -> None:
-    """Two kinds of change, four ways one is written."""
+    """Two kinds of change, five ways one is written (the Return's since #3745)."""
     assert {kind.value for kind in UnlockKind} == {"unlocked", "relocked"}
     assert {source.value for source in UnlockSource} == {
         "manual",
         "auto_reveal",
         "created_unlocked",
         "backfill",
+        "metta_return",
     }
 
 

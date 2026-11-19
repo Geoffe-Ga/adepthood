@@ -1,10 +1,11 @@
 """The habit unlock log: writing each lock-state change, and reading the latest unlock (#3724).
 
-Three writers flip ``Habit.revealed`` on a program habit -- a manual
-``PUT /habits/{id}``, the habit list's auto-reveal, and a create that arrives
-unlocked. Each calls :func:`record_lock_changes` after the flip and before its
-own commit, so the log row lands in the same transaction as the change it
-describes. The writer mutates and ``add``s but never commits.
+Four writers flip ``Habit.revealed`` on a program habit -- a manual
+``PUT /habits/{id}``, the habit list's auto-reveal, a create that arrives
+unlocked, and a Metta Return arc's release and recommit (#3745). Each calls
+:func:`record_lock_changes` after the flip and before its own commit, so the
+log row lands in the same transaction as the change it describes. The writer
+mutates and ``add``s but never commits.
 
 Every query is scoped by ``user_id``: the pass looked up is the caller's live
 pass, and a habit's program number counts only the caller's own habits.
