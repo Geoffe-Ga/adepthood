@@ -3533,5 +3533,22 @@
     },
     "status": "covered",
     "coveredBy": "frontend/e2e/habit-ledger.browser.e2e.test.ts"
+  },
+  {
+    "id": "course.access-holds-at-the-high-water-mark",
+    "description": "Course reading never drops back below the furthest point a person has reached (#3744, epic #3722 owner decision: \"never go back down to beige in a reset, metta or otherwise\"). After begin-again (POST /stages/begin-again), an Energy Scaffolding pass opened today or back-dated (POST /stages/passes), or a pending pass arriving on its day, every stage below StageProgress.highest_stage_reached keeps all its chapters open and the mark's own stage stays open as far as it had dripped (highest_drip_day), on the Course listing, single chapters (GET /course/content/{content_id}), the stage list's is_unlocked the Course drawer reads, and reading invitations; a Metta Return start or leave changes none of it. Once the new pass passes the mark the calendar paces again and the mark moves with it. The Map's current_stage and calendar_stage still reset exactly as before. Uncovered by a browser spec: no Playwright journey yet walks an account to a later stage and back through a reset. Pinned meanwhile by backend/tests/test_course_high_water.py against the real routes.",
+    "crosses": {
+      "screen": "frontend/src/features/Course/CourseScreen.tsx",
+      "client": ["course", "stages"],
+      "routes": [
+        "POST /stages/begin-again",
+        "POST /stages/passes",
+        "GET /stages",
+        "GET /course/stages/{stage_number}/content"
+      ],
+      "tables": ["stageprogress", "programpass", "coursestage", "stagecontent"]
+    },
+    "status": "uncovered",
+    "issue": 3722
   }
 ]
