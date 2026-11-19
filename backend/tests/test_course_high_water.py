@@ -32,7 +32,7 @@ from domain.course import (
     stage_duration_days,
     unlocked_chapter_count,
 )
-from domain.dates import ensure_aware, today_in_tz
+from domain.dates import day_bounds_in_tz, ensure_aware, today_in_tz
 from domain.stage_progress import is_stage_unlocked
 from models.course_stage import CourseStage
 from models.program_pass import ProgramPass
@@ -208,7 +208,12 @@ def _row(*, current: int, mark: int, held: int, started_days_ago: int = 0) -> St
         highest_stage_reached=mark,
         highest_drip_day=held,
         stage_started_at=now,
-        program_started_at=now - timedelta(days=started_days_ago),
+        # Anchors are stored at local midnight (``day_bounds_in_tz``), so the
+        # test does the same: an instant ``started_days_ago`` x 24h back
+        # straddles a local day boundary for part of every UTC day.
+        program_started_at=day_bounds_in_tz(
+            _TZ, today_in_tz(_TZ) - timedelta(days=started_days_ago)
+        )[0],
     )
 
 
