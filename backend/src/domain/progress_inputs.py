@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from dataclasses import dataclass, field
-from datetime import date, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 from typing import TYPE_CHECKING
 
 from domain.constants import STAGE_DURATIONS_DAYS
@@ -17,6 +17,7 @@ if TYPE_CHECKING:
     from models.goal_completion import GoalCompletion
     from models.habit import Habit
     from models.habit_unlock_event import HabitUnlockEvent
+    from models.metta_return_arc import MettaReturnArc
     from models.practice_session import PracticeSession
     from models.program_pass import ProgramPass
     from models.stage_progress import StageProgress
@@ -56,6 +57,11 @@ class OverviewInput:
     passes: Sequence[ProgramPass] = ()
     #: The owner's unlock-log rows that belong to one of ``passes``.
     unlock_events: Sequence[HabitUnlockEvent] = ()
+    #: The owner's Metta Return arcs (issue #3745), in any order.
+    return_arcs: Sequence[MettaReturnArc] = ()
+    #: The instant of the read: a running Return arc is measured to it, as
+    #: ``/metta-return`` measures one.
+    now: datetime = field(default_factory=lambda: datetime.now(UTC))
 
 
 def minimum_goal(goals: Sequence[Goal]) -> Goal | None:

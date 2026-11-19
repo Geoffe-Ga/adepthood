@@ -31,6 +31,7 @@ from domain.progress_inputs import (
     start_day,
 )
 from domain.progress_passes import arc_passes
+from domain.progress_return_arcs import return_arcs
 from domain.progress_rhythm import (
     DayCount,
     Population,
@@ -163,6 +164,7 @@ def _arc(data: OverviewInput) -> ProgressArc:
         stages=_arc_stages(data, start),
         habit_births=_births(data, start),
         passes=arc_passes(data),
+        return_arcs=return_arcs(data),
     )
 
 

@@ -7826,6 +7826,14 @@
             ],
             "title": "Program Started At"
           },
+          "return_arcs": {
+            "description": "Every Metta Return arc, oldest first, each its own (possibly partial) segment. Empty with habits off.",
+            "items": {
+              "$ref": "#/components/schemas/ReturnArcSegment"
+            },
+            "title": "Return Arcs",
+            "type": "array"
+          },
           "stages": {
             "items": {
               "$ref": "#/components/schemas/ArcStage"
@@ -9434,6 +9442,83 @@
           "complete"
         ],
         "title": "ReturnArcResponse",
+        "type": "object"
+      },
+      "ReturnArcSegment": {
+        "description": "One Metta Return arc, drawn as its own segment beside the pass ribbons (#3745).\n\nMeasured exactly as ``/metta-return`` measures it: paused time never counts,\nand a left arc is frozen where it was left. The arc never opens or closes a\npass, so it may overlap the live one.",
+        "properties": {
+          "completed": {
+            "description": "All 35 days of the arc were lived, paused time not counted. Display only.",
+            "title": "Completed",
+            "type": "boolean"
+          },
+          "ended_on": {
+            "anyOf": [
+              {
+                "format": "date",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Account-zone day the arc was left; null while it has not been left.",
+            "title": "Ended On"
+          },
+          "pass_number": {
+            "anyOf": [
+              {
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The recorded pass live on started_on; null when no recorded pass covers it.",
+            "title": "Pass Number"
+          },
+          "reached_week": {
+            "description": "Week reached: the current week, or the week it was paused or left in.",
+            "maximum": 5.0,
+            "minimum": 1.0,
+            "title": "Reached Week",
+            "type": "integer"
+          },
+          "started_on": {
+            "description": "Account-zone day the arc's elapsed time counts from. A resume moves it forward by the time spent paused, so paused time is not counted.",
+            "format": "date",
+            "title": "Started On",
+            "type": "string"
+          },
+          "state": {
+            "description": "left: stepped out of; complete: all five weeks lived, not left; paused: held, week frozen; active: running.",
+            "enum": [
+              "active",
+              "paused",
+              "complete",
+              "left"
+            ],
+            "title": "State",
+            "type": "string"
+          },
+          "weeks_total": {
+            "description": "Weeks in a whole arc: always 5.",
+            "minimum": 1.0,
+            "title": "Weeks Total",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "started_on",
+          "ended_on",
+          "state",
+          "weeks_total",
+          "reached_week",
+          "completed",
+          "pass_number"
+        ],
+        "title": "ReturnArcSegment",
         "type": "object"
       },
       "ReturnWeekResponse": {
@@ -25114,7 +25199,7 @@
     },
     "/metta-return/arc/recommit": {
       "post": {
-        "description": "Re-commit a batch of the caller's habits released in any of their Return arcs.\n\nRaises 404 only when the caller has never opened an arc, since there is then\nnothing that could have been released. Each named habit the caller owns that\nwas released and not yet re-committed is unlocked (``revealed`` flips back to\nTrue) and stamped with ``recommitted_at``; an id the caller never released is\nignored, and re-committing an already-recommitted habit is a no-op, so the\ncall is idempotent. Works while the arc is time-complete, paused, or already\nleft. Returns the caller's full released list.\n\nThe scope is the caller, not one arc. Releasing is a soft pause on a *habit*,\nand resolving the active arc stranded every habit released in an arc the\ncaller subsequently left: ``left_at`` makes that arc unresolvable, so the\nendpoint 404'd and the only way back was an undiscoverable long-press.\nSpanning arcs means the invitation that paused a habit can always undo\nitself. Ownership of every id in the body is decided explicitly by\n:func:`resolve_owned_habits` before any write, so a cross-tenant id is\naudited and dropped rather than silently relied on the query filter.",
+        "description": "Re-commit a batch of the caller's habits released in any of their Return arcs.\n\nRaises 404 only when the caller has never opened an arc, since there is then\nnothing that could have been released. Each named habit the caller owns that\nwas released and not yet re-committed is unlocked (``revealed`` flips back to\nTrue) and stamped with ``recommitted_at``; an id the caller never released is\nignored, and re-committing an already-recommitted habit is a no-op, so the\ncall is idempotent. Works while the arc is time-complete, paused, or already\nleft. Returns the caller's full released list.\n\nThe scope is the caller, not one arc. Releasing is a soft pause on a *habit*,\nand resolving the active arc stranded every habit released in an arc the\ncaller subsequently left: ``left_at`` makes that arc unresolvable, so the\nendpoint 404'd and the only way back was an undiscoverable long-press.\nSpanning arcs means the invitation that paused a habit can always undo\nitself. Ownership of every id in the body is decided explicitly by\n:func:`resolve_owned_habits` before any write, so a cross-tenant id is\naudited and dropped rather than silently relied on the query filter.\n\nA habit whose lock actually opens is logged as a ``metta_return`` unlock\n(#3745) in the same commit; one already unlocked elsewhere is stamped but\nnot logged, because its lock did not move.",
         "operationId": "recommit_habits_metta_return_arc_recommit_post",
         "parameters": [
           {
@@ -25238,7 +25323,7 @@
     },
     "/metta-return/arc/release": {
       "post": {
-        "description": "Release a batch of the caller's habits within their active Return arc.\n\nRaises 404 when the caller has no active arc. Each named habit that the\ncaller owns and that is still unlocked is softly paused (``revealed`` flips\nto False, preserving its goals and completions) and recorded as released for\nthe arc; ids that are unowned, unknown, or already locked are skipped\nsilently. Returns the arc's full released list.\n\nThe arc is locked ``FOR UPDATE`` (:func:`_active_arc_for_update`) so two\nreleases for the same arc fully serialize: the second waits on the arc row,\nand by the time it runs its ``_existing_releases_by_habit`` pre-check already\nsees the first's committed rows, so it never re-inserts. The\n``(arc_id, habit_id)`` unique constraint is therefore never provoked here,\nand no ``IntegrityError`` catch is needed — one (which would abort the whole\ntransaction, not a single item) would be dead code that misleadingly implies\nper-item recovery.",
+        "description": "Release a batch of the caller's habits within their active Return arc.\n\nRaises 404 when the caller has no active arc. Each named habit that the\ncaller owns and that is still unlocked is softly paused (``revealed`` flips\nto False, preserving its goals and completions) and recorded as released for\nthe arc; ids that are unowned, unknown, or already locked are skipped\nsilently. Returns the arc's full released list.\n\nThe arc is locked ``FOR UPDATE`` (:func:`_active_arc_for_update`) so two\nreleases for the same arc fully serialize: the second waits on the arc row,\nand by the time it runs its ``_existing_releases_by_habit`` pre-check already\nsees the first's committed rows, so it never re-inserts. The\n``(arc_id, habit_id)`` unique constraint is therefore never provoked here,\nand no ``IntegrityError`` catch is needed — one (which would abort the whole\ntransaction, not a single item) would be dead code that misleadingly implies\nper-item recovery.\n\nEach flip is logged as a ``metta_return`` re-lock (#3745) in the same commit.",
         "operationId": "release_habits_metta_return_arc_release_post",
         "parameters": [
           {

@@ -7,6 +7,7 @@ as every other "person is present" reader does (issue #3725).
 
 from collections import defaultdict
 from collections.abc import Sequence
+from datetime import UTC, datetime
 from typing import Annotated
 
 from fastapi import Depends, Response
@@ -29,6 +30,7 @@ from models.goal import Goal
 from models.goal_completion import GoalCompletion
 from models.habit import Habit
 from models.habit_unlock_event import HabitUnlockEvent
+from models.metta_return_arc import MettaReturnArc
 from models.practice import Practice
 from models.practice_session import PracticeSession
 from models.program_pass import ProgramPass
@@ -121,6 +123,20 @@ async def _unlock_events(session: AsyncSession, owner: int) -> Sequence[HabitUnl
     return result.scalars().all()
 
 
+async def _return_arcs(session: AsyncSession, owner: int) -> Sequence[MettaReturnArc]:
+    """The owner's Metta Return arcs, oldest first, in one query (issue #3745).
+
+    The pass each arc sits in is read from the owner's own passes, already
+    loaded by :func:`_passes`, so no join reaches another account's rows.
+    """
+    result = await session.execute(
+        select(MettaReturnArc)
+        .where(MettaReturnArc.user_id == owner)
+        .order_by(col(MettaReturnArc.started_at), col(MettaReturnArc.id))
+    )
+    return result.scalars().all()
+
+
 async def _settled_progress(
     session: AsyncSession, owner: int, timezone: str
 ) -> StageProgress | None:
@@ -196,6 +212,7 @@ async def _read_values(session: AsyncSession, owner: int, timezone: str) -> Over
     )
     return OverviewInput(
         today=today_in_tz(timezone),
+        now=datetime.now(UTC),
         timezone=timezone,
         progress=progress,
         habits=habits,
@@ -209,6 +226,7 @@ async def _read_values(session: AsyncSession, owner: int, timezone: str) -> Over
         enable_practices=preferences.enable_practices if preferences else True,
         passes=await _passes(session, owner),
         unlock_events=await _unlock_events(session, owner),
+        return_arcs=await _return_arcs(session, owner),
     )
 
 
