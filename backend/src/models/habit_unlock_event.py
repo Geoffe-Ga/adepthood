@@ -38,6 +38,8 @@ class UnlockSource(StrEnum):
     CREATED_UNLOCKED = "created_unlocked"
     #: Reconstructed by the migration from ``auto_revealed_at`` or a first check-in.
     BACKFILL = "backfill"
+    #: A Metta Return arc released the habit, or re-committed to it (issue #3745).
+    METTA_RETURN = "metta_return"
 
 
 def _in_constraint(column: str, values: type[StrEnum]) -> str:

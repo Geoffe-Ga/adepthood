@@ -5,10 +5,15 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
+from domain.metta_return import RETURN_WEEK_COUNT
 from models.program_pass import PassOrigin
 
 #: ``pending`` -- starts on a later day; ``live`` -- running now; ``ended`` -- closed.
 PassState = Literal["pending", "live", "ended"]
+
+#: ``active`` -- running; ``paused`` -- held, its week frozen; ``complete`` -- all
+#: five weeks lived and not left; ``left`` -- the person stepped out of it.
+ReturnArcState = Literal["active", "paused", "complete", "left"]
 
 
 class ArcStage(BaseModel):
@@ -108,6 +113,44 @@ class ArcPass(BaseModel):
     )
 
 
+class ReturnArcSegment(BaseModel):
+    """One Metta Return arc, drawn as its own segment beside the pass ribbons (#3745).
+
+    Measured exactly as ``/metta-return`` measures it: paused time never counts,
+    and a left arc is frozen where it was left. The arc never opens or closes a
+    pass, so it may overlap the live one.
+    """
+
+    started_on: date = Field(
+        description=(
+            "Account-zone day the arc's elapsed time counts from. A resume moves it "
+            "forward by the time spent paused, so paused time is not counted."
+        )
+    )
+    ended_on: date | None = Field(
+        description="Account-zone day the arc was left; null while it has not been left."
+    )
+    state: ReturnArcState = Field(
+        description=(
+            "left: stepped out of; complete: all five weeks lived, not left; "
+            "paused: held, week frozen; active: running."
+        )
+    )
+    weeks_total: int = Field(ge=1, description="Weeks in a whole arc: always 5.")
+    reached_week: int = Field(
+        ge=1,
+        le=RETURN_WEEK_COUNT,
+        description="Week reached: the current week, or the week it was paused or left in.",
+    )
+    completed: bool = Field(
+        description="All 35 days of the arc were lived, paused time not counted. Display only."
+    )
+    pass_number: int | None = Field(
+        ge=1,
+        description="The recorded pass live on started_on; null when no recorded pass covers it.",
+    )
+
+
 class ProgressArc(BaseModel):
     """The live programme anchor and its ten-stage shape."""
 
@@ -121,6 +164,13 @@ class ProgressArc(BaseModel):
         default_factory=list,
         description=(
             "One entry per pass, oldest first; at most one is pending, and it is last. "
+            "Empty with habits off."
+        ),
+    )
+    return_arcs: list[ReturnArcSegment] = Field(
+        default_factory=list,
+        description=(
+            "Every Metta Return arc, oldest first, each its own (possibly partial) segment. "
             "Empty with habits off."
         ),
     )
