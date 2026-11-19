@@ -512,6 +512,14 @@ def _refuse_outside(verdict: str) -> None:
         raise unprocessable(_PROGRAM_START_REFUSALS[verdict])
 
 
+async def _pass_floor(session: AsyncSession, progress: StageProgress, today: date, tz: str) -> date:
+    """The start of the pass running ``today``: an arrived pending day, else the live pass's."""
+    pending = progress.pending_pass_starts_on
+    if pending is not None and pending_pass_due(progress, today):
+        return pending
+    return await live_pass_start(session, progress, tz=tz)
+
+
 async def _open_pass_locked(
     session: AsyncSession, user_id: int, chosen: date, bounds: ProgramStartBounds, tz: str
 ) -> StageProgress:
@@ -526,16 +534,13 @@ async def _open_pass_locked(
         raise not_found("stage_progress")
     now = datetime.now(UTC)
     today = to_user_date(tz, now)
-    pending = progress.pending_pass_starts_on
-    if pending is not None and pending_pass_due(progress, today):
-        floor = pending
-    else:
-        floor = await live_pass_start(session, progress, tz=tz)
+    floor = await _pass_floor(session, progress, today, tz)
     _refuse_outside(pass_start_verdict(chosen, bounds, current_pass_start=floor))
-    await arrive_pending_pass(session, progress, now=now, tz=tz)
+    arrived = await arrive_pending_pass(session, progress, now=now, tz=tz)
     if chosen > today:
         progress.pending_pass_starts_on = chosen
-    else:
+    elif not (arrived and chosen == floor):
+        # chosen == floor after an arrival is the pass just opened: open nothing twice.
         await open_pass_on(session, progress, chosen, now=now, tz=tz)
     session.add(progress)
     return progress

@@ -49,6 +49,7 @@ _CALENDAR = "/stages/program-calendar"
 # 60 days into a pass is stage 3 (stages 1 and 2 run 21 days each).
 _SIXTY_DAYS = 60
 _THIRD_STAGE = 3
+_TWO_LOOPS = 2
 # The issue's example: a save sixteen days ahead.
 _SIXTEEN_DAYS = 16
 _THIRTY_DAYS = 30
@@ -774,3 +775,59 @@ async def test_a_settle_that_lost_the_race_opens_nothing_and_ends_its_transactio
     assert settled.cycle_number == 1
     assert not db_session.in_transaction()
     assert len(await _passes(db_session, user_id)) == 1
+
+
+@pytest.mark.asyncio
+async def test_a_save_for_an_arrived_pending_day_opens_that_pass_once(
+    async_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """Saving the very day that already arrived is the arrival itself, not a second open.
+
+    Issue #3735: the arrival opened the pass, then the save opened another on
+    the same day, closing the first as a zero-day pass and looping twice.
+    """
+    headers, user_id = await _arrived(async_client, db_session, "settle_same_day")
+    before = await _progress(db_session, user_id)
+    anchors_before = len(before.past_cycle_anchors or [])
+    cycle_before = before.cycle_number
+
+    body = await _open(async_client, headers, _today())
+
+    assert body["cycle_number"] == cycle_before + 1
+    assert body["pending_pass_starts_on"] is None
+    passes = await _passes(db_session, user_id)
+    assert [(p.origin, p.started_on, p.ended_on) for p in passes] == [
+        (
+            PassOrigin.FIRST_RUN,
+            _today() - timedelta(days=_SIXTY_DAYS + _SIXTEEN_DAYS),
+            _today() - _ONE_DAY,
+        ),
+        (PassOrigin.RESCAFFOLD, _today(), None),
+    ]
+    assert all(p.ended_on is None or p.ended_on >= p.started_on for p in passes)
+    progress = await _progress(db_session, user_id)
+    assert progress.cycle_number == cycle_before + 1
+    assert len(progress.past_cycle_anchors or []) == anchors_before + 1
+    assert progress.pending_pass_starts_on is None
+
+
+@pytest.mark.asyncio
+async def test_a_save_after_an_arrived_pending_day_arrives_then_opens(
+    async_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """A day later than the arrived one still opens its own pass after the arrival."""
+    headers, user_id = await _arrived(async_client, db_session, "settle_later_day")
+    await _shift_back(db_session, user_id, _SIXTEEN_DAYS)
+    arrived_on = _today() - timedelta(days=_SIXTEEN_DAYS)
+    cycle_before = (await _progress(db_session, user_id)).cycle_number
+
+    body = await _open(async_client, headers, _today())
+
+    assert body["cycle_number"] == cycle_before + _TWO_LOOPS
+    passes = await _passes(db_session, user_id)
+    assert [(p.origin, p.started_on, p.ended_on) for p in passes][1:] == [
+        (PassOrigin.RESCAFFOLD, arrived_on, _today() - _ONE_DAY),
+        (PassOrigin.RESCAFFOLD, _today(), None),
+    ]
+    progress = await _progress(db_session, user_id)
+    assert len(progress.past_cycle_anchors or []) == _TWO_LOOPS
