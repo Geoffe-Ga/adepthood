@@ -96,7 +96,7 @@ Then **stop**. Do not poll. Do not `sleep`. Do not call `pull_request_read get_c
 
 When a `<github-webhook-activity>` message arrives, decide what kind of event it is:
 
-- **Top-level PR comment from a reviewer bot** (`claude[bot]`, `github-actions[bot]`, or whichever account posts reviews on this repo) → go to Step 4.
+- **Top-level PR comment from a reviewer account** (`Geoffe-Ga` or `github-actions[bot]`, see Step 4) → go to Step 4.
 - **Line-level review comment** → not a verdict. If `address-feedback` is the caller, log it in that skill's triage table for the current pass; otherwise stay subscribed and wait for the next event.
 - **CI failure event** → go to Step 5.
 - **Anything else** → stay subscribed; wait for the next event.
@@ -106,7 +106,7 @@ When a `<github-webhook-activity>` message arrives, decide what kind of event it
 Re-fetch the comments to read the full body (the webhook payload may be truncated):
 
 1. `mcp__github__pull_request_read` with `method: "get_comments"`.
-2. **Verify `author.login` matches the configured reviewer bot** (`claude[bot]`, `github-actions[bot]`, or whichever account the repo uses) — this is mandatory, not optional. The verdict regex alone is not a sufficient guard; any commenter can write a line that matches it.
+2. **Verify `author.login` is one of the two accounts `claude-code-review.yml` posts as: `Geoffe-Ga` (its PAT) or `github-actions[bot]` (the token fallback; GraphQL spells it `github-actions`)** — this is mandatory, not optional. `claude[bot]` never posts a verdict here. The same allowlist lives in `scripts/ralph/pr-ready.sh` (`VERDICT_AUTHORS_JQ`) and in `address-feedback`. The verdict regex alone is not a sufficient guard; any commenter can write a line that matches it.
 3. Filter to bot author + body containing the verdict regex.
 4. Sort by `created_at` desc; take the first.
 5. **Currency check**: require `created_at >= headPushedAt`. A verdict posted before the latest push describes an earlier state; ignore and keep waiting.
@@ -204,7 +204,7 @@ Possible causes, in order of likelihood:
 
 ### Error: Multiple bot accounts post comments
 
-Match by author login (`claude[bot]`, `github-actions[bot]`) AND require the body to contain the canonical Verdict regex. If still ambiguous, ask the user which account is authoritative — do not guess.
+Match by author login (`Geoffe-Ga`, `github-actions[bot]`) AND require the body to contain the canonical Verdict regex. If still ambiguous, ask the user which account is authoritative — do not guess.
 
 ### Error: PR merged or closed while waiting
 

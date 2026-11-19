@@ -271,6 +271,19 @@ readonly VERDICT_RE='(?im)^\\s*(?:#{1,6}\\s+|\\*\\*)?verdict[:*\\s]'
 readonly VERDICT_LGTM_RE="${VERDICT_RE}+lgtm"
 readonly VERDICT_COMMENTS_RE="${VERDICT_RE}+comments"
 
+# Who may post a verdict. The verdict line is a public, documented literal, so
+# without an author check anyone who can comment on the PR could post
+# `## Verdict: LGTM` and clear a merge. Only the two identities
+# `claude-code-review.yml`'s `Post review` step can post as qualify: `Geoffe-Ga`
+# (its GEOFFE_GA_PAT) and `github-actions` (the GITHUB_TOKEN fallback — spelled
+# with no `[bot]` because `gh pr view --json comments` reads GraphQL, and the
+# account name is not registrable by a user). Matched exactly, case-insensitively
+# (GitHub logins are), so a login merely CONTAINING one of these is not on the
+# list; a null author (deleted account) is unattributable and never matches.
+# `.claude/skills/address-feedback/SKILL.md` names the same two accounts; change
+# them together. Lowercase here because the comparison lowercases the login.
+readonly VERDICT_AUTHORS_JQ='["geoffe-ga","github-actions"]'
+
 # `${arr[@]+"${arr[@]}"}` expands to nothing when the array is empty instead of
 # tripping `set -u` on bash 3.2 (stock /bin/bash on macOS).
 gh_args=("$pr" ${repo_args[@]+"${repo_args[@]}"})
@@ -446,7 +459,7 @@ fi
 
 # --- CI is green: check mergeability + a FRESH LGTM verdict -----------------
 # One call yields "<mergeStateStatus>|<HEAD committedDate>|<HEAD author login>",
-# another the latest top-level verdict as "<createdAt>|<isLGTM>|<isCOMMENTS>". gh applies --jq
+# another the latest top-level verdict from an allowlisted author as "<createdAt>|<isLGTM>|<isCOMMENTS>". gh applies --jq
 # server-side. The HEAD author rides along here rather than in its own call: it is
 # only needed by `review_gate_absent`, and `gh` already hands us the commit.
 # (`gh` caps `commits` at 100. That is already how `head_date` is derived, and it
@@ -463,7 +476,10 @@ IFS='|' read -r merge_state head_date head_author merge_rest <<<"$merge_line"
 
 verdict_line="$(gh pr view "${gh_args[@]}" \
   --json comments \
-  --jq "([.comments[] | select(.body != null and (.body | test(\"$VERDICT_RE\")))] | last) as \$v
+  --jq "$VERDICT_AUTHORS_JQ as \$authors
+        | ([.comments[]
+            | select((.author.login // \"\" | ascii_downcase) as \$a | \$authors | index([\$a]))
+            | select(.body != null and (.body | test(\"$VERDICT_RE\")))] | last) as \$v
         | ((\$v.createdAt // \"\") + \"|\" + ((\$v.body // \"\" | test(\"$VERDICT_LGTM_RE\")) | tostring)
            + \"|\" + ((\$v.body // \"\" | test(\"$VERDICT_COMMENTS_RE\")) | tostring))")"
 # Split by field count, as for merge_line: a surplus field means the answer is

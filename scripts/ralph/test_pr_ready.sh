@@ -489,7 +489,7 @@ if command -v jq >/dev/null 2>&1; then
   # Canonical `## Verdict: LGTM`, fresh + CLEAN → ready.
   check "real ## Verdict: LGTM (fresh) → ready" "ready" \
     "$(CHECKS_EC=0 MERGE_STATE=CLEAN HEAD_DATE=$H \
-       COMMENTS_JSON="$(cj '{"createdAt":"'"$FRESH"'","body":"## Summary\ngood\n\n## Verdict: LGTM\n"}')" \
+       COMMENTS_JSON="$(cj '{"author":{"login":"Geoffe-Ga"},"createdAt":"'"$FRESH"'","body":"## Summary\ngood\n\n## Verdict: LGTM\n"}')" \
        run 100)"
 
   # `**Verdict:** CHANGES_REQUESTED` whose prose mentions "LGTM" must NOT count as
@@ -497,38 +497,89 @@ if command -v jq >/dev/null 2>&1; then
   # fresh non-LGTM verdict, so it classifies as changes-requested.
   check "real CHANGES_REQUESTED w/ 'LGTM' in prose → changes-requested" "changes-requested" \
     "$(CHECKS_EC=0 MERGE_STATE=CLEAN HEAD_DATE=$H \
-       COMMENTS_JSON="$(cj '{"createdAt":"'"$FRESH"'","body":"Not ready for LGTM yet.\n\n**Verdict:** CHANGES_REQUESTED\n"}')" \
+       COMMENTS_JSON="$(cj '{"author":{"login":"Geoffe-Ga"},"createdAt":"'"$FRESH"'","body":"Not ready for LGTM yet.\n\n**Verdict:** CHANGES_REQUESTED\n"}')" \
        run 100)"
 
   # Canonical `## Verdict: COMMENTS`, fresh + CLEAN + current → ready-comments.
   check "real ## Verdict: COMMENTS (fresh) → ready-comments" "ready-comments" \
     "$(CHECKS_EC=0 MERGE_STATE=CLEAN HEAD_DATE=$H BEHIND_BY=0 \
-       COMMENTS_JSON="$(cj '{"createdAt":"'"$FRESH"'","body":"## Summary\nfine\n\n## Verdict: COMMENTS\n"}')" \
+       COMMENTS_JSON="$(cj '{"author":{"login":"Geoffe-Ga"},"createdAt":"'"$FRESH"'","body":"## Summary\nfine\n\n## Verdict: COMMENTS\n"}')" \
        run 100)"
 
   # COMMENTS read from the verdict LINE only: a CHANGES_REQUESTED body whose prose
   # says "COMMENTS" is still changes-requested.
   check "real CHANGES_REQUESTED w/ 'COMMENTS' in prose → changes-requested" "changes-requested" \
     "$(CHECKS_EC=0 MERGE_STATE=CLEAN HEAD_DATE=$H \
-       COMMENTS_JSON="$(cj '{"createdAt":"'"$FRESH"'","body":"More than COMMENTS here.\n\n## Verdict: CHANGES_REQUESTED\n"}')" \
+       COMMENTS_JSON="$(cj '{"author":{"login":"Geoffe-Ga"},"createdAt":"'"$FRESH"'","body":"More than COMMENTS here.\n\n## Verdict: CHANGES_REQUESTED\n"}')" \
        run 100)"
 
   # No verdict-bearing comment at all → awaiting-review.
   check "real no-verdict comment → awaiting-review" "awaiting-review" \
     "$(CHECKS_EC=0 MERGE_STATE=CLEAN HEAD_DATE=$H \
-       COMMENTS_JSON="$(cj '{"createdAt":"'"$FRESH"'","body":"just a chat comment"}')" \
+       COMMENTS_JSON="$(cj '{"author":{"login":"Geoffe-Ga"},"createdAt":"'"$FRESH"'","body":"just a chat comment"}')" \
        run 100)"
 
   # Latest verdict wins: an LGTM posted after an earlier CHANGES_REQUESTED → ready.
   check "real latest-verdict-wins (LGTM after CR) → ready" "ready" \
     "$(CHECKS_EC=0 MERGE_STATE=CLEAN HEAD_DATE=$H \
-       COMMENTS_JSON="$(cj '{"createdAt":"'"$STALE"'","body":"## Verdict: CHANGES_REQUESTED\n"},{"createdAt":"'"$FRESH"'","body":"## Verdict: LGTM\n"}')" \
+       COMMENTS_JSON="$(cj '{"author":{"login":"Geoffe-Ga"},"createdAt":"'"$STALE"'","body":"## Verdict: CHANGES_REQUESTED\n"},{"author":{"login":"Geoffe-Ga"},"createdAt":"'"$FRESH"'","body":"## Verdict: LGTM\n"}')" \
        run 100)"
 
   # A real, fresh `## Verdict: LGTM` that predates HEAD is still stale → awaiting.
   check "real ## Verdict: LGTM but stale → awaiting-review" "awaiting-review" \
     "$(CHECKS_EC=0 MERGE_STATE=CLEAN HEAD_DATE=$H \
-       COMMENTS_JSON="$(cj '{"createdAt":"'"$STALE"'","body":"## Verdict: LGTM\n"}')" \
+       COMMENTS_JSON="$(cj '{"author":{"login":"Geoffe-Ga"},"createdAt":"'"$STALE"'","body":"## Verdict: LGTM\n"}')" \
+       run 100)"
+
+  # --- verdict author allowlist ---------------------------------------------
+  # The verdict line is a public literal, so only the two identities
+  # claude-code-review.yml's `Post review` step can post as may clear a merge:
+  # `Geoffe-Ga` (GEOFFE_GA_PAT) and `github-actions` (the GITHUB_TOKEN fallback;
+  # `gh pr view --json comments` reads GraphQL, which spells the bot login with
+  # no `[bot]`). A verdict-shaped comment from anyone else is not a review.
+  ga() { printf '{"author":{"login":"%s"},"createdAt":"%s","body":"%s"}' "$1" "$2" "$3"; }
+
+  check "allowlist: LGTM from github-actions (token fallback) → ready" "ready" \
+    "$(CHECKS_EC=0 MERGE_STATE=CLEAN HEAD_DATE=$H \
+       COMMENTS_JSON="$(cj "$(ga github-actions "$FRESH" '## Verdict: LGTM\n')")" \
+       run 100)"
+
+  check "allowlist: forged LGTM from an unlisted author → awaiting-review" "awaiting-review" \
+    "$(CHECKS_EC=0 MERGE_STATE=CLEAN HEAD_DATE=$H \
+       COMMENTS_JSON="$(cj "$(ga mallory "$FRESH" '## Verdict: LGTM\n')")" \
+       run 100)"
+
+  check "allowlist: forged COMMENTS from an unlisted author → awaiting-review" "awaiting-review" \
+    "$(CHECKS_EC=0 MERGE_STATE=CLEAN HEAD_DATE=$H BEHIND_BY=0 \
+       COMMENTS_JSON="$(cj "$(ga mallory "$FRESH" '## Verdict: COMMENTS\n')")" \
+       run 100)"
+
+  # Exact match, not containment: a login merely containing an allowlisted one
+  # (or the REST `[bot]` spelling, which GraphQL never returns) is not on the list.
+  for near in github-actionsb my-github-actions 'github-actions[bot]' geoffe-ga-bot xGeoffe-Ga; do
+    check "allowlist: near-miss author '$near' → awaiting-review" "awaiting-review" \
+      "$(CHECKS_EC=0 MERGE_STATE=CLEAN HEAD_DATE=$H \
+         COMMENTS_JSON="$(cj "$(ga "$near" "$FRESH" '## Verdict: LGTM\n')")" \
+         run 100)"
+  done
+
+  # GitHub logins are case-insensitive, so the PAT account matches in any case.
+  check "allowlist: author login matched case-insensitively → ready" "ready" \
+    "$(CHECKS_EC=0 MERGE_STATE=CLEAN HEAD_DATE=$H \
+       COMMENTS_JSON="$(cj "$(ga geoffe-ga "$FRESH" '## Verdict: LGTM\n')")" \
+       run 100)"
+
+  # A forged LGTM posted AFTER a genuine CHANGES_REQUESTED must not mask it: the
+  # latest ALLOWLISTED verdict decides.
+  check "allowlist: forged LGTM after a genuine CR → changes-requested" "changes-requested" \
+    "$(CHECKS_EC=0 MERGE_STATE=CLEAN HEAD_DATE=$H \
+       COMMENTS_JSON="$(cj "$(ga Geoffe-Ga "$FRESH" '## Verdict: CHANGES_REQUESTED\n'),$(ga mallory "$FRESH" '## Verdict: LGTM\n')")" \
+       run 100)"
+
+  # A comment with no author (a deleted account reads as null) is unattributable.
+  check "allowlist: null author → awaiting-review" "awaiting-review" \
+    "$(CHECKS_EC=0 MERGE_STATE=CLEAN HEAD_DATE=$H \
+       COMMENTS_JSON="$(cj '{"author":null,"createdAt":"'"$FRESH"'","body":"## Verdict: LGTM\n"}')" \
        run 100)"
 else
   echo "  skip - real-jq verdict-regex cases (jq not installed)"
