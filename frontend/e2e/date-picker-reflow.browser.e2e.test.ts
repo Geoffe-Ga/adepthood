@@ -113,7 +113,7 @@ for (const width of [390, 1280]) {
     await page.screenshot({ path: info.outputPath(`photo-${width}-2x.png`) });
   });
 
-  test(`onboarding date shortcuts reflow and offer only days already begun at ${width}px`, async ({
+  test(`onboarding date shortcuts reflow and offer future days within the served window at ${width}px`, async ({
     page,
     request,
   }, info) => {
@@ -138,12 +138,14 @@ for (const width of [390, 1280]) {
     await page.screenshot({ path: info.outputPath(`onboarding-${width}-normal.png`) });
     await enlargeShortcuts(page);
     await assertShortcuts(page);
-    // The start date is a day the program already began (#3097): the server
-    // refuses a future one, so the picker offers nothing after today and both
-    // future shortcuts are range-disabled here exactly as they are on the
-    // photograph date. Today stays a distinct keyboard action, here on Space.
-    await expect(page.getByRole('button', { name: CHOICES[1], exact: true })).toBeDisabled();
-    await expect(page.getByRole('button', { name: CHOICES[2], exact: true })).toBeDisabled();
+    // Unlike the photograph date, a program start may lie in the future
+    // (#3725): the picker is clamped to the window the server serves, which
+    // reaches one whole program past today, so both future shortcuts are
+    // enabled here. The window also reaches back past today, so a person who
+    // signed up today can still scaffold from today (#3728): today stays
+    // enabled and committable, a distinct keyboard action, here on Space.
+    await expect(page.getByRole('button', { name: CHOICES[1], exact: true })).toBeEnabled();
+    await expect(page.getByRole('button', { name: CHOICES[2], exact: true })).toBeEnabled();
     const today = page.getByRole('button', { name: CHOICES[0], exact: true });
     await expect(today).toBeEnabled();
     await today.focus();
