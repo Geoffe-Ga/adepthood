@@ -39,6 +39,12 @@ export interface RibbonProps extends ChartBaseProps {
   title?: string;
 }
 
+/**
+ * Below this a block's visible width is rounding, not drawing: a block that
+ * starts exactly where the drawn weeks end must not leave a stroked sliver.
+ */
+const ROUNDING_WIDTH = 1e-6;
+
 const weekPosition = (first: number, last = first): string =>
   first === last ? `Week ${first}` : `Weeks ${first}–${last}`;
 
@@ -94,7 +100,7 @@ function RibbonBlocks({
     <>
       {ribbonGeometry(blocks, width).flatMap((block, index) => {
         const visible = Math.min(block.width, drawnWidth - block.x);
-        return visible > 0
+        return visible > ROUNDING_WIDTH
           ? [
               <Rect
                 key={index}

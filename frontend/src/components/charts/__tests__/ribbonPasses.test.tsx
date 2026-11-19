@@ -332,3 +332,19 @@ describe('a pass ribbon on the web', () => {
     expect(readout(view)).toMatch(/^Habit 2 · Evening walk/);
   });
 });
+
+describe('a pass ribbon cut on a stage boundary', () => {
+  it('draws no sliver of the next stage when the drawn weeks end where a block begins', () => {
+    // At 296 px the drawn edge lands a rounding error past stage 7's start; 299 px is exact.
+    for (const [width, drawnWeeks, stages] of [
+      [296, 20, 6],
+      [299, 28, 8],
+    ] as const) {
+      const view = render(
+        <Ribbon blocks={blocks} drawnWeeks={drawnWeeks} width={width} summary="Pass." />,
+      );
+      const drawn = rects(view).filter((node) => node.props.testID !== 'ribbon-track');
+      expect(drawn).toHaveLength(stages);
+    }
+  });
+});
