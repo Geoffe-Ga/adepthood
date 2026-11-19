@@ -11,6 +11,8 @@
  * and handed to the save, which follows it.
  */
 import { useProgramStore } from '../../../store/useProgramStore';
+import { todayInUserTZ } from '../../../utils/dateUtils';
+import { useDayKey } from '../../../utils/dayRollover';
 import type { Habit } from '../Habits.types';
 
 import { isServerBackedHabit } from './serverIds';
@@ -23,6 +25,8 @@ export interface ScaffoldPassState {
   pendingPassStartsOn: string | null;
   /** Positive while a first pass placed in the future has not begun. */
   daysUntilStart: number;
+  /** The running pass's start, ``YYYY-MM-DD`` in the account zone, or null when unknown. */
+  programStartDay: string | null;
 }
 
 /**
@@ -30,20 +34,41 @@ export interface ScaffoldPassState {
  * or once habits the server holds show an earlier save already happened.
  * Demo tiles and rows this device minted are not that evidence.
  *
- * A first pass placed in the future that has not begun is still corrected,
- * habits or not: its start can only be moved, because a pass opened on its
- * own day -- the day the picker would offer first -- would end it before it
- * ran a single day.
+ * A first pass that has not run a day is still corrected, habits or not: one
+ * placed in the future that has not begun, and one that began ``today`` (the
+ * account zone's day) -- the signup-day scaffold. Its start can only be moved,
+ * because a pass opened on its own day would end it before it ran a single
+ * day, and the pass picker therefore never offers that day: a person who
+ * signed up today could not scaffold from today.
  */
 export function scaffoldOpensPass(
   state: ScaffoldPassState,
   existingHabits: readonly Habit[],
+  today: string,
 ): boolean {
   if (state.programStartLocked || state.pendingPassStartsOn !== null) return true;
-  if (state.daysUntilStart > 0) return false;
+  if (state.daysUntilStart > 0 || state.programStartDay === today) return false;
   return existingHabits.some((habit) => isServerBackedHabit(habit));
 }
 
-/** ``scaffoldOpensPass`` against the store as it stands now. */
-export const scaffoldOpensPassNow = (existingHabits: readonly Habit[]): boolean =>
-  scaffoldOpensPass(useProgramStore.getState(), existingHabits);
+/** ``scaffoldOpensPass`` against the store as it stands now, with today in ``tz``. */
+export const scaffoldOpensPassNow = (existingHabits: readonly Habit[], tz: string): boolean =>
+  scaffoldOpensPass(useProgramStore.getState(), existingHabits, todayInUserTZ(tz));
+
+/**
+ * ``scaffoldOpensPass`` as a component reads it: subscribed to the store's
+ * answers and to the shared day-rollover owner, so the decision the modal shows
+ * follows the account's day across local midnight.
+ */
+export function useScaffoldOpensPass(existingHabits: readonly Habit[], tz: string): boolean {
+  const programStartLocked = useProgramStore((s) => s.programStartLocked);
+  const pendingPassStartsOn = useProgramStore((s) => s.pendingPassStartsOn);
+  const daysUntilStart = useProgramStore((s) => s.daysUntilStart);
+  const programStartDay = useProgramStore((s) => s.programStartDay);
+  const today = useDayKey(tz);
+  return scaffoldOpensPass(
+    { programStartLocked, pendingPassStartsOn, daysUntilStart, programStartDay },
+    existingHabits,
+    today,
+  );
+}

@@ -2666,7 +2666,7 @@ export const habitManager = {
     // session that ended while it was out writes nothing more under whoever
     // holds the device now.
     const anchored = await commitScaffoldAnchor({
-      opensPass: options.opensPass ?? scaffoldOpensPassNow(existing),
+      opensPass: options.opensPass ?? scaffoldOpensPassNow(existing, zone),
       pickedDay: programStartDay ?? laidDay,
       correctionDay: scaffoldStartDay(pickedHabits(plan), laidDay, zone),
       zone,

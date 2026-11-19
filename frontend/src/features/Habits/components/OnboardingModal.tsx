@@ -35,7 +35,7 @@ import { MAX_HABITS } from '../constants';
 import styles from '../Habits.styles';
 import type { Habit, HabitMergePlan, OnboardingHabit, OnboardingModalProps } from '../Habits.types';
 import { calculateHabitStartDate, calculateNetEnergy, stageAtIndex } from '../HabitUtils';
-import { scaffoldOpensPass } from '../services/scaffoldPass';
+import { useScaffoldOpensPass } from '../services/scaffoldPass';
 
 import { ConfirmDialog } from './ConfirmDialog';
 import HabitEmojiPicker from './HabitEmojiPicker';
@@ -1022,13 +1022,8 @@ const useComposedState = (
   userTimezone: string,
 ) => {
   const anchor = useProgramStore(selectProgramStartDate);
-  const programStartLocked = useProgramStore((s) => s.programStartLocked);
   const pending = useProgramStore((s) => s.pendingPassStartsOn);
-  const daysUntilStart = useProgramStore((s) => s.daysUntilStart);
-  const opensPass = scaffoldOpensPass(
-    { programStartLocked, pendingPassStartsOn: pending, daysUntilStart },
-    existingHabits,
-  );
+  const opensPass = useScaffoldOpensPass(existingHabits, userTimezone);
   const range = useScaffoldStartRange(userTimezone, opensPass);
   const seed: StartSeed = { anchor, range, opensPass, pending };
   const [entry] = useState<EntryState>(() => entryStateFor(existingHabits, seed));
