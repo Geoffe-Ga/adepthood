@@ -27,7 +27,7 @@ from sqlalchemy.exc import IntegrityError
 
 from models.habit_unlock_event import UnlockSource
 
-_BASE_REVISION = "a4c8e2f6b1d3"  # pragma: allowlist secret
+_BASE_REVISION = "b7e1c4d9a2f5"  # pragma: allowlist secret
 _REVISION = "3f7a9c2e5b18"  # pragma: allowlist secret
 
 _TABLE = "habitunlockevent"

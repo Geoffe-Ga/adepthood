@@ -1,7 +1,7 @@
 """Let the unlock log record a Metta Return arc's release and recommit.
 
 Revision ID: 3f7a9c2e5b18
-Revises: a4c8e2f6b1d3
+Revises: b7e1c4d9a2f5
 Create Date: 2026-11-19 00:00:00.000000
 
 A Return arc releases a habit (re-locking it) and re-commits to it (unlocking
@@ -28,7 +28,7 @@ from alembic import op
 
 # revision identifiers, used by Alembic.
 revision: str = "3f7a9c2e5b18"  # pragma: allowlist secret
-down_revision: str | Sequence[str] | None = "a4c8e2f6b1d3"  # pragma: allowlist secret
+down_revision: str | Sequence[str] | None = "b7e1c4d9a2f5"  # pragma: allowlist secret
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
