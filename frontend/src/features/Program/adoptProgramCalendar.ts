@@ -29,7 +29,14 @@ export function adoptProgramCalendar(calendar: ProgramCalendar, tz: string | nul
     tz !== null && calendar.program_started_at !== null
       ? dayKeyInTZ(calendar.program_started_at, tz)
       : null;
-  useProgramStore.getState().adoptServerProgramStart({ day, window, locked });
+  // A pass pending behind the running one leaves ``program_started_at`` on the
+  // running pass, so every reader keeps counting from it until the day comes.
+  const pass = {
+    daysUntilStart: calendar.days_until_start ?? 0,
+    pendingPassStartsOn: calendar.pending_pass_starts_on ?? null,
+    passStartWindow: calendar.pass_start_window ?? null,
+  };
+  useProgramStore.getState().adoptServerProgramStart({ day, window, locked, pass });
   const stages = useStageStore.getState();
   stages.setCurrentStage(calendar.current_stage);
   stages.setCycleNumber(calendar.cycle_number);

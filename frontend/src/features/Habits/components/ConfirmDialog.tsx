@@ -10,7 +10,8 @@ export interface ConfirmDialogProps {
   testID?: string;
   cancelTestID?: string;
   confirmTestID?: string;
-  cancelLabel?: string;
+  /** ``null`` leaves only the confirm action: a notice with one way out. */
+  cancelLabel?: string | null;
   confirmLabel?: string;
   destructive?: boolean;
   onCancel: () => void;
@@ -46,14 +47,16 @@ export const ConfirmDialog = ({
           <Text style={styles.discardTitle}>{title}</Text>
           {message && <Text style={styles.discardMessage}>{message}</Text>}
           <View style={styles.discardActions}>
-            <TouchableOpacity
-              onPress={onCancel}
-              style={styles.discardButton}
-              testID={cancelTestID}
-              accessibilityRole="button"
-            >
-              <Text style={styles.discardButtonText}>{cancelLabel}</Text>
-            </TouchableOpacity>
+            {cancelLabel !== null && (
+              <TouchableOpacity
+                onPress={onCancel}
+                style={styles.discardButton}
+                testID={cancelTestID}
+                accessibilityRole="button"
+              >
+                <Text style={styles.discardButtonText}>{cancelLabel}</Text>
+              </TouchableOpacity>
+            )}
             <TouchableOpacity
               onPress={onConfirm}
               style={styles.discardButton}

@@ -11,6 +11,7 @@ import type { Habit } from '../Habits.types';
 import { HabitsContent } from '../HabitsScreen';
 
 import type { DroppedCheckInState } from '@/store/useDroppedCheckInStore';
+import type * as ProgramStoreModule from '@/store/useProgramStore';
 
 // Stub the modal components — importing HabitsScreen pulls them in, and some
 // carry native deps (e.g. datetimepicker) that don't load under jest.
@@ -246,5 +247,35 @@ describe('HabitsContent', () => {
 
     expect(getByTestId('dropped-check-in-notice')).toBeTruthy();
     useDroppedCheckInStore.getState().reset();
+  });
+
+  it('shows the next-pass notice above the grid while a pass is held for the future (#3728)', () => {
+    const { useProgramStore } = jest.requireActual('@/store/useProgramStore') as {
+      useProgramStore: typeof ProgramStoreModule.useProgramStore;
+    };
+    useProgramStore.setState({ pendingPassStartsOn: '2099-12-01' });
+
+    const { getByTestId, toJSON } = render(
+      <HabitsContent
+        habits={[makeHabit(1)]}
+        loading={false}
+        error={null}
+        columns={1}
+        gridGutter={8}
+        renderItem={renderRow}
+        onRetry={jest.fn()}
+        onAddHabit={jest.fn()}
+        pagination={null}
+        userTimezone="UTC"
+      />,
+    );
+
+    expect(getByTestId('pass-begins-notice')).toHaveTextContent(
+      'Your next pass begins December 1, 2099.',
+    );
+    // Above the grid: the notice is laid out before the first row.
+    const rendered = JSON.stringify(toJSON());
+    expect(rendered.indexOf('pass-begins-notice')).toBeLessThan(rendered.indexOf('row-1'));
+    useProgramStore.getState().reset();
   });
 });

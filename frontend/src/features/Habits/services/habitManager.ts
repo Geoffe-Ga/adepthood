@@ -77,6 +77,7 @@ import {
   todayInUserTZ,
 } from '../../../utils/dateUtils';
 import {
+  commitPassStart,
   commitProgramStart,
   holdPendingProgramStart,
   PROGRAM_START_PENDING_COPY,
@@ -90,6 +91,8 @@ import type {
   HabitMergePlan,
   OnboardingHabit,
   SaveOrderOptions,
+  ScaffoldSaveNotify,
+  ScaffoldSaveOptions,
 } from '../Habits.types';
 import {
   getGoalTier,
@@ -129,6 +132,7 @@ import { milestoneLine } from './milestoneCopy';
 import { ReplayCalendarRegistry } from './replayCalendarRegistry';
 import type { ReplayCalendar } from './replayCalendarRegistry';
 import { classifyReplayFailure, hasExhaustedRetries, nextHeadState } from './replayPolicy';
+import { scaffoldOpensPassNow } from './scaffoldPass';
 import {
   ClientMintedIdError,
   isNotDemoSeed,
@@ -574,15 +578,19 @@ const layFromAccountDay = (plan: HabitMergePlan, laidDay: string, zone: string):
  * device -- and the pending key -- may now belong to someone else, and the
  * caller writes nothing further for an account that is no longer here.
  */
-const commitScaffoldStart = async (day: string | null, zone: string): Promise<boolean> => {
+const commitScaffoldStart = async (
+  day: string | null,
+  zone: string,
+  notify: ScaffoldSaveNotify,
+): Promise<boolean> => {
   if (day === null || !needsScaffoldPut(day)) return true;
   const firstPick = useProgramStore.getState().programStartDay === null;
   const scope = captureAuthScope();
   const outcome = await commitProgramStart(day, { tz: zone });
   if (!isAuthScopeCurrent(scope)) return false;
   if (outcome.kind === 'saved') return true;
-  if (outcome.kind === 'unsaved' && firstPick) return holdFirstPick(day, scope);
-  Alert.alert(SYNC_FAILURE_TITLE, outcome.message);
+  if (outcome.kind === 'unsaved' && firstPick) return holdFirstPick(day, scope, notify);
+  notify(outcome.message);
   return true;
 };
 
@@ -596,7 +604,11 @@ const needsScaffoldPut = (day: string): boolean => {
  * Hold an unsent first pick for the account that made it, and count from it
  * meanwhile. ``false`` when that session ended while the hold was written.
  */
-const holdFirstPick = async (day: string, scope: AuthScope): Promise<boolean> => {
+const holdFirstPick = async (
+  day: string,
+  scope: AuthScope,
+  notify: ScaffoldSaveNotify,
+): Promise<boolean> => {
   const held = useProgramStore.getState();
   await holdPendingProgramStart({
     owner: scope.owner,
@@ -605,9 +617,66 @@ const holdFirstPick = async (day: string, scope: AuthScope): Promise<boolean> =>
   });
   if (!isAuthScopeCurrent(scope)) return false;
   useProgramStore.getState().setProgramStartDay(day);
-  Alert.alert(SYNC_FAILURE_TITLE, PROGRAM_START_PENDING_COPY);
+  notify(PROGRAM_START_PENDING_COPY);
   return true;
 };
+
+/**
+ * Where a scaffolding save's start-day message goes when its caller names no
+ * place: a native alert. The modal always names one -- ``Alert.alert`` shows
+ * nothing on react-native-web (#3728) -- so this is the fallback for callers
+ * that drive the save directly.
+ */
+const alertScaffoldNotice: ScaffoldSaveNotify = (message) => {
+  Alert.alert(SYNC_FAILURE_TITLE, message);
+};
+
+/**
+ * Open the pass a scaffolding save asks for (#3728): ``POST /stages/passes``
+ * with the picked day, exactly once, before any habit row is written. Every
+ * such save opens one -- the same day the server already holds included --
+ * so nothing is skipped. A refusal or a dropped connection leaves the running
+ * pass running and says so; the habits themselves still save, as a refused PUT
+ * leaves them. Nothing is held for replay: unlike a first pick there is a pass
+ * to fall back on, and the person who saw it fail can save again.
+ *
+ * Resolves ``false`` when the session that saved ended while the POST was out.
+ */
+const commitScaffoldPass = async (
+  day: string | null,
+  zone: string,
+  notify: ScaffoldSaveNotify,
+): Promise<boolean> => {
+  if (day === null) return true;
+  const scope = captureAuthScope();
+  const outcome = await commitPassStart(day, { tz: zone });
+  if (!isAuthScopeCurrent(scope)) return false;
+  if (outcome.kind !== 'saved') notify(outcome.message);
+  return true;
+};
+
+interface ScaffoldAnchorWrite {
+  /** The save opens a new pass (#3728) rather than correcting pass 1's start. */
+  opensPass: boolean;
+  /** The day the picker showed: what a new pass opens on, as picked. */
+  pickedDay: string | null;
+  /** The day a correction anchors pass 1 to (an earlier kept habit's, if any). */
+  correctionDay: string | null;
+  zone: string;
+  notify: ScaffoldSaveNotify;
+}
+
+/**
+ * Send a scaffolding save's day before any row is written: as a new pass on
+ * the picked day once there is a pass to keep (#3728) -- a save that keeps
+ * every habit and adds none included -- else as pass 1's own start, so the
+ * Map, Practice, Course, Journal and habit reveal all count from the day the
+ * person chose. ``false`` when the session that saved has ended.
+ */
+const commitScaffoldAnchor = (write: ScaffoldAnchorWrite): Promise<boolean> =>
+  write.opensPass
+    ? commitScaffoldPass(write.pickedDay, write.zone, write.notify)
+    : commitScaffoldStart(write.correctionDay, write.zone, write.notify);
 
 const syncOnboardingHabits = async (fullHabits: readonly Habit[], tz: string): Promise<void> => {
   for (const habit of fullHabits) {
@@ -2565,12 +2634,18 @@ export const habitManager = {
    *
    * ``programStartDay`` is the ``YYYY-MM-DD`` the modal's start-date picker
    * showed: the day the program is anchored to, sent as picked (#3097).
+   * ``options.notify`` receives the one message to show when that day did not
+   * take -- a refusal, or a pick that never reached the server (#3728); the
+   * modal renders it, because ``Alert.alert`` shows nothing on the web.
+   * ``options.opensPass`` is the decision the modal showed (pass window or
+   * pass 1's own), so the save cannot decide differently from what was seen.
    */
   onboardingSave: async (
     input: readonly OnboardingHabit[] | HabitMergePlan,
     showToast?: ShowToast,
     tz?: string,
     programStartDay?: string,
+    options: ScaffoldSaveOptions = {},
   ): Promise<void> => {
     const existing = getHabits();
     const zone = tz ?? detectDeviceTimezone();
@@ -2587,14 +2662,16 @@ export const habitManager = {
       icon: '\u{1F449}',
       duration: INSTRUCTIONAL_TOAST_DURATION_MS,
     });
-    // The picked start date becomes the server's program anchor before any row
-    // is created, so the Map, Practice, Course, Journal and habit reveal all
-    // count from the day the person chose (#3097). A session that ended while
-    // it was out writes nothing more under whoever holds the device now.
-    const anchored = await commitScaffoldStart(
-      scaffoldStartDay(pickedHabits(plan), laidDay, zone),
+    // The picked day reaches the server before any row is created (#3097). A
+    // session that ended while it was out writes nothing more under whoever
+    // holds the device now.
+    const anchored = await commitScaffoldAnchor({
+      opensPass: options.opensPass ?? scaffoldOpensPassNow(existing, zone),
+      pickedDay: programStartDay ?? laidDay,
+      correctionDay: scaffoldStartDay(pickedHabits(plan), laidDay, zone),
       zone,
-    );
+      notify: options.notify ?? alertScaffoldNotice,
+    });
     if (!anchored) return;
     const stillHere = await commitHabitMerge(ops, zone);
     if (stillHere.length > 0) setHabits([...getHabits(), ...stillHere]);

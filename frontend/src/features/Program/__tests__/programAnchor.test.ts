@@ -168,7 +168,7 @@ describe('commitProgramStart', () => {
   });
 
   it.each([
-    [422, 'program_start_in_future', /today or earlier/i],
+    [422, 'program_start_in_future', /further ahead/i],
     [422, 'program_start_too_early', /earliest/i],
     [409, 'program_start_fixed_after_first_cycle', /begin again/i],
   ])('a %i %s is refused with plain copy and the store unchanged', async (status, code, copy) => {

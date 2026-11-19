@@ -5,6 +5,7 @@ import React from 'react';
 import ProgramStartSettingsScreen from '../ProgramStartSettingsScreen';
 
 import DatePicker from '@/components/DatePicker';
+import { TOTAL_PROGRAM_DAYS } from '@/constants/program';
 import { useAuth } from '@/context/AuthContext';
 import type { ProgramStartChangeOutcome } from '@/features/Habits/services/habitManager';
 import type { ProgramStartOutcome } from '@/features/Program/programAnchor';
@@ -34,7 +35,9 @@ jest.mock('@/storage/programStorage', () => ({
 
 const ZONE = 'Europe/Paris';
 const HELD_DAY = '2026-03-10';
-const WINDOW = { earliest: '2026-01-02', latest: '2026-11-08' };
+// The served window reaches one whole program past today (#3725).
+const TODAY = todayInUserTZ(ZONE);
+const WINDOW = { earliest: '2026-01-02', latest: addDaysInTZ(TODAY, TOTAL_PROGRAM_DAYS, ZONE) };
 
 const mockUseAuth = useAuth as jest.MockedFunction<typeof useAuth>;
 
@@ -64,6 +67,9 @@ afterEach(() => {
     anchorSource: null,
     programStartWindow: null,
     programStartLocked: false,
+    pendingPassStartsOn: null,
+    passStartWindow: null,
+    daysUntilStart: 0,
   });
 });
 
@@ -75,7 +81,7 @@ describe('ProgramStartSettingsScreen (#3097)', () => {
     expect(mockReconcile).toHaveBeenCalledWith(ZONE);
   });
 
-  it('opens on the held date, clamped to the server window and today', () => {
+  it('opens on the held date, clamped to the server window', () => {
     hold();
 
     const result = render(<ProgramStartSettingsScreen />);
@@ -84,7 +90,7 @@ describe('ProgramStartSettingsScreen (#3097)', () => {
     expect(picker(result)).toMatchObject({
       value: HELD_DAY,
       minDate: WINDOW.earliest,
-      maxDate: todayInUserTZ(ZONE),
+      maxDate: WINDOW.latest,
     });
   });
 
@@ -117,12 +123,11 @@ describe('ProgramStartSettingsScreen (#3097)', () => {
     expect(picker(result).value).toBe(HELD_DAY);
   });
 
-  it('never opens on a future day held from before the server answered, and saves today instead', async () => {
-    const today = todayInUserTZ(ZONE);
-    const FUTURE_DAYS = 30;
+  it('never opens past the window, and saves its last day instead', async () => {
+    const PAST_THE_END = 30;
     act(() =>
       useProgramStore.setState({
-        programStartDay: addDaysInTZ(today, FUTURE_DAYS, ZONE),
+        programStartDay: addDaysInTZ(WINDOW.latest, PAST_THE_END, ZONE),
         anchorSource: 'storage',
         programStartWindow: WINDOW,
       }),
@@ -130,9 +135,21 @@ describe('ProgramStartSettingsScreen (#3097)', () => {
 
     const result = render(<ProgramStartSettingsScreen />);
 
-    expect(picker(result)).toMatchObject({ value: today, maxDate: today });
+    expect(picker(result)).toMatchObject({ value: WINDOW.latest, maxDate: WINDOW.latest });
     fireEvent.press(result.getByTestId('save-program-start-button'));
-    await waitFor(() => expect(mockChangeProgramStart).toHaveBeenCalledWith(today, ZONE));
+    await waitFor(() => expect(mockChangeProgramStart).toHaveBeenCalledWith(WINDOW.latest, ZONE));
+  });
+
+  it('offers a future day in the first cycle, inside the window (#3728)', () => {
+    hold();
+    const result = render(<ProgramStartSettingsScreen />);
+    const FUTURE_DAYS = 14;
+    const future = addDaysInTZ(TODAY, FUTURE_DAYS, ZONE);
+
+    act(() => picker(result).onChange(future));
+
+    expect(picker(result).value).toBe(future);
+    expect(picker(result).maxDate! > TODAY).toBe(true);
   });
 
   it('says the habits did not follow, not "saved", when only the date took (#3097 review)', async () => {
@@ -156,6 +173,55 @@ describe('ProgramStartSettingsScreen (#3097)', () => {
     // The date did move, so the picker stays on it and Save re-lays the rows.
     expect(picker(result).value).toBe('2026-04-01');
     expect(result.getByTestId('current-program-start')).toHaveTextContent('April 1, 2026');
+  });
+
+  it('keeps the date fixed in a later cycle even though a new pass may still be opened (#3728)', () => {
+    // Settings corrects the pass the person is in; opening one is the
+    // scaffolding's, so the pass window served in every cycle unlocks nothing here.
+    act(() =>
+      useProgramStore.getState().adoptServerProgramStart({
+        day: HELD_DAY,
+        window: null,
+        locked: true,
+        pass: {
+          daysUntilStart: 0,
+          pendingPassStartsOn: null,
+          passStartWindow: { earliest: HELD_DAY, latest: WINDOW.latest },
+        },
+      }),
+    );
+
+    const result = render(<ProgramStartSettingsScreen />);
+
+    expect(result.UNSAFE_queryByType(DatePicker)).toBeNull();
+    expect(result.getByText(/begin again/i)).toBeTruthy();
+  });
+
+  it('locks the date while a next pass is pending, and says where that day is changed (#3728)', () => {
+    // A PUT here would quietly drop the pass held for December 1.
+    act(() =>
+      useProgramStore.getState().adoptServerProgramStart({
+        day: HELD_DAY,
+        window: WINDOW,
+        locked: false,
+        pass: {
+          daysUntilStart: 0,
+          pendingPassStartsOn: '2026-12-01',
+          passStartWindow: { earliest: HELD_DAY, latest: WINDOW.latest },
+        },
+      }),
+    );
+
+    const result = render(<ProgramStartSettingsScreen />);
+
+    expect(result.UNSAFE_queryByType(DatePicker)).toBeNull();
+    expect(result.queryByTestId('save-program-start-button')).toBeNull();
+    expect(
+      result.getByText(
+        'Your next pass begins December 1, 2026. To change that day, save Energy Scaffolding again.',
+      ),
+    ).toBeTruthy();
+    expect(mockChangeProgramStart).not.toHaveBeenCalled();
   });
 
   it('shows the fixed date and no picker once begin-again has run', () => {

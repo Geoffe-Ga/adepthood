@@ -6,7 +6,12 @@ import { formatApiError } from '../../../api/errorMessages';
 import { colors } from '../../../design/tokens';
 import { useOptimisticMutation } from '../../../hooks/useOptimisticMutation';
 import { savePendingCheckIn } from '../../../storage/habitStorage';
-import type { HabitMergePlan, HabitsActions, OnboardingHabit } from '../Habits.types';
+import type {
+  HabitMergePlan,
+  HabitsActions,
+  OnboardingHabit,
+  ScaffoldSaveOptions,
+} from '../Habits.types';
 import {
   GOAL_UNITS_NOT_SAVED_COPY,
   habitManager,
@@ -258,8 +263,11 @@ export const useHabitActions = (
   // which has no row to name) or a plan it derived from the habits it just
   // showed the user, and the merge already speaks both.
   const onboardingSave = useCallback(
-    (input: readonly OnboardingHabit[] | HabitMergePlan, programStartDay?: string) =>
-      habitManager.onboardingSave(input, showToast, tz, programStartDay),
+    (
+      input: readonly OnboardingHabit[] | HabitMergePlan,
+      programStartDay?: string,
+      options?: ScaffoldSaveOptions,
+    ) => habitManager.onboardingSave(input, showToast, tz, programStartDay, options),
     [showToast, tz],
   );
 

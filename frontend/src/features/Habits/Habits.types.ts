@@ -209,6 +209,7 @@ export interface OnboardingModalProps {
   onSaveHabits: (
     _habits: readonly OnboardingHabit[] | HabitMergePlan,
     _programStartDay?: string,
+    _options?: ScaffoldSaveOptions,
   ) => void;
   /**
    * The habits the user already has, so the modal can ask about them instead of
@@ -294,6 +295,7 @@ export interface HabitsActions {
   onboardingSave: (
     _input: readonly OnboardingHabit[] | HabitMergePlan,
     _programStartDay?: string,
+    _options?: ScaffoldSaveOptions,
   ) => Promise<void>;
   iconPress: (_index: number) => void;
   emojiSelect: (_emoji: string) => void;
@@ -320,4 +322,22 @@ export interface UseHabitsReturn {
   ui: HabitsUIFlags;
   /** Exposed only for testing — do not use in production code. */
   setHabitsForTesting: (_habits: Habit[]) => void;
+}
+
+/**
+ * Where a scaffolding save says its start day did not take -- a refusal, or a
+ * pick that never reached the server (#3728). The modal renders it in a dialog:
+ * ``Alert.alert`` shows nothing on react-native-web.
+ */
+export type ScaffoldSaveNotify = (_message: string) => void;
+
+/** What the modal tells a scaffolding save beyond the picks and the day (#3728). */
+export interface ScaffoldSaveOptions {
+  /** Where to say the start day did not take; a native alert when absent. */
+  notify?: ScaffoldSaveNotify;
+  /**
+   * Whether the save opens a new pass -- the decision the modal showed the
+   * person, window and all. Read from the store at save time when absent.
+   */
+  opensPass?: boolean;
 }

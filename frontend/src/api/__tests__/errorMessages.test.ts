@@ -1,6 +1,7 @@
 /* eslint-env jest */
 /* global describe, it, expect */
 
+import { TOTAL_PROGRAM_WEEKS } from '../../constants/program';
 import {
   AI_ACCESS_REVOKED_COPY,
   CREDIT_EXHAUSTED_COPY,
@@ -588,12 +589,26 @@ describe('payer refusals say how to proceed (#3096)', () => {
 
 describe('program start refusals say what to do instead (#3097)', () => {
   it.each([
-    ['program_start_in_future', 422, /today or earlier/i],
+    ['program_start_in_future', 422, /further ahead than a start date can be set/i],
     ['program_start_too_early', 422, /earliest/i],
     ['program_start_fixed_after_first_cycle', 409, /begin again/i],
+    ['pass_start_before_current_pass', 422, /before the pass you.re in/i],
   ])('maps %s to plain copy', (code, status, pattern) => {
     const message = formatApiError(new ApiError(status, code));
     expect(message).toMatch(pattern);
     expect(message).not.toMatch(/_/);
+  });
+
+  it('says a future start may now be set, up to one program ahead (#3728)', () => {
+    const message = formatApiError(new ApiError(422, 'program_start_in_future'));
+    // The old copy said "today or earlier", which a future pick now contradicts.
+    expect(message).not.toMatch(/today or earlier/i);
+    expect(message).toMatch(new RegExp(`${TOTAL_PROGRAM_WEEKS} weeks`));
+  });
+
+  it('says a begin-again with no finished cycle changed nothing (#3728)', () => {
+    const message = formatApiError(new ApiError(409, 'cycle_not_complete'));
+    expect(message).toMatch(/still under way/i);
+    expect(message).toMatch(/nothing (has )?changed/i);
   });
 });

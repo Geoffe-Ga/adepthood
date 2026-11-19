@@ -3,6 +3,7 @@ import { render, fireEvent, act, within } from '@testing-library/react-native';
 import React from 'react';
 import type { ReactElement, ReactNode } from 'react';
 
+import { toISODate } from '../../../../components/DatePicker';
 import { useProgramStore } from '../../../../store/useProgramStore';
 import type { Habit, HabitMergePlan, OnboardingHabit } from '../../Habits.types';
 
@@ -110,6 +111,23 @@ const pressContinue = (result: ReturnType<typeof render>) => {
   fireEvent.press(result.getByTestId('continue-button'));
   const warn = result.queryByTestId('count-warning-continue');
   if (warn) fireEvent.press(warn);
+};
+
+/** From the add-habits step, run the flow to its end and press Finish. */
+const runToFinish = async (result: ReturnType<typeof render>) => {
+  pressContinue(result);
+  fireEvent.press(result.getByTestId('continue-button'));
+  act(() => {
+    fireEvent.press(result.getByTestId('continue-button'));
+  });
+  act(() => {
+    jest.advanceTimersByTime(REVEAL_TOTAL_MS);
+  });
+  await act(async () => {
+    fireEvent.press(result.getByTestId('continue-to-templates'));
+    await jest.advanceTimersByTimeAsync(10);
+  });
+  fireEvent.press(result.getByTestId('finish-setup'));
 };
 
 describe('OnboardingModal review step', () => {
@@ -433,22 +451,6 @@ describe('OnboardingModal review step, what the save is handed', () => {
     });
   });
 
-  const runToFinish = async (result: ReturnType<typeof render>) => {
-    pressContinue(result);
-    fireEvent.press(result.getByTestId('continue-button'));
-    act(() => {
-      fireEvent.press(result.getByTestId('continue-button'));
-    });
-    act(() => {
-      jest.advanceTimersByTime(REVEAL_TOTAL_MS);
-    });
-    await act(async () => {
-      fireEvent.press(result.getByTestId('continue-to-templates'));
-      await jest.advanceTimersByTimeAsync(10);
-    });
-    fireEvent.press(result.getByTestId('finish-setup'));
-  };
-
   it('states a plan naming every habit the user decided about', async () => {
     const { onSaveHabits, ...result } = renderModal([habit(), carried, second]);
 
@@ -521,10 +523,10 @@ describe('OnboardingModal start-date seed', () => {
     });
   };
 
-  it('opens the picker on the day the program already begins, not on today', () => {
-    // Saving a scaffolding pass is an explicit anchor write. A picker seeded
-    // with today re-answers a question the user already answered, and moves the
-    // whole course calendar for a returning user who never touched it.
+  it('with habits already saved, opens on today: the save starts a new pass (#3728)', () => {
+    // Every scaffolding save opens a pass. Seeding the picker with the running
+    // pass's own day would open a new pass that replaces it on the very day it
+    // began; today is the day a pass started now would begin.
     useProgramStore.getState().hydrateProgramStartDate(new Date(2026, 0, 15));
     const result = renderModal([habit()]);
 
@@ -532,6 +534,21 @@ describe('OnboardingModal start-date seed', () => {
     advanceToReorder(result);
 
     expect(result.getByText('Beige begins on:')).toBeTruthy();
+    expect(result.UNSAFE_queryByProps({ value: '2026-01-15' })).toBeNull();
+    expect(result.UNSAFE_getByProps({ value: toISODate(new Date()) })).toBeTruthy();
+  });
+
+  it('on a first save, opens on the day the program already begins, not on today', () => {
+    // The first save corrects pass 1 itself (#3097): a picker seeded with today
+    // would re-answer a question the user already answered.
+    useProgramStore.getState().hydrateProgramStartDate(new Date(2026, 0, 15));
+    const result = renderModal([]);
+
+    const input = result.getByTestId('habit-input');
+    fireEvent.changeText(input, 'Stretch');
+    fireEvent(input, 'onKeyPress', { nativeEvent: { key: 'Enter' } });
+    advanceToReorder(result);
+
     // The picker can always give back the day it is showing, even below the
     // offline fallback floor.
     expect(result.UNSAFE_getByProps({ value: '2026-01-15' }).props.minDate).toBe('2026-01-15');
@@ -552,11 +569,146 @@ describe('OnboardingModal start-date seed', () => {
     fireEvent(input, 'onKeyPress', { nativeEvent: { key: 'Enter' } });
     advanceToReorder(result);
 
-    // Today is the ceiling now, not the floor: a program cannot start on a day
-    // that has not come, but it may have started before the person signed up
-    // (#3097).
+    // With no window served yet, today is the ceiling: the client never
+    // computes the server's window itself (#3728), but the program may have
+    // started before the person signed up (#3097).
     const picker = result.UNSAFE_getByProps({ value: iso }).props;
     expect(picker.maxDate).toBe(iso);
     expect(picker.minDate < iso).toBe(true);
+  });
+});
+
+describe('OnboardingModal review step names the pass a save opens (#3728)', () => {
+  afterEach(() => {
+    act(() => {
+      useProgramStore.getState().reset();
+    });
+  });
+
+  const PENDING_DAY = '2026-12-01';
+
+  it('says in one sentence that saving starts a new pass and the current one is kept', () => {
+    act(() => {
+      useProgramStore.setState({
+        pendingPassStartsOn: PENDING_DAY,
+        passStartWindow: { earliest: '2026-01-01', latest: '2099-12-31' },
+      });
+    });
+    const result = renderModal([habit()]);
+
+    const notice = result.getByTestId('review-new-pass');
+    expect(notice).toHaveTextContent(
+      'Saving starts a new pass on December 1, 2026; your current pass stays on Stats and progress.',
+    );
+  });
+
+  it('names today when no pass is held yet', () => {
+    act(() => {
+      useProgramStore.setState({
+        programStartDay: '2026-01-01',
+        passStartWindow: { earliest: '2026-01-01', latest: '2099-12-31' },
+      });
+    });
+    const result = renderModal([habit()]);
+
+    const today = new Date().toLocaleDateString('en-US', {
+      month: 'long',
+      day: 'numeric',
+      year: 'numeric',
+    });
+    expect(result.getByTestId('review-new-pass')).toHaveTextContent(new RegExp(today));
+  });
+});
+
+describe('OnboardingModal shows a start-date message the save reports (#3728)', () => {
+  beforeEach(() => {
+    jest.useFakeTimers();
+  });
+
+  afterEach(() => {
+    jest.useRealTimers();
+    act(() => {
+      useProgramStore.getState().reset();
+    });
+  });
+
+  const REFUSAL =
+    "A new pass can't start before the pass you're in began. Pick that day or a later one; your current pass keeps running.";
+
+  /** Finish a one-pick first run, returning the notice callback the save was handed. */
+  const finishFirstRun = async (onSaveHabits: jest.Mock) => {
+    const result = renderModal([], onSaveHabits);
+    const input = result.getByTestId('habit-input');
+    fireEvent.changeText(input, 'Stretch');
+    fireEvent(input, 'onKeyPress', { nativeEvent: { key: 'Enter' } });
+    pressContinue(result);
+    fireEvent.press(result.getByTestId('continue-button'));
+    act(() => {
+      fireEvent.press(result.getByTestId('continue-button'));
+    });
+    act(() => {
+      jest.advanceTimersByTime(REVEAL_TOTAL_MS);
+    });
+    await act(async () => {
+      fireEvent.press(result.getByTestId('continue-to-templates'));
+      await jest.advanceTimersByTimeAsync(10);
+    });
+    fireEvent.press(result.getByTestId('finish-setup'));
+    const options = onSaveHabits.mock.calls[0]?.[2] as { notify: (_message: string) => void };
+    const notify = options.notify;
+    return { result, notify };
+  };
+
+  it('renders the copy in a dialog, not a native alert that web drops', async () => {
+    const { result, notify } = await finishFirstRun(jest.fn());
+
+    expect(typeof notify).toBe('function');
+    act(() => notify(REFUSAL));
+
+    expect(result.getByTestId('start-day-notice')).toBeTruthy();
+    expect(result.getByText(REFUSAL)).toBeTruthy();
+  });
+
+  it('offers one way out, and it closes the dialog', async () => {
+    const { result, notify } = await finishFirstRun(jest.fn());
+    act(() => notify(REFUSAL));
+
+    expect(result.queryByTestId('start-day-notice-cancel')).toBeNull();
+    fireEvent.press(result.getByTestId('start-day-notice-ok'));
+
+    expect(result.queryByTestId('start-day-notice')).toBeNull();
+  });
+});
+
+describe('OnboardingModal hands the save the decision it showed (#3728)', () => {
+  beforeEach(() => {
+    jest.useFakeTimers();
+  });
+
+  afterEach(() => {
+    jest.useRealTimers();
+    act(() => {
+      useProgramStore.getState().reset();
+    });
+  });
+
+  it('says the save opens a pass when it showed the pass window', async () => {
+    const onSaveHabits = jest.fn();
+    const result = renderModal([habit()], onSaveHabits);
+    fireEvent.press(result.getByTestId('review-continue'));
+    await runToFinish(result);
+
+    expect(onSaveHabits.mock.calls[0]?.[2]).toMatchObject({ opensPass: true });
+  });
+
+  it('says the save corrects pass 1 on a first run', async () => {
+    const onSaveHabits = jest.fn();
+    const result = renderModal([], onSaveHabits);
+    const input = result.getByTestId('habit-input');
+    fireEvent.changeText(input, 'Stretch');
+    fireEvent(input, 'onKeyPress', { nativeEvent: { key: 'Enter' } });
+    await runToFinish(result);
+
+    expect(onSaveHabits.mock.calls[0]?.[2]).toMatchObject({ opensPass: false });
   });
 });

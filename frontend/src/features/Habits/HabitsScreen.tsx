@@ -9,6 +9,8 @@ import { useAuth } from '../../context/AuthContext';
 import { useTheme } from '../../design/ThemeContext';
 import { spacing } from '../../design/tokens';
 import useResponsive from '../../design/useResponsive';
+import { detectDeviceTimezone } from '../../utils/dateUtils';
+import { PassBeginsNotice } from '../Program/PassBeginsNotice';
 
 import AddHabitModal from './components/AddHabitModal';
 import DroppedCheckInNotice from './components/DroppedCheckInNotice';
@@ -511,6 +513,8 @@ interface HabitsContentProps {
   /** Stage bounds for the current lap's empty state; omitted on the first-run page. */
   emptyStageStart?: number;
   emptyStageEnd?: number;
+  /** The account zone the next-pass notice counts days in (#3728); device zone when absent. */
+  userTimezone?: string;
 }
 
 interface HabitsBodyProps {
@@ -580,6 +584,7 @@ export const HabitsContent = ({
   pagination,
   emptyStageStart,
   emptyStageEnd,
+  userTimezone = detectDeviceTimezone(),
 }: HabitsContentProps) => {
   // First-run guidance; suppressed during loading/error (audit-ux-07).
   const showEmpty = !loading && !error && habits.length === 0;
@@ -588,6 +593,10 @@ export const HabitsContent = ({
       {error && <ErrorBanner error={error} onRetry={onRetry} />}
       {/* Self-suppressing: renders nothing unless a queued check-in was lost. */}
       <DroppedCheckInNotice />
+      {/* Self-suppressing: renders nothing unless a pass waits to begin (#3728). */}
+      {/* Inset by the list's padding plus a tile's own margin (half a gutter
+          each), so it hangs from the tiles' edge. */}
+      <PassBeginsNotice tz={userTimezone} inset={gridGutter} />
       {loading && <LoadingSpinner />}
       {!loading && (
         <HabitsBody
@@ -719,6 +728,7 @@ const HabitsContentSection = ({
     pagination={paginationProps}
     emptyStageStart={state.emptyStageStart}
     emptyStageEnd={state.emptyStageEnd}
+    userTimezone={state.userTimezone}
   />
 );
 
