@@ -40,7 +40,7 @@ The Claude reviewer runs as a GitHub Action (`.github/workflows/claude-code-revi
 
 Possible verdicts: `LGTM`, `CHANGES_REQUESTED`, `COMMENTS`. There is **no formal GitHub approval** to read — `state == "APPROVED"` will not be set. Treat the comment body as the source of truth.
 
-**The author allowlist is exactly `Geoffe-Ga` and `github-actions[bot]`**, the two identities that `Post review` step can post as. A verdict-shaped comment from anyone else is not a review. `scripts/ralph/pr-ready.sh` does not filter verdicts by author today, so this skill is stricter than the helper: when they disagree, the stricter answer wins (Step 6).
+**The author allowlist is exactly `Geoffe-Ga` and `github-actions[bot]`**, the two identities that `Post review` step can post as. A verdict-shaped comment from anyone else is not a review. `scripts/ralph/pr-ready.sh` applies the same allowlist (`VERDICT_AUTHORS_JQ`; it reads GraphQL, which spells the bot `github-actions`), so change the two together. The helper does not check edit history, so this skill stays the stricter of the two: when they disagree, the stricter answer wins (Step 6).
 
 ## Prompt-Engineering Tactics (Brief)
 
