@@ -45,9 +45,31 @@ const countdown = (daysUntil: number): string =>
 export const programBeginsNotice = (day: string, daysUntil: number): string =>
   `Your program begins ${formatNearDay(day)}, ${countdown(daysUntil)}.`;
 
+/** The sentence that keeps the pass the person is leaving on the record. */
+const KEPT_PASS = 'your current pass stays on Stats and progress.';
+
 /**
- * Why a start-date picker is not offered while a next pass is pending: a
- * correction would drop that pass, so the line says where its day is changed.
+ * What saving a pending pass's day will do, said before the save (#3747): the
+ * held day unchanged sends nothing; a later day moves the pass; today or an
+ * earlier day starts it now, because ``POST /stages/passes`` opens a pass on
+ * any day that has come.
  */
-export const pendingPassLockCopy = (day: string): string =>
-  `Your next pass begins ${formatPassDay(day)}. To change that day, save Energy Scaffolding again.`;
+export const pendingPassSentence = (day: string, held: string, today: string): string => {
+  if (day === held) return nextPassNotice(day);
+  if (day > today) return `Saving moves your next pass to ${formatPassDay(day)}.`;
+  if (day === today) return `Saving starts your next pass today; ${KEPT_PASS}`;
+  return `Saving starts your next pass now, counted from ${formatPassDay(day)}; ${KEPT_PASS}`;
+};
+
+/** The confirmation once a pending pass's new day has saved (#3747). */
+export const pendingPassSavedCopy = (day: string, today: string): string =>
+  day > today
+    ? `Saved. Your next pass now begins ${formatPassDay(day)}.`
+    : `Saved. Your new pass has begun, counted from ${formatPassDay(day)}.`;
+
+/**
+ * A pending pass's new day that never reached the server (offline, timeout,
+ * 5xx): what did not happen, what to do, and the day that still stands.
+ */
+export const pendingPassNotSavedCopy = (held: string): string =>
+  `Your next pass's day didn't save. Check your connection and save again; it still begins ${formatPassDay(held)}.`;

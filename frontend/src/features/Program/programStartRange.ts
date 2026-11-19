@@ -24,19 +24,20 @@ export interface ProgramStartRange {
   maxDay: string;
   /** Today in the account zone, the day a picker with nothing held opens on. */
   today: string;
-  /**
-   * No picker is offered: in cycle 2 and later the date is fixed, and while a
-   * next pass is pending a correction would drop it (#3728).
-   */
+  /** No correction is offered: in cycle 2 and later the date is fixed. */
   locked: boolean;
-  /** The day a pending next pass begins, when that is what locks the date. */
+  /**
+   * The day a pending next pass begins, or null. While one is pending, a
+   * screen offers that day instead of a correction (#3747): the server's PUT
+   * would drop the pending pass.
+   */
   pendingPassDay: string | null;
 }
 
 /**
- * The range that corrects the pass the person is in. ``pendingPassDay`` locks
- * it as well: the server drops a pending pass on any correction, so that day
- * is changed by saving Energy Scaffolding again instead (#3728).
+ * The range that corrects the pass the person is in. ``pendingPassDay`` is
+ * carried alongside: while a pass is pending, the start-date screens offer
+ * that pass's day rather than this correction, which would drop it (#3747).
  */
 export function programStartRange(
   window: ProgramStartWindow | null,
@@ -50,7 +51,7 @@ export function programStartRange(
     minDay,
     maxDay: window?.latest ?? today,
     today,
-    locked: locked || pendingPassDay !== null,
+    locked,
     pendingPassDay,
   };
 }

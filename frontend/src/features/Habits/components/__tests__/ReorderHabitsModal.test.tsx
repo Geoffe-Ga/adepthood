@@ -6,6 +6,7 @@ import React from 'react';
 import { Modal, StyleSheet } from 'react-native';
 
 import { messageForCode } from '../../../../api/errorMessages';
+import { parseISODate } from '../../../../components/DatePicker';
 import { TOTAL_PROGRAM_DAYS } from '../../../../constants/program';
 import { accent, STAGE_COLORS } from '../../../../design/tokens';
 import { useProgramStore } from '../../../../store/useProgramStore';
@@ -13,6 +14,7 @@ import { addDaysInTZ, dayKeyInTZ, todayInUserTZ } from '../../../../utils/dateUt
 import type { ProgramStartOutcome } from '../../../Program/programAnchor';
 import type { Habit } from '../../Habits.types';
 import { HABIT_ROWS_NOT_MOVED_COPY } from '../../services/habitManager';
+import { layProgramRows } from '../../services/habitOrdering';
 import { REORDER_HABITS_CLOSE_LABEL } from '../modalCloseLabels';
 
 jest.mock('@react-native-async-storage/async-storage', () => ({
@@ -49,9 +51,30 @@ const mockCommitProgramStart = jest.fn(
     return Promise.resolve({ kind: 'saved' });
   },
 );
+// The pending pass's own commit (#3747): ``POST /stages/passes``. Its echo holds a
+// future day as pending and opens the pass now on a day that has come.
+const mockCommitPassStart = jest.fn(
+  (day: string, _options: { tz: string }): Promise<ProgramStartOutcome> => {
+    const later = day > todayInUserTZ(Intl.DateTimeFormat().resolvedOptions().timeZone);
+    const running = useProgramStore.getState().programStartDay;
+    const latest = useProgramStore.getState().passStartWindow?.latest ?? day;
+    useProgramStore.getState().adoptServerProgramStart({
+      day: later ? running : day,
+      window: null,
+      locked: false,
+      pass: {
+        daysUntilStart: 0,
+        pendingPassStartsOn: later ? day : null,
+        passStartWindow: { earliest: later ? (running ?? day) : day, latest },
+      },
+    });
+    return Promise.resolve({ kind: 'saved' });
+  },
+);
 jest.mock('../../../Program/programAnchor', () => ({
   commitProgramStart: (day: string, options: { tz: string }) =>
     mockCommitProgramStart(day, options),
+  commitPassStart: (day: string, options: { tz: string }) => mockCommitPassStart(day, options),
 }));
 
 // Captured picker props so structural / prop tests can introspect them.
@@ -157,6 +180,7 @@ const resetProgramStore = () =>
 beforeEach(() => {
   lastModalDatePickerProps.current = null;
   mockCommitProgramStart.mockClear();
+  mockCommitPassStart.mockClear();
   act(() => resetProgramStore());
 });
 
@@ -1400,39 +1424,6 @@ describe('ReorderHabitsModal — the server decides the start date (#3097)', () 
     expect(result.queryByTestId('reorder-start-date-notice')).toBeNull();
   });
 
-  it('locks the date while a next pass is pending, so no PUT can drop it (#3728)', async () => {
-    act(() =>
-      useProgramStore.getState().adoptServerProgramStart({
-        day: '2026-03-10',
-        window: { earliest: '2026-01-02', latest: SERVED_LATEST },
-        locked: false,
-        pass: {
-          daysUntilStart: 0,
-          pendingPassStartsOn: '2026-12-01',
-          passStartWindow: { earliest: '2026-03-10', latest: SERVED_LATEST },
-        },
-      }),
-    );
-    const onSaveOrder = jest.fn((_habits: Habit[]) => Promise.resolve(true));
-    const result = render(
-      <ReorderHabitsModal visible habits={HABITS} onClose={jest.fn()} onSaveOrder={onSaveOrder} />,
-    );
-
-    expect(result.queryByTestId('reorder-start-date')).toBeNull();
-    expect(result.getByTestId('program-start-fixed')).toBeTruthy();
-    expect(
-      result.getByText(
-        'Your next pass begins December 1, 2026. To change that day, save Energy Scaffolding again.',
-      ),
-    ).toBeTruthy();
-
-    await act(async () => {
-      fireEvent.press(result.getByText('Save Order'));
-    });
-    expect(mockCommitProgramStart).not.toHaveBeenCalled();
-    expect(onSaveOrder).toHaveBeenCalledTimes(1);
-  });
-
   it('shows a fixed date, not a picker, once begin-again has run', async () => {
     act(() =>
       useProgramStore.getState().adoptServerProgramStart({
@@ -1637,5 +1628,197 @@ describe('ReorderHabitsModal — the server decides the start date (#3097)', () 
     // A new sitting owes nothing to the last one: an order-only failure closes.
     expect(onSaveOrder).toHaveBeenLastCalledWith(expect.any(Array), { anchorSaved: false });
     expect(onClose).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('ReorderHabitsModal — a pending pass is rescheduled, not locked (#3747)', () => {
+  const RUNNING_DAY = '2026-03-10';
+  /** A next pass held a fortnight ahead of the device's today. */
+  const PENDING_DAYS_AHEAD = 14;
+  const MOVED_DAYS_AHEAD = 30;
+  const today = todayInUserTZ(DEVICE_ZONE);
+  const pendingDay = addDaysInTZ(today, PENDING_DAYS_AHEAD, DEVICE_ZONE);
+  const movedDay = addDaysInTZ(today, MOVED_DAYS_AHEAD, DEVICE_ZONE);
+  /** The mock picker's confirm: June 1, 2026, a day that has already come. */
+  const EARLIER_DAY = '2026-06-01';
+
+  const holdPending = (locked = false) =>
+    act(() =>
+      useProgramStore.getState().adoptServerProgramStart({
+        day: RUNNING_DAY,
+        window: locked ? null : { earliest: '2026-01-02', latest: SERVED_LATEST },
+        locked,
+        pass: {
+          daysUntilStart: 0,
+          pendingPassStartsOn: pendingDay,
+          passStartWindow: { earliest: RUNNING_DAY, latest: SERVED_LATEST },
+        },
+      }),
+    );
+
+  const startDays = (rows: Habit[]): string[] =>
+    rows.map((row) => dayKeyInTZ(new Date(row.start_date), DEVICE_ZONE));
+
+  /** The scaffolding save that held the pass laid its rows from the pending day. */
+  const PENDING_ROWS = layProgramRows(HABITS, pendingDay, DEVICE_ZONE);
+  const PENDING_ROW_DAYS = startDays(PENDING_ROWS);
+
+  const openPending = (onSaveOrder = jest.fn((_habits: Habit[]) => Promise.resolve(true))) => {
+    holdPending();
+    const result = render(
+      <ReorderHabitsModal
+        visible
+        habits={PENDING_ROWS}
+        onClose={jest.fn()}
+        onSaveOrder={onSaveOrder}
+      />,
+    );
+    return { result, onSaveOrder };
+  };
+
+  const pickPassDay = (result: ReturnType<typeof render>, day: string) => {
+    fireEvent.press(result.getByTestId('reorder-pass-date'));
+    act(() => {
+      (lastModalDatePickerProps.current!.onConfirm as (_d: Date) => void)(
+        new Date(`${day}T00:00:00`),
+      );
+    });
+  };
+
+  it("shows the rows' own start read-only and offers the pending day in the pass window", () => {
+    const { result } = openPending();
+
+    expect(result.queryByTestId('reorder-start-date')).toBeNull();
+    // Laid from the rows' own first day, not the running start: opening the
+    // modal moves no row (#3747).
+    expect(result.getByTestId('program-start-fixed')).toHaveTextContent(
+      `First Habit Start Date: ${parseISODate(pendingDay).toLocaleDateString('en-US', {
+        month: 'short',
+        day: 'numeric',
+        year: 'numeric',
+      })}`,
+    );
+    expect(startDays(getOrderedHabits(result))).toEqual(PENDING_ROW_DAYS);
+    expect(result.getByTestId('reorder-pass-sentence')).toHaveTextContent(
+      /^Your next pass begins /,
+    );
+
+    fireEvent.press(result.getByTestId('reorder-pass-date'));
+    const props = lastModalDatePickerProps.current!;
+    expect(dayKeyInTZ(props.date as Date, DEVICE_ZONE)).toBe(pendingDay);
+    // The scaffold picker's floor rule: never the running pass's own start.
+    expect(dayKeyInTZ(props.minimumDate as Date, DEVICE_ZONE)).toBe('2026-03-11');
+    expect(dayKeyInTZ(props.maximumDate as Date, DEVICE_ZONE)).toBe(SERVED_LATEST);
+  });
+
+  it('reschedules a later day with one POST before the order: no PUT, rows not re-laid', async () => {
+    const { result, onSaveOrder } = openPending();
+
+    pickPassDay(result, movedDay);
+    expect(result.getByTestId('reorder-pass-sentence')).toHaveTextContent(
+      /^Saving moves your next pass to /,
+    );
+    await act(async () => {
+      fireEvent.press(result.getByText('Save Order'));
+    });
+
+    expect(mockCommitPassStart).toHaveBeenCalledTimes(1);
+    expect(mockCommitPassStart).toHaveBeenCalledWith(movedDay, { tz: DEVICE_ZONE });
+    expect(mockCommitProgramStart).not.toHaveBeenCalled();
+    expect(mockCommitPassStart.mock.invocationCallOrder[0]).toBeLessThan(
+      onSaveOrder.mock.invocationCallOrder[0]!,
+    );
+    expect(onSaveOrder).toHaveBeenCalledWith(expect.any(Array), { anchorSaved: false });
+    expect(startDays(onSaveOrder.mock.calls[0]![0])).toEqual(PENDING_ROW_DAYS);
+    expect(useProgramStore.getState().pendingPassStartsOn).toBe(movedDay);
+  });
+
+  it('says an earlier day starts the pass now, and starts it with the POST', async () => {
+    const { result, onSaveOrder } = openPending();
+
+    fireEvent.press(result.getByTestId('reorder-pass-date'));
+    fireEvent.press(result.getByTestId('modal-datetime-confirm'));
+    expect(result.getByTestId('reorder-pass-sentence')).toHaveTextContent(
+      /^Saving starts your next pass now, counted from June 1, 2026; your current pass stays on Stats and progress\.$/,
+    );
+    await act(async () => {
+      fireEvent.press(result.getByText('Save Order'));
+    });
+
+    expect(mockCommitPassStart).toHaveBeenCalledWith(EARLIER_DAY, { tz: DEVICE_ZONE });
+    expect(mockCommitProgramStart).not.toHaveBeenCalled();
+    expect(onSaveOrder).toHaveBeenCalledWith(expect.any(Array), { anchorSaved: false });
+    expect(startDays(onSaveOrder.mock.calls[0]![0])).toEqual(PENDING_ROW_DAYS);
+    expect(useProgramStore.getState().pendingPassStartsOn).toBeNull();
+    expect(useProgramStore.getState().programStartDay).toBe(EARLIER_DAY);
+  });
+
+  it('sends no POST when the pending day was left alone', async () => {
+    const { result, onSaveOrder } = openPending();
+
+    await act(async () => {
+      fireEvent.press(result.getByText('Save Order'));
+    });
+
+    expect(mockCommitPassStart).not.toHaveBeenCalled();
+    expect(mockCommitProgramStart).not.toHaveBeenCalled();
+    expect(onSaveOrder).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps the modal open on a refusal, says why, sends no rows and puts the day back', async () => {
+    mockCommitPassStart.mockImplementationOnce(() =>
+      Promise.resolve({ kind: 'refused', message: 'Too far ahead.' }),
+    );
+    const onClose = jest.fn();
+    holdPending();
+    const onSaveOrder = jest.fn((_habits: Habit[]) => Promise.resolve(true));
+    const result = render(
+      <ReorderHabitsModal visible habits={HABITS} onClose={onClose} onSaveOrder={onSaveOrder} />,
+    );
+
+    pickPassDay(result, movedDay);
+    await act(async () => {
+      fireEvent.press(result.getByText('Save Order'));
+    });
+
+    expect(result.getByTestId('reorder-start-date-notice')).toHaveTextContent('Too far ahead.');
+    expect(onSaveOrder).not.toHaveBeenCalled();
+    expect(onClose).not.toHaveBeenCalled();
+    expect(result.getByTestId('reorder-pass-sentence')).toHaveTextContent(
+      /^Your next pass begins /,
+    );
+  });
+
+  it('still offers the pending day in a later cycle, and says why the start is fixed', () => {
+    holdPending(true);
+    const result = render(
+      <ReorderHabitsModal visible habits={HABITS} onClose={jest.fn()} onSaveOrder={jest.fn()} />,
+    );
+
+    expect(result.getByTestId('reorder-pass-date')).toBeTruthy();
+    expect(result.getByText(/begin again/i)).toBeTruthy();
+  });
+
+  it('offers the pending day through a date input on web', () => {
+    const Platform = require('react-native').Platform as { OS: string };
+    const originalOS = Platform.OS;
+    Platform.OS = 'web';
+    try {
+      const { result } = openPending();
+      const input = result.UNSAFE_root.findByProps({ 'data-testid': 'reorder-pass-date-input' });
+
+      expect(input.props).toMatchObject({
+        value: pendingDay,
+        min: '2026-03-11',
+        max: SERVED_LATEST,
+        'aria-label': 'Next pass start date',
+      });
+      act(() => input.props.onChange({ target: { value: movedDay } }));
+      expect(result.getByTestId('reorder-pass-sentence')).toHaveTextContent(
+        /^Saving moves your next pass to /,
+      );
+    } finally {
+      Platform.OS = originalOS;
+    }
   });
 });

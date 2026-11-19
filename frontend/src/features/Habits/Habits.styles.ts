@@ -449,6 +449,19 @@ export const styles = StyleSheet.create({
     fontFamily: fonts.sans,
     fontSize: 16,
   },
+  // What saving the pending pass's day will do, said before the save (#3747).
+  reorderPassSentence: {
+    fontSize: 14,
+    color: ink.primary,
+    fontFamily: fonts.sans,
+    marginTop: -SPACING.sm,
+    marginBottom: SPACING.lg,
+  },
+  // The pending-pass row sits under the fixed start date, whose own margin
+  // already spaces the two; a second full margin left a loose gap (#3747).
+  reorderPassRow: {
+    marginTop: 0,
+  },
   reorderInstructions: {
     fontSize: 14,
     color: ink.muted,
