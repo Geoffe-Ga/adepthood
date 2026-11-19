@@ -7,8 +7,10 @@ import math
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
+from domain.constants import STAGE_DURATIONS_DAYS
 from domain.dates import ensure_aware, to_user_date
 from domain.program_calendar import calendar_day_in_stage, days_until_start, effective_anchor
+from domain.stage_authority import open_through, reanchor_program
 
 if TYPE_CHECKING:
     from models.stage_progress import StageProgress
@@ -16,9 +18,12 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-def compute_days_elapsed(stage_started_at: datetime) -> int:
-    """Return whole days elapsed; clamps a future ``stage_started_at`` to 0 + WARNING."""
-    now = datetime.now(UTC)
+def compute_days_elapsed(stage_started_at: datetime, now: datetime | None = None) -> int:
+    """Return whole days elapsed to ``now`` (the wall clock when None).
+
+    A future ``stage_started_at`` clamps to 0 and logs a WARNING.
+    """
+    now = ensure_aware(now) if now is not None else datetime.now(UTC)
     # SQLite drops tzinfo on round-trip, so coerce naive values to UTC
     # before subtraction to avoid TypeError under the test fixture.
     stage_started_at = ensure_aware(stage_started_at)
@@ -36,6 +41,100 @@ def compute_days_elapsed(stage_started_at: datetime) -> int:
 NOT_BEGUN_DAY = 0
 
 
+# -- The Course high-water mark (issue #3744) ----------------------------------
+#
+# The owner's decision on epic #3722: "The course work should stay at the
+# highest unlocked point that the user has reached until they begin to pass
+# their high water mark again, never go back down to beige in a reset, metta or
+# otherwise." The mark is ``StageProgress.highest_stage_reached`` (the stage)
+# with ``highest_drip_day`` (how far that stage had dripped), and the two
+# functions below are the whole rule: the stage gate and the drip both read it,
+# so the Courses router and the reading invitations cannot disagree. It is
+# about Course access only -- ``current_stage``, the calendar and
+# :func:`domain.stage_authority.open_through` (pacing for habits, practice and
+# prompts) are left exactly as they were.
+
+
+def course_open_through(
+    progress: StageProgress | None,
+    now: datetime | None = None,
+    *,
+    tz: str | None = None,
+) -> int:
+    """The highest stage whose Course reading is open to this person.
+
+    :func:`domain.stage_authority.open_through` (the calendar and the record)
+    widened by the lifetime mark: a stage once reached stays open after
+    begin-again, a rescaffold or a re-pick moves the record back below it.
+    """
+    opened = open_through(progress, now, tz=tz)
+    if progress is None:
+        return opened
+    return max(opened, progress.highest_stage_reached)
+
+
+def held_drip_day(progress: StageProgress, stage_number: int, *, duration_days: int) -> int:
+    """The drip day the lifetime mark holds open in ``stage_number``.
+
+    Every stage below the mark is held fully open, the mark itself as far as it
+    had dripped when the record last left it, and anything above it not at all
+    -- there the live calendar and record are the only pacing.
+    """
+    mark = progress.highest_stage_reached
+    if stage_number < mark:
+        return duration_days
+    if stage_number == mark:
+        return progress.highest_drip_day
+    return NOT_BEGUN_DAY
+
+
+def stage_duration_days(stage_number: int) -> int:
+    """Days ``stage_number`` lasts, clamped to the curriculum's ten stages."""
+    index = min(max(stage_number, 1), len(STAGE_DURATIONS_DAYS)) - 1
+    return STAGE_DURATIONS_DAYS[index]
+
+
+def course_high_water_day(progress: StageProgress, *, now: datetime, tz: str) -> int:
+    """How far the mark's own stage has dripped for ``progress`` as of ``now``.
+
+    Monotone: the day measured already includes what the mark held, so holding
+    it again never shrinks what is held.
+    """
+    mark = progress.highest_stage_reached
+    return drip_day_in_stage(
+        progress, mark, duration_days=stage_duration_days(mark), tz=tz, now=now
+    )
+
+
+def hold_course_high_water(progress: StageProgress, *, now: datetime, tz: str) -> None:
+    """Hold how far the mark's stage has dripped, before a reset moves the record back.
+
+    Called by the cycle loop shared by begin-again, a rescaffold and an arriving
+    pending pass, immediately before it returns the record to stage 1. ``now``
+    is the last moment the outgoing calendar was the one the person saw.
+    Mutates in place; the caller holds the row lock and commits.
+    """
+    progress.highest_drip_day = course_high_water_day(progress, now=now, tz=tz)
+
+
+def reanchor_keeping_course(
+    progress: StageProgress, anchor: datetime, now: datetime, *, tz: str
+) -> None:
+    """:func:`domain.stage_authority.reanchor_program`, keeping the Course where it was.
+
+    The first-cycle re-pick is a correction of the pass the person is in, not a
+    reset, so the mark's drip is held only when the correction moves the record
+    off the mark -- below it. A re-pick that leaves the record on the mark keeps
+    the live drip and the not-yet-begun rule of issue #3725 exactly as they
+    were; one that carries the record past it raises the mark instead.
+    Mutates in place; the caller holds the row lock and commits.
+    """
+    reached = course_high_water_day(progress, now=now, tz=tz)
+    reanchor_program(progress, anchor, now, tz=tz)
+    if progress.current_stage < progress.highest_stage_reached:
+        progress.highest_drip_day = reached
+
+
 def drip_day_in_stage(
     progress: StageProgress,
     stage_number: int,
@@ -47,8 +146,27 @@ def drip_day_in_stage(
     """The 1-based day ``progress`` stands on within ``stage_number`` for the drip.
 
     The one rule the Course listing and the reading invitations share, so a
-    chapter the listing withholds is never recommended. Advancement is honored
-    so time can only widen access, never revoke it:
+    chapter the listing withholds is never recommended. The day is the further
+    of the live drip (:func:`_live_drip_day`) and what the lifetime mark holds
+    (:func:`held_drip_day`), so neither time nor a reset can take a chapter
+    back: once the new pass's own drip passes the mark, it paces as before.
+    """
+    held = held_drip_day(progress, stage_number, duration_days=duration_days)
+    live = _live_drip_day(progress, stage_number, duration_days=duration_days, tz=tz, now=now)
+    return max(held, live)
+
+
+def _live_drip_day(
+    progress: StageProgress,
+    stage_number: int,
+    *,
+    duration_days: int,
+    tz: str,
+    now: datetime | None,
+) -> int:
+    """The drip day the current calendar and record give ``stage_number``.
+
+    Advancement is honored so time can only widen access, never revoke it:
 
     - a **past** stage returns its full ``duration_days`` → every chapter open;
     - a program that has **not begun** (its start is still ahead, issue #3725)
@@ -70,7 +188,7 @@ def drip_day_in_stage(
     anchor = effective_anchor(progress, today, tz=tz)
     calendar_day = calendar_day_in_stage(anchor, stage_number, moment, tz=tz)
     if progress.current_stage == stage_number:
-        return max(calendar_day, compute_days_elapsed(progress.stage_started_at) + 1)
+        return max(calendar_day, compute_days_elapsed(progress.stage_started_at, moment) + 1)
     return calendar_day
 
 

@@ -614,7 +614,9 @@ RETENTION: Mapping[str, RetentionRule] = {
         )
     ),
     "stagecontent": shared_catalogue("Shared curriculum chapters."),
-    "stageprogress": until_account_deletion("Where the account had reached."),
+    "stageprogress": until_account_deletion(
+        "Where the account had reached, and the Course high-water mark."
+    ),
     "user": until_account_deletion(
         "The account row itself. Account deletion hard-deletes it; its soft-delete "
         "column is never written.",

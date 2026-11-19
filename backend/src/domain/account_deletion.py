@@ -388,7 +388,10 @@ POLICY: Mapping[str, TablePolicy] = {
         "exists to sweep on, and the rows age out on their own.",
     ),
     "stagecontent": _retain("Shared curriculum chapters."),
-    "stageprogress": _erase("user_id", "Where the account had reached in the 36 weeks."),
+    "stageprogress": _erase(
+        "user_id",
+        "Where the account had reached in the 36 weeks, and the Course high-water mark.",
+    ),
     "user": TablePolicy(
         disposition=Disposition.ERASE,
         rationale=(

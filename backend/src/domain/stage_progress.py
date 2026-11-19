@@ -12,10 +12,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import col, select
 
 from domain.constants import TOTAL_STAGES
+from domain.course import course_open_through
 from domain.dates import ensure_aware, to_user_date
 from domain.program_calendar import resolve_program_anchor
 from domain.program_pass import first_pass
-from domain.stage_authority import open_through
 from models.content_completion import ContentCompletion
 from models.course_stage import CourseStage
 from models.goal import Goal
@@ -128,9 +128,12 @@ def is_stage_unlocked(
     *,
     tz: str | None = None,
 ) -> bool:
-    """Return True iff the stage is open by the calendar OR by the record.
+    """Return True iff the stage is open by the calendar, the record OR the lifetime mark.
 
-    The gate is :func:`domain.stage_authority.open_through` and nothing else:
+    The gate is :func:`domain.course.course_open_through` and nothing else --
+    :func:`domain.stage_authority.open_through` widened by
+    ``highest_stage_reached``, so a stage once reached stays open after
+    begin-again, a rescaffold or a re-pick (issue #3744). ``open_through`` is:
     the union of what the calendar has opened and what the record has entered,
     evaluated in the caller's timezone (``tz``; UTC when None) so the server
     counts the same local midnights the client does and never 403s a stage the
@@ -139,7 +142,7 @@ def is_stage_unlocked(
     calendar is server-computed, so the union cannot let a client skip ahead
     either. Stage 1 is open to everyone, including a user with no row yet.
     """
-    return stage_number <= open_through(progress, now, tz=tz)
+    return stage_number <= course_open_through(progress, now, tz=tz)
 
 
 async def _compute_habits_progress(

@@ -95,6 +95,9 @@ __all__ = [
 #: program's first stage is open to everyone from the first screen.
 FIRST_STAGE = 1
 
+#: ``highest_drip_day`` for a mark the record stands on: nothing held, the live drip paces it.
+_NOTHING_HELD = 0
+
 
 @dataclass(frozen=True)
 class StageStanding:
@@ -170,10 +173,17 @@ def _enter(progress: StageProgress, stage_number: int, entered_at: datetime) -> 
     being credited with having engaged those stages. What they actually did
     inside a stage is measured by ``compute_stage_progress``, which reads
     habits, practice and course rows and knows nothing of this column.
+
+    Entering past the lifetime mark raises it and clears ``highest_drip_day``,
+    which only ever describes the mark's own stage.
     """
     progress.current_stage = stage_number
     progress.completed_stages = list(range(FIRST_STAGE, stage_number))
-    progress.highest_stage_reached = max(progress.highest_stage_reached, stage_number)
+    if stage_number > progress.highest_stage_reached:
+        # The mark moves onto a stage the record now stands on, so the live
+        # drip paces it and nothing is held there yet (issue #3744).
+        progress.highest_stage_reached = stage_number
+        progress.highest_drip_day = _NOTHING_HELD
     progress.stage_started_at = entered_at
 
 

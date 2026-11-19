@@ -18,6 +18,10 @@ class StageProgress(SQLModel, table=True):
             "highest_stage_reached >= 1",
             name="ck_stageprogress_highest_stage_reached_positive",
         ),
+        CheckConstraint(
+            "highest_drip_day >= 0",
+            name="ck_stageprogress_highest_drip_day_non_negative",
+        ),
     )
 
     id: int | None = Field(default=None, primary_key=True)
@@ -73,5 +77,13 @@ class StageProgress(SQLModel, table=True):
     # Monotone — bumped on advance, never cleared by begin-again — so a Return
     # stays eligible from any current stage once Blue was ever passed.
     highest_stage_reached: int = Field(default=1, ge=1)
+    # How far the Course had dripped inside ``highest_stage_reached`` when the
+    # record last left it (issue #3744). The Course holds every stage below the
+    # mark fully open and the mark itself open to at least this day, through
+    # begin-again, a rescaffold and a first-cycle re-pick, so a reset never
+    # takes back a chapter the person already had. 0 while the record still
+    # stands on the mark (the live drip answers) and whenever the mark rises
+    # onto a new stage. Written by ``domain.course.hold_course_high_water``.
+    highest_drip_day: int = Field(default=0, ge=0)
     user_id: int = Field(foreign_key="user.id", unique=True, ondelete="CASCADE")
     user: "User" = Relationship(back_populates="stage_progress")

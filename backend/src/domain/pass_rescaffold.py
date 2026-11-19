@@ -29,9 +29,10 @@ Every writer here mutates and never commits: callers hold the
 
 from __future__ import annotations
 
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, timedelta
 from typing import TYPE_CHECKING
 
+from domain.course import hold_course_high_water
 from domain.dates import day_bounds_in_tz, ensure_aware, to_user_date
 from domain.program_calendar import resolve_program_anchor
 from domain.program_pass import open_next_pass
@@ -50,6 +51,10 @@ __all__ = [
     "pending_pass_due",
     "settle_pending_pass",
 ]
+
+#: The smallest step back from a pending pass's first instant: the last moment
+#: the pass it replaces was still the one the person saw.
+_LAST_INSTANT_BEFORE = timedelta(microseconds=1)
 
 
 def _padded_anchors(existing: StageProgress) -> list[str | None]:
@@ -79,7 +84,24 @@ def _retained_anchors(existing: StageProgress) -> list[str | None]:
     return [*_padded_anchors(existing), anchor.isoformat()]
 
 
-def loop_to_next_cycle(existing: StageProgress, anchor: datetime) -> None:
+def _last_seen(progress: StageProgress, now: datetime, tz: str) -> datetime:
+    """The last moment the outgoing pass was the calendar the person saw.
+
+    ``now`` for begin-again and a save for today or earlier. A pending pass
+    whose day has come took over the calendar at that day's first instant
+    (:func:`domain.program_calendar.effective_anchor`), so the outgoing pass
+    was last seen just before it, however late the read that opens it.
+    """
+    pending = progress.pending_pass_starts_on
+    if pending is None or not pending_pass_due(progress, to_user_date(tz, ensure_aware(now))):
+        return now
+    start, _ = day_bounds_in_tz(tz, pending)
+    return min(ensure_aware(now), start - _LAST_INSTANT_BEFORE)
+
+
+def loop_to_next_cycle(
+    existing: StageProgress, anchor: datetime, *, now: datetime, tz: str
+) -> None:
     """Mutate ``existing`` in place into the next cycle, starting at ``anchor``.
 
     Retains the OUTGOING cycle's calendar anchor on ``past_cycle_anchors``
@@ -101,7 +123,13 @@ def loop_to_next_cycle(existing: StageProgress, anchor: datetime) -> None:
     Shared by begin-again (``anchor`` is now) and a scaffolding re-run (the
     local midnight of the chosen day): a new pass is a new cycle either way, so
     the outgoing cycle's recorded end -- the incoming anchor -- stays true.
+
+    Before anything moves, the Course high-water mark records how far the
+    outgoing pass had dripped the mark's stage as of ``now``
+    (:func:`domain.course.hold_course_high_water`, issue #3744), so the reset
+    returns the record to stage 1 without taking back any reading.
     """
+    hold_course_high_water(existing, now=_last_seen(existing, now, tz), tz=tz)
     existing.past_cycle_anchors = _retained_anchors(existing)
     existing.cycle_number += 1
     existing.current_stage = FIRST_STAGE
@@ -131,7 +159,7 @@ async def open_pass_on(
         session, progress, started_on=start_day, origin=PassOrigin.RESCAFFOLD, tz=tz
     )
     anchor, _ = day_bounds_in_tz(tz, start_day)
-    loop_to_next_cycle(progress, anchor)
+    loop_to_next_cycle(progress, anchor, now=now, tz=tz)
     reanchor_program(progress, anchor, now, tz=tz)
 
 

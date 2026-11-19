@@ -502,7 +502,8 @@ MANIFEST: Mapping[str, ExportRule] = {
     "stageprogress": _include(
         "stage_progress",
         StageProgress,
-        "Where the account had reached in the 36 weeks, and how many times round it had been.",
+        "Where the account had reached in the 36 weeks, how many times round it had "
+        "been, and how far its Course reading is held open (its lifetime high-water mark).",
     ),
     "user": Included(
         key="account",
