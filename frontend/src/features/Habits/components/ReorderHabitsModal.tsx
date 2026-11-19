@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import type { ComponentType } from 'react';
 import { Modal, Platform, Text, TouchableOpacity, View } from 'react-native';
+import type { StyleProp, ViewStyle } from 'react-native';
 import DraggableFlatList from 'react-native-draggable-flatlist';
 
 import { decorativeHidden } from '../../../components/a11yHidden';
@@ -9,7 +10,7 @@ import { parseISODate, toISODate } from '../../../components/DatePicker';
 import { useTheme } from '../../../design/ThemeContext';
 import { SPACING } from '../../../design/tokens';
 import { useProgramStore } from '../../../store/useProgramStore';
-import { detectDeviceTimezone } from '../../../utils/dateUtils';
+import { dayKeyInTZ, detectDeviceTimezone } from '../../../utils/dateUtils';
 import { commitProgramStart } from '../../Program/programAnchor';
 import { ProgramStartFixed } from '../../Program/ProgramStartFixed';
 import {
@@ -17,6 +18,7 @@ import {
   useProgramStartRange,
   type ProgramStartRange,
 } from '../../Program/programStartRange';
+import { usePendingPassPick, type PendingPassPick } from '../../Program/usePendingPassPick';
 import { MAX_HABITS } from '../constants';
 import styles from '../Habits.styles';
 import type { Habit, ReorderHabitsModalProps, SaveHabitOrder } from '../Habits.types';
@@ -62,6 +64,20 @@ const formatDate = (date: Date): string =>
  */
 const updateStartDates = (habits: Habit[], startDate: Date, userTimezone: string): Habit[] =>
   layProgramRows(habits, toISODate(startDate), userTimezone);
+
+/**
+ * The first day the program rows already hold, as a device-calendar Date like
+ * the picker's, or null when no program row is held. Carryover rows and demo
+ * tiles carry no program date, so they are skipped.
+ */
+const heldRowsStart = (habits: readonly Habit[], tz: string): Date | null => {
+  const times = habits
+    .filter((habit) => !isCarryoverHabit(habit) && habit.isDemoSeed !== true)
+    .map((habit) => new Date(habit.start_date).getTime())
+    .filter((time) => !Number.isNaN(time));
+  if (times.length === 0) return null;
+  return parseISODate(dayKeyInTZ(new Date(Math.min(...times)), tz));
+};
 
 const groupBySignedRange = (habits: Habit[]): Habit[] => [
   ...habits.filter(isCarryoverHabit),
@@ -247,27 +263,36 @@ const ReorderPageMarker = ({ page }: { page: number }) => {
 interface ReorderDateButtonProps {
   startDate: Date;
   range: ProgramStartRange;
+  /** The pending next pass, whose day is offered instead of a correction (#3747). */
+  pass: PendingPassPick;
   notice: string | null;
   onOpenPicker: () => void;
   onSelectDate: (_date: Date) => void;
+  onSelectPassDate: (_date: Date) => void;
 }
 
 const START_DATE_LABEL = 'First Habit Start Date:';
+const PASS_DATE_LABEL = 'Next Pass Begins:';
+
+interface WebDateButtonProps {
+  date: Date;
+  range: Pick<ProgramStartRange, 'minDay' | 'maxDay'>;
+  /** ``reorder-start-date`` or ``reorder-pass-date``; the input adds ``-input``. */
+  testID: string;
+  ariaLabel: string;
+  onSelectDate: (_date: Date) => void;
+}
 
 // Web fallback: react-native-modal-datetime-picker is a no-op on web.
-const WebDateButton = ({
-  startDate,
-  range,
-  onSelectDate,
-}: Pick<ReorderDateButtonProps, 'startDate' | 'range' | 'onSelectDate'>) => (
-  <View style={[styles.datePickerButton, { position: 'relative' }]} testID="reorder-start-date">
-    <Text style={styles.datePickerButtonText}>{formatDate(startDate)}</Text>
+const WebDateButton = ({ date, range, testID, ariaLabel, onSelectDate }: WebDateButtonProps) => (
+  <View style={[styles.datePickerButton, { position: 'relative' }]} testID={testID}>
+    <Text style={styles.datePickerButtonText}>{formatDate(date)}</Text>
     <input
-      aria-label="First habit start date"
-      data-testid="reorder-start-date-input"
+      aria-label={ariaLabel}
+      data-testid={`${testID}-input`}
       type="date"
-      value={toISODate(startDate)}
-      min={pickerFloor(range, toISODate(startDate))}
+      value={toISODate(date)}
+      min={pickerFloor(range, toISODate(date))}
       max={range.maxDay}
       onChange={(e) => {
         if (e.target.value) onSelectDate(parseISODate(e.target.value));
@@ -288,47 +313,93 @@ const WebDateButton = ({
   </View>
 );
 
-const ReorderDateButton = ({
+type DateRowProps = Omit<WebDateButtonProps, 'onSelectDate'> & {
+  label: string;
+  rowStyle?: StyleProp<ViewStyle>;
+  onOpenPicker: () => void;
+  onSelectDate: (_date: Date) => void;
+};
+
+/** A labelled date control: a date input on web, a button opening the picker elsewhere. */
+const DateRow = ({ label, rowStyle, onOpenPicker, ...button }: DateRowProps) => (
+  <View style={[styles.datePickerContainer, rowStyle]}>
+    <Text style={styles.datePickerLabel}>{label}</Text>
+    {Platform.OS === 'web' ? (
+      <WebDateButton {...button} />
+    ) : (
+      <TouchableOpacity
+        testID={button.testID}
+        style={styles.datePickerButton}
+        onPress={onOpenPicker}
+        accessibilityRole="button"
+        accessibilityLabel={button.ariaLabel}
+      >
+        <Text style={styles.datePickerButtonText}>{formatDate(button.date)}</Text>
+      </TouchableOpacity>
+    )}
+  </View>
+);
+
+const DateNotice = ({ notice }: { notice: string | null }) =>
+  notice === null ? null : (
+    <Text
+      style={styles.habitError}
+      accessibilityRole="alert"
+      accessibilityLiveRegion="polite"
+      testID="reorder-start-date-notice"
+    >
+      {notice}
+    </Text>
+  );
+
+/**
+ * While a next pass is pending (#3747): the running pass's start, shown and not
+ * offered -- a correction would drop the pending pass -- and the pending day,
+ * offered in the pass window with what saving it will do said beforehand.
+ */
+const PendingPassDate = ({
   startDate,
   range,
+  pass,
   notice,
   onOpenPicker,
-  onSelectDate,
-}: ReorderDateButtonProps) => {
-  if (range.locked)
-    return (
-      <ProgramStartFixed
-        label={START_DATE_LABEL}
-        date={startDate}
-        pendingPassDay={range.pendingPassDay}
-      />
-    );
+  onSelectPassDate,
+}: Omit<ReorderDateButtonProps, 'onSelectDate'>) => (
+  <>
+    <ProgramStartFixed label={START_DATE_LABEL} date={startDate} showReason={range.locked} />
+    <DateRow
+      label={PASS_DATE_LABEL}
+      rowStyle={styles.reorderPassRow}
+      date={parseISODate(pass.day)}
+      range={pass.range}
+      testID="reorder-pass-date"
+      ariaLabel="Next pass start date"
+      onOpenPicker={onOpenPicker}
+      onSelectDate={onSelectPassDate}
+    />
+    <Text style={styles.reorderPassSentence} testID="reorder-pass-sentence">
+      {pass.sentence}
+    </Text>
+    <DateNotice notice={notice} />
+  </>
+);
+
+const ReorderDateButton = (props: ReorderDateButtonProps) => {
+  const { startDate, range, pass, notice, onOpenPicker, onSelectDate } = props;
+  if (pass.held !== null) return <PendingPassDate {...props} />;
+  if (range.locked) return <ProgramStartFixed label={START_DATE_LABEL} date={startDate} />;
   return (
     <>
-      <View style={styles.datePickerContainer}>
-        <Text style={styles.datePickerLabel}>{START_DATE_LABEL}</Text>
-        {Platform.OS === 'web' ? (
-          <WebDateButton startDate={startDate} range={range} onSelectDate={onSelectDate} />
-        ) : (
-          <TouchableOpacity
-            testID="reorder-start-date"
-            style={styles.datePickerButton}
-            onPress={onOpenPicker}
-          >
-            <Text style={styles.datePickerButtonText}>{formatDate(startDate)}</Text>
-          </TouchableOpacity>
-        )}
-      </View>
-      {notice !== null && (
-        <Text
-          style={styles.habitError}
-          accessibilityRole="alert"
-          accessibilityLiveRegion="polite"
-          testID="reorder-start-date-notice"
-        >
-          {notice}
-        </Text>
-      )}
+      <DateRow
+        label={START_DATE_LABEL}
+        date={startDate}
+        range={range}
+        testID="reorder-start-date"
+        ariaLabel="First habit start date"
+        onOpenPicker={onOpenPicker}
+        onSelectDate={onSelectDate}
+      />
+      <DateNotice notice={notice} />
     </>
   );
 };
@@ -566,6 +637,8 @@ interface ReorderState {
   setPickerVisible: (_v: boolean) => void;
   handleDragEnd: ReorderListProps['onDragEnd'];
   handleConfirmDate: (_d: Date) => void;
+  /** A pick of the pending pass's day (#3747): previewed until Save Order. */
+  handleConfirmPassDate: (_d: Date) => void;
   handleCancelDate: () => void;
   /** True while the commit is on the wire; drives the busy control. */
   saving: boolean;
@@ -574,6 +647,8 @@ interface ReorderState {
   range: ProgramStartRange;
   /** Why the last picked date did not save, shown beside the picker. */
   notice: string | null;
+  /** The pending next pass, whose day is offered instead of a correction (#3747). */
+  pass: PendingPassPick;
 }
 
 interface ReorderHookInput {
@@ -680,7 +755,25 @@ interface StartDateGateInput {
  * A refusal or a dropped connection restores the date that still stands and
  * says why, and the rows are not sent.
  */
+/**
+ * The pending pass's half of the gate (#3747): ``POST /stages/passes`` with the
+ * picked day, before the order. A later day reschedules the pass, an earlier
+ * one starts it now; either way no anchor PUT is sent and the rows owe nothing
+ * to it, so they are not re-laid. A refusal or a dropped connection puts the
+ * held day back, says why, and the order is not sent.
+ */
+const passGate = (pass: PendingPassPick, say: (_notice: string) => void): StartDateGate => {
+  if (!pass.changed) return () => true;
+  return () =>
+    pass.commit().then((outcome) => {
+      if (outcome.kind === 'saved' || outcome.kind === 'unchanged') return true;
+      say(outcome.message);
+      return false;
+    });
+};
+
 const useStartDateGate = ({ startDate, userTimezone, range, restore }: StartDateGateInput) => {
+  const pass = usePendingPassPick(userTimezone);
   const programStartDay = useProgramStore((s) => s.programStartDay);
   const programStartDate = useProgramStore((s) => s.programStartDate);
   const [notice, setNotice] = useState<string | null>(null);
@@ -693,6 +786,7 @@ const useStartDateGate = ({ startDate, userTimezone, range, restore }: StartDate
   // are still laid from the old day until one of these saves lands.
   const anchorSavedRef = useRef(false);
   const gate: StartDateGate = () => {
+    if (pass.held !== null) return passGate(pass, setNotice)();
     const day = toISODate(startDate);
     if (!picked || range.locked || day === programStartDay) return true;
     return commitProgramStart(day, { tz: userTimezone }).then((outcome) => {
@@ -710,10 +804,16 @@ const useStartDateGate = ({ startDate, userTimezone, range, restore }: StartDate
     setPicked(true);
     setNotice(null);
   };
+  /** A new pick of the pending pass's day (#3747), sent at Save Order. */
+  const pickPassDay = (day: string) => {
+    pass.pick(day);
+    setNotice(null);
+  };
   /** The sitting is over: nothing picked, nothing saved, nothing to say. */
   const endSitting = () => {
     setPicked(false);
     setNotice(null);
+    pass.reset();
     anchorSavedRef.current = false;
   };
   const sitting: StartDateSitting = {
@@ -721,7 +821,7 @@ const useStartDateGate = ({ startDate, userTimezone, range, restore }: StartDate
     anchorSaved: () => anchorSavedRef.current,
     rowsUnsaved: () => setNotice(HABIT_ROWS_NOT_MOVED_COPY),
   };
-  return { notice, sitting, markPicked, endSitting };
+  return { notice, sitting, markPicked, pass, pickPassDay, endSitting };
 };
 
 /**
@@ -756,6 +856,37 @@ const useOpenSeed = (visible: boolean, habits: Habit[], seed: (_grouped: Habit[]
 const droppedHabits = (data: Array<Habit | ReorderEntry>): Habit[] =>
   data.some(isReorderEntry) ? habitsFromEntries(data.filter(isReorderEntry)) : (data as Habit[]);
 
+/**
+ * The rows and the start date they are previewed from. ``restartFrom`` moves
+ * both together, so the list always shows the cadence the picker shows.
+ */
+const useStartDatePreview = (userTimezone: string) => {
+  const programStartDate = useProgramStore((s) => s.programStartDate);
+  const [orderedHabits, setOrderedHabits] = useState<Habit[]>([]);
+  const [startDate, setStartDate] = useState<Date>(() => programStartDate ?? new Date());
+  const restartFrom = (date: Date) => {
+    setStartDate(date);
+    setOrderedHabits((prev) => updateStartDates(prev, date, userTimezone));
+  };
+  // While a next pass is pending the rows are laid from their own first day,
+  // not the running start, so a sitting that only moves that pass -- or starts
+  // it now -- re-lays no row (#3747).
+  const seed = (rows: Habit[], pending: boolean) => {
+    const from = (pending ? heldRowsStart(rows, userTimezone) : null) ?? startDate;
+    setStartDate(from);
+    setOrderedHabits(updateStartDates(rows, from, userTimezone));
+  };
+  return {
+    programStartDate,
+    orderedHabits,
+    setOrderedHabits,
+    startDate,
+    setStartDate,
+    restartFrom,
+    seed,
+  };
+};
+
 const useReorderState = ({
   habits,
   visible,
@@ -763,17 +894,12 @@ const useReorderState = ({
   onClose,
   onSaveOrder,
 }: ReorderHookInput): ReorderState => {
-  const programStartDate = useProgramStore((s) => s.programStartDate);
   const range = useProgramStartRange(userTimezone);
   const { saving, commit } = useOrderCommit(onSaveOrder, onClose);
-  const [orderedHabits, setOrderedHabits] = useState<Habit[]>([]);
-  const [startDate, setStartDate] = useState<Date>(() => programStartDate ?? new Date());
+  const preview = useStartDatePreview(userTimezone);
+  const { orderedHabits, setOrderedHabits, startDate, restartFrom } = preview;
   const [pickerVisible, setPickerVisible] = useState(false);
-  const restartFrom = (date: Date) => {
-    setStartDate(date);
-    setOrderedHabits((prev) => updateStartDates(prev, date, userTimezone));
-  };
-  const { notice, sitting, markPicked, endSitting } = useStartDateGate({
+  const { notice, sitting, markPicked, pass, pickPassDay, endSitting } = useStartDateGate({
     startDate,
     userTimezone,
     range,
@@ -781,14 +907,12 @@ const useReorderState = ({
   });
 
   useClosedReset(visible, () => {
-    if (programStartDate) setStartDate(programStartDate);
+    if (preview.programStartDate) preview.setStartDate(preview.programStartDate);
     setPickerVisible(false);
     endSitting();
   });
 
-  useOpenSeed(visible, habits, (seed) =>
-    setOrderedHabits(updateStartDates(seed, startDate, userTimezone)),
-  );
+  useOpenSeed(visible, habits, (rows) => preview.seed(rows, pass.held !== null));
 
   return {
     orderedHabits,
@@ -805,11 +929,17 @@ const useReorderState = ({
       markPicked();
       restartFrom(selectedDate);
     },
+    // The pending pass's day moves no row: the rows stay laid from the running start.
+    handleConfirmPassDate: (selectedDate) => {
+      setPickerVisible(false);
+      pickPassDay(toISODate(selectedDate));
+    },
     handleCancelDate: () => setPickerVisible(false),
     saving,
     handleSave: () => commit(orderedHabits, sitting),
     range,
     notice,
+    pass,
   };
 };
 
@@ -818,9 +948,11 @@ interface ReorderBodyProps {
   orderedHabits: Habit[];
   startDate: Date;
   range: ProgramStartRange;
+  pass: PendingPassPick;
   notice: string | null;
   onOpenPicker: () => void;
   onSelectDate: (_d: Date) => void;
+  onSelectPassDate: (_d: Date) => void;
   onDragEnd: ReorderListProps['onDragEnd'];
   saving: boolean;
   onSave: () => void;
@@ -831,9 +963,11 @@ const ReorderBody = ({
   orderedHabits,
   startDate,
   range,
+  pass,
   notice,
   onOpenPicker,
   onSelectDate,
+  onSelectPassDate,
   onDragEnd,
   saving,
   onSave,
@@ -848,9 +982,11 @@ const ReorderBody = ({
     <ReorderDateButton
       startDate={startDate}
       range={range}
+      pass={pass}
       notice={notice}
       onOpenPicker={onOpenPicker}
       onSelectDate={onSelectDate}
+      onSelectPassDate={onSelectPassDate}
     />
     <Text style={styles.reorderInstructions}>
       Drag by the handle to change the order, or drag a habit across one of the lines to move it to
@@ -871,6 +1007,25 @@ const ReorderBody = ({
     />
   </View>
 );
+
+/**
+ * What the one native picker offers: the pending pass's day in the pass window
+ * while a pass is pending (#3747), else the start date. Clamped to what the
+ * server accepts (#3097): up to the window's end, a whole program ahead
+ * (#3728), and back to the window's floor -- or to the date on display, if
+ * earlier.
+ */
+const nativePickerProps = (state: ReorderState) => {
+  const pending = state.pass.held !== null;
+  const day = pending ? state.pass.day : toISODate(state.startDate);
+  const range = pending ? state.pass.range : state.range;
+  return {
+    date: parseISODate(day),
+    minimumDate: parseISODate(pickerFloor(range, day)),
+    maximumDate: parseISODate(range.maxDay),
+    onConfirm: pending ? state.handleConfirmPassDate : state.handleConfirmDate,
+  };
+};
 
 // Mount the picker as a SIBLING of the parent <Modal>: iOS animates nested UIViewController modals underneath the parent, hiding them.
 export const ReorderHabitsModal = ({
@@ -897,9 +1052,11 @@ export const ReorderHabitsModal = ({
             orderedHabits={state.orderedHabits}
             startDate={state.startDate}
             range={state.range}
+            pass={state.pass}
             notice={state.notice}
             onOpenPicker={() => state.setPickerVisible(true)}
             onSelectDate={state.handleConfirmDate}
+            onSelectPassDate={state.handleConfirmPassDate}
             onDragEnd={state.handleDragEnd}
             saving={state.saving}
             onSave={() => {
@@ -915,13 +1072,7 @@ export const ReorderHabitsModal = ({
       <DateTimePickerModal
         isVisible={visible && state.pickerVisible}
         mode="date"
-        date={state.startDate}
-        // Clamped to what the server accepts (#3097): up to the window's end, a
-        // whole program ahead (#3728), and back to the server's floor -- or to
-        // the date on display, if earlier.
-        minimumDate={parseISODate(pickerFloor(state.range, toISODate(state.startDate)))}
-        maximumDate={parseISODate(state.range.maxDay)}
-        onConfirm={state.handleConfirmDate}
+        {...nativePickerProps(state)}
         onCancel={state.handleCancelDate}
       />
     </>

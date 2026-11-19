@@ -12,13 +12,14 @@ import { useAuth } from '@/context/AuthContext';
 import { BORDER_RADIUS, SPACING, ink, surface } from '@/design/tokens';
 import { habitManager } from '@/features/Habits/services/habitManager';
 import { reconcileProgramAnchor } from '@/features/Program/programAnchor';
-import { programStartLockedCopy } from '@/features/Program/ProgramStartFixed';
+import { PROGRAM_START_FIXED_COPY } from '@/features/Program/ProgramStartFixed';
 import {
   notAfterLatest,
   pickerFloor,
   useProgramStartRange,
   type ProgramStartRange,
 } from '@/features/Program/programStartRange';
+import { usePendingPassPick, type PendingPassPick } from '@/features/Program/usePendingPassPick';
 import { useProgramStore } from '@/store/useProgramStore';
 
 /**
@@ -29,8 +30,13 @@ import { useProgramStore } from '@/store/useProgramStore';
  * scaffolding -- can pick it here. It reads the server's anchor and window,
  * offers only the dates the server accepts, and saves through
  * ``habitManager.changeProgramStart`` so any program habits are re-laid from
- * the new day. Once begin-again has fixed the date -- or while a next pass is
- * pending, which a correction would drop (#3728) -- it is shown, not offered.
+ * the new day. Once begin-again has fixed the date it is shown, not offered.
+ *
+ * While a next pass is pending, the screen offers that pass's day instead
+ * (#3747): a correction of the running pass would drop it, so the start date is
+ * shown and the pending day is saved through ``POST /stages/passes``, which
+ * moves the pass to a later day or starts it now on today or earlier. No habit
+ * row is re-laid by that save.
  */
 
 const INTRO_COPY =
@@ -39,6 +45,9 @@ const INTRO_COPY =
 
 const NO_DATE_COPY =
   "You haven't picked a start date yet. Choose today, or the day you began if that was earlier.";
+
+/** A Save with nothing to send yet reads as at rest, not as broken. */
+const IDLE_BUTTON_OPACITY = 0.5;
 
 const formatDay = (day: string): string =>
   parseISODate(day).toLocaleDateString('en-US', {
@@ -157,6 +166,82 @@ const PickerSection = ({
   </>
 );
 
+interface PendingPassSectionProps {
+  state: SettingsFormState;
+  pass: PendingPassPick;
+  onChange: (_day: string) => void;
+  onSave: () => void;
+}
+
+/** The pending pass's day, with what saving it will do said before the save (#3747). */
+const PendingPassSection = ({
+  state,
+  pass,
+  onChange,
+  onSave,
+}: PendingPassSectionProps): React.JSX.Element => {
+  const disabled = state.submitting || !pass.changed;
+  return (
+    <>
+      <Text style={settingsFormStyles.inputLabel}>Next pass begins</Text>
+      <View style={styles.pickerRow}>
+        <DatePicker
+          value={pass.day}
+          minDate={pickerFloor(pass.range, pass.day)}
+          maxDate={pass.range.maxDay}
+          onChange={onChange}
+        />
+      </View>
+      <Text style={settingsFormStyles.body} testID="pending-pass-sentence">
+        {pass.sentence}
+      </Text>
+      <SettingsFeedbackBanner idPrefix="pending-pass" error={state.error} status={state.status} />
+      <TouchableOpacity
+        onPress={onSave}
+        style={[settingsFormStyles.primaryButton, !pass.changed && styles.idleButton]}
+        disabled={disabled}
+        testID="save-pending-pass-button"
+        accessibilityLabel="Save next pass day"
+        accessibilityRole="button"
+        accessibilityState={{ disabled, busy: state.submitting }}
+      >
+        <Text style={settingsFormStyles.primaryButtonText}>
+          {state.submitting ? 'Saving…' : 'Save'}
+        </Text>
+      </TouchableOpacity>
+    </>
+  );
+};
+
+/**
+ * The pending pass's day as a form (#3747): a pick clears the last message, and
+ * Save sends a POST -- never the PUT -- with no habit re-lay.
+ */
+function usePendingPassForm(form: SettingsFormState, tz: string) {
+  const pass = usePendingPassPick(tz);
+  const { setSubmitting, setError, setStatus } = form;
+  const { commit, pick } = pass;
+  const onChange = useCallback(
+    (day: string) => {
+      pick(day);
+      setError(null);
+      setStatus(null);
+    },
+    [pick, setError, setStatus],
+  );
+  const save = useCallback(async () => {
+    setError(null);
+    setStatus(null);
+    setSubmitting(true);
+    const outcome = await commit();
+    setSubmitting(false);
+    if (outcome.kind === 'unchanged') return;
+    if (outcome.kind === 'saved') setStatus(outcome.message);
+    else setError(outcome.message);
+  }, [commit, setSubmitting, setError, setStatus]);
+  return { pass, onChange, save };
+}
+
 const BackLink = ({ onBack }: { onBack?: () => void }): React.JSX.Element | null =>
   onBack ? (
     <TouchableOpacity
@@ -176,6 +261,7 @@ export default function ProgramStartSettingsScreen({ navigation }: Props = {}): 
   const state = useSettingsFormState(openingDay(held, range));
   const { edit, revert } = useHeldDraft(state, held, range);
   const save = useSaveProgramStart(state, userTimezone, revert);
+  const pending = usePendingPassForm(state, userTimezone);
   const { setError, setStatus } = state;
 
   // One read on arrival: the server is the authority, and the cached anchor may
@@ -201,10 +287,23 @@ export default function ProgramStartSettingsScreen({ navigation }: Props = {}): 
     <ScreenScaffold scroll testID="program-start-settings-screen">
       <Text style={settingsFormStyles.body}>{INTRO_COPY}</Text>
       <CurrentDateCard day={held} />
-      {range.locked ? (
-        <Text style={settingsFormStyles.body}>{programStartLockedCopy(range.pendingPassDay)}</Text>
+      {range.locked && <Text style={settingsFormStyles.body}>{PROGRAM_START_FIXED_COPY}</Text>}
+      {pending.pass.held !== null ? (
+        <PendingPassSection
+          state={state}
+          pass={pending.pass}
+          onChange={pending.onChange}
+          onSave={() => void pending.save()}
+        />
       ) : (
-        <PickerSection state={state} range={range} onChange={onChange} onSave={() => void save()} />
+        !range.locked && (
+          <PickerSection
+            state={state}
+            range={range}
+            onChange={onChange}
+            onSave={() => void save()}
+          />
+        )
       )}
       <BackLink onBack={onBack} />
     </ScreenScaffold>
@@ -228,5 +327,8 @@ const styles = StyleSheet.create({
   },
   pickerRow: {
     marginBottom: SPACING.md,
+  },
+  idleButton: {
+    opacity: IDLE_BUTTON_OPACITY,
   },
 });

@@ -55,7 +55,7 @@ describe('programStartRange', () => {
     expect(programStartRange(null, true, todayInUserTZ(ZONE), ZONE).locked).toBe(true);
   });
 
-  it('locks while a pass is pending, naming its day, because a correction would drop it', () => {
+  it('names a pending pass without locking the date, so its day can be offered (#3747)', () => {
     const range = programStartRange(
       { earliest: '2026-01-02', latest: '2027-07-18' },
       false,
@@ -63,7 +63,7 @@ describe('programStartRange', () => {
       ZONE,
       '2026-12-01',
     );
-    expect(range.locked).toBe(true);
+    expect(range.locked).toBe(false);
     expect(range.pendingPassDay).toBe('2026-12-01');
   });
 });

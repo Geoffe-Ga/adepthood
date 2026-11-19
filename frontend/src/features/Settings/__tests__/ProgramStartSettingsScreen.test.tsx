@@ -4,7 +4,7 @@ import React from 'react';
 
 import ProgramStartSettingsScreen from '../ProgramStartSettingsScreen';
 
-import DatePicker from '@/components/DatePicker';
+import DatePicker, { parseISODate } from '@/components/DatePicker';
 import { TOTAL_PROGRAM_DAYS } from '@/constants/program';
 import { useAuth } from '@/context/AuthContext';
 import type { ProgramStartChangeOutcome } from '@/features/Habits/services/habitManager';
@@ -15,8 +15,11 @@ import { addDaysInTZ, todayInUserTZ } from '@/utils/dateUtils';
 jest.mock('@/context/AuthContext', () => ({ useAuth: jest.fn() }));
 
 const mockReconcile = jest.fn<(_tz: string) => Promise<void>>();
+const mockCommitPassStart =
+  jest.fn<(_day: string, _options: { tz: string }) => Promise<ProgramStartOutcome>>();
 jest.mock('@/features/Program/programAnchor', () => ({
   reconcileProgramAnchor: (tz: string) => mockReconcile(tz),
+  commitPassStart: (day: string, options: { tz: string }) => mockCommitPassStart(day, options),
 }));
 
 const mockChangeProgramStart =
@@ -46,6 +49,40 @@ const hold = (locked = false) =>
     useProgramStore.getState().adoptServerProgramStart({ day: HELD_DAY, window: WINDOW, locked }),
   );
 
+/** How far ahead the next pass is held, how far a reschedule moves it, how far back a start-now reaches. */
+const PENDING_DAYS_AHEAD = 16;
+const MOVED_DAYS = 7;
+const STARTED_DAYS_BACK = 3;
+const PENDING_DAY = addDaysInTZ(TODAY, PENDING_DAYS_AHEAD, ZONE);
+const PASS_WINDOW = { earliest: HELD_DAY, latest: WINDOW.latest };
+
+/** A next pass held for ``PENDING_DAY`` behind the pass running since ``HELD_DAY``. */
+const holdPending = (locked = false) =>
+  act(() =>
+    useProgramStore.getState().adoptServerProgramStart({
+      day: HELD_DAY,
+      window: locked ? null : WINDOW,
+      locked,
+      pass: { daysUntilStart: 0, pendingPassStartsOn: PENDING_DAY, passStartWindow: PASS_WINDOW },
+    }),
+  );
+
+/** The POST's echo: a future day stays pending; a day that has come opens the pass now. */
+const echoPass = (day: string): Promise<ProgramStartOutcome> => {
+  const later = day > TODAY;
+  useProgramStore.getState().adoptServerProgramStart({
+    day: later ? HELD_DAY : day,
+    window: WINDOW,
+    locked: false,
+    pass: {
+      daysUntilStart: 0,
+      pendingPassStartsOn: later ? day : null,
+      passStartWindow: { earliest: later ? HELD_DAY : day, latest: WINDOW.latest },
+    },
+  });
+  return Promise.resolve({ kind: 'saved' });
+};
+
 const picker = (result: ReturnType<typeof render>) =>
   result.UNSAFE_getByType(DatePicker).props as {
     value: string;
@@ -58,6 +95,7 @@ beforeEach(() => {
   mockUseAuth.mockReturnValue({ userTimezone: ZONE } as unknown as ReturnType<typeof useAuth>);
   mockReconcile.mockReset().mockResolvedValue(undefined);
   mockChangeProgramStart.mockReset().mockResolvedValue({ kind: 'saved' });
+  mockCommitPassStart.mockReset().mockImplementation(echoPass);
 });
 
 afterEach(() => {
@@ -197,31 +235,122 @@ describe('ProgramStartSettingsScreen (#3097)', () => {
     expect(result.getByText(/begin again/i)).toBeTruthy();
   });
 
-  it('locks the date while a next pass is pending, and says where that day is changed (#3728)', () => {
-    // A PUT here would quietly drop the pass held for December 1.
-    act(() =>
-      useProgramStore.getState().adoptServerProgramStart({
-        day: HELD_DAY,
-        window: WINDOW,
-        locked: false,
-        pass: {
-          daysUntilStart: 0,
-          pendingPassStartsOn: '2026-12-01',
-          passStartWindow: { earliest: HELD_DAY, latest: WINDOW.latest },
-        },
-      }),
-    );
+  describe('while a next pass is pending (#3747)', () => {
+    it("offers the pending pass's day in the pass window, never the running start", () => {
+      holdPending();
 
-    const result = render(<ProgramStartSettingsScreen />);
+      const result = render(<ProgramStartSettingsScreen />);
 
-    expect(result.UNSAFE_queryByType(DatePicker)).toBeNull();
-    expect(result.queryByTestId('save-program-start-button')).toBeNull();
-    expect(
-      result.getByText(
-        'Your next pass begins December 1, 2026. To change that day, save Energy Scaffolding again.',
-      ),
-    ).toBeTruthy();
-    expect(mockChangeProgramStart).not.toHaveBeenCalled();
+      expect(picker(result)).toMatchObject({
+        value: PENDING_DAY,
+        // The scaffold picker's floor rule: the day after the running start.
+        minDate: addDaysInTZ(HELD_DAY, 1, 'UTC'),
+        maxDate: PASS_WINDOW.latest,
+      });
+      expect(result.getByTestId('current-program-start')).toHaveTextContent('March 10, 2026');
+      expect(result.getByTestId('pending-pass-sentence')).toHaveTextContent(
+        /^Your next pass begins /,
+      );
+      expect(result.queryByTestId('save-program-start-button')).toBeNull();
+    });
+
+    it('reschedules a later day with one POST: no PUT, no habit re-lay', async () => {
+      holdPending();
+      const result = render(<ProgramStartSettingsScreen />);
+      const later = addDaysInTZ(PENDING_DAY, MOVED_DAYS, ZONE);
+
+      act(() => picker(result).onChange(later));
+      expect(result.getByTestId('pending-pass-sentence')).toHaveTextContent(
+        /^Saving moves your next pass to /,
+      );
+      fireEvent.press(result.getByTestId('save-pending-pass-button'));
+
+      await waitFor(() =>
+        expect(result.getByTestId('pending-pass-status')).toHaveTextContent(
+          /^Saved\. Your next pass now begins /,
+        ),
+      );
+      expect(mockCommitPassStart).toHaveBeenCalledTimes(1);
+      expect(mockCommitPassStart).toHaveBeenCalledWith(later, { tz: ZONE });
+      expect(mockChangeProgramStart).not.toHaveBeenCalled();
+      expect(useProgramStore.getState().pendingPassStartsOn).toBe(later);
+      expect(useProgramStore.getState().programStartDay).toBe(HELD_DAY);
+    });
+
+    it('says an earlier day starts the pass now, and starts it with the POST', async () => {
+      holdPending();
+      const result = render(<ProgramStartSettingsScreen />);
+      const earlier = addDaysInTZ(TODAY, -STARTED_DAYS_BACK, ZONE);
+
+      act(() => picker(result).onChange(earlier));
+      expect(result.getByTestId('pending-pass-sentence')).toHaveTextContent(
+        /^Saving starts your next pass now, counted from .*; your current pass stays on Stats and progress\.$/,
+      );
+      fireEvent.press(result.getByTestId('save-pending-pass-button'));
+
+      await waitFor(() =>
+        expect(result.getByTestId('current-program-start')).toHaveTextContent(
+          parseISODate(earlier).toLocaleDateString('en-US', {
+            month: 'long',
+            day: 'numeric',
+            year: 'numeric',
+          }),
+        ),
+      );
+      expect(mockCommitPassStart).toHaveBeenCalledWith(earlier, { tz: ZONE });
+      expect(mockChangeProgramStart).not.toHaveBeenCalled();
+      // The pass has begun: nothing is pending, so the correction is offered again.
+      expect(result.queryByTestId('save-pending-pass-button')).toBeNull();
+      expect(result.getByTestId('program-start-status')).toHaveTextContent(
+        /^Saved\. Your new pass has begun, counted from /,
+      );
+    });
+
+    it('says today starts the pass today', () => {
+      holdPending();
+      const result = render(<ProgramStartSettingsScreen />);
+
+      act(() => picker(result).onChange(TODAY));
+
+      expect(result.getByTestId('pending-pass-sentence')).toHaveTextContent(
+        'Saving starts your next pass today; your current pass stays on Stats and progress.',
+      );
+    });
+
+    it('sends nothing while the held day is unchanged', () => {
+      holdPending();
+      const result = render(<ProgramStartSettingsScreen />);
+
+      const save = result.getByTestId('save-pending-pass-button');
+      expect(save.props.accessibilityState).toMatchObject({ disabled: true });
+      fireEvent.press(save);
+
+      expect(mockCommitPassStart).not.toHaveBeenCalled();
+    });
+
+    it('shows a refusal and puts the held day back', async () => {
+      holdPending();
+      mockCommitPassStart.mockResolvedValueOnce({ kind: 'refused', message: 'Too far ahead.' });
+      const result = render(<ProgramStartSettingsScreen />);
+
+      act(() => picker(result).onChange(addDaysInTZ(PENDING_DAY, MOVED_DAYS, ZONE)));
+      fireEvent.press(result.getByTestId('save-pending-pass-button'));
+
+      await waitFor(() =>
+        expect(result.getByTestId('pending-pass-error')).toHaveTextContent('Too far ahead.'),
+      );
+      expect(picker(result).value).toBe(PENDING_DAY);
+    });
+
+    it('still offers the pending day in a later cycle, where opening a pass is allowed', () => {
+      holdPending(true);
+
+      const result = render(<ProgramStartSettingsScreen />);
+
+      expect(picker(result).value).toBe(PENDING_DAY);
+      expect(result.getByTestId('save-pending-pass-button')).toBeTruthy();
+      expect(result.getByText(/begin again/i)).toBeTruthy();
+    });
   });
 
   it('shows the fixed date and no picker once begin-again has run', () => {
