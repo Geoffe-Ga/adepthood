@@ -731,6 +731,8 @@ export const chart = {
   tier: ['#c98b68', '#a5572f', '#6e3417'],
   dim: '#c9bfae',
   heat: [surface.sunken, '#dfb99e', '#c98b68', '#a5572f', '#6e3417'],
+  /** A Metta Return segment (#3746): the Return card's own terracotta. */
+  returnArc: colors.tier.clear,
 } as const;
 
 /** Shared SVG geometry, in logical pixels; widths come from the containing view. */

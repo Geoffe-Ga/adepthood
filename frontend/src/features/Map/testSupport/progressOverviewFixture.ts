@@ -195,3 +195,37 @@ export function passesFixture(): Pass[] {
     },
   ];
 }
+
+type ReturnArc = NonNullable<ApiProgressOverview['arc']['return_arcs']>[number];
+
+const RETURN_WEEKS = 5;
+
+/** A Return arc measured as the server measures it (#3745). */
+const returnArc = (
+  startedOn: string,
+  state: ReturnArc['state'],
+  reachedWeek: number,
+  [endedOn, passNumber]: [string | null, number | null],
+): ReturnArc => ({
+  started_on: startedOn,
+  ended_on: endedOn,
+  state,
+  weeks_total: RETURN_WEEKS,
+  reached_week: reachedWeek,
+  completed: state === 'complete',
+  pass_number: passNumber,
+});
+
+/**
+ * Three Metta Return arcs, oldest first, each begun inside one of
+ * `passesFixture`'s passes: one set down in week 3 of the partial pass, one
+ * lived through in the completed pass and never left, and one running in
+ * week 3 of the live pass.
+ */
+export function returnArcsFixture(): ReturnArc[] {
+  return [
+    returnArc('2025-02-10', 'left', 3, ['2025-02-24', 1]),
+    returnArc('2025-07-07', 'complete', RETURN_WEEKS, [null, 2]),
+    returnArc('2026-08-03', 'active', 3, [null, 4]),
+  ];
+}

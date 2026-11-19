@@ -138,6 +138,20 @@ export const RETURN_START_ERROR =
 export const RETURN_DISMISS_ERROR =
   'Set aside here. That choice did not reach the server, so the Return may still be offered on your Journal shelf.';
 
+/**
+ * The five weeks' titles, one Metta focus each, as the backend's
+ * ``domain.metta_return.RETURN_SEQUENCE`` names them. The Progress screen
+ * names a Return segment's weeks with these (#3746) without reading
+ * ``GET /metta-return``; ``returnWeekTitlesDrift.test.ts`` fails if they drift.
+ */
+export const RETURN_WEEK_TITLES: readonly string[] = [
+  'Coming home to steady ground',
+  'Someone who has held you',
+  'A face you barely know',
+  'Meeting a hard heart with softness',
+  'The circle without an edge',
+];
+
 /** Every user-facing Return string, gathered for the balance-not-altitude sweep. */
 export const RETURN_COPY_ENTRIES: readonly string[] = [
   RETURN_OFFER_HEADING,
@@ -175,4 +189,5 @@ export const RETURN_COPY_ENTRIES: readonly string[] = [
   RETURN_RECOMMIT_ACTION,
   RETURN_RESTING_HEADING,
   RETURN_RESTING_BODY,
+  ...RETURN_WEEK_TITLES,
 ];

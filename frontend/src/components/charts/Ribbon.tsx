@@ -6,6 +6,7 @@ import { ChartFrame, useChartSize } from './ChartFrame';
 import { chartStyles } from './chartStyles';
 import { positive, ribbonGeometry, weekCenter } from './geometry';
 import { Plot } from './Plot';
+import { BLOCK_HINT, BlockFocus, BlockReadout, useBlockInspection } from './RibbonBlockInspection';
 import {
   isNumbered,
   MarkerInspector,
@@ -34,20 +35,53 @@ export interface RibbonProps extends ChartBaseProps {
   drawnWeeks?: number;
   markers?: readonly RibbonMarker[];
   secondaryBlocks?: readonly RibbonBlock[];
+  /**
+   * The weeks the plot's full width stands for, when longer than the blocks:
+   * a shorter row (a five-week Metta Return, #3746) then keeps the pass rows'
+   * week width instead of stretching across the width.
+   */
+  scaleWeeks?: number;
+  /**
+   * One note per block. Given, each block is read by touch, hover and keys,
+   * and the table twin lists each block's note in place of its position, which
+   * the block's own label already names; the note of the current week says
+   * where you are, so no separate row does.
+   */
+  blockNotes?: readonly string[];
+  /** The table twin's column heading; `Arc position` unless the row lists notes. */
+  tableHeader?: string;
   showKey?: boolean;
   /** Shown on the frame's header row beside the table toggle. */
   title?: string;
 }
 
+/**
+ * Below this a block's visible width is rounding, not drawing: a block that
+ * starts exactly where the drawn weeks end must not leave a stroked sliver.
+ */
+const ROUNDING_WIDTH = 1e-6;
+
 const weekPosition = (first: number, last = first): string =>
   first === last ? `Week ${first}` : `Weeks ${first}–${last}`;
 
-/** Durations size the blocks; inclusive ranges tell the reader where they are. */
-export function ribbonTableRows(blocks: readonly RibbonBlock[]): ChartTableRow[] {
+const capitalise = (text: string): string => text.charAt(0).toUpperCase() + text.slice(1);
+
+/**
+ * Durations size the blocks; inclusive ranges tell the reader where they are.
+ * A block with a note is listed by its note instead.
+ */
+export function ribbonTableRows(
+  blocks: readonly RibbonBlock[],
+  notes: readonly string[] = [],
+): ChartTableRow[] {
   let first = 1;
-  return blocks.map((block) => {
+  return blocks.map((block, index) => {
     const last = first + positive(block.weeks) - 1;
-    const row = { label: block.label, values: [weekPosition(first, last)] };
+    const note = notes[index];
+    const row = {
+      label: block.label,
+      values: [note ? capitalise(note) : weekPosition(first, last)],
+    };
     first = last + 1;
     return row;
   });
@@ -94,7 +128,7 @@ function RibbonBlocks({
     <>
       {ribbonGeometry(blocks, width).flatMap((block, index) => {
         const visible = Math.min(block.width, drawnWidth - block.x);
-        return visible > 0
+        return visible > ROUNDING_WIDTH
           ? [
               <Rect
                 key={index}
@@ -294,6 +328,35 @@ function NumberedRibbon({
   );
 }
 
+/** A row read week by week (#3746): each block's note by touch, hover and keys. */
+function BlockRibbon({
+  plot,
+  notes,
+  summary,
+  testID,
+}: {
+  plot: Omit<RibbonPlotProps, 'height' | 'marks'>;
+  notes: readonly string[];
+  summary: string;
+  testID?: string;
+}) {
+  const inspection = useBlockInspection(plot.blocks, notes, plot.width);
+  return (
+    <>
+      <MarkerInspector summary={summary} testID={testID} inspection={inspection} hint={BLOCK_HINT}>
+        <RibbonPlot
+          {...plot}
+          height={chartLayout.ribbonHeight + chartLayout.axisSpace}
+          marks={
+            <BlockFocus blocks={plot.blocks} width={plot.width} selected={inspection.selected} />
+          }
+        />
+      </MarkerInspector>
+      <BlockReadout detail={inspection.detail} testID={testID} />
+    </>
+  );
+}
+
 /** A pass row's table leads with its habits; the plain arc leads with its stages. */
 const tableRows = (
   stageRows: readonly ChartTableRow[],
@@ -308,13 +371,16 @@ const tableRows = (
 /** The plain arc, or a pass row with numbered habits when its markers carry numbers. */
 function RibbonBody({
   plot,
+  notes,
   summary,
   testID,
 }: {
   plot: Omit<RibbonPlotProps, 'height' | 'marks'>;
+  notes?: readonly string[];
   summary: string;
   testID?: string;
 }) {
+  if (notes) return <BlockRibbon plot={plot} notes={notes} summary={summary} testID={testID} />;
   return isNumbered(plot.markers) ? (
     <NumberedRibbon plot={plot} summary={summary} testID={testID} />
   ) : (
@@ -322,35 +388,46 @@ function RibbonBody({
   );
 }
 
+/** A shorter row keeps the scale's week width; it never stretches past the plot. */
+const segmentWidth = (plotWidth: number, weeks: number, scaleWeeks?: number): number =>
+  scaleWeeks !== undefined && scaleWeeks > weeks ? (plotWidth * weeks) / scaleWeeks : plotWidth;
+
 export function Ribbon({
   blocks,
   currentWeek,
   drawnWeeks,
   markers = [],
   secondaryBlocks = [],
+  scaleWeeks,
+  blockNotes,
+  tableHeader = 'Arc position',
   showKey = true,
   title,
   ...base
 }: RibbonProps) {
   const size = useChartSize(base.width, base.height);
-  const width = Math.max(1, size.width - 2 * chartLayout.plotInset);
+  const plotWidth = Math.max(1, size.width - 2 * chartLayout.plotInset);
   const weeks = blocks.reduce((sum, block) => sum + positive(block.weeks), 0);
-  const stageRows = [...ribbonTableRows(blocks), ...ribbonTableRows(secondaryBlocks)];
+  const width = segmentWidth(plotWidth, weeks, scaleWeeks);
+  const stageRows = [...ribbonTableRows(blocks, blockNotes), ...ribbonTableRows(secondaryBlocks)];
   const markerRows = markers.map(markerRow);
+  // A row that lists notes says "this week" on the week itself.
+  const hereWeek = blockNotes ? undefined : currentWeek;
   const plot = { blocks, secondaryBlocks, markers, currentWeek, drawnWeeks, weeks, width };
   return (
     <ChartFrame
       {...base}
       title={title}
       onLayout={size.onLayout}
-      interactive={isNumbered(markers)}
+      interactive={isNumbered(markers) || blockNotes !== undefined}
       // A pass row's header starts where its track does (#3727).
       inset={drawnWeeks !== undefined || isNumbered(markers) ? chartLayout.plotInset : undefined}
-      rows={tableRows(stageRows, markerRows, currentWeek, isNumbered(markers))}
-      headers={['Arc position']}
+      rows={tableRows(stageRows, markerRows, hereWeek, isNumbered(markers))}
+      headers={[tableHeader]}
     >
       <RibbonBody
         plot={{ ...plot, plotWidth: size.width }}
+        notes={blockNotes}
         summary={base.summary}
         testID={base.testID}
       />

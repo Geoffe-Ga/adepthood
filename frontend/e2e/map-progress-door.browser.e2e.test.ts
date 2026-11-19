@@ -2,7 +2,14 @@ import { expect, test, type APIRequestContext, type Locator, type Page } from '@
 
 import type { ApiProgressOverview } from '../src/api';
 
-import { backendUrl, bearer, isoDaysAgo, signUp, tokenFor } from './journalHabitsBrowserSupport';
+import {
+  backendUrl,
+  bearer,
+  isoDaysAgo,
+  reachReturnEligibility,
+  signUp,
+  tokenFor,
+} from './journalHabitsBrowserSupport';
 
 /**
  * Issue #3528 — the Map's "Your progress" door opens the whole arc, drawn from
@@ -17,7 +24,9 @@ import { backendUrl, bearer, isoDaysAgo, signUp, tokenFor } from './journalHabit
  * the arc and its one pass ribbon (#3727) measure from the same day.
  *
  * A second journey re-scaffolds through `POST /stages/passes` and reads two
- * stacked pass ribbons, each with its own numbered habit markers.
+ * stacked pass ribbons, each with its own numbered habit markers. A third
+ * begins a Metta Return through `POST /metta-return/arc` and reads it as its
+ * own five-week segment (#3746).
  */
 
 test.use({ hasTouch: true });
@@ -458,4 +467,107 @@ test('a re-scaffold stacks one numbered ribbon per pass, oldest on top', async (
   await expect(live).toContainText(`Habit ${newest.program_number} · ${SECOND_HABIT}`);
   await expect(live).toContainText(`Week ${newest.week}`);
   await expect(live).toContainText('Unlocked ');
+});
+
+/** Issue #3746: a Metta Return arc is its own five-week row, a pass week wide per week. */
+const RETURN_WEEKS = 5;
+const ARC_WEEKS = 36;
+
+type ReturnArcSegment = NonNullable<ApiProgressOverview['arc']['return_arcs']>[number];
+
+/** The dashed track's width: the segment's whole length, drawn or not. */
+async function trackWidth(row: Locator): Promise<number> {
+  const box = await row.getByTestId('ribbon-track').boundingBox();
+  expect(box).not.toBeNull();
+  return box!.width;
+}
+
+/** The live pass's drawn width, first stage to last: all thirty-six weeks. */
+async function passSpan(host: Locator): Promise<number> {
+  const first = await host.getByTestId('ribbon-block-0').boundingBox();
+  const last = await host.locator('[data-testid^="ribbon-block-"]').last().boundingBox();
+  expect(first).not.toBeNull();
+  expect(last).not.toBeNull();
+  return last!.x + last!.width - first!.x;
+}
+
+/** Hover, touch and keys each read the Return's weeks out. */
+async function inspectReturnWeeks(page: Page, row: Locator) {
+  const plot = row.locator('[data-testid$="-inspect"]');
+  const value = row.locator('[data-testid$="-value"]');
+  const first = await row.getByTestId('ribbon-block-0').boundingBox();
+  expect(first).not.toBeNull();
+  await page.mouse.move(first!.x + first!.width / 2, first!.y + first!.height / 2);
+  await expect(value).toHaveText('Week 1 · Coming home to steady ground · this week');
+  await plot.press('End');
+  await expect(value).toHaveText('Week 5 · The circle without an edge · not begun');
+  await page.touchscreen.tap(first!.x + first!.width / 2, first!.y + first!.height / 2);
+  await expect(value).toHaveText('Week 1 · Coming home to steady ground · this week');
+  await plot.press('ArrowRight');
+  await expect(value).toHaveText('Week 2 · Someone who has held you · not begun');
+  await plot.press('Home');
+  await expect(value).toHaveText('Week 1 · Coming home to steady ground · this week');
+}
+
+test('a Metta Return arc is drawn as its own five-week segment', async ({ page }, testInfo) => {
+  const email = await signUp(page, 'map-return');
+  const token = await tokenFor(page.request, email);
+  await reachReturnEligibility(page.request, token, email);
+  const started = await page.request.post(`${backendUrl()}/metta-return/arc`, {
+    headers: bearer(token),
+  });
+  expect(started.status(), await started.text()).toBe(201);
+  await page.reload();
+
+  const overview = await openProgressFromMap(page);
+  const arcs = overview.arc.return_arcs ?? [];
+  expect(arcs).toHaveLength(1);
+  const [arc] = arcs as [ReturnArcSegment];
+  expect(arc).toMatchObject({
+    state: 'active',
+    weeks_total: RETURN_WEEKS,
+    reached_week: 1,
+    completed: false,
+    ended_on: null,
+  });
+
+  const screen = page.getByTestId('progress-screen');
+  const row = screen.getByTestId('progress-return-1');
+  await expect(row).toContainText(/Metta Return · began \d{1,2} \w{3} · week 1 of 5/);
+  await expect(row.locator('[data-testid$="-inspect"]')).toHaveAttribute(
+    'aria-label',
+    /^Metta Return, began \d{1,2} \w+ \d{4}\. In week 1 of 5: Coming home to steady ground\.$/,
+  );
+  // The running week is drawn; the four ahead are the dashed track.
+  await expect(row.locator('[data-testid^="ribbon-block-"]')).toHaveCount(1);
+  await expect(row.getByTestId('ribbon-track')).toHaveAttribute('stroke-dasharray', /4[ ,]+4/);
+  await expect(row.getByTestId('ribbon-here')).toHaveCount(1);
+  // The arc began inside the live pass, so its row sits under that pass's.
+  const host = screen.getByTestId(`progress-pass-${arc.pass_number}`);
+  expect(arc.pass_number).not.toBeNull();
+  expect((await host.boundingBox())!.y).toBeLessThan((await row.boundingBox())!.y);
+
+  for (const viewport of VIEWPORTS) {
+    await page.setViewportSize({ width: viewport.width, height: viewport.height });
+    await screen.evaluate((element) => element.scrollTo(0, 0));
+    await row.scrollIntoViewIfNeeded();
+    // A Return week is a pass week wide: five of the pass row's thirty-six.
+    const passWeek = (await passSpan(host)) / ARC_WEEKS;
+    const span = await trackWidth(row);
+    expect(Math.abs(span / RETURN_WEEKS - passWeek)).toBeLessThan(1);
+    await inspectReturnWeeks(page, row);
+    const bounds = await row.boundingBox();
+    expect(bounds!.x).toBeGreaterThanOrEqual(0);
+    expect(bounds!.x + bounds!.width).toBeLessThanOrEqual(viewport.width);
+    await page.screenshot({ path: testInfo.outputPath(`map-return-${viewport.name}.png`) });
+  }
+
+  // The table twin lists each week by its focus, with where the arc stands in it.
+  await row.getByRole('button', { name: 'Show as table' }).click();
+  await expect(row).toContainText('Week 1 · Coming home to steady ground');
+  await expect(row).toContainText('Week 5 · The circle without an edge');
+  await expect(row).toContainText('In this Return');
+  await expect(row).toContainText('This week');
+  await expect(row).toContainText('Not begun');
+  await expect(screen).not.toContainText(/streak|broken|missed|lost|failed/i);
 });

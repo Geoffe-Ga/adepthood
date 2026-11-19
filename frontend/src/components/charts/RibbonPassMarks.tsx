@@ -79,7 +79,8 @@ export function useMarkerLayout(markers: readonly RibbonMarker[], weeks: number,
 
 type Layout = ReturnType<typeof useMarkerLayout>;
 
-function webInspection(
+/** Hover and arrow keys on the web, shared by marker and week inspection. */
+export function webInspection(
   selectAt: (_x: number, _y: number) => void,
   move: (_offset: number) => void,
   setIndex: (_index: number) => void,
@@ -209,15 +210,24 @@ export function NumberedMarks({
   );
 }
 
+const MARKER_HINT =
+  "Tap a habit's number to read it. Use left and right arrow keys to move between habits.";
+
+/** What an inspector needs: a readout, and touch, step and web handlers. */
+type InspectorState = Pick<Inspection, 'detail' | 'selectAt' | 'move' | 'web'>;
+
 export function MarkerInspector({
   summary,
   testID,
   inspection,
+  hint = MARKER_HINT,
   children,
 }: {
   summary: string;
   testID?: string;
-  inspection: Inspection;
+  inspection: InspectorState;
+  /** How to read the plot; a habit's numbers unless the plot reads something else. */
+  hint?: string;
   children: React.ReactNode;
 }) {
   return (
@@ -225,7 +235,7 @@ export function MarkerInspector({
       testID={`${testID}-inspect`}
       accessibilityRole="adjustable"
       accessibilityLabel={summary}
-      accessibilityHint="Tap a habit's number to read it. Use left and right arrow keys to move between habits."
+      accessibilityHint={hint}
       accessibilityValue={inspection.detail ? { text: inspection.detail } : undefined}
       accessibilityActions={[{ name: 'increment' }, { name: 'decrement' }]}
       onAccessibilityAction={(event) =>

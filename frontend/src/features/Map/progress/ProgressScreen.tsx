@@ -3,6 +3,7 @@ import React, { useState } from 'react';
 import { StyleSheet, Text, View, useWindowDimensions } from 'react-native';
 
 import {
+  arcRows,
   arcSummary,
   birthMarkers,
   CYCLE_CAPTION,
@@ -14,7 +15,6 @@ import {
   energySummary,
   habitHistories,
   habitRange,
-  passRows,
   percent,
   percentFigure,
   ribbonBlocks,
@@ -25,6 +25,9 @@ import {
   rhythmVisible,
   RHYTHM_EARLY_LINE,
   youAreHere,
+  type ArcRow,
+  type PassRow,
+  type ReturnRow,
 } from './progressPresentation';
 import { useProgressOverview } from './useProgressOverview';
 
@@ -53,46 +56,81 @@ function useText() {
   };
 }
 
-/** One ribbon per pass (#3727), oldest on top so time reads downward. */
-function PassRibbons({ rows }: { rows: ReturnType<typeof passRows> }) {
+function PassRibbon({ row }: { row: PassRow }) {
+  return (
+    <Ribbon
+      testID={`progress-${row.key}`}
+      title={row.label}
+      blocks={row.blocks}
+      drawnWeeks={row.drawnWeeks}
+      currentWeek={row.currentWeek}
+      markers={row.markers}
+      summary={row.summary}
+      showKey={false}
+    />
+  );
+}
+
+/** A Metta Return arc (#3746): five weeks at a pass row's week width, read week by week. */
+function ReturnRibbon({ row }: { row: ReturnRow }) {
+  return (
+    <Ribbon
+      testID={`progress-${row.key}`}
+      title={row.label}
+      blocks={row.blocks}
+      drawnWeeks={row.drawnWeeks}
+      currentWeek={row.currentWeek}
+      scaleWeeks={row.scaleWeeks}
+      blockNotes={row.weekNotes}
+      tableHeader="In this Return"
+      summary={row.summary}
+      showKey={false}
+    />
+  );
+}
+
+/**
+ * One ribbon per pass (#3727), oldest on top so time reads downward, with each
+ * Metta Return arc as its own row in time order among them (#3746).
+ */
+function PassRibbons({ rows, lead }: { rows: readonly ArcRow[]; lead?: React.ReactNode }) {
   return (
     <View style={styles.passes}>
-      {rows.map((row) => (
-        <Ribbon
-          key={row.key}
-          testID={`progress-${row.key}`}
-          title={row.label}
-          blocks={row.blocks}
-          drawnWeeks={row.drawnWeeks}
-          currentWeek={row.currentWeek}
-          markers={row.markers}
-          summary={row.summary}
-          showKey={false}
-        />
-      ))}
+      {lead}
+      {rows.map((entry) =>
+        entry.kind === 'pass' ? (
+          <PassRibbon key={entry.row.key} row={entry.row} />
+        ) : (
+          <ReturnRibbon key={entry.row.key} row={entry.row} />
+        ),
+      )}
     </View>
   );
 }
 
+/** The single ribbon of an older server or a habits-off account, unchanged. */
+function SingleRibbon({ overview }: { overview: Overview }) {
+  return (
+    <Ribbon
+      testID="progress-ribbon"
+      title={youAreHere(overview) ?? undefined}
+      blocks={ribbonBlocks(overview)}
+      currentWeek={overview.arc.current_week ?? undefined}
+      markers={birthMarkers(overview)}
+      summary={arcSummary(overview)}
+      showKey={false}
+    />
+  );
+}
+
 function ArcSection({ overview }: { overview: Overview }) {
-  const rows = passRows(overview);
-  if (rows.length > 0)
-    return (
-      <EditorialSection title="The arc" testID="progress-arc">
-        <PassRibbons rows={rows} />
-      </EditorialSection>
-    );
+  const rows = arcRows(overview);
+  const passes = rows.some((row) => row.kind === 'pass');
+  // No recorded pass: the single ribbon stays, with any Return arcs stacked under it.
+  const lead = passes ? undefined : <SingleRibbon overview={overview} />;
   return (
     <EditorialSection title="The arc" testID="progress-arc">
-      <Ribbon
-        testID="progress-ribbon"
-        title={youAreHere(overview) ?? undefined}
-        blocks={ribbonBlocks(overview)}
-        currentWeek={overview.arc.current_week ?? undefined}
-        markers={birthMarkers(overview)}
-        summary={arcSummary(overview)}
-        showKey={false}
-      />
+      {rows.length > 0 ? <PassRibbons rows={rows} lead={lead} /> : lead}
     </EditorialSection>
   );
 }
