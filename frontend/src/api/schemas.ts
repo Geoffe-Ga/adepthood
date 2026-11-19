@@ -2211,5 +2211,25 @@ export const arcPassSchema = z.object({
   markers: z.array(passMarkerSchema),
 });
 
+/**
+ * One Metta Return arc drawn as its own ribbon segment (#3745, #3746), oldest
+ * first in the arc. Named apart from ``returnArcSchema`` (the ``/metta-return``
+ * arc) so the conformance guard matches it to ``ReturnArcSegment``.
+ */
+export const returnArcSegmentSchema = z.object({
+  /** The day the arc's elapsed time counts from; a resume moves it forward by the pause. */
+  started_on: isoDate,
+  /** The day it was left; null while it has not been. */
+  ended_on: isoDate.nullable(),
+  state: z.enum(['active', 'paused', 'complete', 'left']),
+  weeks_total: z.number().int().min(RETURN_MIN_WEEK),
+  /** The current week, or the week it was paused or left in. */
+  reached_week: returnWeekNumber,
+  completed: z.boolean(),
+  /** The recorded pass live on ``started_on``; null outside every pass. */
+  pass_number: z.number().int().nullable(),
+});
+
 export type PassMarkerT = z.infer<typeof passMarkerSchema>;
 export type ArcPassT = z.infer<typeof arcPassSchema>;
+export type ReturnArcSegmentT = z.infer<typeof returnArcSegmentSchema>;

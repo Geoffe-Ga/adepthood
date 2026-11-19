@@ -1,6 +1,6 @@
 import { z } from 'zod';
 
-import { arcPassSchema } from './schemas';
+import { arcPassSchema, returnArcSegmentSchema } from './schemas';
 
 /** Mirrors ``backend/src/schemas/progress.py::ProgressOverviewResponse`` (#3522). */
 export const progressOverviewSchema = z.object({
@@ -38,6 +38,8 @@ export const progressOverviewSchema = z.object({
     ),
     /** One entry per pass, oldest first (#3726); absent from an older server. */
     passes: z.array(arcPassSchema).optional(),
+    /** One entry per Metta Return arc, oldest first (#3745); absent from an older server. */
+    return_arcs: z.array(returnArcSegmentSchema).optional(),
   }),
   rhythm: z.object({
     days: z.array(

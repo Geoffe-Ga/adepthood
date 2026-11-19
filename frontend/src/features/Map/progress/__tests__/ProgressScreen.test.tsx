@@ -9,6 +9,7 @@ import type { ApiProgressOverview } from '@/api';
 import {
   passesFixture,
   progressOverviewFixture,
+  returnArcsFixture,
 } from '@/features/Map/testSupport/progressOverviewFixture';
 
 interface Read {
@@ -100,6 +101,79 @@ describe('ProgressScreen', () => {
     const tree = render(<ProgressScreen />);
     expect(tree.getByTestId('progress-ribbon')).toBeTruthy();
     expect(tree.queryByTestId('progress-pass-1')).toBeNull();
+  });
+
+  it('draws each Metta Return arc as its own row, in time order among the passes (#3746)', () => {
+    const overview = progressOverviewFixture();
+    overview.arc.passes = passesFixture();
+    overview.arc.return_arcs = returnArcsFixture();
+    mockRead = read({ overview });
+    const tree = render(<ProgressScreen />);
+    const arc = within(tree.getByTestId('progress-arc'));
+    expect(
+      arc.getAllByTestId(/^progress-(pass|return)-\d+$/).map((row) => row.props.testID),
+    ).toEqual([
+      'progress-pass-1',
+      'progress-return-1',
+      'progress-pass-2',
+      'progress-return-2',
+      'progress-pass-4',
+      'progress-return-3',
+      'progress-pass-5',
+    ]);
+    expect(arc.getByText('Metta Return · began 10 Feb · left at week 3')).toBeTruthy();
+    expect(arc.getByText('Metta Return · began 7 Jul · completed')).toBeTruthy();
+    expect(arc.getByText('Metta Return · began 3 Aug · week 3 of 5')).toBeTruthy();
+    const active = tree.getByTestId('progress-return-3-inspect');
+    expect(active.props.accessibilityLabel).toBe(
+      'Metta Return, began 3 August 2026. In week 3 of 5: A face you barely know.',
+    );
+    fireEvent(active, 'accessibilityAction', { nativeEvent: { actionName: 'increment' } });
+    expect(tree.getByTestId('progress-return-3-value')).toHaveTextContent(
+      'Week 1 · Coming home to steady ground · lived',
+    );
+  });
+
+  it('lists a Return arc’s five weeks in its table twin', () => {
+    const overview = progressOverviewFixture();
+    overview.arc.passes = passesFixture();
+    overview.arc.return_arcs = returnArcsFixture();
+    mockRead = read({ overview });
+    const tree = render(<ProgressScreen />);
+    const left = within(tree.getByTestId('progress-return-1'));
+    fireEvent.press(left.getByRole('button', { name: 'Show as table' }));
+    expect(left.getByText('Week 3 · A face you barely know')).toBeTruthy();
+    expect(left.getByText('Left here')).toBeTruthy();
+    expect(left.getAllByText('Not begun')).toHaveLength(2);
+  });
+
+  it('draws Return arcs under the single ribbon when no pass is recorded', () => {
+    const overview = progressOverviewFixture();
+    overview.arc.return_arcs = returnArcsFixture().slice(0, 1);
+    mockRead = read({ overview });
+    const tree = render(<ProgressScreen />);
+    const arc = within(tree.getByTestId('progress-arc'));
+    expect(arc.getByTestId('progress-ribbon')).toBeTruthy();
+    expect(arc.getByText('Metta Return · began 10 Feb · left at week 3')).toBeTruthy();
+  });
+
+  it('leaves the screen exactly as it was with no Return arcs', () => {
+    const rendered = (arcs?: ReturnType<typeof returnArcsFixture>) => {
+      const overview = progressOverviewFixture();
+      overview.arc.passes = passesFixture();
+      if (arcs) overview.arc.return_arcs = arcs;
+      mockRead = read({ overview });
+      return JSON.stringify(render(<ProgressScreen />).toJSON());
+    };
+    const before = rendered();
+    expect(rendered([])).toBe(before);
+    expect(before).not.toContain('Metta Return');
+    const fallback = progressOverviewFixture();
+    fallback.arc.return_arcs = [];
+    mockRead = read({ overview: fallback });
+    const single = JSON.stringify(render(<ProgressScreen />).toJSON());
+    mockRead = read();
+    expect(JSON.stringify(render(<ProgressScreen />).toJSON())).toBe(single);
   });
 
   it('keeps all sections in the scroll container when the arc table expands', () => {

@@ -8,6 +8,7 @@ import type { ApiProgressOverview } from '@/api';
 import type { ChartPoint, Dumbbell, RibbonBlock, RibbonMarker } from '@/components/charts';
 import { formatHistoryValue } from '@/components/charts/HistoryPlot';
 import { chart, STAGE_COLORS } from '@/design/tokens';
+import { RETURN_WEEK_TITLES } from '@/features/Return/returnCopy';
 import { storedStageColorName } from '@/store/stageColorName';
 import { addDaysInTZ, dayKeyToInstant } from '@/utils/dateUtils';
 
@@ -183,6 +184,118 @@ export function passRows(overview: ApiProgressOverview): PassRow[] {
   const passes = overview.arc.passes ?? [];
   const numbered = passes.length > 1;
   return passes.map((pass, index) => passRow(overview, pass, passes[index + 1], numbered));
+}
+
+type ReturnArc = NonNullable<ApiProgressOverview['arc']['return_arcs']>[number];
+
+/** One Metta Return arc drawn as its own ribbon row (#3746), a pass week wide per week. */
+export interface ReturnRow {
+  key: string;
+  /** `Metta Return · began 3 Aug · week 3 of 5`. */
+  label: string;
+  /** One block per week of the Return, named with its focus. */
+  blocks: RibbonBlock[];
+  /** Weeks drawn in the Return colour; the rest is an unfilled track. */
+  drawnWeeks: number;
+  /** The running arc's week, drawn as the week line. */
+  currentWeek?: number;
+  /** The weeks the pass rows span, so a Return week is as wide as a pass week. */
+  scaleWeeks: number;
+  /** What each week was, for inspection and the table twin. */
+  weekNotes: string[];
+  /** The whole row as one sentence for screen readers. */
+  summary: string;
+}
+
+const WEEK_DAYS = 7;
+const returnDone = (arc: ReturnArc): boolean => arc.completed || arc.state === 'complete';
+const returnWeekName = (week: number): string => {
+  const title = RETURN_WEEK_TITLES[week - 1];
+  return title ? `Week ${week} · ${title}` : `Week ${week}`;
+};
+/** `: A face you barely know`, or nothing for a week past the known five. */
+const focusClause = (week: number): string => {
+  const title = RETURN_WEEK_TITLES[week - 1];
+  return title ? `: ${title}` : '';
+};
+
+/** Where the arc stands, in the row's header: the Return's own words. */
+function returnStatus(arc: ReturnArc): string {
+  if (returnDone(arc)) return 'completed';
+  if (arc.state === 'left') return `left at week ${arc.reached_week}`;
+  if (arc.state === 'paused') return 'paused';
+  return `week ${arc.reached_week} of ${arc.weeks_total}`;
+}
+
+/** What the reached week was: the one running, paused in, or set down in. */
+const REACHED_NOTE: Record<ReturnArc['state'], string> = {
+  active: 'this week',
+  paused: 'paused here',
+  left: 'left here',
+  complete: 'lived',
+};
+
+function weekNote(arc: ReturnArc, week: number): string {
+  if (returnDone(arc) || week < arc.reached_week) return 'lived';
+  return week === arc.reached_week ? REACHED_NOTE[arc.state] : 'not begun';
+}
+
+/** The sentence's middle: where the arc is, how far it got, or when it ended. */
+function returnWhere(arc: ReturnArc): string {
+  const week = `week ${arc.reached_week} of ${arc.weeks_total}${focusClause(arc.reached_week)}`;
+  if (returnDone(arc)) {
+    const end = arc.ended_on ?? addDaysInTZ(arc.started_on, arc.weeks_total * WEEK_DAYS, 'UTC');
+    return `Completed all ${arc.weeks_total} weeks, ending ${dayLong(end)}.`;
+  }
+  if (arc.state === 'left')
+    return arc.ended_on ? `Left on ${dayLong(arc.ended_on)} in ${week}.` : `Left in ${week}.`;
+  return arc.state === 'paused' ? `Paused in ${week}.` : `In ${week}.`;
+}
+
+function returnRow(overview: ApiProgressOverview, arc: ReturnArc, index: number): ReturnRow {
+  const weeks = Array.from({ length: arc.weeks_total }, (_, offset) => offset + 1);
+  const running = arc.state === 'active' && !returnDone(arc);
+  return {
+    key: `return-${index + 1}`,
+    label: `Metta Return · began ${dayShort(arc.started_on)} · ${returnStatus(arc)}`,
+    blocks: weeks.map((week) => ({
+      label: returnWeekName(week),
+      weeks: 1,
+      color: chart.returnArc,
+    })),
+    drawnWeeks: returnDone(arc) ? arc.weeks_total : arc.reached_week,
+    ...(running ? { currentWeek: arc.reached_week } : {}),
+    scaleWeeks: arcWeeks(overview),
+    weekNotes: weeks.map((week) => weekNote(arc, week)),
+    summary: `Metta Return, began ${dayLong(arc.started_on)}. ${returnWhere(arc)}`,
+  };
+}
+
+/** One row per Metta Return arc, oldest first (#3746); empty when the server sends none. */
+export const returnRows = (overview: ApiProgressOverview): ReturnRow[] =>
+  (overview.arc.return_arcs ?? []).map((arc, index) => returnRow(overview, arc, index));
+
+export type ArcRow = { kind: 'pass'; row: PassRow } | { kind: 'return'; row: ReturnRow };
+
+/**
+ * The pass rows with each Return arc placed in time order (#3746): an arc
+ * follows the passes begun on or before its first day, so it sits under the
+ * pass it began inside. An arc never opens or closes a pass, so it may overlap
+ * the live one. With no arcs this is exactly the pass rows.
+ */
+export function arcRows(overview: ApiProgressOverview): ArcRow[] {
+  const passes = overview.arc.passes ?? [];
+  const arcs = overview.arc.return_arcs ?? [];
+  const returns = returnRows(overview);
+  const rows: ArcRow[] = [];
+  let next = 0;
+  // Passes keep the server's order; each arc goes in before the first pass begun after it.
+  passRows(overview).forEach((row, index) => {
+    while (next < arcs.length && arcs[next]!.started_on < passes[index]!.started_on)
+      rows.push({ kind: 'return', row: returns[next++]! });
+    rows.push({ kind: 'pass', row });
+  });
+  return [...rows, ...returns.slice(next).map((row): ArcRow => ({ kind: 'return', row }))];
 }
 
 export const carryovers = (overview: ApiProgressOverview): string[] =>
