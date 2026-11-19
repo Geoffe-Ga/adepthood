@@ -69,7 +69,16 @@ jobs:
 
           # Find the latest Claude review comment via the deterministic
           # "## Verdict: <verdict>" line that claude-code-review.yml appends.
-          CLAUDE=$(jq -c '[.[] | select(.body | test("(^|\\n)## Verdict:"))] | last // empty' comments.json)
+          # The verdict line is a public literal, so only the two identities
+          # that workflow's `Post review` step posts as count: Geoffe-Ga (its
+          # PAT) and github-actions[bot] (the GITHUB_TOKEN fallback; REST keeps
+          # the `[bot]`). Matched exactly and case-insensitively; a null user
+          # (deleted account) never matches. scripts/ralph/pr-ready.sh and the
+          # address-feedback skill hold the same list: change them together.
+          VERDICT_AUTHORS='["geoffe-ga","github-actions[bot]"]'
+          CLAUDE=$(jq -c --argjson authors "$VERDICT_AUTHORS" '[.[]
+                     | select((.user.login // "" | ascii_downcase) as $a | $authors | index([$a]))
+                     | select(.body | test("(^|\\n)## Verdict:"))] | last // empty' comments.json)
           if [ -z "$CLAUDE" ]; then
             echo "No Claude review yet - skipping"
             exit 0
