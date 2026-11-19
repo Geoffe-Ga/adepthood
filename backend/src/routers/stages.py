@@ -16,6 +16,7 @@ from database import get_session
 from dependencies.creek_vault import get_creek_vault_client
 from dependencies.timezone import current_user_timezone
 from domain.constants import STAGE_START_WEEKS, TOTAL_STAGES
+from domain.course import reanchor_keeping_course
 from domain.creek_vault import CreekVaultClient
 from domain.dates import day_bounds_in_tz, ensure_aware, to_user_date, today_in_tz
 from domain.pass_rescaffold import (
@@ -39,7 +40,7 @@ from domain.program_start import (
     program_start_bounds,
     verdict_within,
 )
-from domain.stage_authority import reanchor_program, record_stage_entry
+from domain.stage_authority import record_stage_entry
 from domain.stage_keys import STAGE_KEYS
 from domain.stage_progress import (
     compute_stage_progress,
@@ -454,7 +455,7 @@ async def _reanchor_first_pass(
     replaces the first.
     """
     anchor, _ = day_bounds_in_tz(tz, chosen)
-    reanchor_program(progress, anchor, tz=tz)
+    reanchor_keeping_course(progress, anchor, datetime.now(UTC), tz=tz)
     await move_live_pass_start(session, progress.user_id, chosen)
     progress.pending_pass_starts_on = None
     session.add(progress)
@@ -603,7 +604,7 @@ async def get_stage_history(
     )
 
 
-def _loop_to_next_cycle(existing: StageProgress, now: datetime) -> StageProgressRecord:
+def _loop_to_next_cycle(existing: StageProgress, now: datetime, tz: str) -> StageProgressRecord:
     """Loop a completed-cycle row into the next cycle at ``now``, returning its record.
 
     The loop itself is :func:`domain.pass_rescaffold.loop_to_next_cycle`, shared
@@ -611,7 +612,7 @@ def _loop_to_next_cycle(existing: StageProgress, now: datetime) -> StageProgress
     the pass record written alongside (issue #3723) dates the incoming pass from
     the very instant that becomes its anchor.
     """
-    loop_to_next_cycle(existing, now)
+    loop_to_next_cycle(existing, now, now=now, tz=tz)
     return StageProgressRecord(
         id=existing.id,
         user_id=existing.user_id,
@@ -665,7 +666,7 @@ async def begin_again(
         raise conflict("cycle_not_complete")
 
     await begin_next_pass(session, existing, now=now, tz=user_tz)
-    record = _loop_to_next_cycle(existing, now)
+    record = _loop_to_next_cycle(existing, now, user_tz)
     session.add(existing)
     await session.commit()
     await session.refresh(existing)
