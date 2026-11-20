@@ -22,11 +22,20 @@ vault that cannot accept files, and a call that failed mid-flight are three
 different things to tell a user, and flattening them would leave them with
 "something went wrong" and no next step.
 
-**An upload is never queued or retried.** There is no spool of pending
+**An upload is never queued or retried here.** There is no spool of pending
 documents, for the same reason the write path keeps no backlog: durably storing
 user document bytes outside the vault is a privacy decision nobody has made. A
 failed upload is reported honestly to the person who made it, and they can try
 again.
+
+**A busy vault is a wait, not a failure (#3770).** Creek refuses an upload with
+``503 temporarily_unavailable`` while a classify or link pass holds its
+content-mutation lock, and something in front of it may shed with a ``429``.
+Neither kept the document and neither says anything about it, so both answer
+:attr:`VaultUploadStatus.VAULT_BUSY` with the wait Creek named in
+``Retry-After`` (or :data:`DEFAULT_VAULT_BUSY_RETRY_AFTER_SECONDS`). The bytes
+still stay with the caller: it is the client that holds the document and sends
+it again once the wait is over. Every other failure degrades exactly as before.
 
 **Intimate documents do not leave this process.** They are withheld here, before
 the vault is contacted at all, and the reason is the wire rather than a policy
@@ -68,6 +77,7 @@ import logging
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from datetime import datetime
+from typing import Final
 
 from domain.creek_vault import (
     CreekCapability,
@@ -77,7 +87,10 @@ from domain.creek_vault import (
     CreekVaultClient,
     CreekVaultContractError,
     CreekVaultError,
+    CreekVaultRateLimitedError,
+    CreekVaultUnavailableError,
     VaultErrorCode,
+    VaultSendSuspendedError,
     VaultTierCeiling,
     VaultUploadRequest,
     VaultUploadResult,
@@ -86,6 +99,7 @@ from domain.creek_vault import (
     wire_ceiling_for,
 )
 from domain.upload_source import normalize_source_text
+from services.upload_handshake_memo import UPLOAD_HANDSHAKE_MEMO
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -115,6 +129,15 @@ _FOLDER_IDENTITY_DOMAIN = b"adepthood-upload-folder-v1\x00"
 # path could contain can move a boundary between them.
 _FRAME_LENGTH_BYTES = 8
 
+#: The wait a busy answer names when the vault named none (#3770). Creek before
+#: Creek-Vault#2121 sends no ``Retry-After``; thirty seconds is long enough for a
+#: short pass to finish and short enough that a waiting row does not feel stuck.
+DEFAULT_VAULT_BUSY_RETRY_AFTER_SECONDS: Final[int] = 30
+
+#: The shortest wait a busy answer names. ``Retry-After: 0`` reads as "send it
+#: again now", which against a vault that is still busy is a tight loop.
+MIN_VAULT_BUSY_RETRY_AFTER_SECONDS: Final[int] = 1
+
 
 class UploadDegradeReason(enum.StrEnum):
     """Why one upload failed mid-flight, in terms an operator can act on.
@@ -125,7 +148,8 @@ class UploadDegradeReason(enum.StrEnum):
     an upload refused as unsupported *after* the handshake advertised it,
     ``CEILING_UNREPRESENTABLE`` is a document whose tier Creek's wire cannot
     express, and ``NOT_STORED`` is a vault that answered successfully yet did not
-    durably keep the document.
+    durably keep the document. ``VAULT_BUSY`` is a vault that refused for now
+    -- a pass holding its lock, or a shed -- and is answered as a wait (#3770).
 
     Three of them reach the user as a single
     :attr:`VaultUploadStatus.DEGRADED` -- that is the point of degrading. The
@@ -142,6 +166,7 @@ class UploadDegradeReason(enum.StrEnum):
     UNSUPPORTED_CAPABILITY = "unsupported_capability"
     CEILING_UNREPRESENTABLE = "ceiling_unrepresentable"
     NOT_STORED = "not_stored"
+    VAULT_BUSY = "vault_busy"
 
 
 # Vault error codes that describe a *negotiation* rather than a mishap: the
@@ -200,6 +225,10 @@ class UploadedDocument:
     the call site readable -- five loose keyword arguments in a row is where a
     filename and a classification get transposed silently.
 
+    ``run_id`` names the Seed run the document was sent in, when it was. It
+    decides nothing about the document: it only lets the run's documents share
+    one capability handshake (:mod:`services.upload_handshake_memo`, #3770).
+
     ``source`` is set only for a document imported from a folder, and is what
     keeps two same-named notes in different subfolders apart -- see
     :func:`upload_external_id`. ``None`` is a single-file upload, addressed
@@ -216,6 +245,7 @@ class UploadedDocument:
     classification: str
     created_at: datetime
     source: FolderSource | None = field(default=None, repr=False)
+    run_id: str | None = None
 
 
 @dataclass(frozen=True)
@@ -227,11 +257,15 @@ class VaultUploadOutcome:
     document as, which is an empty tuple until the vault returns them -- and
     empty is the correct, expected answer rather than a failure. Frozen so a
     recorded outcome cannot mutate between the service and the router.
+
+    ``retry_after_seconds`` is set only on :attr:`VaultUploadStatus.VAULT_BUSY`:
+    how long to wait before sending the same document again.
     """
 
     status: VaultUploadStatus
     vault_ref: str | None
     tags: tuple[str, ...]
+    retry_after_seconds: int | None = None
 
 
 # The three non-accepted outcomes are value-identical every time, so they are
@@ -324,7 +358,35 @@ def _degrade_reason_for(error: CreekVaultError) -> UploadDegradeReason:
         return UploadDegradeReason.AUTH
     if isinstance(error, CreekCapabilityUnsupportedError):
         return UploadDegradeReason.UNSUPPORTED_CAPABILITY
+    if _busy_wait(error) is not None:
+        return UploadDegradeReason.VAULT_BUSY
     return UploadDegradeReason.UNAVAILABLE
+
+
+def _busy_wait(error: CreekVaultError) -> int | None:
+    """Return the wait a retryable refusal earns, or ``None`` for any other failure.
+
+    Two shapes are a busy vault: a :class:`CreekVaultRateLimitedError` (any
+    ``429``, or Creek's ``rate_limited`` code), and an availability error whose
+    code is Creek's own ``temporarily_unavailable`` -- the answer its
+    content-mutation lock and its concurrency limits both give. An uncoded 503,
+    a dropped connection, any other 5xx is a real outage and is not a wait.
+
+    The operator's send suspension is excluded first: it subclasses the
+    availability error, but no amount of waiting lifts it (#3618).
+    """
+    if isinstance(error, VaultSendSuspendedError) or not isinstance(
+        error, CreekVaultUnavailableError
+    ):
+        return None
+    retryable = isinstance(error, CreekVaultRateLimitedError) or (
+        error.code is VaultErrorCode.TEMPORARILY_UNAVAILABLE
+    )
+    if not retryable:
+        return None
+    if error.retry_after_seconds is None:
+        return DEFAULT_VAULT_BUSY_RETRY_AFTER_SECONDS
+    return max(MIN_VAULT_BUSY_RETRY_AFTER_SECONDS, error.retry_after_seconds)
 
 
 def _degrade_fields(error: CreekVaultError) -> dict[str, object]:
@@ -376,9 +438,19 @@ def _failed_outcome_for(error: CreekVaultError) -> VaultUploadOutcome:
     withdrawn under us, and a route refused to this caller's version. Both leave
     the person in the same place as an unadvertised capability, so both answer
     the same status the pre-call gate does.
+
+    A third answer sits between them (#3770): a vault that refused *for now* --
+    ``temporarily_unavailable`` or a ``429`` -- is neither broken nor closed,
+    and is answered :attr:`VaultUploadStatus.VAULT_BUSY` with the wait it named.
+    See :func:`_busy_wait`.
     """
     if _is_unnegotiable(error):
         return _UNSUPPORTED_OUTCOME
+    wait = _busy_wait(error)
+    if wait is not None:
+        return VaultUploadOutcome(
+            status=VaultUploadStatus.VAULT_BUSY, vault_ref=None, tags=(), retry_after_seconds=wait
+        )
     return _DEGRADED_OUTCOME
 
 
@@ -487,7 +559,9 @@ def _expressible_on_the_wire(tier_ceiling: VaultTierCeiling) -> bool:
     return True
 
 
-async def _vault_refusal(client: CreekVaultClient) -> VaultUploadOutcome | None:
+async def _vault_refusal(
+    client: CreekVaultClient, document: UploadedDocument
+) -> VaultUploadOutcome | None:
     """Probe the vault and name what stops the upload, or ``None`` if nothing does.
 
     An unreachable vault and a vault that cannot take files are separated because
@@ -498,8 +572,13 @@ async def _vault_refusal(client: CreekVaultClient) -> VaultUploadOutcome | None:
     text has said nothing about whether it takes files, and treating one as the
     other would put a user's document on the wire toward a surface that never
     claimed it.
+
+    A document sent as part of a Seed run reuses the run's handshake while it is
+    fresh rather than probing again (#3770, :mod:`services.upload_handshake_memo`).
     """
-    await client.handshake()
+    await UPLOAD_HANDSHAKE_MEMO.handshake(
+        client, owner_user_id=document.owner_user_id, run_id=document.run_id
+    )
     if not client.is_available():
         return _UNAVAILABLE_OUTCOME
     if not client.supports(CreekCapability.UPLOAD):
@@ -538,7 +617,8 @@ async def store_upload(
        caller may name, so this is a fact about the contract rather than about
        today's weather.
     3. A handshake probes the vault -- see :func:`_vault_refusal`.
-    4. The upload runs. A mishap during it degrades to
+    4. The upload runs. A vault busy for now answers
+       :attr:`VaultUploadStatus.VAULT_BUSY` with a wait (#3770). A mishap during it degrades to
        :attr:`VaultUploadStatus.DEGRADED`; a capability withdrawn under us, or a
        route refused to our version, lands on
        :attr:`VaultUploadStatus.CAPABILITY_UNSUPPORTED` alongside step 3. See
@@ -554,11 +634,15 @@ async def store_upload(
     if not _expressible_on_the_wire(tier_ceiling):
         _log_degraded(request, {"reason": UploadDegradeReason.CEILING_UNREPRESENTABLE.value})
         return _UNSUPPORTED_OUTCOME
-    refusal = await _vault_refusal(client)
+    refusal = await _vault_refusal(client, document)
     if refusal is not None:
         return refusal
     attempt = await _try_upload(client, request)
     if isinstance(attempt, VaultUploadOutcome):
+        if attempt.status is not VaultUploadStatus.VAULT_BUSY:
+            UPLOAD_HANDSHAKE_MEMO.forget(
+                client, owner_user_id=document.owner_user_id, run_id=document.run_id
+            )
         return attempt
     return VaultUploadOutcome(
         status=VaultUploadStatus.ACCEPTED, vault_ref=attempt.vault_ref, tags=attempt.tags

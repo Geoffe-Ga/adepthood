@@ -90,6 +90,7 @@ from __future__ import annotations
 
 import asyncio
 import enum
+import hashlib
 import logging
 import os
 from collections.abc import Callable, Mapping, Sequence
@@ -194,6 +195,8 @@ from services.creek_vault_payload import (
 from services.creek_vault_pinned_transport import build_pinned_destination_transport
 from services.creek_vault_readings import recommend_from_vault
 from services.creek_vault_relay import parse_request_key_providers, relay_headers
+from services.creek_vault_retry_after import RETRY_AFTER_HEADER as _RETRY_AFTER_HEADER
+from services.creek_vault_retry_after import read_retry_after_seconds
 from services.creek_vault_telemetry import (
     VaultCallTimedOutError,
     VaultTelemetryOutcome,
@@ -1386,9 +1389,10 @@ def _availability_failure(
         :class:`CreekVaultUnavailableError` -- the same degrade for every
         existing caller, since the first is a subclass of the second.
     """
+    wait = read_retry_after_seconds(response.headers.get(_RETRY_AFTER_HEADER))
     if signals_rate_limit(response.status_code, code):
-        return CreekVaultRateLimitedError(message, code=code)
-    return CreekVaultUnavailableError(message, code=code)
+        return CreekVaultRateLimitedError(message, code=code, retry_after_seconds=wait)
+    return CreekVaultUnavailableError(message, code=code, retry_after_seconds=wait)
 
 
 def _faults_our_request(response: httpx.Response) -> bool:
@@ -1702,6 +1706,11 @@ def _durable_pipeline_result(
     return result
 
 
+# Separates the vault URL from the key inside the handshake-identity pre-image.
+# A NUL can appear in neither, so no two (url, key) pairs share a pre-image.
+_IDENTITY_SEPARATOR = "\x00"
+
+
 class HttpCreekVaultClient:
     """A :class:`CreekVaultClient` that speaks plain HTTP/JSON to a configured vault.
 
@@ -1801,6 +1810,30 @@ class HttpCreekVaultClient:
         class still has no ``__repr__`` of its own.
         """
         return self._url
+
+    @property
+    def handshake_identity(self) -> str:
+        """A content-free digest of the vault and credential a handshake answers for.
+
+        What :mod:`services.upload_handshake_memo` keys a reused handshake on
+        (#3770), so one adapter can never be handed a probe made against another
+        vault, or with another key, even for the same account. A digest rather
+        than the URL and key themselves, so the memo holds no credential.
+        """
+        return hashlib.sha256(
+            f"{self._url}{_IDENTITY_SEPARATOR}{self._api_key}".encode()
+        ).hexdigest()
+
+    def adopt_handshake(self, result: HandshakeResult, /) -> None:
+        """Take a handshake this run already made against this same vault (#3770).
+
+        The cheap synchronous reads -- :meth:`is_available`, :meth:`supports`
+        -- then answer from it exactly as if :meth:`handshake` had just run, and
+        no probe goes on the wire. Only an available result is ever offered, so
+        no degrade reason comes with it.
+        """
+        self._last_handshake = result
+        self._degrade_reason = None
 
     def _active_client(self) -> httpx.AsyncClient:
         """Return the injected client, or borrow the shared pool's (built on demand).

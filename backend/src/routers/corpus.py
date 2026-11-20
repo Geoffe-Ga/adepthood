@@ -438,6 +438,7 @@ def _vault_response(result: VaultImportResult) -> DocumentImportResponse:
         vault_status=result.status,
         vault_ref=result.vault_ref,
         tags=list(result.tags),
+        retry_after_seconds=result.retry_after_seconds,
         message=UPLOAD_MESSAGES[result.status],
     )
 
@@ -543,6 +544,7 @@ async def import_corpus_document(
                     classification=payload.classification,
                     created_at=datetime.now(UTC),
                     source=_folder_source(payload),
+                    run_id=payload.upload_run_id,
                 ),
             )
         except ManagedUploadTooLargeError:

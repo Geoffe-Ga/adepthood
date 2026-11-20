@@ -350,12 +350,25 @@ class CreekVaultUnavailableError(CreekVaultError):
     are the vault reporting on **itself** rather than faulting the call we made.
     It defaults to ``None``, which is what every purely transport-level failure
     leaves it as: nothing answered, so nothing named a reason.
+
+    ``retry_after_seconds`` is the wait the answer's ``Retry-After`` header
+    named, in whole seconds, when it named one this adapter could read (#3770).
+    Only a number survives: the header is read as delta-seconds and nothing
+    else, so no vault-chosen text rides on the exception. ``None`` means no wait
+    was named -- every transport failure, and every answer without the header.
     """
 
-    def __init__(self, message: str, *, code: VaultErrorCode | None = None) -> None:
-        """Store the static message and, when the vault named one we know, its code."""
+    def __init__(
+        self,
+        message: str,
+        *,
+        code: VaultErrorCode | None = None,
+        retry_after_seconds: int | None = None,
+    ) -> None:
+        """Store the static message, the vault's known code, and any wait it named."""
         super().__init__(message)
         self.code = code
+        self.retry_after_seconds = retry_after_seconds
 
 
 class CreekVaultRateLimitedError(CreekVaultUnavailableError):
@@ -865,12 +878,21 @@ class VaultUploadStatus(enum.StrEnum):
     the user needs from the status is the same in both -- that no retry helps --
     and splitting it would add a fourth wire value every consumer of this enum
     would have to learn before it could render anything at all.
+
+    ``VAULT_BUSY`` (#3770) is the one outcome that is a wait rather than an
+    answer: the vault refused with a retryable ``503 temporarily_unavailable``
+    or a ``429`` -- a classify or link pass holding its lock, or a shed in
+    front of it -- kept nothing, and named (or was given) a wait. It is apart
+    from ``DEGRADED`` because the advice differs: "try again" after a mishap,
+    "wait this long, then send it" for a vault that is merely occupied. Last,
+    so the order of the others does not move.
     """
 
     ACCEPTED = "accepted"
     VAULT_UNAVAILABLE = "vault_unavailable"
     CAPABILITY_UNSUPPORTED = "capability_unsupported"
     DEGRADED = "degraded"
+    VAULT_BUSY = "vault_busy"
 
 
 @dataclass(frozen=True)
