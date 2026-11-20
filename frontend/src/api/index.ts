@@ -123,6 +123,8 @@ import {
   type ReflectionSourceItemT,
   type ReadingQuoteItemT,
   type RelatedEddyT,
+  type RelatedThreadT,
+  type LetterRelatedT,
   type RelatedPraxisKindT,
   type RelatedPraxisStatusT,
   type RelatedPraxisT,
@@ -1957,6 +1959,13 @@ export interface Marginalia {
   source_model?: string | null;
   essay_source?: MarginaliaSourceT | null;
   receipt_version?: number | null;
+  /**
+   * Which voice the writer's vault says wrote the letter (#3778): ``owner``
+   * when their own style shaped it. Absent or null for every other letter.
+   */
+  essay_voice?: 'owner' | 'higher_self' | null;
+  /** The writer's own vault pages the letter's entry touched; null when none (#3778). */
+  essay_related?: LetterRelated | null;
 }
 
 /** Where a promoted quote was lifted from: an entry, a Course chapter, or a letter. */
@@ -2002,6 +2011,10 @@ export type RelatedPraxisStatus = RelatedPraxisStatusT;
 export type RelatedPraxis = RelatedPraxisT;
 /** A recurring corpus pattern related to the current journal reflection. */
 export type RelatedEddy = RelatedEddyT;
+/** A narrative thread of the writer's vault the current entry belongs to (#3778). */
+export type RelatedThread = RelatedThreadT;
+/** The vault pages beside a letter: praxis, eddies and threads (#3778). */
+export type LetterRelated = LetterRelatedT;
 
 /**
  * A margin note after an essay request, with the wallet it left behind
@@ -2077,6 +2090,8 @@ export interface ResonanceResponse {
   related_praxis?: RelatedPraxis[];
   /** Recurring corpus patterns this reflection touched; absent on legacy responses. */
   related_eddies?: RelatedEddy[];
+  /** Narrative threads this reflection touched (#3778); absent on legacy responses. */
+  related_threads?: RelatedThread[];
   /** Which side answered each operation and who paid (#3062); absent on legacy responses. */
   provenance?: PassProvenanceT | null;
 }

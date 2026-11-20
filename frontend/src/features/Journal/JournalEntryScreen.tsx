@@ -5148,7 +5148,11 @@ function EntryCareSurfaces({ ctl }: { ctl: Controller }): React.JSX.Element {
 /** Corpus-level vault pages sit beside the journal page, never in its margin. */
 function EntryCreekSurface({ ctl }: { ctl: Controller }): React.JSX.Element | null {
   return (
-    <FromYourCreekPanel praxis={ctl.resonance.relatedPraxis} eddies={ctl.resonance.relatedEddies} />
+    <FromYourCreekPanel
+      praxis={ctl.resonance.relatedPraxis}
+      eddies={ctl.resonance.relatedEddies}
+      threads={ctl.resonance.relatedThreads}
+    />
   );
 }
 

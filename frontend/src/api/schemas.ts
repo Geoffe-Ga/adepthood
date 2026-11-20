@@ -1131,6 +1131,14 @@ const marginaliaFieldsSchema = z.object({
   source_model: z.string().nullish().catch(null),
   essay_source: recordedSource,
   receipt_version: z.number().int().nullish().catch(null),
+  // Which voice a vault letter says wrote it, and the writer's own pages beside
+  // it (#3778). Fail safe like provenance: missing, unknown or malformed reads
+  // as null -- no voice line and no panel -- never a lost note.
+  essay_voice: z.enum(['owner', 'higher_self']).nullish().catch(null),
+  essay_related: z
+    .lazy(() => letterRelatedSchema)
+    .nullish()
+    .catch(null),
 });
 
 export const marginaliaSchema = z.preprocess(normalizeNoteReceipt, marginaliaFieldsSchema);
@@ -1367,6 +1375,32 @@ export const relatedEddySchema = z.object({
   formed: z.string(),
 });
 
+/**
+ * The three lifecycles a vault thread may sit in (Creek contract 0.36). Closed
+ * so a drifted value fails at the boundary instead of rendering unlabelled.
+ */
+export const relatedThreadStatusSchema = z.enum(['active', 'dormant', 'resolved']);
+
+/**
+ * One narrative thread of the writer's own vault an entry belongs to (#3778):
+ * the page's id, title and lifecycle, never its body.
+ */
+export const relatedThreadSchema = z.object({
+  id: z.string(),
+  title: z.string(),
+  status: relatedThreadStatusSchema,
+});
+
+/**
+ * The writer's own vault pages a letter's entry touched (mirrors the backend
+ * ``LetterRelatedResponse``, #3778). Each list defaults to empty.
+ */
+export const letterRelatedSchema = z.object({
+  praxis: z.array(relatedPraxisSchema).default([]),
+  eddies: z.array(relatedEddySchema).default([]),
+  threads: z.array(relatedThreadSchema).default([]),
+});
+
 /** Which side answered one operation of a pass (mirrors ``ProvenanceReceipt``). */
 export const provenanceReceiptSchema = z
   .object({
@@ -1452,6 +1486,7 @@ export const resonanceResponseSchema = z.object({
   // these are optional only so responses predating them still validate.
   related_praxis: z.array(relatedPraxisSchema).optional(),
   related_eddies: z.array(relatedEddySchema).optional(),
+  related_threads: z.array(relatedThreadSchema).optional(),
   // Which side answered each operation and who paid (#3062). A missing or
   // malformed object parses to null, read as "Source not recorded".
   provenance: recordedPassProvenanceSchema.nullish().catch(null),
@@ -1492,6 +1527,8 @@ export type RelatedPraxisKindT = z.infer<typeof relatedPraxisKindSchema>;
 export type RelatedPraxisStatusT = z.infer<typeof relatedPraxisStatusSchema>;
 export type RelatedPraxisT = z.infer<typeof relatedPraxisSchema>;
 export type RelatedEddyT = z.infer<typeof relatedEddySchema>;
+export type RelatedThreadT = z.infer<typeof relatedThreadSchema>;
+export type LetterRelatedT = z.infer<typeof letterRelatedSchema>;
 
 // ---------------------------------------------------------------------------
 // Depth preferences (you-choose-your-depth ring toggles)

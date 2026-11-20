@@ -9,6 +9,7 @@ import type {
   Marginalia,
   RelatedEddy,
   RelatedPraxis,
+  RelatedThread,
   ResonanceResponse,
 } from '@/api';
 import { ApiError } from '@/api';
@@ -25,6 +26,8 @@ const EDDY: RelatedEddy = {
   fragment_count: 12,
   formed: '2026-03-04',
 };
+
+const THREAD: RelatedThread = { id: 'thread-1', title: 'Leaving the firm', status: 'active' };
 
 const mockList = jest.fn() as jest.MockedFunction<
   (_id: number) => Promise<{ items: Marginalia[] }>
@@ -64,6 +67,23 @@ beforeEach(() => {
 });
 
 describe('useResonance — related Creek pages', () => {
+  it('stores the threads a pass names, and clears them when a later pass names none', async () => {
+    const legacy = resonancePayload();
+    delete legacy.related_threads;
+    mockGenerate
+      .mockResolvedValueOnce(resonancePayload({ related_threads: [THREAD] }))
+      .mockResolvedValueOnce(legacy);
+    const { result } = renderHook(() =>
+      useResonance({ routeEntryId: null, flush: async () => 42, userTimezone: TEST_TIMEZONE }),
+    );
+
+    await act(async () => result.current.requestResonance());
+    expect(result.current.relatedThreads).toEqual([THREAD]);
+
+    await act(async () => result.current.requestResonance());
+    expect(result.current.relatedThreads).toEqual([]);
+  });
+
   it('stores praxis and eddies returned alongside a resonance pass', async () => {
     mockGenerate.mockResolvedValue(
       resonancePayload({ related_praxis: [PRAXIS], related_eddies: [EDDY] }),

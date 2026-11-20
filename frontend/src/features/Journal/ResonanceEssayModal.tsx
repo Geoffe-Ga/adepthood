@@ -36,6 +36,7 @@ import {
 import { aiAccessRevoked } from './aiAccessRevoked';
 import CareSupportNote from './CareSupportNote';
 import { ExplainerActionPair, PayerChangedNotice, explainerStyles } from './ExplainerDialogParts';
+import FromYourCreekPanel from './FromYourCreekPanel';
 import { fundingOutcome, type FundingOutcome } from './fundingOutcome';
 import { generationRefusal } from './generationRefusal';
 import JournalModalShell from './JournalModalShell';
@@ -80,6 +81,13 @@ export interface ResonanceEssayModalProps {
   onFundingRequired?: (_outcome: FundingOutcome) => void;
 }
 
+/**
+ * The quiet line under a letter the writer's vault wrote in their own voice
+ * (#3778): an attribution, not a badge, and said aloud in full.
+ */
+const OWN_VOICE_LINE = 'In your own voice';
+const OWN_VOICE_A11Y = 'This letter is written in your own voice, drawn from your own writing.';
+
 /** Shown when a fetch resolves an empty essay, so the user isn't stranded on a blank card. */
 const BLANK_ESSAY_MESSAGE = "This note's essay isn't ready yet.";
 
@@ -96,6 +104,10 @@ interface EssayState {
   offer: boolean;
   /** Which side wrote the letter, as the server recorded it (#3062). */
   essaySource?: unknown;
+  /** Which voice the writer's vault says wrote the letter (#3778). */
+  essayVoice?: Marginalia['essay_voice'];
+  /** The writer's own vault pages beside the letter (#3778). */
+  essayRelated?: Marginalia['essay_related'];
   /** The offer is back because the ask's payer route changed (#3385). */
   payerChanged?: boolean;
   /** The vault's care guard answered instead of a letter: the server's care surface (#3380). */
@@ -146,6 +158,8 @@ function initialState(note: Marginalia, unanswered: UnansweredNotes): EssayState
       error: null,
       offer: false,
       essaySource: note.essay_source,
+      essayVoice: note.essay_voice,
+      essayRelated: note.essay_related,
     };
   }
   const remembered = unanswered.get(note.id);
@@ -259,6 +273,8 @@ function letterState(updated: Marginalia): EssayState {
     essay: updated.essay,
     loading: false,
     essaySource: updated.essay_source,
+    essayVoice: updated.essay_voice,
+    essayRelated: updated.essay_related,
   };
 }
 
@@ -481,6 +497,8 @@ function EssayBody({
   retryable = true,
   retry,
   essaySource,
+  essayVoice,
+  essayRelated,
   care,
 }: Omit<EssayState, 'offer'> & { retry: () => void }) {
   if (loading) {
@@ -513,13 +531,46 @@ function EssayBody({
     );
   }
   return (
+    <LetterText
+      essay={essay}
+      essaySource={essaySource}
+      essayVoice={essayVoice}
+      essayRelated={essayRelated}
+    />
+  );
+}
+
+/**
+ * The letter, then -- only when its vault said so -- the quiet own-voice line
+ * under it, its source, and the writer's own pages beside it (#3778).
+ */
+function LetterText({
+  essay,
+  essaySource,
+  essayVoice,
+  essayRelated,
+}: Pick<EssayState, 'essay' | 'essaySource' | 'essayVoice' | 'essayRelated'>) {
+  return (
     <View>
       <Text style={styles.essay} testID="essay-text">
         {essay}
       </Text>
+      {essayVoice === 'owner' ? (
+        <Text style={styles.voice} accessibilityLabel={OWN_VOICE_A11Y} testID="essay-voice">
+          {OWN_VOICE_LINE}
+        </Text>
+      ) : null}
       <Text style={styles.source} testID="essay-source">
         {sourceLabel(essaySource)}
       </Text>
+      {essayRelated == null ? null : (
+        <FromYourCreekPanel
+          praxis={essayRelated.praxis}
+          eddies={essayRelated.eddies}
+          threads={essayRelated.threads}
+          placement="letter"
+        />
+      )}
     </View>
   );
 }
@@ -673,6 +724,12 @@ const styles = StyleSheet.create({
   essay: {
     ...editorialType.body,
     color: colors.paper.ink,
+  },
+  voice: {
+    ...editorialType.caption,
+    color: colors.paper.inkSoft,
+    fontStyle: 'italic',
+    paddingTop: spacing(1.5),
   },
   source: {
     ...editorialType.caption,

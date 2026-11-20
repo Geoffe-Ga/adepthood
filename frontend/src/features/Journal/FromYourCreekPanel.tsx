@@ -1,8 +1,9 @@
 /**
  * A quiet, display-only reading of the compiled pages this entry touched in
  * the writer's Creek vault. It lives beside the journal page, not in its
- * margin: praxis and eddies describe corpus-level patterns rather than a span
- * of the current entry.
+ * margin: praxis, eddies and threads describe corpus-level patterns rather
+ * than a span of the current entry. A letter carries the same panel under its
+ * text (#3778), flush with the letter's own margins.
  */
 import React, { useState } from 'react';
 import {
@@ -14,7 +15,7 @@ import {
   useWindowDimensions,
 } from 'react-native';
 
-import type { RelatedEddy, RelatedPraxis, RelatedPraxisStatus } from '@/api';
+import type { RelatedEddy, RelatedPraxis, RelatedPraxisStatus, RelatedThread } from '@/api';
 import {
   BORDER_RADIUS,
   SPACING,
@@ -31,6 +32,13 @@ import {
 export interface FromYourCreekPanelProps {
   praxis: RelatedPraxis[];
   eddies: RelatedEddy[];
+  /** Narrative threads the entry belongs to (#3778); none by default. */
+  threads?: RelatedThread[];
+  /**
+   * Where the panel sits: beside the journal page on its desk (the default), or
+   * inside a letter's card, flush with the letter's own margins (#3778).
+   */
+  placement?: 'desk' | 'letter';
 }
 
 const MONTHS = [
@@ -58,6 +66,14 @@ const MAX_EXPANDED_VIEWPORT_RATIO = 0.6;
  */
 const PRAXIS_HEADING = "Praxis — what you're putting into practice";
 const EDDIES_HEADING = 'Eddies — where your writing keeps circling';
+const THREADS_HEADING = 'Threads — the currents your writing is part of';
+
+/** A thread's lifecycle in plain words, so a status never reads as a verdict. */
+const THREAD_STATUS_LABELS: Record<RelatedThread['status'], string> = {
+  active: 'still running',
+  dormant: 'quiet for now',
+  resolved: 'has run its course',
+};
 
 /** The vault's lifecycle language, softened where an internal status is terse. */
 function statusLabel(status: RelatedPraxisStatus): string {
@@ -140,15 +156,47 @@ function EddyPages({ items }: { items: RelatedEddy[] }): React.JSX.Element | nul
   );
 }
 
+function ThreadPages({ items }: { items: RelatedThread[] }): React.JSX.Element | null {
+  if (items.length === 0) return null;
+  return (
+    <View style={styles.section} testID="from-your-creek-threads">
+      <Text style={styles.sectionHeading}>{THREADS_HEADING}</Text>
+      {items.map((item) => {
+        const status = THREAD_STATUS_LABELS[item.status];
+        return (
+          <View
+            key={item.id}
+            style={styles.page}
+            accessible
+            accessibilityRole="summary"
+            accessibilityLabel={`${sentence(item.title)} A thread, ${status}.`}
+          >
+            <Text style={styles.pageTitle}>{item.title}</Text>
+            <Text style={styles.caption}>{status}</Text>
+          </View>
+        );
+      })}
+    </View>
+  );
+}
+
 /** Collapsed by default, following the sources panel's invitation-to-expand. */
-function FromYourCreekPanel({ praxis, eddies }: FromYourCreekPanelProps): React.JSX.Element | null {
+function FromYourCreekPanel({
+  praxis,
+  eddies,
+  threads = [],
+  placement = 'desk',
+}: FromYourCreekPanelProps): React.JSX.Element | null {
   const [expanded, setExpanded] = useState(false);
   const { height } = useWindowDimensions();
-  const pageCount = praxis.length + eddies.length;
+  const pageCount = praxis.length + eddies.length + threads.length;
   if (pageCount === 0) return null;
 
   return (
-    <View style={styles.band}>
+    <View
+      style={placement === 'letter' ? styles.letterBand : styles.band}
+      testID="from-your-creek-band"
+    >
       <View style={styles.panel} testID="from-your-creek">
         <TouchableOpacity
           style={styles.toggle}
@@ -174,6 +222,7 @@ function FromYourCreekPanel({ praxis, eddies }: FromYourCreekPanelProps): React.
           >
             <PraxisPages items={praxis} />
             <EddyPages items={eddies} />
+            <ThreadPages items={threads} />
           </ScrollView>
         ) : null}
       </View>
@@ -188,6 +237,11 @@ const styles = StyleSheet.create({
     alignSelf: 'center',
     paddingHorizontal: journalSheet.deskPaddingH,
     paddingTop: SPACING.sm,
+  },
+  letterBand: {
+    width: '100%',
+    paddingHorizontal: 0,
+    paddingTop: SPACING.md,
   },
   panel: {
     backgroundColor: surface.raised,

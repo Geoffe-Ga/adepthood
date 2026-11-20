@@ -196,6 +196,9 @@ const AUDITED_NON_INTERACTIVE_CAPTIONS = [
   // Audited (#3062): the letter's recorded-source line under the letter text.
   // Static metadata, never pressed.
   'features/Journal/ResonanceEssayModal.tsx::source',
+  // Audited (#3778): the quiet "In your own voice" line under an own-voice
+  // letter. An attribution, never pressed.
+  'features/Journal/ResonanceEssayModal.tsx::voice',
   // Audited: the one line under "Which habit?" (#2861) saying what choosing a
   // habit does. Static text above the rows, never pressed — every row in the
   // picker is an OfferAction, which takes editorialType.action.

@@ -33,6 +33,7 @@ import type {
   ContractionReflection,
   Marginalia,
   RelatedEddy,
+  RelatedThread,
   RelatedPraxis,
   ResonanceResponse,
   ResonanceRoute,
@@ -166,6 +167,8 @@ export interface UseResonanceResult {
   relatedPraxis: RelatedPraxis[];
   /** Recurring corpus patterns related by the latest completed resonance pass. */
   relatedEddies: RelatedEddy[];
+  /** Narrative threads the latest completed resonance pass named (#3778). */
+  relatedThreads: RelatedThread[];
   /**
    * How many generate passes have resolved on this screen, excluding any the
    * privacy floor withheld (``private: true``). A signal, not a thing to show:
@@ -419,6 +422,7 @@ interface LatestPassState {
   passProvenance: ResonanceResponse['provenance'];
   relatedPraxis: RelatedPraxis[];
   relatedEddies: RelatedEddy[];
+  relatedThreads: RelatedThread[];
   /** Resolved, non-intimate passes so far; survives ``clear`` because it counts history. */
   completedPasses: number;
   clear: () => void;
@@ -442,6 +446,7 @@ function useLatestPassState(): LatestPassState {
   const [passProvenance, setPassProvenance] = useState<ResonanceResponse['provenance']>(undefined);
   const [relatedPraxis, setRelatedPraxis] = useState<RelatedPraxis[]>([]);
   const [relatedEddies, setRelatedEddies] = useState<RelatedEddy[]>([]);
+  const [relatedThreads, setRelatedThreads] = useState<RelatedThread[]>([]);
   const [completedPasses, setCompletedPasses] = useState(0);
 
   const clear = useCallback((): void => {
@@ -452,6 +457,7 @@ function useLatestPassState(): LatestPassState {
     setPassProvenance(undefined);
     setRelatedPraxis([]);
     setRelatedEddies([]);
+    setRelatedThreads([]);
   }, []);
 
   const receive = useCallback((result: ResonanceResponse): void => {
@@ -463,6 +469,7 @@ function useLatestPassState(): LatestPassState {
     setPassProvenance(receivedPassProvenance(result));
     setRelatedPraxis(result.related_praxis ?? []);
     setRelatedEddies(result.related_eddies ?? []);
+    setRelatedThreads(result.related_threads ?? []);
     // The server never counts an intimate pass, and neither does this: a
     // client that did would ask for an offer and render "sent once to the
     // language-model provider" beneath the line saying this entry stays put.
@@ -477,6 +484,7 @@ function useLatestPassState(): LatestPassState {
     passProvenance,
     relatedPraxis,
     relatedEddies,
+    relatedThreads,
     completedPasses,
     clear,
     receive,
@@ -728,6 +736,7 @@ export function useResonance({
     passProvenance: latestPass.passProvenance,
     relatedPraxis: latestPass.relatedPraxis,
     relatedEddies: latestPass.relatedEddies,
+    relatedThreads: latestPass.relatedThreads,
     completedPasses: latestPass.completedPasses,
     ...pass,
     error: marginError.message,
