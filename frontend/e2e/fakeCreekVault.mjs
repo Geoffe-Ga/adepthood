@@ -66,9 +66,19 @@ import { fileURLToPath } from 'node:url';
  * the ledger: they are reads of the audit, not traffic adepthood sent.
  *
  * `POST /__lane/fail-upload` arms one refusal for the upload whose content
- * digest it names: that `POST /v1/uploads` is answered 503 and stores nothing,
- * and is recorded with `action: 'failed'`, so the folder-import journey can
- * fail one document of several and prove its retry keeps the same identity.
+ * digest it names: that `POST /v1/uploads` is answered `503 unavailable` -- a
+ * real outage, not the retryable `temporarily_unavailable` a busy vault answers
+ * (#3770) -- and stores nothing, and is recorded with `action: 'failed'`, so the
+ * folder-import journey can fail one document of several and prove its retry
+ * keeps the same identity.
+ *
+ * `POST /__lane/busy-uploads` makes this vault busy for the next `count`
+ * uploads, whatever their digest (#3770): each is answered `503
+ * temporarily_unavailable` with `Retry-After: retry_after_seconds` and stores
+ * nothing, as Creek answers while a classify or link pass holds its
+ * content-mutation lock, and is recorded with `action: 'busy'`. The count runs
+ * down one per upload, so a journey can prove a run waited the vault out
+ * rather than settling its documents as failed.
  *
  * `POST /__lane/lose-upload-reply` arms the opposite case for the upload whose
  * digest it names (#3229): that `POST /v1/uploads` is stored exactly as any
@@ -398,6 +408,14 @@ const uploadReplyLossesArmed = new Set();
 /** A 2xx body adepthood cannot decode: what a proxy error page served as 200 looks like. */
 const UNREADABLE_REPLY = '<html>proxy error page</html>';
 
+/**
+ * How many more uploads this vault refuses as busy, and the wait it names (#3770).
+ * Zero by default; set only by `POST /__lane/busy-uploads`.
+ */
+let busyUploadsRemaining = 0;
+let busyUploadRetryAfterSeconds = 1;
+/** The most uploads one arming may refuse, so a mis-armed lane cannot wedge. */
+const MAX_BUSY_UPLOADS = 100;
 /** One deterministic transport fault, armed only by the withdrawal journey. */
 let voiceDraftDeleteFailuresRemaining = 0;
 /** Held until a journey releases it, so retained copies can be observed directly. */
@@ -479,8 +497,13 @@ function send(response, status, payload) {
   response.end(JSON.stringify(payload));
 }
 
-function refuse(response, status, code) {
-  send(response, status, { code, message: code, request_id: `req-lane-${received.length}` });
+function refuse(response, status, code, headers = {}) {
+  response.writeHead(status, {
+    'Content-Type': 'application/json',
+    'X-Creek-Contract-Version': CONTRACT_MINOR,
+    ...headers,
+  });
+  response.end(JSON.stringify({ code, message: code, request_id: `req-lane-${received.length}` }));
 }
 
 async function readJson(request) {
@@ -568,6 +591,22 @@ async function uploads(request, response) {
     return;
   }
   const digest = digestOf(body.content_base64);
+  if (busyUploadsRemaining > 0) {
+    busyUploadsRemaining -= 1;
+    received.push({
+      method: 'POST',
+      path: '/v1/uploads',
+      externalId: body.external_id,
+      tier: body.tier,
+      ceiling: request.headers[CEILING_HEADER] ?? null,
+      digest,
+      action: 'busy',
+    });
+    refuse(response, HTTP_SERVICE_UNAVAILABLE, 'temporarily_unavailable', {
+      'Retry-After': String(busyUploadRetryAfterSeconds),
+    });
+    return;
+  }
   if (uploadFailuresArmed.delete(digest)) {
     // Recorded as an attempt that stored nothing, so a journey can prove the
     // retry that follows addressed this same external id.
@@ -580,7 +619,9 @@ async function uploads(request, response) {
       digest,
       action: 'failed',
     });
-    refuse(response, HTTP_SERVICE_UNAVAILABLE, 'temporarily_unavailable');
+    // `unavailable`, not `temporarily_unavailable`: that one is a busy vault,
+    // which adepthood waits out rather than settling (#3770).
+    refuse(response, HTTP_SERVICE_UNAVAILABLE, 'unavailable');
     return;
   }
   const { fragment, action } = store('upload', body.external_id, digest);
@@ -1343,6 +1384,25 @@ const server = createServer((request, response) => {
       (pathname === '/__lane/fail-upload' ? uploadFailuresArmed : uploadReplyLossesArmed).add(
         body.digest,
       );
+      send(response, HTTP_OK, { status: 'ok' });
+      return;
+    }
+    if (request.method === 'POST' && pathname === '/__lane/busy-uploads') {
+      const body = await readJson(request);
+      const count = body?.count;
+      const wait = body?.retry_after_seconds;
+      if (
+        !Number.isInteger(count) ||
+        count < 0 ||
+        count > MAX_BUSY_UPLOADS ||
+        !Number.isInteger(wait) ||
+        wait < 0
+      ) {
+        refuse(response, HTTP_BAD_REQUEST, 'invalid_request');
+        return;
+      }
+      busyUploadsRemaining = count;
+      busyUploadRetryAfterSeconds = wait;
       send(response, HTTP_OK, { status: 'ok' });
       return;
     }

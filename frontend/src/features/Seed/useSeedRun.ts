@@ -16,6 +16,14 @@
  * {@link MAX_SEED_RATE_LIMIT_WAITS} times per document; every wait stops the
  * moment the run does.
  *
+ * **Patient with a busy vault too (#3770).** A `vault_busy` answer is the vault
+ * occupied with a pass of its own, not the document failing: the row reads
+ * "Waiting for your vault…", the run waits as long as the answer named and sends
+ * the same document again, and none of it is charged against the pace. Those
+ * waits have their own bound, {@link MAX_SEED_VAULT_BUSY_WAITS}. A run sends one
+ * id with all of its documents, retries included ({@link mintSeedRunId}), so
+ * the server probes the vault once per run rather than once per document.
+ *
  * **What did not go over can go again, once or twice.** The documents a retry
  * may send ({@link isRetryableSeedStatus}) keep their picked handle and the tier
  * they went at, so "Try again" sends exactly those, under the same identity,
@@ -51,12 +59,16 @@ import {
   type SeedRunAction,
   type SeedRunState,
   type SeedRunTally,
+  type SeedWaitCause,
   type SettledSeedStatus,
 } from './seedRun';
+import { mintSeedRunId } from './seedRunId';
 import {
   createSeedUploadPacer,
   MAX_SEED_RATE_LIMIT_WAITS,
+  MAX_SEED_VAULT_BUSY_WAITS,
   rateLimitWaitMs,
+  vaultBusyWaitMs,
   waitOrStop,
   type SeedUploadPacer,
 } from './seedUploadPacing';
@@ -128,6 +140,8 @@ export interface SeedRunController {
   isSending: boolean;
   /** Whether the next document is being held for a moment: paced, or waiting out a 429. */
   isPaused: boolean;
+  /** Whether the next document is waiting out a busy vault (#3770). */
+  isWaitingOnVault: boolean;
   /**
    * Whether anything in this run was held back for want of the upload consent.
    *
@@ -173,11 +187,18 @@ interface SendContext {
   dispatch: Dispatch<SeedRunAction>;
   signal: AbortSignal;
   pacer: SeedUploadPacer;
+  /** The id every document of this run is sent with (#3770). */
+  runId: string;
 }
 
 /** Hold a document for `ms`, shown as waiting; false if the run stopped meanwhile. */
-async function holdFor(id: string, ms: number, context: SendContext): Promise<boolean> {
-  context.dispatch({ type: 'wait', id });
+async function holdFor(
+  id: string,
+  ms: number,
+  context: SendContext,
+  cause: SeedWaitCause = 'pace',
+): Promise<boolean> {
+  context.dispatch({ type: 'wait', id, cause });
   return waitOrStop(ms, context.signal);
 }
 
@@ -193,29 +214,63 @@ async function pacedAttempt(
   const paceMs = context.pacer.delayMs();
   if (paceMs > 0 && !(await holdFor(id, paceMs, context))) return null;
   context.dispatch({ type: 'start', id });
-  const attempt = await attemptSeedDocument(queued.document, queued.tier);
+  const attempt = await attemptSeedDocument(queued.document, queued.tier, context.runId);
   if (attempt.answered) context.pacer.record();
   return attempt;
 }
 
+/** How many waits of each kind one document has taken so far. */
+interface WaitsTaken {
+  rateLimit: number;
+  vaultBusy: number;
+}
+
+/** One wait a document will take before its next attempt. */
+interface NextWait {
+  ms: number;
+  cause: SeedWaitCause;
+}
+
 /**
- * Send one document, waiting out a 429 a bounded number of times, and answer
- * the status it settles on. A wait cut short by the run stopping settles as
- * `cancelled`: the refused attempt kept nothing, and no other was made.
+ * The wait an attempt earns, counting it against its own kind's budget, or null
+ * when it settles here: an answer that is not a wait, a budget spent, or a 429
+ * asking for longer than the run will sit through.
+ */
+function nextWait(attempt: SeedAttempt, taken: WaitsTaken): NextWait | null {
+  if (attempt.status === 'vault_busy') {
+    if (taken.vaultBusy >= MAX_SEED_VAULT_BUSY_WAITS) return null;
+    taken.vaultBusy += 1;
+    return { ms: vaultBusyWaitMs(attempt.retryAfterSeconds), cause: 'vault' };
+  }
+  if (attempt.status !== 'rate_limited' || taken.rateLimit >= MAX_SEED_RATE_LIMIT_WAITS) {
+    return null;
+  }
+  const ms = rateLimitWaitMs(attempt.retryAfterSeconds);
+  if (ms === null) return null;
+  taken.rateLimit += 1;
+  return { ms, cause: 'pace' };
+}
+
+/**
+ * Send one document, waiting out a 429 or a busy vault a bounded number of
+ * times each, and answer the status it settles on. A wait cut short by the run
+ * stopping settles as `cancelled`: the refused attempt kept nothing, and no
+ * other was made.
  */
 async function sendOne(
   id: string,
   queued: QueuedDocument,
   context: SendContext,
 ): Promise<SettledSeedStatus> {
+  const taken: WaitsTaken = { rateLimit: 0, vaultBusy: 0 };
   let attempt = await pacedAttempt(id, queued, context);
-  for (let waits = 0; attempt !== null && attempt.status === 'rate_limited'; waits += 1) {
-    const waitMs = rateLimitWaitMs(attempt.retryAfterSeconds);
-    if (waits >= MAX_SEED_RATE_LIMIT_WAITS || waitMs === null) break;
-    if (!(await holdFor(id, waitMs, context))) return 'cancelled';
+  while (attempt !== null) {
+    const wait = nextWait(attempt, taken);
+    if (wait === null) return attempt.status;
+    if (!(await holdFor(id, wait.ms, context, wait.cause))) return 'cancelled';
     attempt = await pacedAttempt(id, queued, context);
   }
-  return attempt === null ? 'cancelled' : attempt.status;
+  return 'cancelled';
 }
 
 /**
@@ -331,6 +386,9 @@ function useBatchRunner(dispatch: Dispatch<SeedRunAction>): BatchRunner {
   const sendingRef = useRef(false);
   const heldRef = useRef(new Map<string, HeldDocument>());
   const [pacer] = useState(() => createSeedUploadPacer());
+  // One id for everything this screen sends, retries included: they are one
+  // run to the person, and one handshake's worth to the server (#3770).
+  const [runId] = useState(mintSeedRunId);
 
   const cancel = useCallback(() => {
     abortRef.current?.abort();
@@ -360,6 +418,7 @@ function useBatchRunner(dispatch: Dispatch<SeedRunAction>): BatchRunner {
           dispatch,
           signal: controller.signal,
           pacer,
+          runId,
         });
         pruneHeld(heldRef.current, batch);
       } finally {
@@ -368,7 +427,7 @@ function useBatchRunner(dispatch: Dispatch<SeedRunAction>): BatchRunner {
         setHeldIds(new Set(heldRef.current.keys()));
       }
     },
-    [dispatch, pacer],
+    [dispatch, pacer, runId],
   );
 
   return { run, cancel, isSending, sendingRef, heldRef, heldIds };
@@ -466,6 +525,7 @@ export function useSeedRun(): SeedRunController {
     notice,
     isSending,
     isPaused: items.some((item) => item.status === 'waiting'),
+    isWaitingOnVault: items.some((item) => item.status === 'vault_waiting'),
     needsConsent: items.some((item) => item.status === 'consent_required'),
   };
 }

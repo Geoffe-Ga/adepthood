@@ -35,16 +35,22 @@ import { isDeviceKnownOffline } from '@/api/networkSignal';
 
 /** What one attempt at a document came to, as the run needs to know it. */
 export interface SeedAttempt {
-  /** The settled outcome; `rate_limited` when the server asked for a pause. */
+  /**
+   * The settled outcome; `rate_limited` when the server asked for a pause, and
+   * `vault_busy` when the vault did (#3770).
+   */
   status: SettledSeedStatus;
   /**
-   * Whether the server answered (or may have answered) the request, so the run
-   * counts it toward the upload pace. False for a document refused on device,
-   * one never sent because the device was offline, and a 429, which the
-   * server's limiter does not count.
+   * Whether the run counts the request toward the upload pace. False for a
+   * document refused on device, one never sent because the device was offline,
+   * a 429, which the server's limiter does not count, and a busy vault, whose
+   * wait is the vault's and is never charged against the pace (#3770).
    */
   answered: boolean;
-  /** For `rate_limited`, the server's `Retry-After` in seconds when it named one. */
+  /**
+   * For `rate_limited`, the server's `Retry-After` in seconds when it named one;
+   * for `vault_busy`, the `retry_after_seconds` the answer named.
+   */
   retryAfterSeconds: number | null;
 }
 
@@ -56,7 +62,7 @@ const HTTP_REQUEST_TIMEOUT = 408;
 
 /**
  * The vault's outcomes in the run's own vocabulary. `accepted` is renamed
- * `ingested`; the other three keep the wire word so the copy layer can say the
+ * `ingested`; the other four keep the wire word so the copy layer can say the
  * specific, actionable thing each one calls for.
  */
 const VAULT_SEED_STATUS: Record<VaultUploadStatusT, VaultSeedStatus> = {
@@ -64,6 +70,7 @@ const VAULT_SEED_STATUS: Record<VaultUploadStatusT, VaultSeedStatus> = {
   vault_unavailable: 'vault_unavailable',
   capability_unsupported: 'capability_unsupported',
   degraded: 'degraded',
+  vault_busy: 'vault_busy',
 };
 
 /**
@@ -149,6 +156,18 @@ function settledStatus(outcome: DocumentImportT): SettledSeedStatus {
 }
 
 /**
+ * One 202 as an attempt. A busy vault is a wait the run takes, so it is not
+ * charged against the pace and carries the wait it named (#3770).
+ */
+function attemptForOutcome(outcome: DocumentImportT): SeedAttempt {
+  const status = settledStatus(outcome);
+  if (status === 'vault_busy') {
+    return { status, answered: false, retryAfterSeconds: outcome.retry_after_seconds ?? null };
+  }
+  return { status, answered: true, retryAfterSeconds: null };
+}
+
+/**
  * Make one attempt at a document: refuse it on device, or send it once and read
  * the answer. Never retries and never waits; the run decides what a 429 costs.
  * Never throws, for the same reason {@link importSeedDocument} does not.
@@ -156,6 +175,7 @@ function settledStatus(outcome: DocumentImportT): SettledSeedStatus {
 export async function attemptSeedDocument(
   document: PickedDocument,
   classification: JournalClassification,
+  runId?: string,
 ): Promise<SeedAttempt> {
   if (!document.seedable) {
     return decidedOnDevice('unsupported_format');
@@ -176,8 +196,9 @@ export async function attemptSeedDocument(
       contentBase64: read.contentBase64,
       classification,
       ...(document.source ? { source: document.source } : {}),
+      ...(runId === undefined ? {} : { runId }),
     });
-    return { status: settledStatus(outcome), answered: true, retryAfterSeconds: null };
+    return attemptForOutcome(outcome);
   } catch (error: unknown) {
     return attemptForError(error);
   }

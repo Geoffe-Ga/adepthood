@@ -2315,6 +2315,12 @@ export interface ImportDocumentInput {
   classification: JournalClassification;
   /** Set for a document from a folder import, so same-named notes stay distinct. */
   source?: ImportDocumentSource;
+  /**
+   * The bulk run this document belongs to (#3770): one opaque id per run, so the
+   * server can let the run's documents share one vault handshake. Decides
+   * nothing about the document.
+   */
+  runId?: string;
 }
 
 /** The request's optional folder pair, sent together or not at all. */
@@ -2363,7 +2369,7 @@ export const corpus = {
    * error message or a log line.
    */
   async importDocument(
-    { filename, contentBase64, classification, source }: ImportDocumentInput,
+    { filename, contentBase64, classification, source, runId }: ImportDocumentInput,
     token?: string,
   ): Promise<DocumentImportT> {
     const scope = captureAuthScope();
@@ -2383,6 +2389,7 @@ export const corpus = {
           content_base64: contentBase64,
           classification,
           ...importSourceFields(source),
+          ...(runId === undefined ? {} : { upload_run_id: runId }),
         },
         headers,
         token,

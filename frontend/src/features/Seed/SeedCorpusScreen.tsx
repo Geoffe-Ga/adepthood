@@ -328,7 +328,7 @@ const SeedCorpusBody = ({ run, folder, onOpenConsent }: SeedCorpusBodyProps): Re
       </EditorialSection>
       <ChooseButton onPress={run.choose} disabled={run.isSending} />
       <SeedFolderSection folder={folder} isSending={run.isSending} />
-      <SeedProgress line={seedProgressLine(run.tally, run.isPaused)} />
+      <SeedProgress line={seedProgressLine(run.tally, run.isPaused, run.isWaitingOnVault)} />
       {run.notice ? (
         <Text style={styles.notice} testID="seed-notice">
           {run.notice}

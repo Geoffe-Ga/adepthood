@@ -322,3 +322,41 @@ describe('sending the ones that did not go again (#3556)', () => {
     expect(isRetryableSeedStatus(status)).toBe(false);
   });
 });
+
+describe('a document waiting out a busy vault (#3770)', () => {
+  function started(): SeedRunState {
+    return seedRunReducer(withThreeQueued(), { type: 'start', id: 'a' });
+  }
+
+  test('is held as vault_waiting, apart from the pace', () => {
+    const vault = seedRunReducer(started(), { type: 'wait', id: 'a', cause: 'vault' });
+    const pace = seedRunReducer(started(), { type: 'wait', id: 'a', cause: 'pace' });
+    const unnamed = seedRunReducer(started(), { type: 'wait', id: 'a' });
+
+    expect(vault.items.a?.status).toBe('vault_waiting');
+    expect(pace.items.a?.status).toBe('waiting');
+    expect(unnamed.items.a?.status).toBe('waiting');
+  });
+
+  test('holds the run, counts as still waiting, and can go again', () => {
+    const held = seedRunReducer(started(), { type: 'wait', id: 'a', cause: 'vault' });
+
+    expect(selectNextQueued(held)).toBeNull();
+    expect(seedRunTally(held).waiting).toBe(3);
+    expect(seedRunReducer(held, { type: 'start', id: 'a' }).items.a?.status).toBe('uploading');
+  });
+
+  test('is cancelled with the rest when the run stops', () => {
+    const held = seedRunReducer(started(), { type: 'wait', id: 'a', cause: 'vault' });
+
+    expect(seedRunReducer(held, { type: 'cancel' }).items.a?.status).toBe('cancelled');
+  });
+
+  test('settled as vault_busy is a refusal that a retry may send again', () => {
+    const settled = seedRunReducer(started(), { type: 'settle', id: 'a', status: 'vault_busy' });
+
+    expect(isRetryableSeedStatus('vault_busy')).toBe(true);
+    expect(seedRunTally(settled).refused).toBe(1);
+    expect(seedRunTally(settled).unconfirmed).toBe(0);
+  });
+});

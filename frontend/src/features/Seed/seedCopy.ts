@@ -26,6 +26,12 @@ export const SEED_STATUS_LINES: Record<SeedItemStatus, string> = {
   // Paced to keep a big folder from being turned away, or waiting out the
   // pause the server asked for (#3556). Nothing is wrong, and it goes next.
   waiting: 'Pausing a moment so everything goes over at a steady pace. This one is next.',
+  // The vault answered that it was busy -- a pass of its own holding it for a
+  // while (#3770). Not a failure and not this document's doing: the run waits
+  // as long as the vault asked, then sends it again.
+  vault_waiting:
+    "Waiting for your vault… It's busy settling what it already holds, and this one goes " +
+    "over as soon as it's free.",
   uploading: 'Going over now…',
   ingested: 'In your vault. It will show up in reflections from here on.',
   vault_unavailable: "Your vault didn't answer. Check that it's running, then send this again.",
@@ -47,6 +53,12 @@ export const SEED_STATUS_LINES: Record<SeedItemStatus, string> = {
   degraded:
     "We couldn't confirm this reached your vault. Send it again — the same file updates in " +
     'place rather than making a second copy.',
+  // The vault stayed busy through every wait the run would take (#3770). It
+  // refused before anything was written, so "nothing was stored" is a fact,
+  // and the cause was the vault's moment, so it can go again.
+  vault_busy:
+    'Your vault stayed busy the whole time, so this one is still with you and nothing was ' +
+    'stored. Send it again once your vault has settled.',
   in_corpus: 'Kept with the rest of your writing. It will show up in reflections from here on.',
   // The ordinary first answer rather than an error state: the corpus is off
   // until somebody turns it on. It names the setting rather than the endpoint,
@@ -189,9 +201,16 @@ export function seedSummaryLine(tally: SeedRunTally): string | null {
  * would be a count of something nobody can see. Says "sending" and names no
  * destination — which of the two answered is the server's word per request.
  */
-export function seedProgressLine(tally: SeedRunTally, paused = false): string | null {
+export function seedProgressLine(
+  tally: SeedRunTally,
+  paused = false,
+  waitingOnVault = false,
+): string | null {
   if (tally.waiting === 0) {
     return null;
+  }
+  if (waitingOnVault) {
+    return SEED_VAULT_BUSY_PROGRESS_LINE;
   }
   if (paused) {
     return SEED_PAUSED_PROGRESS_LINE;
@@ -206,6 +225,13 @@ export function seedProgressLine(tally: SeedRunTally, paused = false): string | 
  */
 export const SEED_PAUSED_PROGRESS_LINE =
   'Pausing a moment between documents so they all go over at a steady pace…';
+
+/**
+ * The progress line while the next document waits out a busy vault (#3770):
+ * the vault's own pass is holding things, not the pace and not the document.
+ */
+export const SEED_VAULT_BUSY_PROGRESS_LINE =
+  "Waiting for your vault to finish what it's doing. The rest go over once it's free…";
 
 /**
  * The offer to send again the documents that did not go over (#3556), counting

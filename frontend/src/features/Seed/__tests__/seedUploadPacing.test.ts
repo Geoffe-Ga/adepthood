@@ -3,7 +3,11 @@
 import {
   createSeedUploadPacer,
   MAX_SEED_RATE_LIMIT_WAIT_MS,
+  MAX_SEED_RATE_LIMIT_WAITS,
+  MAX_SEED_VAULT_BUSY_WAITS,
   rateLimitWaitMs,
+  VAULT_BUSY_FALLBACK_WAIT_MS,
+  vaultBusyWaitMs,
   SEED_UPLOAD_LIMIT,
   SEED_UPLOAD_PACING_MARGIN_MS,
   SEED_UPLOAD_WINDOW_MS,
@@ -117,5 +121,29 @@ describe('a wait that can be stopped', () => {
     controller.abort();
 
     await expect(waitOrStop(60_000, controller.signal)).resolves.toBe(false);
+  });
+});
+
+describe('the wait for a busy vault (#3770)', () => {
+  test('is the wait the vault named, in milliseconds', () => {
+    expect(vaultBusyWaitMs(7)).toBe(7 * MS_PER_SECOND);
+  });
+
+  test('is the server default when none was named', () => {
+    expect(vaultBusyWaitMs(null)).toBe(VAULT_BUSY_FALLBACK_WAIT_MS);
+    expect(VAULT_BUSY_FALLBACK_WAIT_MS).toBe(30 * MS_PER_SECOND);
+  });
+
+  test('never waits less than a second, so a busy vault is never asked in a tight loop', () => {
+    expect(vaultBusyWaitMs(0)).toBe(MS_PER_SECOND);
+  });
+
+  test('asks again after the longest wait rather than giving up on a long pass', () => {
+    expect(vaultBusyWaitMs(3600)).toBe(MAX_SEED_RATE_LIMIT_WAIT_MS);
+  });
+
+  test('has a budget of its own, larger than the pace allowance', () => {
+    expect(MAX_SEED_VAULT_BUSY_WAITS).toBeGreaterThan(MAX_SEED_RATE_LIMIT_WAITS);
+    expect(MAX_SEED_VAULT_BUSY_WAITS).toBeGreaterThanOrEqual(SEED_UPLOAD_LIMIT - 1);
   });
 });

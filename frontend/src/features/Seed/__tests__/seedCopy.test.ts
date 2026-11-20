@@ -19,6 +19,7 @@ import {
   VAULT_FIRST_CTA,
   VAULT_GATE_COPY,
   SEED_PAUSED_PROGRESS_LINE,
+  SEED_VAULT_BUSY_PROGRESS_LINE,
   seedProgressLine,
   seedRetryLabel,
   seedSummaryLine,
@@ -439,5 +440,23 @@ describe('a document held for a moment (#3556)', () => {
   test('the retry offer counts what it will send', () => {
     expect(seedRetryLabel(1)).toBe('Try that one again');
     expect(seedRetryLabel(3)).toBe('Try those 3 again');
+  });
+});
+
+describe('waiting for a busy vault (#3770)', () => {
+  test('the row says it is waiting for the vault', () => {
+    expect(SEED_STATUS_LINES.vault_waiting.startsWith('Waiting for your vault…')).toBe(true);
+  });
+
+  test('the progress line names the vault, not the pace', () => {
+    const tally = { total: 3, landed: 1, waiting: 2, refused: 0, unconfirmed: 0 };
+
+    expect(seedProgressLine(tally, false, true)).toBe(SEED_VAULT_BUSY_PROGRESS_LINE);
+    expect(seedProgressLine(tally, true, false)).toBe(SEED_PAUSED_PROGRESS_LINE);
+  });
+
+  test('a document the vault stayed busy for says nothing was stored, without blame', () => {
+    expect(SEED_STATUS_LINES.vault_busy).toMatch(/nothing was stored/u);
+    expect(SEED_STATUS_LINES.vault_busy).not.toMatch(/fail|error/iu);
   });
 });
