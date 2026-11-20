@@ -39,7 +39,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Final, Protocol, runtime_checkable
 
-from domain.creek_vault import CreekCapability, HandshakeResult
+from domain.creek_vault import CreekCapability, CreekVaultClient, HandshakeResult
 
 #: How long one run reuses a probe before asking the vault again. Long enough to
 #: cover a run's back-to-back documents and a busy vault's retries; short enough
@@ -48,13 +48,6 @@ UPLOAD_HANDSHAKE_REUSE_SECONDS: Final[float] = 120.0
 
 #: How many runs' probes one process holds at once, the oldest let go first.
 UPLOAD_HANDSHAKE_MEMO_MAX_RUNS: Final[int] = 1024
-
-
-class Probes(Protocol):
-    """The one call every vault client makes to learn what the vault serves."""
-
-    async def handshake(self) -> HandshakeResult:
-        """Probe the vault and cache the result on the client."""
 
 
 @runtime_checkable
@@ -118,7 +111,9 @@ class UploadHandshakeMemo:
         while len(self._entries) > self._max_entries:
             self._entries.popitem(last=False)
 
-    async def handshake(self, client: Probes, *, owner_user_id: int, run_id: str | None) -> None:
+    async def prepare(
+        self, client: CreekVaultClient, *, owner_user_id: int, run_id: str | None
+    ) -> None:
         """Leave ``client`` handshaken: from this run's probe if fresh, else by probing."""
         if run_id is None or not isinstance(client, AdoptsHandshake):
             await client.handshake()
@@ -136,7 +131,7 @@ class UploadHandshakeMemo:
         """Drop every remembered probe."""
         self._entries.clear()
 
-    def forget(self, client: Probes, *, owner_user_id: int, run_id: str | None) -> None:
+    def forget(self, client: CreekVaultClient, *, owner_user_id: int, run_id: str | None) -> None:
         """Drop this run's probe, so its next document asks the vault again."""
         if run_id is None or not isinstance(client, AdoptsHandshake):
             return

@@ -7,7 +7,7 @@
  * document: it is opaque, never shown, never stored, and new for every run.
  *
  * Drawn from the platform CSPRNG, as the app's other random material is, and
- * spelled in hex so it always fits the server's `upload_run_id` pattern.
+ * spelled in hex so it always fits the server's `upload_run` pattern.
  */
 
 /** Bytes of randomness in one id: 128 bits, 32 hex characters. */

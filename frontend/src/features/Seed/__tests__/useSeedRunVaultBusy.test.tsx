@@ -75,7 +75,7 @@ function busy(retryAfterSeconds: number | null) {
   });
 }
 
-function sentBodies(): { filename: string; upload_run_id?: string }[] {
+function sentBodies(): { filename: string; upload_run?: string }[] {
   return mockFetch.mock.calls.map((call) => JSON.parse(call[1].body));
 }
 
@@ -217,7 +217,7 @@ describe('the run id that lets a run share one handshake', () => {
       await second.result.current.sendDocuments([note('c.md')]);
     });
 
-    const ids = sentBodies().map((body) => body.upload_run_id);
+    const ids = sentBodies().map((body) => body.upload_run);
     expect(ids).toHaveLength(4);
     expect(ids[0]).toMatch(/^[A-Za-z0-9_-]{16,64}$/u);
     expect(ids.slice(0, 3)).toEqual([ids[0], ids[0], ids[0]]);

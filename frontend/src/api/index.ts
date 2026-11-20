@@ -2389,7 +2389,7 @@ export const corpus = {
           content_base64: contentBase64,
           classification,
           ...importSourceFields(source),
-          ...(runId === undefined ? {} : { upload_run_id: runId }),
+          ...(runId === undefined ? {} : { upload_run: runId }),
         },
         headers,
         token,

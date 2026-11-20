@@ -32,7 +32,6 @@ from httpx import AsyncClient, MockTransport
 
 from dependencies.creek_vault import get_creek_vault_client
 from domain.creek_vault import (
-    CONTRACT_VERSION,
     CreekCapability,
     CreekVaultRateLimitedError,
     CreekVaultUnavailableError,
@@ -414,7 +413,7 @@ class TestTheHandshakeIsCachedPerRun:
         memo = UploadHandshakeMemo()
         client = _CountingProbeClient(capabilities=frozenset({CreekCapability.JOURNAL}))
         for _ in range(2):
-            await memo.handshake(client, owner_user_id=_OWNER_ID, run_id=_RUN_ID)
+            await memo.prepare(client, owner_user_id=_OWNER_ID, run_id=_RUN_ID)
         assert client.probes == 2
 
     @pytest.mark.asyncio
@@ -423,12 +422,12 @@ class TestTheHandshakeIsCachedPerRun:
         now = [0.0]
         memo = UploadHandshakeMemo(clock=lambda: now[0])
         client = _CountingProbeClient()
-        await memo.handshake(client, owner_user_id=_OWNER_ID, run_id=_RUN_ID)
+        await memo.prepare(client, owner_user_id=_OWNER_ID, run_id=_RUN_ID)
         now[0] = UPLOAD_HANDSHAKE_REUSE_SECONDS - 1
-        await memo.handshake(client, owner_user_id=_OWNER_ID, run_id=_RUN_ID)
+        await memo.prepare(client, owner_user_id=_OWNER_ID, run_id=_RUN_ID)
         assert client.probes == 1
         now[0] = UPLOAD_HANDSHAKE_REUSE_SECONDS + 1
-        await memo.handshake(client, owner_user_id=_OWNER_ID, run_id=_RUN_ID)
+        await memo.prepare(client, owner_user_id=_OWNER_ID, run_id=_RUN_ID)
         assert client.probes == 2
 
     @pytest.mark.asyncio
@@ -437,26 +436,26 @@ class TestTheHandshakeIsCachedPerRun:
         memo = UploadHandshakeMemo(max_entries=2)
         client = _CountingProbeClient()
         for run in ("run-aaaaaaaaaaaaaaaa", "run-bbbbbbbbbbbbbbbb", "run-cccccccccccccccc"):
-            await memo.handshake(client, owner_user_id=_OWNER_ID, run_id=run)
-        await memo.handshake(client, owner_user_id=_OWNER_ID, run_id="run-aaaaaaaaaaaaaaaa")
+            await memo.prepare(client, owner_user_id=_OWNER_ID, run_id=run)
+        await memo.prepare(client, owner_user_id=_OWNER_ID, run_id="run-aaaaaaaaaaaaaaaa")
         assert client.probes == 4
 
     @pytest.mark.asyncio
     async def test_the_route_reads_the_run_off_the_request(self, async_client: AsyncClient) -> None:
-        """``upload_run_id`` reaches the service, and a malformed one is refused."""
+        """``upload_run`` reaches the service, and a malformed one is refused."""
         refused = await async_client.post(
             _IMPORT_PATH,
             json={
                 "filename": _FILENAME,
                 "content_base64": _CONTENT_B64,
                 "classification": "personal",
-                "upload_run_id": "not a run id!",
+                "upload_run": "not a run id!",
             },
             headers=await _signup(async_client, "busy-run-refused"),
         )
         assert refused.status_code == HTTPStatus.UNPROCESSABLE_ENTITY
         accepted = await _import_against(
-            async_client, _BusyVault(busy_for=0), "busy-run", upload_run_id=_RUN_ID
+            async_client, _BusyVault(busy_for=0), "busy-run", upload_run=_RUN_ID
         )
         assert accepted.json()["vault_status"] == VaultUploadStatus.ACCEPTED.value
 
@@ -478,19 +477,23 @@ def _upload_request() -> VaultUploadRequest:
     )
 
 
-@dataclass
-class _CountingProbeClient:
-    """A client whose probe is counted and whose handshake can be adopted.
+class _CountingProbeClient(ScriptedUploadClient):
+    """A scripted vault whose probe is counted and whose handshake can be adopted.
 
-    Shaped like the HTTP adapter's two memo hooks and nothing more, so the memo
-    is exercised on its own, without a transport.
+    Shaped like the HTTP adapter's two memo hooks, so the memo is exercised on
+    its own, without a transport.
     """
 
-    capabilities: frozenset[CreekCapability] = frozenset(
-        {CreekCapability.JOURNAL, CreekCapability.UPLOAD}
-    )
-    probes: int = 0
-    adopted: list[HandshakeResult] = field(default_factory=list)
+    def __init__(
+        self,
+        capabilities: frozenset[CreekCapability] = frozenset(
+            {CreekCapability.JOURNAL, CreekCapability.UPLOAD}
+        ),
+    ) -> None:
+        """Advertise ``capabilities`` and start with no probe made."""
+        super().__init__(capabilities=capabilities)
+        self.probes = 0
+        self.adopted: list[HandshakeResult] = []
 
     @property
     def handshake_identity(self) -> str:
@@ -498,15 +501,9 @@ class _CountingProbeClient:
         return "counting-probe-vault"
 
     async def handshake(self) -> HandshakeResult:
-        """Count the probe and answer an available vault."""
+        """Count the probe, then answer as the scripted vault does."""
         self.probes += 1
-        return HandshakeResult(
-            available=True,
-            contract_version=CONTRACT_VERSION,
-            ontology_version="1.0.0",
-            capabilities=self.capabilities,
-            attestation=None,
-        )
+        return await super().handshake()
 
     def adopt_handshake(self, result: HandshakeResult, /) -> None:
         """Record what the memo handed over."""

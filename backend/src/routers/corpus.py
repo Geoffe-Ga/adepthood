@@ -544,7 +544,7 @@ async def import_corpus_document(
                     classification=payload.classification,
                     created_at=datetime.now(UTC),
                     source=_folder_source(payload),
-                    run_id=payload.upload_run_id,
+                    run_id=payload.upload_run,
                 ),
             )
         except ManagedUploadTooLargeError:

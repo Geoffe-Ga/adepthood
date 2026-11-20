@@ -16,6 +16,7 @@ reaches an exception, a log, or a response.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from typing import Final
 
 #: The header a refusal names its wait in.
@@ -26,13 +27,13 @@ RETRY_AFTER_HEADER: Final[str] = "Retry-After"
 _MAX_RETRY_AFTER_DIGITS: Final[int] = 6
 
 
-def read_retry_after_seconds(raw: str | None) -> int | None:
-    """Return the whole seconds ``raw`` names, or ``None`` when it names none we read."""
-    if raw is None:
-        return None
-    value = raw.strip()
-    if not value or len(value) > _MAX_RETRY_AFTER_DIGITS:
-        return None
-    if not (value.isascii() and value.isdigit()):
-        return None
-    return int(value)
+def read_retry_after_seconds(headers: Mapping[str, str]) -> int | None:
+    """Return the whole seconds a response's ``Retry-After`` names, or ``None``."""
+    raw = headers.get(RETRY_AFTER_HEADER)
+    return None if raw is None else _delta_seconds(raw.strip())
+
+
+def _delta_seconds(value: str) -> int | None:
+    """Read a stripped header value as a short run of ASCII digits, or ``None``."""
+    readable = 0 < len(value) <= _MAX_RETRY_AFTER_DIGITS and value.isascii() and value.isdigit()
+    return int(value) if readable else None

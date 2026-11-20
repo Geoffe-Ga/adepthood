@@ -134,7 +134,7 @@ test('twenty notes sent while the vault is busy for nineteen calls all land', as
   // One run id rode every request, so the server could probe the vault once.
   const runIds = new Set(
     importPosts(sent).map(
-      (entry) => (JSON.parse(entry.body ?? '{}') as { upload_run_id?: string }).upload_run_id,
+      (entry) => (JSON.parse(entry.body ?? '{}') as { upload_run?: string }).upload_run,
     ),
   );
   expect(runIds.size).toBe(1);

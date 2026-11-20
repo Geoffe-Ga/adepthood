@@ -195,7 +195,6 @@ from services.creek_vault_payload import (
 from services.creek_vault_pinned_transport import build_pinned_destination_transport
 from services.creek_vault_readings import recommend_from_vault
 from services.creek_vault_relay import parse_request_key_providers, relay_headers
-from services.creek_vault_retry_after import RETRY_AFTER_HEADER as _RETRY_AFTER_HEADER
 from services.creek_vault_retry_after import read_retry_after_seconds
 from services.creek_vault_telemetry import (
     VaultCallTimedOutError,
@@ -1389,7 +1388,7 @@ def _availability_failure(
         :class:`CreekVaultUnavailableError` -- the same degrade for every
         existing caller, since the first is a subclass of the second.
     """
-    wait = read_retry_after_seconds(response.headers.get(_RETRY_AFTER_HEADER))
+    wait = read_retry_after_seconds(response.headers)
     if signals_rate_limit(response.status_code, code):
         return CreekVaultRateLimitedError(message, code=code, retry_after_seconds=wait)
     return CreekVaultUnavailableError(message, code=code, retry_after_seconds=wait)

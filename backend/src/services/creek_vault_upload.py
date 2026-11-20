@@ -372,23 +372,31 @@ def _busy_wait(error: CreekVaultError) -> int | None:
     ``429``, or Creek's ``rate_limited`` code), and an availability error whose
     code is Creek's own ``temporarily_unavailable`` -- the answer its
     content-mutation lock and its concurrency limits both give. An uncoded 503,
-    a dropped connection, any other 5xx is a real outage and is not a wait.
+    Creek's ``unavailable``, a dropped connection, any other 5xx is a real
+    outage and is not a wait.
+    """
+    if not _is_retryable_refusal(error):
+        return None
+    named = error.retry_after_seconds if isinstance(error, CreekVaultUnavailableError) else None
+    if named is None:
+        return DEFAULT_VAULT_BUSY_RETRY_AFTER_SECONDS
+    return max(MIN_VAULT_BUSY_RETRY_AFTER_SECONDS, named)
+
+
+def _is_retryable_refusal(error: CreekVaultError) -> bool:
+    """Whether ``error`` is a vault refusing *for now*, which waiting clears.
 
     The operator's send suspension is excluded first: it subclasses the
     availability error, but no amount of waiting lifts it (#3618).
     """
-    if isinstance(error, VaultSendSuspendedError) or not isinstance(
-        error, CreekVaultUnavailableError
-    ):
-        return None
-    retryable = isinstance(error, CreekVaultRateLimitedError) or (
-        error.code is VaultErrorCode.TEMPORARILY_UNAVAILABLE
+    if isinstance(error, VaultSendSuspendedError):
+        return False
+    if isinstance(error, CreekVaultRateLimitedError):
+        return True
+    return (
+        isinstance(error, CreekVaultUnavailableError)
+        and error.code is VaultErrorCode.TEMPORARILY_UNAVAILABLE
     )
-    if not retryable:
-        return None
-    if error.retry_after_seconds is None:
-        return DEFAULT_VAULT_BUSY_RETRY_AFTER_SECONDS
-    return max(MIN_VAULT_BUSY_RETRY_AFTER_SECONDS, error.retry_after_seconds)
 
 
 def _degrade_fields(error: CreekVaultError) -> dict[str, object]:
@@ -578,7 +586,7 @@ async def _vault_refusal(
     A document sent as part of a Seed run reuses the run's handshake while it is
     fresh rather than probing again (#3770, :mod:`services.upload_handshake_memo`).
     """
-    await UPLOAD_HANDSHAKE_MEMO.handshake(
+    await UPLOAD_HANDSHAKE_MEMO.prepare(
         client, owner_user_id=document.owner_user_id, run_id=document.run_id
     )
     if not client.is_available():

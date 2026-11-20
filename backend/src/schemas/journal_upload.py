@@ -58,9 +58,9 @@ MAX_UPLOAD_BASE64_CHARS = (MAX_UPLOAD_BYTES * 4) // 3 + 4
 # documents can share one capability handshake. Letters, digits, ``_`` and
 # ``-`` only, long enough to be unguessable in practice and short enough to be
 # a cheap memo key. It is never stored, logged, or forwarded to a vault.
-UPLOAD_RUN_ID_PATTERN = r"^[A-Za-z0-9_-]+$"
-MIN_UPLOAD_RUN_ID_LENGTH = 16
-MAX_UPLOAD_RUN_ID_LENGTH = 64
+UPLOAD_RUN_PATTERN = r"^[A-Za-z0-9_-]+$"
+MIN_UPLOAD_RUN_LENGTH = 16
+MAX_UPLOAD_RUN_LENGTH = 64
 
 
 class DocumentTooLargeError(ValueError):
@@ -215,11 +215,11 @@ class UploadDocumentRequest(BaseModel):
         repr=False,
     )
 
-    upload_run_id: str | None = Field(
+    upload_run: str | None = Field(
         default=None,
-        min_length=MIN_UPLOAD_RUN_ID_LENGTH,
-        max_length=MAX_UPLOAD_RUN_ID_LENGTH,
-        pattern=UPLOAD_RUN_ID_PATTERN,
+        min_length=MIN_UPLOAD_RUN_LENGTH,
+        max_length=MAX_UPLOAD_RUN_LENGTH,
+        pattern=UPLOAD_RUN_PATTERN,
         description=(
             "Optional: an opaque id the client mints once per bulk upload run, so the "
             "run's documents share one vault capability handshake. Decides nothing "

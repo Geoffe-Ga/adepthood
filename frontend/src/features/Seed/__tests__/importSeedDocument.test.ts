@@ -443,7 +443,7 @@ describe('a busy vault (#3770)', () => {
     await attemptSeedDocument(document(), 'personal');
 
     const bodies = mockFetch.mock.calls.map((call) => JSON.parse(call[1].body));
-    expect(bodies[0].upload_run_id).toBe('run0123456789abcdef');
-    expect(bodies[1]).not.toHaveProperty('upload_run_id');
+    expect(bodies[0].upload_run).toBe('run0123456789abcdef');
+    expect(bodies[1]).not.toHaveProperty('upload_run');
   });
 });

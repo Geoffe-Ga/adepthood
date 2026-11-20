@@ -11084,7 +11084,7 @@
             "description": "Folder imports only: the '/'-separated path from the chosen folder's root to this file, ending in its filename. Sent together with source_namespace.",
             "title": "Source Relative Path"
           },
-          "upload_run_id": {
+          "upload_run": {
             "anyOf": [
               {
                 "maxLength": 64,
@@ -11097,7 +11097,7 @@
               }
             ],
             "description": "Optional: an opaque id the client mints once per bulk upload run, so the run's documents share one vault capability handshake. Decides nothing about the document.",
-            "title": "Upload Run Id"
+            "title": "Upload Run"
           }
         },
         "required": [
