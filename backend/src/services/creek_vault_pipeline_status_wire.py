@@ -83,8 +83,13 @@ FOLDER_PATH_PATTERN: Final = "^(?:0[1-9]|1[01])-[A-Za-z-]+(?:/[A-Za-z0-9-]+)*$"
 #: The published ``PipelineFolderStatus.writer`` pattern: a subsystem token.
 WRITER_PATTERN: Final = "^[a-z][a-z0-9_-]*(?:\\.[a-z0-9_-]+)*$"
 
-#: The published ``PipelineDocumentStatus.fragment_path`` pattern: under 01-Fragments.
-FRAGMENT_PATH_PATTERN: Final = "^01-Fragments/(?:[^/\\x00-\\x1f]+/)*[^/\\x00-\\x1f]+\\.md$"
+#: Where an upload's fragment may be listed: a vault-relative ``.md`` path under
+#: ``01-Fragments`` (the 0.34 pin) or ``11-Other-Authors``, which Creek-Vault#2141
+#: adds for borrowed-author uploads. Accepting both now means the widening is not
+#: an off-schema answer the day it ships.
+FRAGMENT_PATH_PATTERN: Final = (
+    "^(?:01-Fragments|11-Other-Authors)/(?:[^/\\x00-\\x1f]+/)*[^/\\x00-\\x1f]+\\.md$"
+)
 
 #: Every published job method: the classification methods, then the link methods.
 JOB_METHODS: Final = ("rules", "llm", "temporal", "eddies", "threads", "embeddings")

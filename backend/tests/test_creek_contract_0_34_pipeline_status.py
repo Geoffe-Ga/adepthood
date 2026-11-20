@@ -70,6 +70,8 @@ _STATUS_MINOR: Final = "0.34"
 #: How many folders ``creek init`` scaffolds outside ``00-Creek-Meta`` at 0.34.
 _SCAFFOLDED_FOLDERS: Final = 63
 _LIMIT: Final = 50
+#: The pinned slice's ``fragment_path`` pattern: fragments under ``01-Fragments``.
+_PINNED_FRAGMENT_PATH_PATTERN: Final = "^01-Fragments/(?:[^/\\x00-\\x1f]+/)*[^/\\x00-\\x1f]+\\.md$"
 
 
 def _json(path: Path) -> dict[str, Any]:
@@ -179,9 +181,37 @@ def test_the_wire_vocabulary_is_creeks_published_one() -> None:
     assert set(wire.JOB_FAILURE_CODES) == set(defs["JobFailureCode"]["enum"])
     assert defs["PipelineFolderStatus"]["properties"]["path"]["pattern"] == wire.FOLDER_PATH_PATTERN
     fragment_path = defs["PipelineDocumentStatus"]["properties"]["fragment_path"]["anyOf"][0]
-    assert fragment_path["pattern"] == wire.FRAGMENT_PATH_PATTERN
+    assert fragment_path["pattern"] == _PINNED_FRAGMENT_PATH_PATTERN
     assert query["properties"]["limit"]["default"] == _LIMIT
     assert schema["properties"]["documents"]["maxItems"] == PIPELINE_STATUS_MAX_LIMIT
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        "01-Fragments/Writing/Substack/on-attention.md",
+        "01-Fragments/loose.md",
+        "11-Other-Authors/example-author/an-essay.md",
+    ],
+)
+def test_the_parser_admits_every_root_creek_lists_an_upload_under(path: str) -> None:
+    """The pinned root, and ``11-Other-Authors`` (Creek-Vault#2141's widening)."""
+    body = _success()
+    body["documents"][0]["fragment_path"] = path
+    status = wire.pipeline_status_from(json.dumps(body).encode())
+    assert status is not None
+    assert status.documents[0].fragment_path == path
+
+
+@pytest.mark.parametrize(
+    "path",
+    ["02-Threads/elsewhere.md", "01-Fragments/../escape.txt", "/01-Fragments/abs.md", "x.md"],
+)
+def test_the_parser_refuses_a_fragment_path_outside_those_roots(path: str) -> None:
+    """Anything else is not where an upload lands, and refuses the answer."""
+    body = _success()
+    body["documents"][0]["fragment_path"] = path
+    assert wire.pipeline_status_from(json.dumps(body).encode()) is None
 
 
 def test_every_answer_this_suite_serves_is_one_creek_publishes() -> None:
