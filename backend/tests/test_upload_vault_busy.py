@@ -15,7 +15,6 @@ Pinned here, layer by layer:
 - the route answers ``202 {vault_status: "vault_busy", retry_after_seconds}``
   and drives no pipeline for a document that did not land;
 - a Seed run's documents share one capability handshake (cached per run);
-- a Creek ``staged`` answer (Creek-Vault#2121) is a landing, not a failure.
 """
 
 from __future__ import annotations
@@ -47,7 +46,6 @@ from domain.creek_vault import (
 from main import app
 from schemas.journal_upload import UPLOAD_MESSAGES
 from services.creek_vault_client import HttpCreekVaultClient
-from services.creek_vault_payload import _parse_http_upload_result
 from services.creek_vault_upload import (
     DEFAULT_VAULT_BUSY_RETRY_AFTER_SECONDS,
     UploadedDocument,
@@ -79,8 +77,6 @@ _OTHER_RUN_ID = "seedrunfedcba9876543210fedcba9876"
 _CREEK_RETRY_AFTER = 7
 # A 429 from an intermediary, naming a different wait so the two cannot be confused.
 _SHED_RETRY_AFTER = 12
-# The job handle a staged answer carries (Creek job ids are UUIDs).
-_STAGED_JOB_ID = "6f1c2a4e-0b7d-4c55-9a3e-2d8f1e0c7b11"
 
 
 def _busy_body(code: str = "temporarily_unavailable") -> dict[str, str]:
@@ -463,39 +459,6 @@ class TestTheHandshakeIsCachedPerRun:
             async_client, _BusyVault(busy_for=0), "busy-run", upload_run_id=_RUN_ID
         )
         assert accepted.json()["vault_status"] == VaultUploadStatus.ACCEPTED.value
-
-
-class TestAStagedUploadIsALanding:
-    """Creek-Vault#2121 may answer a busy-time upload ``202 staged``: kept, ingested later."""
-
-    def test_a_staged_answer_with_a_job_is_stored(self) -> None:
-        """The bytes are accepted, so the document is kept -- with no fragment yet."""
-        result = _parse_http_upload_result({"status": "staged", "job_id": _STAGED_JOB_ID})
-        assert result.stored is True
-        assert result.vault_ref is None
-
-    @pytest.mark.parametrize(
-        "payload",
-        [
-            pytest.param({"status": "staged"}, id="no-job"),
-            pytest.param({"status": "staged", "job_id": "not-a-uuid"}, id="bad-job"),
-            pytest.param({"status": "queued", "job_id": _STAGED_JOB_ID}, id="other-status"),
-        ],
-    )
-    def test_anything_less_than_a_staged_job_is_not_stored(self, payload: object) -> None:
-        """A staged claim nobody could follow up on is not evidence of a landing."""
-        assert _parse_http_upload_result(payload).stored is False
-
-    @pytest.mark.asyncio
-    async def test_the_route_answers_a_staged_upload_as_accepted(
-        self, async_client: AsyncClient
-    ) -> None:
-        """Not degraded and not busy: the vault has the document."""
-        vault = _BusyVault(busy_for=0, stored_body={"status": "staged", "job_id": _STAGED_JOB_ID})
-        body = (await _import_against(async_client, vault, "busy-staged")).json()
-        assert body["vault_status"] == VaultUploadStatus.ACCEPTED.value
-        assert body["stored"] is True
-        assert body["vault_ref"] is None
 
 
 # ---------------------------------------------------------------------------

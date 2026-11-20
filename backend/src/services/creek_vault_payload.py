@@ -717,10 +717,6 @@ _NOT_STORED_RESULT = VaultIngestResult(stored=False, vault_ref=None, action=None
 # carries the tags a vault's ingest pipeline assigned, which is empty here for
 # the same reason the ref is absent -- nothing was written to have any.
 _NOT_STORED_UPLOAD = VaultUploadResult(stored=False, vault_ref=None, action=None, tags=())
-# A staged upload (Creek-Vault#2121): kept, ingest deferred, so no fragment yet.
-_STAGED_UPLOAD = VaultUploadResult(stored=True, vault_ref=None, action=None, tags=())
-# The status a busy vault answers an admitted-but-deferred upload with.
-_UPLOAD_STAGED_STATUS = "staged"
 
 # Voice Draft writes are separate from uploads but retain the same conservative
 # result rule: unless every security-relevant response claim can be verified,
@@ -1126,30 +1122,13 @@ def _parse_http_upload_result(payload: object) -> VaultUploadResult:
     empty for the same reason it does on the fallback path: the vault does not
     return per-fragment tags on this surface, and empty is the truth rather than
     a failure.
-
-    **A staged answer is a landing too** (Creek-Vault#2121, #3770). A vault busy
-    with a classify or link pass may accept the bytes now and ingest them once
-    its lock frees, answering ``status: "staged"`` with the durable ``job_id``
-    that will do it. The document is kept -- that is what staging promises -- so
-    it is stored, with no fragment ref yet because none exists. The same
-    conservatism applies: only a ``staged`` status *with* a job id that parses
-    as Creek's own job handle (a UUID) counts, because a staged claim nobody
-    could follow up on is not evidence the bytes were kept.
     """
     if isinstance(payload, Mapping):
-        if _is_staged(payload):
-            return _STAGED_UPLOAD
         action = _coerce_ingest_action(payload.get("action"))
         fragment_id = _usable_fragment_id(payload)
         if action is not None and fragment_id is not None:
             return VaultUploadResult(stored=True, vault_ref=fragment_id, action=action)
     return _NOT_STORED_UPLOAD
-
-
-def _is_staged(payload: Mapping[str, object]) -> bool:
-    """Return whether ``payload`` is Creek's staged-upload answer carrying a real job."""
-    staged = payload.get("status") == _UPLOAD_STAGED_STATUS
-    return staged and _job_id(payload.get("job_id")) is not None
 
 
 # The status every pipeline response reports when it actually ran. Its own

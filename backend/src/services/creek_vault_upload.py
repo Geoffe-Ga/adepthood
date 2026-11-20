@@ -129,9 +129,11 @@ _FOLDER_IDENTITY_DOMAIN = b"adepthood-upload-folder-v1\x00"
 # path could contain can move a boundary between them.
 _FRAME_LENGTH_BYTES = 8
 
-#: The wait a busy answer names when the vault named none (#3770). Creek before
-#: Creek-Vault#2121 sends no ``Retry-After``; thirty seconds is long enough for a
-#: short pass to finish and short enough that a waiting row does not feel stuck.
+#: The wait a busy answer names when the vault named none (#3770). From
+#: Creek-Vault#2121 Creek names ``Retry-After: 30`` on a busy refusal, but only to
+#: a caller declaring contract minor 0.31 or later; adepthood declares less, so
+#: today the header is absent and this default is the wait. Thirty seconds matches
+#: Creek's own figure.
 DEFAULT_VAULT_BUSY_RETRY_AFTER_SECONDS: Final[int] = 30
 
 #: The shortest wait a busy answer names. ``Retry-After: 0`` reads as "send it
