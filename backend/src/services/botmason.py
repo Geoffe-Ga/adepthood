@@ -1338,7 +1338,18 @@ async def _call_openai(
             max_tokens=max_tokens,
         )
 
-    completion = await _retry_on_transient(_do_call)
+    # The call that opens the client closes it, on success and on failure. An
+    # unclosed client leaves a kept-alive socket owned only by the garbage
+    # collector, and asyncio's ``_SelectorTransport.__del__`` closes that socket
+    # without unregistering it from the event loop. The next socket to reuse
+    # the file descriptor can then wait on a readiness event that never comes,
+    # so the next dial hangs for the whole ``_LLM_TIMEOUT_SECONDS``. A
+    # resonance pass dials twice, and its second dial stalled 30 s whenever a
+    # collection landed between them.
+    try:
+        completion = await _retry_on_transient(_do_call)
+    finally:
+        await client.close()
     usage = getattr(completion, "usage", None)
     return LLMResponse(
         text=str(completion.choices[0].message.content or ""),
@@ -1385,7 +1396,11 @@ async def _call_anthropic(
             messages=cast("list[MessageParam]", messages_for_api),
         )
 
-    response = await _retry_on_transient(_do_call)
+    # The call that opens the client closes it (see :func:`_call_openai`).
+    try:
+        response = await _retry_on_transient(_do_call)
+    finally:
+        await client.close()
     block = response.content[0]
     text = str(block.text) if hasattr(block, "text") else str(block)
     usage = getattr(response, "usage", None)

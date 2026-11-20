@@ -418,6 +418,9 @@ class _KwargRecordingOpenAIClient:
 
         self.chat = type("Chat", (), {"completions": _Completions()})()
 
+    async def close(self) -> None:
+        """Hold no connection; the code under test closes every client it builds."""
+
 
 class _KwargRecordingAnthropicClient:
     """Stands in for ``anthropic.AsyncAnthropic``; records the ``create()`` call kwargs."""
@@ -436,6 +439,9 @@ class _KwargRecordingAnthropicClient:
                 return type("Message", (), {"content": [block], "usage": usage})()
 
         self.messages = _Messages()
+
+    async def close(self) -> None:
+        """Hold no connection; the code under test closes every client it builds."""
 
 
 _OPENAI_CREATE_KWARGS = frozenset({"model", "messages", "max_tokens"})

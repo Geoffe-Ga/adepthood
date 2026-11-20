@@ -704,6 +704,9 @@ class _FakeOpenAIClient:
 
         self.chat = type("Chat", (), {"completions": _Completions()})()
 
+    async def close(self) -> None:
+        """Hold no connection; the code under test closes every client it builds."""
+
 
 class _FakeAnthropicClient:
     """Stands in for ``anthropic.AsyncAnthropic`` — records ctor args, returns a message."""
@@ -721,6 +724,9 @@ class _FakeAnthropicClient:
                 return type("Message", (), {"content": [block], "usage": usage})()
 
         self.messages = _Messages()
+
+    async def close(self) -> None:
+        """Hold no connection; the code under test closes every client it builds."""
 
 
 @pytest.mark.asyncio

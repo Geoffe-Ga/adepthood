@@ -70,6 +70,9 @@ class TransportStub:
         self.request_count = 0
         #: Each request's parsed JSON body, in arrival order: what the SDK put on the wire.
         self.bodies: list[dict[str, Any]] = []
+        #: Every HTTP client handed to an SDK client the code under test built,
+        #: so a test can ask whether the code closed what it opened.
+        self.http_clients: list[httpx.AsyncClient | httpx2.AsyncClient] = []
 
     def record(self, content: bytes = b"") -> None:
         """Count one request and keep its body, then raise the canned failure if there is one."""
@@ -96,7 +99,9 @@ def use_openai(
         return httpx2.Response(stub.status_code, json=stub.body, request=request)
 
     def _factory(**kwargs: object) -> openai.AsyncOpenAI:
-        kwargs["http_client"] = httpx2.AsyncClient(transport=httpx2.MockTransport(_handle))
+        http_client = httpx2.AsyncClient(transport=httpx2.MockTransport(_handle))
+        stub.http_clients.append(http_client)
+        kwargs["http_client"] = http_client
         return real_client(**cast("dict[str, Any]", kwargs))
 
     monkeypatch.setenv("BOTMASON_PROVIDER", "openai")
@@ -121,7 +126,9 @@ def use_anthropic(
         return httpx.Response(stub.status_code, json=stub.body, request=request)
 
     def _factory(**kwargs: object) -> anthropic.AsyncAnthropic:
-        kwargs["http_client"] = httpx.AsyncClient(transport=httpx.MockTransport(_handle))
+        http_client = httpx.AsyncClient(transport=httpx.MockTransport(_handle))
+        stub.http_clients.append(http_client)
+        kwargs["http_client"] = http_client
         return real_client(**cast("dict[str, Any]", kwargs))
 
     monkeypatch.setenv("BOTMASON_PROVIDER", "anthropic")
