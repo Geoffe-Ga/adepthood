@@ -46,6 +46,7 @@ from typing import Final, NoReturn, Protocol
 from uuid import UUID
 
 from domain.vault_export import VaultExportPage
+from domain.vault_pipeline_status import VaultPipelineStatus
 
 # Semantic contract version adepthood presents at handshake and compares against
 # what a vault advertises. A major-version mismatch degrades to unavailable
@@ -100,7 +101,11 @@ from domain.vault_export import VaultExportPage
 #    temporarily_unavailable` -- only to a vault listing 0.28
 #    (`domain.vault_key_rejection`). Creek gates nothing else on those two
 #    routes above 0.21, so the declaration changes no answer they rely on;
-#    `tests/test_creek_contract_0_28.py` pins it.
+#    `tests/test_creek_contract_0_28.py` pins it. The pipeline status read
+#    (`GET /v1/pipeline/status`, Creek-Vault#2124, #3775) declares 0.34 only to
+#    a vault listing 0.34 (`PIPELINE_STATUS_SINCE_MINOR`); an older vault is
+#    asked nothing and the dashboard says it needs an update.
+#    `tests/test_creek_contract_0_34_pipeline_status.py` pins it.
 CONTRACT_VERSION = "0.22.0"
 
 
@@ -1665,6 +1670,26 @@ class CreekVaultExportClient(CreekVaultClient, Protocol):
         """
 
 
+class CreekVaultPipelineStatusClient(CreekVaultClient, Protocol):
+    """The client surface the "Your vault" dashboard needs: pipeline status (0.34, #3775).
+
+    Separate from :class:`CreekVaultClient` for the reason
+    :class:`CreekVaultAgentActivityClient` is.
+    """
+
+    async def pipeline_status(self, limit: int, /) -> VaultPipelineStatus:
+        """Read the vault's folders, the caller's ``limit`` newest uploads, and its jobs.
+
+        Content-free and read-only: no stage is started. Fails as
+        :meth:`CreekVaultClient.wheel` does -- an off-schema answer as
+        :class:`CreekVaultPayloadError`, a refusal (an ``incompatible_version``
+        included) as :class:`CreekVaultContractError`, an absent or unlistable
+        vault as :class:`CreekVaultUnavailableError` -- and a vault whose
+        handshake did not list 0.34 raises :class:`CreekCapabilityUnsupportedError`
+        before any request is built.
+        """
+
+
 class CreekVaultVoiceDraftClient(CreekVaultClient, Protocol):
     """The narrow client surface required by optional Voice Draft mirroring.
 
@@ -1704,7 +1729,11 @@ class CreekVaultLetterClient(CreekVaultVoiceDraftClient, Protocol):
 
 
 class CreekVaultPipelineClient(
-    CreekVaultLetterClient, CreekVaultAgentActivityClient, CreekVaultExportClient, Protocol
+    CreekVaultLetterClient,
+    CreekVaultAgentActivityClient,
+    CreekVaultExportClient,
+    CreekVaultPipelineStatusClient,
+    Protocol,
 ):
     """The whole per-request surface: every narrower client, plus pipeline polling.
 

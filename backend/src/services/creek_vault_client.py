@@ -149,6 +149,7 @@ from domain.reading_recommendations import (
 )
 from domain.vault_export import VAULT_EXPORT_SINCE_MINOR, VaultExportPage
 from domain.vault_job_failure import BUSY_FAILURE_CODE_SINCE_MINOR
+from domain.vault_pipeline_status import PIPELINE_STATUS_SINCE_MINOR, VaultPipelineStatus
 from services.creek_vault_activity_wire import read_agent_activity
 from services.creek_vault_agent_discovery import parse_agent_mcp
 from services.creek_vault_call_errors import HTTP_CALL_FAILED_ERRORS as _HTTP_CALL_FAILED_ERRORS
@@ -192,6 +193,10 @@ from services.creek_vault_payload import (
     _wheel_balance_from,
 )
 from services.creek_vault_pinned_transport import build_pinned_destination_transport
+from services.creek_vault_pipeline_status_wire import (
+    pipeline_status_offered,
+    read_pipeline_status,
+)
 from services.creek_vault_readings import recommend_from_vault
 from services.creek_vault_relay import parse_request_key_providers, relay_headers
 from services.creek_vault_retry_after import read_retry_after_seconds
@@ -1129,6 +1134,8 @@ _READING_CALL = _CallDepartures(contract_minor="0.25", deadline=30.0)
 _EXPORT_CALL = _CallDepartures(
     contract_minor=VAULT_EXPORT_SINCE_MINOR, deadline=EXPORT_DEADLINE_SECONDS
 )
+
+_PIPELINE_STATUS_CALL = _CallDepartures(contract_minor=PIPELINE_STATUS_SINCE_MINOR)
 
 # The job-status poll against a vault that serves contract 0.26, which is the
 # minor whose failed job says *why* it failed (Creek-Vault#1877). Only this read
@@ -2809,6 +2816,18 @@ class HttpCreekVaultClient:
                 send, self._url, cursor, supported=supported, read_failure=_read_failure
             )
 
+    async def pipeline_status(self, limit: int, /) -> VaultPipelineStatus:
+        """Read the vault's folders, uploads and jobs (0.34); see the status wire module."""
+        send = partial(self._authorized_request, departures=_PIPELINE_STATUS_CALL)
+        with _CountingOutcome(CreekCapability.PIPELINE):
+            return await read_pipeline_status(
+                send,
+                self._url,
+                limit,
+                supported=pipeline_status_offered(self._last_handshake),
+                read_failure=_read_failure,
+            )
+
 
 class LocalFallbackCreekVaultClient:
     """The no-vault :class:`CreekVaultClient`: local pipeline stays authoritative.
@@ -2926,6 +2945,11 @@ class LocalFallbackCreekVaultClient:
         """Raise: there is no vault whose content could be exported."""
         record_vault_outcome(self._outcome, CreekCapability.EXPORT)
         raise CreekCapabilityUnsupportedError(_unsupported_message(CreekCapability.EXPORT))
+
+    async def pipeline_status(self, _limit: int, /) -> VaultPipelineStatus:
+        """Raise: there is no vault whose folders and uploads could be read."""
+        record_vault_outcome(self._outcome, CreekCapability.PIPELINE)
+        raise CreekCapabilityUnsupportedError(_unsupported_message(CreekCapability.PIPELINE))
 
     async def classify_corpus(self) -> VaultClassificationPass | VaultPipelineJob:
         """Raise: there is no vault whose corpus could be classified.

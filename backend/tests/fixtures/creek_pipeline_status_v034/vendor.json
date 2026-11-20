@@ -1,0 +1,16 @@
+{
+  "repository": "Geoffe-Ga/Creek-Vault",
+  "commit": "9bcd4f1bf061521ab068587d4b3429117a5ffd23",
+  "path": "docs/contracts/adepthood-v1",
+  "contract_version": "0.34.0",
+  "files": {
+    "examples/capabilities/success.json": "681c59a44b0a29c8d94089e48c4112236f688eae9fe62b6258de82f0dd87cf1f",
+    "examples/pipeline/incompatible-version.json": "05ba769f3e7d662a92d8f020c31eb534822af1f2339b6e914301707f8ecd9578",
+    "examples/pipeline/unavailable-service.json": "152f17b333cbd64be186f3b462eaa7f76cd5996937d7a04111b835785f4bb9ac",
+    "manifest.json": "8695da6ca887edb5d49ffd1304eb390d219fb528d70b79430e8351ba547765ad",
+    "pipeline-status/empty.json": "83d7f270600b4f8a6cea2b19397ad6a56e53ff9ddc38c49cde1ecb1253085993",
+    "pipeline-status/success.json": "7ca19865d07d0fc517153951bb17d5e8eee8174f3d2942787e60714d828d0d7a",
+    "schemas/PipelineStatusQuery.schema.json": "698a397f245f0a4f3a49382ff9a0e513f34991174d250f97ca1ce322516d1992",
+    "schemas/PipelineStatusResponse.schema.json": "a64feb642070a2861c227d6688f81cd6b3bd75e38fc03f32c16c65c8b3d4b15a"
+  }
+}

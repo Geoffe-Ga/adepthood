@@ -78,6 +78,7 @@ from domain.creek_vault import (
     VaultWheelBalance,
 )
 from domain.vault_export import VaultExportPage
+from domain.vault_pipeline_status import VaultPipelineStatus
 from models.corpus_fragment import CorpusFragment
 from services import botmason, frequency_classification
 
@@ -342,6 +343,11 @@ class RecordingVault:
         return VaultExportPage(
             documents=(), fragments=(), skipped=0, next_cursor=None, answer_bytes=0
         )
+
+    async def pipeline_status(self, _limit: int, /) -> VaultPipelineStatus:
+        """Record the content-free status read; an empty vault has nothing to show."""
+        await self._dial("pipeline_status", "")
+        return VaultPipelineStatus(folders=(), documents=(), documents_withheld=0, jobs=())
 
     async def upsert_voice_draft(self, request: VaultVoiceDraftRequest, /) -> VaultVoiceDraftResult:
         """Record the AI-authored draft and keep it remotely."""
