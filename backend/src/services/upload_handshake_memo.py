@@ -7,12 +7,14 @@ waiting out a busy vault probed again. Nothing about the vault's capabilities
 changes between two documents of one run a few seconds apart, so the probe is
 remembered for the run and handed to the next document's adapter instead.
 
-**Keyed on what makes a probe someone's.** The key is the owner, the adapter's
-:attr:`~services.creek_vault_client.HttpCreekVaultClient.handshake_identity`
-(a digest of the vault URL and its credential), and the run id the client sent.
-The run id alone is client-chosen, so it never decides anything by itself: a
-guessed or replayed id finds nothing unless it is the same account reaching
-the same vault with the same key, which is exactly the case the reuse is for.
+**Keyed on what makes a probe someone's.** The key is the owner, the vault the
+adapter reaches (its :attr:`~services.creek_vault_client.HttpCreekVaultClient.base_url`),
+and the run name the client sent. The run name alone is client-chosen, so it
+never decides anything by itself: a guessed or replayed name finds nothing
+unless it is the same account reaching the same vault, which is exactly the
+case the reuse is for. A credential rotated mid-run is caught by the upload
+itself: the vault refuses it, the failure forgets the probe, and the next
+document asks again.
 
 **Only a probe worth reusing is remembered**: an available vault that
 advertised ``upload``. A vault that was absent, or that cannot take files, is
@@ -55,8 +57,8 @@ class AdoptsHandshake(Protocol):
     """A client that can be handed a probe instead of making one."""
 
     @property
-    def handshake_identity(self) -> str:
-        """A content-free digest of the vault and credential a probe answers for."""
+    def base_url(self) -> str:
+        """The vault this client reaches."""
 
     def adopt_handshake(self, result: HandshakeResult, /) -> None:
         """Answer the cached reads from ``result`` as if it had just probed."""
@@ -118,7 +120,7 @@ class UploadHandshakeMemo:
         if run_id is None or not isinstance(client, AdoptsHandshake):
             await client.handshake()
             return
-        key = (owner_user_id, client.handshake_identity, run_id)
+        key = (owner_user_id, client.base_url, run_id)
         remembered = self._fresh(key)
         if remembered is not None:
             client.adopt_handshake(remembered)
@@ -135,7 +137,7 @@ class UploadHandshakeMemo:
         """Drop this run's probe, so its next document asks the vault again."""
         if run_id is None or not isinstance(client, AdoptsHandshake):
             return
-        self._entries.pop((owner_user_id, client.handshake_identity, run_id), None)
+        self._entries.pop((owner_user_id, client.base_url, run_id), None)
 
 
 #: The process's one memo, shared by every upload request.

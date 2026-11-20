@@ -496,9 +496,9 @@ class _CountingProbeClient(ScriptedUploadClient):
         self.adopted: list[HandshakeResult] = []
 
     @property
-    def handshake_identity(self) -> str:
+    def base_url(self) -> str:
         """Name one fixed vault."""
-        return "counting-probe-vault"
+        return "https://counting-probe.example.test"
 
     async def handshake(self) -> HandshakeResult:
         """Count the probe, then answer as the scripted vault does."""
