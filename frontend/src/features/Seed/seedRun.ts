@@ -78,10 +78,12 @@ export type CorpusSeedStatus =
  * run waits one out, or for a longer wait than it will sit through (#3556).
  * Nothing was kept, and it is not the document's fault, so it is neither
  * `failed` nor a refusal of the file.
+ *
+ * The {@link SeedSkipStatus} members are files a chosen folder held that were
+ * never going to be sent (#3771), each with the reason it stayed behind.
  */
 export type LocalSeedStatus =
-  | 'unsupported_format'
-  | 'too_large'
+  | SeedSkipStatus
   | 'managed_too_large'
   | 'unreadable'
   | 'offline'
@@ -89,6 +91,28 @@ export type LocalSeedStatus =
   | 'rate_limited'
   | 'unconfirmed'
   | 'cancelled';
+
+/**
+ * Why a file was skipped before anything was sent (#3771): decided on the
+ * device from its name, place and size alone, so not a byte of it left.
+ *
+ *  - `unsupported_format` — a type the vault has no ingestor for, or refuses.
+ *  - `attachments_off`    — a type the vault reads, left out because the
+ *                           folder's attachments were not switched on.
+ *  - `too_large`          — past the one-document size cap.
+ *  - `app_settings`       — inside an app's settings folder (`.obsidian`, `.git`).
+ *  - `hidden_file`        — hidden, or inside a hidden folder.
+ *  - `unsafe_name`        — a name or path the server would refuse.
+ *  - `name_collision`     — one of two spellings of the same path.
+ */
+export type SeedSkipStatus =
+  | 'unsupported_format'
+  | 'attachments_off'
+  | 'too_large'
+  | 'app_settings'
+  | 'hidden_file'
+  | 'unsafe_name'
+  | 'name_collision';
 
 /**
  * A settled document's outcome: what its destination said, or what the device
@@ -139,15 +163,26 @@ export interface SeedEntry {
   status: 'queued' | SettledSeedStatus;
 }
 
-/** How many of each kind of outcome a run currently holds. */
+/**
+ * How many of each kind of outcome a run currently holds (#3771).
+ *
+ * `landed + failed + remaining + skipped + stopped === total`; `unconfirmed`
+ * is the part of `failed` nobody could confirm either way, never a bucket of
+ * its own.
+ */
 export interface SeedRunTally {
   total: number;
   /** Durably kept, wherever this account's writing lives. */
   landed: number;
-  waiting: number;
-  /** Settled, and definitely not kept. */
-  refused: number;
-  /** Settled, but nobody could confirm whether it was kept (#3239). */
+  /** Settled without landing, or without anyone able to say it landed. */
+  failed: number;
+  /** Still to go: queued, held for a moment, or in flight. */
+  remaining: number;
+  /** Never sent: a type nobody here reads, attachments off, and the like. */
+  skipped: number;
+  /** Never sent because the person stopped the run before its turn. */
+  stopped: number;
+  /** Of `failed`, those that may have been kept: nobody could confirm (#3239). */
   unconfirmed: number;
 }
 
@@ -166,6 +201,28 @@ const LANDED_STATUSES: readonly SeedItemStatus[] = ['ingested', 'in_corpus'];
  * "didn't go over" would be a claim about these that nothing can check.
  */
 const UNCONFIRMED_STATUSES: readonly SeedItemStatus[] = ['degraded', 'unconfirmed'];
+
+/**
+ * Every outcome counted as skipped rather than failed (#3771): the files a
+ * folder held that were never sent, and the one the vault turned away for its
+ * type alone (`unsupported_source`, a 415). Nothing about any of them is the
+ * moment's fault, so none is offered again.
+ */
+const SKIPPED_STATUSES: readonly SeedItemStatus[] = [
+  'unsupported_format',
+  'attachments_off',
+  'too_large',
+  'app_settings',
+  'hidden_file',
+  'unsafe_name',
+  'name_collision',
+  'unsupported_source',
+];
+
+/** Whether a document was skipped rather than sent and refused (#3771). */
+export function isSkippedSeedStatus(status: SeedItemStatus): boolean {
+  return SKIPPED_STATUSES.includes(status);
+}
 
 /**
  * The outcomes worth sending the same document again for (#3556): nothing was
@@ -357,22 +414,43 @@ export function selectNextQueued(state: SeedRunState): SeedItem | null {
   return null;
 }
 
-/** What the run currently holds: how much landed, waits, did not land, or is unknown. */
-export function seedRunTally(state: SeedRunState): SeedRunTally {
-  const tally: SeedRunTally = {
-    total: state.order.length,
-    landed: 0,
-    waiting: 0,
-    refused: 0,
-    unconfirmed: 0,
-  };
-  for (const id of state.order) {
-    const status = state.items[id]?.status;
-    if (status === undefined) continue;
-    if (LANDED_STATUSES.includes(status)) tally.landed += 1;
-    else if (UNCONFIRMED_STATUSES.includes(status)) tally.unconfirmed += 1;
-    else if (isSettled(status)) tally.refused += 1;
-    else tally.waiting += 1;
+/** The bucket one status is counted in; `unconfirmed` is counted again apart. */
+type TallyBucket = 'landed' | 'failed' | 'remaining' | 'skipped' | 'stopped';
+
+/**
+ * Which of the five counts a status belongs to. A cancelled document is
+ * `stopped` rather than failed or skipped: nobody refused it, and it was not
+ * its type -- the person stopped the run before its turn.
+ */
+function bucketOf(status: SeedItemStatus): TallyBucket {
+  if (LANDED_STATUSES.includes(status)) return 'landed';
+  if (SKIPPED_STATUSES.includes(status)) return 'skipped';
+  if (status === 'cancelled') return 'stopped';
+  return isSettled(status) ? 'failed' : 'remaining';
+}
+
+/** A tally of nothing. */
+function emptyTally(): SeedRunTally {
+  return { total: 0, landed: 0, failed: 0, remaining: 0, skipped: 0, stopped: 0, unconfirmed: 0 };
+}
+
+/** Count a set of documents into landed, failed, remaining, skipped and stopped (#3771). */
+export function tallySeedItems(items: readonly Pick<SeedItem, 'status'>[]): SeedRunTally {
+  const tally = emptyTally();
+  for (const { status } of items) {
+    tally.total += 1;
+    tally[bucketOf(status)] += 1;
+    if (UNCONFIRMED_STATUSES.includes(status)) tally.unconfirmed += 1;
   }
   return tally;
+}
+
+/** What the whole run currently holds, counted as {@link tallySeedItems} counts. */
+export function seedRunTally(state: SeedRunState): SeedRunTally {
+  const items: SeedItem[] = [];
+  for (const id of state.order) {
+    const item = state.items[id];
+    if (item !== undefined) items.push(item);
+  }
+  return tallySeedItems(items);
 }

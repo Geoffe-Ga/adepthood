@@ -46,6 +46,7 @@ import {
   isRetryableSeedStatus,
   isSettledSeedStatus,
   seedRunReducer,
+  seedRunTally,
   selectNextQueued,
   type SeedRunAction,
   type SeedRunState,
@@ -168,6 +169,11 @@ export function selectUploadQueueRemaining(state: Pick<UploadQueueState, 'run'>)
     if (status !== undefined && !isSettledSeedStatus(status)) remaining += 1;
   }
   return remaining;
+}
+
+/** How many documents this session's queue has settled as failed (#3771). */
+export function selectUploadQueueFailed(state: Pick<UploadQueueState, 'run'>): number {
+  return seedRunTally(state.run).failed;
 }
 
 const INITIAL_STATE = {

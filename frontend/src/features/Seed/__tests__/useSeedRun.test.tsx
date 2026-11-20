@@ -295,8 +295,10 @@ describe('a multi-document run', () => {
     expect(result.current.tally).toEqual({
       total: 2,
       landed: 2,
-      waiting: 0,
-      refused: 0,
+      failed: 0,
+      remaining: 0,
+      skipped: 0,
+      stopped: 0,
       unconfirmed: 0,
     });
   });
@@ -317,8 +319,10 @@ describe('a multi-document run', () => {
     expect(result.current.tally).toEqual({
       total: 1,
       landed: 1,
-      waiting: 0,
-      refused: 0,
+      failed: 0,
+      remaining: 0,
+      skipped: 0,
+      stopped: 0,
       unconfirmed: 0,
     });
     expect(mockFetch.mock.calls[0][0]).toBe('http://test/corpus/import');

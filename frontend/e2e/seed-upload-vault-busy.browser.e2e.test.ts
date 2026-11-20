@@ -3,6 +3,7 @@ import { expect, test } from '@playwright/test';
 import { bearer } from './journalHabitsBrowserSupport';
 import {
   chooseFolder,
+  countsLine,
   digestOf,
   expectLanded,
   importPosts,
@@ -101,7 +102,7 @@ test('twenty notes sent while the vault is busy for nineteen calls all land', as
   const first = Object.keys(files).sort()[0] ?? '';
   await expect(runRow(page, first)).toContainText(VAULT_WAITING_START);
 
-  await expect(page.getByTestId('seed-summary')).toHaveText(`All ${NOTE_COUNT} have landed.`, {
+  await expect(page.getByTestId('seed-summary')).toHaveText(countsLine({ landed: NOTE_COUNT }), {
     timeout: 120_000,
   });
 

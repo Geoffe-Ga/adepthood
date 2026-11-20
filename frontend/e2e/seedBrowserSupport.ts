@@ -281,6 +281,24 @@ export async function startImport(page: Page): Promise<void> {
   await expect(page.getByTestId('seed-folder-review')).toHaveCount(0);
 }
 
+/** The four counts a run reports, each zero unless named (#3771). */
+export interface RunCounts {
+  landed?: number;
+  failed?: number;
+  remaining?: number;
+  skipped?: number;
+}
+
+/** The summary line the screen shows for `counts`: landed · failed · remaining · skipped. */
+export function countsLine({
+  landed = 0,
+  failed = 0,
+  remaining = 0,
+  skipped = 0,
+}: RunCounts): string {
+  return `${landed} landed · ${failed} failed · ${remaining} remaining · ${skipped} skipped (unsupported type)`;
+}
+
 /** The run row naming `relativePath`; rows are named by path, so two Index.md differ. */
 export function runRow(page: Page, relativePath: string): Locator {
   return page
@@ -313,4 +331,52 @@ export function expectNoneIn(haystack: readonly string[], needles: readonly stri
       expect(text.includes(needle), `"${needle}" surfaced in ${text.slice(0, 80)}`).toBe(false);
     }
   }
+}
+
+/**
+ * Record, in the page, every `File` the app reads, by the path the browser gave
+ * it. Installed before the app loads, over every way a script can read a Blob.
+ */
+export async function recordFileReads(page: Page): Promise<void> {
+  await page.addInitScript(() => {
+    const reads: string[] = [];
+    (window as unknown as { __seedReads: string[] }).__seedReads = reads;
+    const note = (blob: unknown): void => {
+      if (blob instanceof File) reads.push(blob.webkitRelativePath || blob.name);
+    };
+    const blobMethods = ['arrayBuffer', 'text', 'stream', 'slice', 'bytes'] as const;
+    for (const method of blobMethods) {
+      const original = (Blob.prototype as unknown as Record<string, unknown>)[method];
+      if (typeof original !== 'function') continue;
+      Object.defineProperty(Blob.prototype, method, {
+        configurable: true,
+        writable: true,
+        value(this: Blob, ...args: unknown[]) {
+          note(this);
+          return (original as (...rest: unknown[]) => unknown).apply(this, args);
+        },
+      });
+    }
+    const readerMethods = [
+      'readAsArrayBuffer',
+      'readAsText',
+      'readAsDataURL',
+      'readAsBinaryString',
+    ] as const;
+    for (const method of readerMethods) {
+      const original = FileReader.prototype[method] as (...rest: unknown[]) => void;
+      Object.defineProperty(FileReader.prototype, method, {
+        configurable: true,
+        writable: true,
+        value(this: FileReader, blob: Blob, ...args: unknown[]) {
+          note(blob);
+          original.call(this, blob, ...args);
+        },
+      });
+    }
+  });
+}
+
+export async function fileReads(page: Page): Promise<string[]> {
+  return page.evaluate(() => [...(window as unknown as { __seedReads: string[] }).__seedReads]);
 }

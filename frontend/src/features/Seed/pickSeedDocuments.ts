@@ -15,6 +15,7 @@
 import * as DocumentPicker from 'expo-document-picker';
 
 import { SEED_DOCUMENT_EXTENSIONS } from './seedDocumentTypes';
+import type { SeedSkipStatus } from './seedRun';
 
 import type { ImportDocumentSource } from '@/api';
 
@@ -72,6 +73,12 @@ export interface PickedDocument {
    * with the upload so `Work/Index.md` and `Home/Index.md` stay two documents.
    */
   source?: ImportDocumentSource;
+  /**
+   * Set when the document was skipped before anything was sent (#3771): a file
+   * a chosen folder held that will not go, with the reason. It carries no
+   * handle, so there is nothing of it that could be read or sent.
+   */
+  skipped?: SeedSkipStatus;
 }
 
 /**

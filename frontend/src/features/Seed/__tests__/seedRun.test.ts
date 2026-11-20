@@ -8,7 +8,25 @@ import {
   selectNextQueued,
   type SeedItemStatus,
   type SeedRunState,
+  isSkippedSeedStatus,
+  tallySeedItems,
+  type SeedRunTally,
+  type SettledSeedStatus,
 } from '../seedRun';
+
+/** A tally that is all zeros except where named. */
+function counts(named: Partial<SeedRunTally>): SeedRunTally {
+  return {
+    total: 0,
+    landed: 0,
+    failed: 0,
+    remaining: 0,
+    skipped: 0,
+    stopped: 0,
+    unconfirmed: 0,
+    ...named,
+  };
+}
 
 function withThreeQueued(): SeedRunState {
   return seedRunReducer(EMPTY_SEED_RUN, {
@@ -108,23 +126,11 @@ describe('one failure never abandons the rest', () => {
 
 describe('what the run reports', () => {
   test('has nothing to say about an empty run', () => {
-    expect(seedRunTally(EMPTY_SEED_RUN)).toEqual({
-      total: 0,
-      landed: 0,
-      waiting: 0,
-      refused: 0,
-      unconfirmed: 0,
-    });
+    expect(seedRunTally(EMPTY_SEED_RUN)).toEqual(counts({}));
   });
 
   test('counts every unsent document as still waiting', () => {
-    expect(seedRunTally(withThreeQueued())).toEqual({
-      total: 3,
-      landed: 0,
-      waiting: 3,
-      refused: 0,
-      unconfirmed: 0,
-    });
+    expect(seedRunTally(withThreeQueued())).toEqual(counts({ total: 3, remaining: 3 }));
   });
 
   test('tallies what landed, what is waiting, and what did not land', () => {
@@ -132,13 +138,7 @@ describe('what the run reports', () => {
     state = seedRunReducer(state, { type: 'settle', id: 'a', status: 'ingested' });
     state = seedRunReducer(state, { type: 'settle', id: 'b', status: 'vault_unavailable' });
 
-    expect(seedRunTally(state)).toEqual({
-      total: 3,
-      landed: 1,
-      waiting: 1,
-      refused: 1,
-      unconfirmed: 0,
-    });
+    expect(seedRunTally(state)).toEqual(counts({ total: 3, landed: 1, remaining: 1, failed: 1 }));
   });
 
   test('counts a document kept by the corpus as landed, exactly as a vault one', () => {
@@ -151,30 +151,79 @@ describe('what the run reports', () => {
     state = seedRunReducer(state, { type: 'settle', id: 'b', status: 'in_corpus' });
     state = seedRunReducer(state, { type: 'settle', id: 'c', status: 'consent_required' });
 
-    expect(seedRunTally(state)).toEqual({
-      total: 3,
-      landed: 2,
-      waiting: 0,
-      refused: 1,
-      unconfirmed: 0,
-    });
+    expect(seedRunTally(state)).toEqual(counts({ total: 3, landed: 2, failed: 1 }));
   });
 
-  test('counts an upload nobody could confirm apart from one that did not go', () => {
-    // #3239. A degraded vault answer and a lost reply may both have been kept,
-    // so neither is counted with the documents that definitely did not go.
+  test('counts an upload nobody could confirm as failed, and again as unconfirmed', () => {
+    // #3239, #3771. A degraded vault answer and a lost reply may both have been
+    // kept: they are failed as far as anyone can see, and `unconfirmed` is the
+    // part of `failed` that says so -- a sub-count, never a bucket of its own.
     let state = withThreeQueued();
     state = seedRunReducer(state, { type: 'settle', id: 'a', status: 'degraded' });
     state = seedRunReducer(state, { type: 'settle', id: 'b', status: 'unconfirmed' });
     state = seedRunReducer(state, { type: 'settle', id: 'c', status: 'offline' });
 
-    expect(seedRunTally(state)).toEqual({
-      total: 3,
-      landed: 0,
-      waiting: 0,
-      refused: 1,
-      unconfirmed: 2,
+    expect(seedRunTally(state)).toEqual(counts({ total: 3, failed: 3, unconfirmed: 2 }));
+  });
+
+  test.each<SettledSeedStatus>([
+    'unsupported_format',
+    'attachments_off',
+    'too_large',
+    'app_settings',
+    'hidden_file',
+    'unsafe_name',
+    'name_collision',
+    'unsupported_source',
+  ])('counts %s as skipped, never as failed (#3771)', (status) => {
+    const state = seedRunReducer(EMPTY_SEED_RUN, {
+      type: 'add',
+      entries: [{ id: 'x', name: 'export.json', status }],
     });
+
+    expect(isSkippedSeedStatus(status)).toBe(true);
+    expect(isRetryableSeedStatus(status)).toBe(false);
+    expect(seedRunTally(state)).toEqual(counts({ total: 1, skipped: 1 }));
+  });
+
+  test('every document is in exactly one of the five counts (#3771)', () => {
+    let state = seedRunReducer(EMPTY_SEED_RUN, {
+      type: 'add',
+      entries: [
+        { id: 'a', name: 'a.md', status: 'queued' },
+        { id: 'b', name: 'b.md', status: 'queued' },
+        { id: 'c', name: 'c.md', status: 'queued' },
+        { id: 'd', name: 'd.md', status: 'queued' },
+        { id: 'e', name: 'data.csv', status: 'attachments_off' },
+        { id: 'f', name: 'export.json', status: 'unsupported_format' },
+      ],
+    });
+    state = seedRunReducer(state, { type: 'settle', id: 'a', status: 'ingested' });
+    state = seedRunReducer(state, { type: 'settle', id: 'b', status: 'degraded' });
+    state = seedRunReducer(state, { type: 'start', id: 'c' });
+    state = seedRunReducer(state, { type: 'cancel', ids: ['d'] });
+
+    const tally = seedRunTally(state);
+    expect(tally).toEqual(
+      counts({
+        total: 6,
+        landed: 1,
+        failed: 1,
+        remaining: 1,
+        skipped: 2,
+        stopped: 1,
+        unconfirmed: 1,
+      }),
+    );
+    expect(tally.landed + tally.failed + tally.remaining + tally.skipped + tally.stopped).toBe(
+      tally.total,
+    );
+  });
+
+  test('counts any set of documents the same way, such as one batch (#3771)', () => {
+    expect(
+      tallySeedItems([{ status: 'ingested' }, { status: 'queued' }, { status: 'hidden_file' }]),
+    ).toEqual(counts({ total: 3, landed: 1, remaining: 1, skipped: 1 }));
   });
 
   test('clears back to an empty run', () => {
@@ -222,16 +271,10 @@ describe('cancelling a run that is still going', () => {
     expect(state.items.c?.status).toBe('queued');
   });
 
-  test('counts a cancelled document among what did not go over', () => {
+  test('counts a cancelled document as stopped, neither failed nor skipped (#3771)', () => {
     const cancelled = seedRunReducer(withThreeQueued(), { type: 'cancel' });
 
-    expect(seedRunTally(cancelled)).toEqual({
-      total: 3,
-      landed: 0,
-      waiting: 0,
-      refused: 3,
-      unconfirmed: 0,
-    });
+    expect(seedRunTally(cancelled)).toEqual(counts({ total: 3, stopped: 3 }));
   });
 });
 
@@ -248,7 +291,7 @@ describe('a document held for a moment (#3556)', () => {
     state = seedRunReducer(state, { type: 'wait', id: 'a' });
 
     expect(state.items.a?.status).toBe('waiting');
-    expect(seedRunTally(state)).toMatchObject({ waiting: 3, refused: 0 });
+    expect(seedRunTally(state)).toMatchObject({ remaining: 3, failed: 0 });
   });
 
   test('a waiting document goes over again once its wait is up', () => {
@@ -353,7 +396,7 @@ describe('a document waiting out a busy vault (#3770)', () => {
     const held = seedRunReducer(started(), { type: 'wait', id: 'a', cause: 'vault' });
 
     expect(selectNextQueued(held)).toBeNull();
-    expect(seedRunTally(held).waiting).toBe(3);
+    expect(seedRunTally(held).remaining).toBe(3);
     expect(seedRunReducer(held, { type: 'start', id: 'a' }).items.a?.status).toBe('uploading');
   });
 
@@ -367,7 +410,7 @@ describe('a document waiting out a busy vault (#3770)', () => {
     const settled = seedRunReducer(started(), { type: 'settle', id: 'a', status: 'vault_busy' });
 
     expect(isRetryableSeedStatus('vault_busy')).toBe(true);
-    expect(seedRunTally(settled).refused).toBe(1);
+    expect(seedRunTally(settled).failed).toBe(1);
     expect(seedRunTally(settled).unconfirmed).toBe(0);
   });
 });

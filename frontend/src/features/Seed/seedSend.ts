@@ -25,6 +25,7 @@
  */
 import { attemptSeedDocument, type SeedAttempt } from './importSeedDocument';
 import type { PickedDocument } from './pickSeedDocuments';
+import { MAX_SEED_DOCUMENT_BYTES } from './readSeedDocument';
 import type { SeedEntry, SeedRunAction, SeedWaitCause, SettledSeedStatus } from './seedRun';
 import {
   MAX_SEED_RATE_LIMIT_WAITS,
@@ -63,7 +64,19 @@ export interface SendContext {
   runId: string;
 }
 
-/** Pair each picked document with a run entry, already settled if unreadable. */
+/**
+ * Where a document enters the run: already settled as skipped when the device
+ * can tell from its name and size alone that it will not go (#3771), so it is
+ * counted at once and never reaches a request; otherwise queued.
+ */
+function startingStatus(document: PickedDocument): SeedEntry['status'] {
+  if (document.skipped !== undefined) return document.skipped;
+  if (!document.seedable) return 'unsupported_format';
+  if (document.size !== null && document.size > MAX_SEED_DOCUMENT_BYTES) return 'too_large';
+  return 'queued';
+}
+
+/** Pair each picked document with a run entry, already settled if it is skipped. */
 export function toQueuedDocuments(
   documents: readonly PickedDocument[],
   from: number,
@@ -74,7 +87,7 @@ export function toQueuedDocuments(
       id: `seed-${from + index}`,
       // A folder document is named by its path, so two `Index.md` rows differ.
       name: document.source?.relativePath ?? document.name,
-      status: document.seedable ? 'queued' : 'unsupported_format',
+      status: startingStatus(document),
     },
     document,
     tier,

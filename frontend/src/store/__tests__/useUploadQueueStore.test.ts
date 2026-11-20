@@ -3,10 +3,12 @@
 import * as FileSystem from 'expo-file-system';
 
 import type { PickedDocument } from '@/features/Seed/pickSeedDocuments';
+import { MAX_SEED_DOCUMENT_BYTES } from '@/features/Seed/readSeedDocument';
 import { SEED_UPLOAD_LIMIT } from '@/features/Seed/seedUploadPacing';
 import { resetAllStores } from '@/store/registry';
 import {
   onUploadQueueDrained,
+  selectUploadQueueFailed,
   selectUploadQueueRemaining,
   useUploadQueueStore,
   type UploadQueueDrain,
@@ -114,6 +116,65 @@ describe('a batch in the queue', () => {
     expect(statuses()).toEqual(['unsupported_format']);
     expect(mockFetch).not.toHaveBeenCalled();
     expect(useUploadQueueStore.getState().isSending).toBe(false);
+  });
+});
+
+describe('files skipped before anything is sent (#3771)', () => {
+  test('enter the run settled with their reason, are never held, and send no byte', async () => {
+    mockFetch.mockImplementation(() => reply('accepted'));
+    const attachment: PickedDocument = {
+      name: 'data/2024.csv',
+      uri: '',
+      size: null,
+      seedable: false,
+      skipped: 'attachments_off',
+    };
+    const config: PickedDocument = {
+      ...attachment,
+      name: '.obsidian/app.json',
+      skipped: 'app_settings',
+    };
+
+    await useUploadQueueStore.getState().enqueue([note('a.md'), attachment, config], 'personal');
+
+    expect(statuses()).toEqual(['ingested', 'attachments_off', 'app_settings']);
+    expect(sentPaths()).toEqual(['a.md']);
+    expect(mocked.__fileBase64).toHaveBeenCalledTimes(1);
+    expect([...useUploadQueueStore.getState().heldIds]).toEqual([]);
+    const { run } = useUploadQueueStore.getState();
+    expect(run.order.map((id) => run.items[id]?.name)).toEqual([
+      'a.md',
+      'data/2024.csv',
+      '.obsidian/app.json',
+    ]);
+  });
+
+  test('a picked file past the size cap is skipped on arrival, unread and unsent', async () => {
+    const huge: PickedDocument = { ...note('huge.md'), size: MAX_SEED_DOCUMENT_BYTES + 1 };
+
+    await useUploadQueueStore.getState().enqueue([huge], 'personal');
+
+    expect(statuses()).toEqual(['too_large']);
+    expect(mockFetch).not.toHaveBeenCalled();
+    expect(mocked.__fileBase64).not.toHaveBeenCalled();
+  });
+
+  test('a type the vault turned away with a 415 is counted skipped, not failed', async () => {
+    mockFetch.mockImplementation(() => reply('unsupported_source'));
+
+    await useUploadQueueStore.getState().enqueue([note('posts.csv')], 'personal');
+
+    expect(statuses()).toEqual(['unsupported_source']);
+    expect(selectUploadQueueFailed(useUploadQueueStore.getState())).toBe(0);
+    expect([...useUploadQueueStore.getState().heldIds]).toEqual([]);
+  });
+
+  test('the failed count is what settled without landing', async () => {
+    mockFetch.mockReturnValueOnce(reply('degraded')).mockImplementation(() => reply('accepted'));
+
+    await useUploadQueueStore.getState().enqueue([note('a.md'), note('b.md')], 'personal');
+
+    expect(selectUploadQueueFailed(useUploadQueueStore.getState())).toBe(1);
   });
 });
 

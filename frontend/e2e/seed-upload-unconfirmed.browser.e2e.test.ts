@@ -6,6 +6,7 @@ import { expect, test, type Response } from '@playwright/test';
 import { bearer } from './journalHabitsBrowserSupport';
 import {
   DEGRADED_LINE_START,
+  countsLine,
   digestOf,
   expectLanded,
   expectNoneIn,
@@ -182,15 +183,16 @@ test('an upload the vault kept but whose reply was lost is unconfirmed, and a re
   // And the screen: the row says it couldn't confirm, and the run counts it
   // apart from what landed and from what didn't go over.
   await expect(runRow(page, name)).toContainText(DEGRADED_LINE_START);
-  await expect(page.getByTestId('seed-summary')).toHaveText(
-    "0 of 1 landed. 1 couldn't be confirmed.",
+  await expect(page.getByTestId('seed-summary')).toHaveText(countsLine({ failed: 1 }));
+  await expect(page.getByTestId('seed-summary-unconfirmed')).toContainText(
+    "1 of those couldn't be confirmed",
   );
 
   // Trying again re-sends the same document under the same identity; the
   // vault updates the fragment it already had rather than adding a second.
   await page.getByTestId('seed-retry-button').click();
   await expectLanded(page, name);
-  await expect(page.getByTestId('seed-summary')).toHaveText('All 1 have landed.');
+  await expect(page.getByTestId('seed-summary')).toHaveText(countsLine({ landed: 1 }));
   await expect(page.getByTestId('seed-retry-button')).toHaveCount(0);
 
   expectUpdatedInPlace(await vaultLedger(page), uploadCount(before), digestOf(text), kept);

@@ -158,6 +158,70 @@ describe('buildFolderManifest', () => {
   });
 });
 
+describe('the files a folder holds that will not be sent (#3771)', () => {
+  test('are kept by path and reason, in path order', () => {
+    const manifest = manifestOf([
+      ...VAULT,
+      file('My Vault/.hidden.md'),
+      file('My Vault/big.md', MAX_SEED_DOCUMENT_BYTES + 1),
+      file('My Vault/export.json'),
+    ]);
+    expect(manifest.skippedFiles).toEqual([
+      { path: '.hidden.md', reason: 'hidden' },
+      { path: '.obsidian/app.json', reason: 'configuration' },
+      { path: 'big.md', reason: 'too_large' },
+      { path: 'cache/example.bin', reason: 'unsupported' },
+      { path: 'export.json', reason: 'unsupported' },
+    ]);
+  });
+
+  test('keep both spellings of a collided path, and a file from outside the folder', () => {
+    const nfc = 'My Vault/Caf\u00e9.md';
+    const nfd = 'My Vault/Cafe\u0301.md';
+    const manifest = manifestOf([file(nfc), file(nfd), file('My Vault/a.md'), file('Other/b.md')]);
+    expect(manifest.skippedFiles).toEqual([
+      { path: 'Caf\u00e9.md', reason: 'collision' },
+      { path: 'Caf\u00e9.md', reason: 'collision' },
+      { path: 'Other/b.md', reason: 'unsafe_path' },
+    ]);
+  });
+
+  test('every extension Creek refuses with a 415 is skipped as unsupported', () => {
+    const refused = [
+      '.json',
+      '.jsonl',
+      '.ndjson',
+      '.tar',
+      '.tgz',
+      '.gz',
+      '.bz2',
+      '.xz',
+      '.7z',
+      '.rar',
+      '.doc',
+      '.xls',
+      '.ppt',
+    ];
+    const manifest = manifestOf(refused.map((extension) => file(`My Vault/export${extension}`)));
+    expect(manifest.notes).toEqual([]);
+    expect(manifest.attachments).toEqual([]);
+    expect(manifest.skipped.unsupported).toBe(refused.length);
+  });
+
+  test('a selection with attachments off leaves them out by name, as attachments_off', () => {
+    const manifest = manifestOf(VAULT);
+    expect(selectFolderEntries(manifest, false).leftOut).toEqual([
+      { path: '.obsidian/app.json', reason: 'configuration' },
+      { path: 'assets/diagram.png', reason: 'attachments_off' },
+      { path: 'cache/example.bin', reason: 'unsupported' },
+    ]);
+    expect(selectFolderEntries(manifest, true).leftOut).toEqual([
+      { path: '.obsidian/app.json', reason: 'configuration' },
+      { path: 'cache/example.bin', reason: 'unsupported' },
+    ]);
+  });
+});
+
 describe('selectFolderEntries', () => {
   test('selects only the notes until attachments are asked for', () => {
     const manifest = manifestOf(VAULT);

@@ -107,7 +107,8 @@ describe('useSeedFolder', () => {
       await hook.result.current.start();
     });
     expect(send).toHaveBeenCalledTimes(1);
-    const documents = send.mock.calls[0][0];
+    // The notes go first; what was left out follows them, skipped (#3771).
+    const documents = send.mock.calls[0][0].slice(0, 2);
     expect(documents).toEqual([
       expect.objectContaining({
         name: 'Index.md',
@@ -124,15 +125,35 @@ describe('useSeedFolder', () => {
     expect(hook.result.current.review).toBeNull();
   });
 
+  test('sends what was left out too, as skipped documents with no handle (#3771)', async () => {
+    const { send, hook } = await reviewing([...VAULT, file('My Vault/export.json')]);
+    await act(async () => {
+      await hook.result.current.start();
+    });
+    const documents = send.mock.calls[0][0];
+    expect(documents.slice(2)).toEqual([
+      { name: '.obsidian/app.json', uri: '', size: null, seedable: false, skipped: 'app_settings' },
+      {
+        name: 'assets/diagram.png',
+        uri: '',
+        size: null,
+        seedable: false,
+        skipped: 'attachments_off',
+      },
+      { name: 'export.json', uri: '', size: null, seedable: false, skipped: 'unsupported_format' },
+    ]);
+    for (const fake of VAULT) expect(fake.arrayBuffer).not.toHaveBeenCalled();
+  });
+
   test('sends the attachments too once they are asked for', async () => {
     const { send, hook } = await reviewing(VAULT);
     act(() => hook.result.current.setIncludeAttachments(true));
     await act(async () => {
       await hook.result.current.start();
     });
-    const paths = send.mock.calls[0][0].map(
-      (document: { source: { relativePath: string } }) => document.source.relativePath,
-    );
+    const paths = send.mock.calls[0][0]
+      .filter((document: { skipped?: string }) => document.skipped === undefined)
+      .map((document: { source: { relativePath: string } }) => document.source.relativePath);
     expect(paths).toEqual(['Home/Index.md', 'Work/Index.md', 'assets/diagram.png']);
   });
 

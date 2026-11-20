@@ -17,9 +17,10 @@ import { useCallback, useMemo, useState } from 'react';
 import { pickSeedDocuments, type PickedDocument } from './pickSeedDocuments';
 import { SEED_CANCELLED_NOTICE, SEED_FAILED_PICK_NOTICE } from './seedCopy';
 import {
-  isSettledSeedStatus,
   isRetryableSeedStatus,
+  isSkippedSeedStatus,
   seedRunTally,
+  tallySeedItems,
   type SeedItem,
   type SeedRunState,
   type SeedRunTally,
@@ -52,6 +53,8 @@ export interface SeedBatchView {
   /** How many of its documents are still in flight or waiting to go. */
   remaining: number;
   state: SeedBatchState;
+  /** Its own landed, failed, remaining and skipped counts (#3771). */
+  tally: SeedRunTally;
 }
 
 /** What the seeding screen reads and drives. */
@@ -60,7 +63,7 @@ export interface SeedRunController {
   items: SeedItem[];
   /** The same documents by the batch they came in, oldest first (#3772). */
   batches: SeedBatchView[];
-  /** How much has landed, waits, or did not land. */
+  /** How much has landed, failed, is still to go, or was skipped (#3771). */
   tally: SeedRunTally;
   /** The tier every document in the next pick will be stored at. */
   classification: JournalClassification;
@@ -129,10 +132,15 @@ function orderedItems(run: SeedRunState): SeedItem[] {
   return ordered;
 }
 
-/** Where a batch stands, read off its documents. */
+/**
+ * Where a batch stands, read off its documents. A skipped file settled on
+ * arrival (#3771), so it says nothing about whether the batch has started.
+ */
 function batchState(items: readonly SeedItem[], remaining: number): SeedBatchState {
   if (remaining === 0) return 'settled';
-  return items.every((item) => item.status === 'queued') ? 'queued' : 'sending';
+  return items.every((item) => item.status === 'queued' || isSkippedSeedStatus(item.status))
+    ? 'queued'
+    : 'sending';
 }
 
 /** One batch with its documents and how far it has got. */
@@ -142,13 +150,14 @@ function toBatchView(batch: SeedBatch, run: SeedRunState): SeedBatchView {
     const item = run.items[id];
     if (item) items.push(item);
   }
-  const remaining = items.filter((item) => !isSettledSeedStatus(item.status)).length;
+  const tally = tallySeedItems(items);
   return {
     id: batch.id,
     name: batch.name,
     items,
-    remaining,
-    state: batchState(items, remaining),
+    remaining: tally.remaining,
+    state: batchState(items, tally.remaining),
+    tally,
   };
 }
 
