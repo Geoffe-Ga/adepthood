@@ -143,16 +143,16 @@ const ReviewActions = ({
   </View>
 );
 
-/** The review of a chosen folder, driven by the folder controller. */
+/**
+ * The review of a chosen folder, driven by the folder controller. Starting it
+ * while another batch is going over queues it behind that one (#3772).
+ */
 export const SeedFolderReview = ({
   folder,
   review,
-  isSending,
 }: {
   folder: SeedFolderController;
   review: Review;
-  /** Whether an earlier batch is still going over; one batch runs at a time. */
-  isSending: boolean;
 }): React.JSX.Element => {
   const skipped = folderSkippedLine(review.manifest.skipped);
   return (
@@ -181,7 +181,7 @@ export const SeedFolderReview = ({
         </Text>
       ) : null}
       <ReviewActions
-        blocked={review.blocker !== null || isSending}
+        blocked={review.blocker !== null}
         onStart={() => void folder.start()}
         onDismiss={folder.dismiss}
       />

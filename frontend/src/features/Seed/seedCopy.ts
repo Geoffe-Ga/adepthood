@@ -241,41 +241,74 @@ export function seedRetryLabel(count: number): string {
   return count === 1 ? 'Try that one again' : `Try those ${count} again`;
 }
 
-/** What the question about leaving a run in flight is called. */
-export const SEED_LEAVE_TITLE = 'Documents are still going over';
+// ---------------------------------------------------------------------------
+// A queue that carries on while the person moves around the app (#3772)
+// ---------------------------------------------------------------------------
+//
+// The run lives in the app-level upload queue, so leaving this screen carries
+// on. It does not outlive the app itself: a picked file cannot be reopened
+// after a reload, so closing the tab or the app stops it, and the copy says so
+// plainly rather than implying a background service there is not.
 
 /**
- * The whole of what leaving costs, said before it is paid.
- *
- * Names what is happening, why leaving matters, what becomes of each half of
- * the run, and both ways out — because the one thing this screen must never do
- * is let the person believe a run was abandoned while documents kept arriving
- * in their corpus.
+ * Shown on the seeding screen while documents are going over: what moving
+ * around the app does, and what closing it does.
  */
-export const SEED_LEAVE_WARNING =
-  'Some of these documents are still going over. The one already on its way has left this ' +
-  'device and will finish wherever it lands; everything still waiting is never sent, and those ' +
-  'files stay on your device exactly as they are. Stay to let the rest go over, or leave and ' +
-  'choose them again another time.';
-
-/** The way out that stops the run. */
-export const SEED_LEAVE_CONFIRM_LABEL = 'Leave and stop sending';
-
-/** The way out that is no exit at all. */
-export const SEED_LEAVE_STAY_LABEL = 'Stay while the rest go over';
+export const SEED_BACKGROUND_NOTE =
+  'These carry on while you use the rest of the app, and you can add more ' +
+  'whenever you like. Closing this tab or the app stops them; anything not yet ' +
+  'sent stays on your device.';
 
 /**
- * The same warning in the one line a browser will take.
+ * The warning a browser shows before a tab with documents still going over is
+ * closed or reloaded -- the one exit that does stop the queue.
  *
- * A page reload never reaches the navigator, so on the web this is the only
- * warning there is. Browsers have shown their own wording since 2016 and
- * ignore this text; it is set because the API is what arms the prompt, and
- * kept truthful because nothing is served by a string that lies where it does
- * happen to show.
+ * Browsers have shown their own wording since 2016 and ignore this text; it is
+ * set because the API is what arms the prompt, and kept truthful because
+ * nothing is served by a string that lies where it does happen to show.
  */
 export const SEED_LEAVE_BROWSER_WARNING =
-  'Documents are still going over. Leaving now stops the run, and everything still waiting is ' +
-  'never sent.';
+  'Documents are still going over. Closing this tab stops them, and everything still waiting ' +
+  'is never sent.';
+
+/** Stops the whole queue; what is with the server already finishes. */
+export const SEED_STOP_ALL_LABEL = 'Stop sending the rest';
+
+/** Stops one batch, leaving the others queued. */
+export const SEED_STOP_BATCH_LABEL = 'Stop this batch';
+
+/** "1 file", "40 files". */
+function fileCount(count: number): string {
+  return count === 1 ? '1 file' : `${count} files`;
+}
+
+/** The app-wide indicator's line: how much of the queue is still to go. */
+export function uploadQueueIndicatorLine(remaining: number): string {
+  return `Uploading · ${remaining} remaining`;
+}
+
+/** What a batch header needs to say where the batch stands. */
+export interface SeedBatchHeader {
+  /** The folder's import name; null for files picked one by one. */
+  name: string | null;
+  state: 'queued' | 'sending' | 'settled';
+  total: number;
+  remaining: number;
+}
+
+/**
+ * The header row above one batch in the run list: its folder's name when it
+ * has one, then queued, going over, or done.
+ */
+export function seedBatchHeaderLine(batch: SeedBatchHeader): string {
+  const where =
+    batch.state === 'queued'
+      ? `Queued · ${fileCount(batch.total)}`
+      : batch.state === 'sending'
+        ? uploadQueueIndicatorLine(batch.remaining)
+        : `Done · ${fileCount(batch.total)}`;
+  return batch.name === null ? where : `${batch.name} · ${where}`;
+}
 
 // ---------------------------------------------------------------------------
 // The way in, when there is nowhere to keep a document yet (#3017)

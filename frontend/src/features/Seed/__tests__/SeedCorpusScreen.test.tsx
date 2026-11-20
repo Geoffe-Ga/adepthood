@@ -11,12 +11,15 @@ import {
   SEED_CHOOSE_LABEL,
   SEED_CONSENT_LINK_LABEL,
   SEED_PAUSED_PROGRESS_LINE,
-  SEED_LEAVE_WARNING,
+  SEED_BACKGROUND_NOTE,
+  SEED_STOP_ALL_LABEL,
   SEED_STATUS_LINES,
   SEED_VAULT_INVITATION,
   SEED_VAULT_INVITATION_LINK_LABEL,
 } from '../seedCopy';
 import SeedCorpusScreen from '../SeedCorpusScreen';
+
+import { useUploadQueueStore } from '@/store/useUploadQueueStore';
 
 jest.mock('@/config', () => ({ API_BASE_URL: 'http://test' }));
 
@@ -121,6 +124,7 @@ function corpusReply(status: string) {
 }
 
 beforeEach(() => {
+  useUploadQueueStore.getState().reset();
   setPlatform(originalOS);
   mockNavigate.mockReset();
   mockDispatch.mockReset();
@@ -171,16 +175,6 @@ function heldVaultReply(): { reply: Promise<unknown>; release: () => void } {
     };
   });
   return { reply, release };
-}
-
-const HELD_ACTION = { type: 'POP' };
-
-function fireBeforeRemove(): { preventDefault: jest.Mock } {
-  const event = { preventDefault: jest.fn(), data: { action: HELD_ACTION } };
-  act(() => {
-    mockListeners.get('beforeRemove')?.(event);
-  });
-  return event;
 }
 
 async function chooseFiles(getByTestId: (_id: string) => unknown) {
@@ -395,7 +389,7 @@ describe('a pick that yields nothing', () => {
 });
 
 describe('while a run is going over', () => {
-  test('re-enables Choose files and names the failure when a browser read times out', async () => {
+  test('keeps Choose files open throughout, and names the failure when a browser read times out', async () => {
     jest.useFakeTimers();
     setPlatform('web');
     globalRef.window = {
@@ -416,7 +410,8 @@ describe('while a run is going over', () => {
       fireEvent.press(getByTestId('seed-choose-button'));
       await Promise.resolve();
     });
-    expect(getByTestId('seed-choose-button').props.accessibilityState.disabled).toBe(true);
+    // Open while a run is going, so more can be queued behind it (#3772).
+    expect(getByTestId('seed-choose-button').props.accessibilityState.disabled).toBe(false);
 
     await act(async () => {
       await jest.advanceTimersByTimeAsync(SEED_DOCUMENT_READ_TIMEOUT_MS);
@@ -460,47 +455,81 @@ describe('while a run is going over', () => {
   });
 });
 
-describe('leaving the screen', () => {
-  test('an idle screen holds nothing back', async () => {
-    getDocumentAsync.mockResolvedValue({ canceled: false, assets: [asset('one.md')] });
-    mockFetch.mockReturnValue(vaultReply('accepted'));
-    const { getByTestId, queryByTestId } = render(<SeedCorpusScreen />);
-    await chooseFiles(getByTestId);
-
-    expect(mockListeners.has('beforeRemove')).toBe(false);
-    expect(queryByTestId('seed-leave-prompt')).toBeNull();
-  });
-
-  test('a run still going over asks first, and says what becomes of each half', async () => {
+describe('leaving the screen, and coming back (#3772)', () => {
+  test('nothing holds the exit: no leave prompt is armed, even mid-run', async () => {
     getDocumentAsync.mockResolvedValue({
       canceled: false,
       assets: [asset('one.md'), asset('two.md')],
     });
     const held = heldVaultReply();
     mockFetch.mockReturnValueOnce(held.reply).mockReturnValue(vaultReply('accepted'));
-    const { getByTestId, getByText } = render(<SeedCorpusScreen />);
+    const { getByTestId, queryByTestId } = render(<SeedCorpusScreen />);
     fireEvent.press(getByTestId('seed-choose-button'));
     await waitFor(() => {
       expect(getByTestId('seed-progress')).toBeTruthy();
     });
 
-    const event = fireBeforeRemove();
-
-    expect(event.preventDefault).toHaveBeenCalledTimes(1);
-    expect(getByTestId('seed-leave-prompt')).toBeTruthy();
-    expect(getByText(SEED_LEAVE_WARNING)).toBeTruthy();
-    expect(mockDispatch).not.toHaveBeenCalled();
-
+    expect(mockListeners.has('beforeRemove')).toBe(false);
+    expect(queryByTestId('seed-leave-prompt')).toBeNull();
     await act(async () => {
       held.release();
     });
   });
 
-  test('leaving means the documents still waiting are never sent', async () => {
+  test('says plainly that the run carries on in the app and stops if the tab closes', async () => {
+    getDocumentAsync.mockResolvedValue({ canceled: false, assets: [asset('one.md')] });
+    const held = heldVaultReply();
+    mockFetch.mockReturnValueOnce(held.reply);
+    const { getByTestId, getByText, queryByTestId } = render(<SeedCorpusScreen />);
+    expect(queryByTestId('seed-background-note')).toBeNull();
+    fireEvent.press(getByTestId('seed-choose-button'));
+
+    await waitFor(() => {
+      expect(getByText(SEED_BACKGROUND_NOTE)).toBeTruthy();
+    });
+    await act(async () => {
+      held.release();
+    });
+    await waitFor(() => {
+      expect(queryByTestId('seed-background-note')).toBeNull();
+    });
+  });
+
+  test('leaving mid-run carries on, and the screen opened again shows every row landed', async () => {
     getDocumentAsync.mockResolvedValue({
       canceled: false,
       assets: [asset('one.md'), asset('two.md'), asset('three.md')],
     });
+    const held = heldVaultReply();
+    mockFetch.mockReturnValueOnce(held.reply).mockReturnValue(vaultReply('accepted'));
+    const first = render(<SeedCorpusScreen />);
+    fireEvent.press(first.getByTestId('seed-choose-button'));
+    await waitFor(() => {
+      expect(first.getByTestId('seed-progress')).toBeTruthy();
+    });
+
+    first.unmount();
+    await act(async () => {
+      held.release();
+    });
+    await waitFor(() => {
+      expect(mockFetch).toHaveBeenCalledTimes(3);
+    });
+
+    const again = render(<SeedCorpusScreen />);
+    for (const id of ['seed-0', 'seed-1', 'seed-2']) {
+      expect(again.getByTestId(`seed-item-status-${id}`).props.children).toBe(
+        SEED_STATUS_LINES.ingested,
+      );
+    }
+  });
+});
+
+describe('queueing more while a run is going over (#3772)', () => {
+  test('a second pick is queued as its own batch, under its own header', async () => {
+    getDocumentAsync
+      .mockResolvedValueOnce({ canceled: false, assets: [asset('one.md'), asset('two.md')] })
+      .mockResolvedValueOnce({ canceled: false, assets: [asset('three.md')] });
     const held = heldVaultReply();
     mockFetch.mockReturnValueOnce(held.reply).mockReturnValue(vaultReply('accepted'));
     const { getByTestId } = render(<SeedCorpusScreen />);
@@ -508,25 +537,26 @@ describe('leaving the screen', () => {
     await waitFor(() => {
       expect(getByTestId('seed-progress')).toBeTruthy();
     });
-    fireBeforeRemove();
 
-    fireEvent.press(getByTestId('seed-leave-confirm'));
+    await chooseFiles(getByTestId);
+
+    expect(getByTestId('seed-batch-header-batch-0').props.children).toBe('Uploading · 2 remaining');
+    expect(getByTestId('seed-batch-header-batch-1').props.children).toBe('Queued · 1 file');
+    expect(mockFetch).toHaveBeenCalledTimes(1);
+
     await act(async () => {
       held.release();
     });
-
-    expect(mockDispatch).toHaveBeenCalledWith(HELD_ACTION);
     await waitFor(() => {
-      expect(mockFetch).toHaveBeenCalledTimes(1);
+      expect(getByTestId('seed-batch-header-batch-1').props.children).toBe('Done · 1 file');
     });
-    expect(getByTestId('seed-item-status-seed-1').props.children).toBe(SEED_STATUS_LINES.cancelled);
+    expect(mockFetch).toHaveBeenCalledTimes(3);
   });
 
-  test('staying lets the rest of the run finish', async () => {
-    getDocumentAsync.mockResolvedValue({
-      canceled: false,
-      assets: [asset('one.md'), asset('two.md')],
-    });
+  test('a queued batch can be stopped on its own', async () => {
+    getDocumentAsync
+      .mockResolvedValueOnce({ canceled: false, assets: [asset('one.md')] })
+      .mockResolvedValueOnce({ canceled: false, assets: [asset('two.md')] });
     const held = heldVaultReply();
     mockFetch.mockReturnValueOnce(held.reply).mockReturnValue(vaultReply('accepted'));
     const { getByTestId, queryByTestId } = render(<SeedCorpusScreen />);
@@ -534,18 +564,45 @@ describe('leaving the screen', () => {
     await waitFor(() => {
       expect(getByTestId('seed-progress')).toBeTruthy();
     });
-    fireBeforeRemove();
+    await chooseFiles(getByTestId);
 
-    fireEvent.press(getByTestId('seed-leave-stay'));
+    fireEvent.press(getByTestId('seed-batch-stop-batch-1'));
     await act(async () => {
       held.release();
     });
 
-    expect(queryByTestId('seed-leave-prompt')).toBeNull();
-    expect(mockDispatch).not.toHaveBeenCalled();
     await waitFor(() => {
-      expect(mockFetch).toHaveBeenCalledTimes(2);
+      expect(queryByTestId('seed-progress')).toBeNull();
     });
+    expect(getByTestId('seed-item-status-seed-1').props.children).toBe(SEED_STATUS_LINES.cancelled);
+    expect(queryByTestId('seed-batch-stop-batch-1')).toBeNull();
+    expect(mockFetch).toHaveBeenCalledTimes(1);
+  });
+
+  test('the whole queue can be stopped, and the document already sent still lands', async () => {
+    getDocumentAsync.mockResolvedValue({
+      canceled: false,
+      assets: [asset('one.md'), asset('two.md'), asset('three.md')],
+    });
+    const held = heldVaultReply();
+    mockFetch.mockReturnValueOnce(held.reply).mockReturnValue(vaultReply('accepted'));
+    const { getByTestId, getByText, queryByTestId } = render(<SeedCorpusScreen />);
+    fireEvent.press(getByTestId('seed-choose-button'));
+    await waitFor(() => {
+      expect(getByTestId('seed-progress')).toBeTruthy();
+    });
+
+    fireEvent.press(getByText(SEED_STOP_ALL_LABEL));
+    await act(async () => {
+      held.release();
+    });
+
+    await waitFor(() => {
+      expect(queryByTestId('seed-stop-all')).toBeNull();
+    });
+    expect(getByTestId('seed-item-status-seed-0').props.children).toBe(SEED_STATUS_LINES.ingested);
+    expect(getByTestId('seed-item-status-seed-2').props.children).toBe(SEED_STATUS_LINES.cancelled);
+    expect(mockFetch).toHaveBeenCalledTimes(1);
   });
 });
 

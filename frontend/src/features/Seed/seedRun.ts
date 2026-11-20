@@ -193,7 +193,8 @@ export const EMPTY_SEED_RUN: SeedRunState = { order: [], items: {} };
  *  - `settle` — record a document's terminal outcome.
  *  - `wait`   — hold a queued or in-flight document for a moment (#3556), for
  *               the pace or, with `cause: 'vault'`, for a busy vault (#3770).
- *  - `cancel` — stop the run: everything still queued or waiting settles as never sent.
+ *  - `cancel` — stop the run: everything still queued or waiting settles as never
+ *               sent; with `ids`, only those documents (one batch, #3772).
  *  - `requeue` — queue settled documents again, only those a retry may send.
  *  - `clear`  — empty the run (the person starting over).
  */
@@ -203,7 +204,7 @@ export type SeedRunAction =
   | { type: 'wait'; id: string; cause?: SeedWaitCause }
   | { type: 'requeue'; ids: readonly string[] }
   | { type: 'settle'; id: string; status: SettledSeedStatus }
-  | { type: 'cancel' }
+  | { type: 'cancel'; ids?: readonly string[] }
   | { type: 'clear' };
 
 /** The statuses of a document the run still holds: not yet settled. */
@@ -222,6 +223,16 @@ function isHeld(status: SeedItemStatus | undefined): boolean {
 /** Whether a status is terminal — nothing further will happen to the document. */
 function isSettled(status: SeedItemStatus): boolean {
   return !UNSETTLED_STATUSES.includes(status);
+}
+
+/** Whether a document is done with: nothing further will happen to it (#3772). */
+export function isSettledSeedStatus(status: SeedItemStatus): boolean {
+  return isSettled(status);
+}
+
+/** Whether a document is durably kept, wherever this account's writing lives (#3772). */
+export function isLandedSeedStatus(status: SeedItemStatus): boolean {
+  return LANDED_STATUSES.includes(status);
 }
 
 /** Return a new state with one item replaced (order untouched). */
@@ -283,9 +294,9 @@ function applySettle(state: SeedRunState, id: string, status: SettledSeedStatus)
  * would be this screen saying one thing while the corpus holds another, which
  * is the divergence the whole cancel path exists to close.
  */
-function applyCancel(state: SeedRunState): SeedRunState {
+function applyCancel(state: SeedRunState, ids: readonly string[]): SeedRunState {
   const items = { ...state.items };
-  for (const id of state.order) {
+  for (const id of ids) {
     const item = items[id];
     if (item && (item.status === 'queued' || isHeld(item.status))) {
       items[id] = { ...item, status: 'cancelled' };
@@ -308,7 +319,7 @@ export function seedRunReducer(state: SeedRunState, action: SeedRunAction): Seed
     case 'settle':
       return applySettle(state, action.id, action.status);
     case 'cancel':
-      return applyCancel(state);
+      return applyCancel(state, action.ids ?? state.order);
     case 'clear':
       return EMPTY_SEED_RUN;
     default:

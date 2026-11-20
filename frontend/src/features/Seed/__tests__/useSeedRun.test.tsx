@@ -9,6 +9,8 @@ import { SEED_DOCUMENT_READ_TIMEOUT_MS } from '../readSeedDocument';
 import { SEED_CANCELLED_NOTICE, SEED_FAILED_PICK_NOTICE } from '../seedCopy';
 import { useSeedRun } from '../useSeedRun';
 
+import { useUploadQueueStore } from '@/store/useUploadQueueStore';
+
 jest.mock('@/config', () => ({ API_BASE_URL: 'http://test' }));
 
 const mockFetch = jest.fn() as jest.Mock;
@@ -102,6 +104,7 @@ function statuses(items: readonly { status: string }[]): string[] {
 }
 
 beforeEach(() => {
+  useUploadQueueStore.getState().reset();
   setPlatform(originalOS);
   mockFetch.mockReset();
   getDocumentAsync.mockReset();
@@ -370,10 +373,9 @@ describe('leaving a run part-way through', () => {
     expect(statuses(result.current.items)).toEqual(['ingested', 'cancelled', 'cancelled']);
   });
 
-  test('unmounting stops the loop, so the screen and the server agree', async () => {
-    // The defect this run exists to close: the loop is held by the callback's
-    // stack, not by React, so an unmount used to leave it uploading on in the
-    // background while the person saw an empty screen.
+  test('unmounting leaves the run going over, and a remount shows the same rows (#3772)', async () => {
+    // Since #3772 the run lives in the app-level queue, not in the screen:
+    // leaving Seed carries on, and the indicator shows it from anywhere.
     getDocumentAsync.mockResolvedValue({
       canceled: false,
       assets: [asset('one.md'), asset('two.md'), asset('three.md')],
@@ -395,7 +397,9 @@ describe('leaving a run part-way through', () => {
       await run;
     });
 
-    expect(mockFetch).toHaveBeenCalledTimes(1);
+    expect(mockFetch).toHaveBeenCalledTimes(3);
+    const again = renderHook(() => useSeedRun());
+    expect(statuses(again.result.current.items)).toEqual(['ingested', 'ingested', 'ingested']);
   });
 
   test('cancelling before anything was ever picked is a no-op', () => {
@@ -469,5 +473,79 @@ describe('the tier a cancelled run had already committed to', () => {
 
     const tiers = mockFetch.mock.calls.map((call) => JSON.parse(call[1].body).classification);
     expect(tiers).toEqual(['personal', 'personal']);
+  });
+});
+
+describe('queueing another pick while one is going over (#3772)', () => {
+  test('appends it as its own batch, sent after the first', async () => {
+    getDocumentAsync
+      .mockResolvedValueOnce({ canceled: false, assets: [asset('one.md'), asset('two.md')] })
+      .mockResolvedValueOnce({ canceled: false, assets: [asset('three.md')] });
+    const held = heldVaultReply();
+    mockFetch.mockReturnValueOnce(held.reply).mockReturnValue(vaultReply('accepted'));
+    const { result } = renderHook(() => useSeedRun());
+    let first: Promise<void> = Promise.resolve();
+    act(() => {
+      first = result.current.choose();
+    });
+    await waitFor(() => {
+      expect(mockFetch).toHaveBeenCalledTimes(1);
+    });
+
+    let second: Promise<void> = Promise.resolve();
+    await act(async () => {
+      second = result.current.choose();
+      await Promise.resolve();
+    });
+    await waitFor(() => {
+      expect(result.current.batches).toHaveLength(2);
+    });
+    expect(result.current.batches[1]?.state).toBe('queued');
+    expect(result.current.batches[0]?.state).toBe('sending');
+    expect(mockFetch).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      held.release();
+      await Promise.all([first, second]);
+    });
+
+    const names = mockFetch.mock.calls.map((call) => JSON.parse(call[1].body).filename);
+    expect(names).toEqual(['one.md', 'two.md', 'three.md']);
+    expect(result.current.batches.map((batch) => batch.state)).toEqual(['settled', 'settled']);
+  });
+
+  test('one batch can be stopped while the other goes on', async () => {
+    getDocumentAsync
+      .mockResolvedValueOnce({ canceled: false, assets: [asset('one.md')] })
+      .mockResolvedValueOnce({ canceled: false, assets: [asset('two.md'), asset('three.md')] });
+    const held = heldVaultReply();
+    mockFetch.mockReturnValueOnce(held.reply).mockReturnValue(vaultReply('accepted'));
+    const { result } = renderHook(() => useSeedRun());
+    let first: Promise<void> = Promise.resolve();
+    let second: Promise<void> = Promise.resolve();
+    act(() => {
+      first = result.current.choose();
+    });
+    await waitFor(() => {
+      expect(mockFetch).toHaveBeenCalledTimes(1);
+    });
+    await act(async () => {
+      second = result.current.choose();
+      await Promise.resolve();
+    });
+    await waitFor(() => {
+      expect(result.current.batches).toHaveLength(2);
+    });
+
+    act(() => {
+      result.current.cancelBatch(result.current.batches[1]?.id ?? '');
+    });
+    await act(async () => {
+      held.release();
+      await Promise.all([first, second]);
+    });
+
+    expect(statuses(result.current.items)).toEqual(['ingested', 'cancelled', 'cancelled']);
+    expect(result.current.batches[1]?.remaining).toBe(0);
   });
 });
