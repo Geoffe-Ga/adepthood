@@ -7,8 +7,7 @@ Create Date: 2026-11-20 00:00:00.000000
 ``POST /corpus/import`` answers a vault upload with its destination, status and
 vault ref, and nothing persisted them, so "did my files land?" had no answer
 after the request (#3775). ``uploadreceipt`` holds one row per settled vault
-import: the filename (Fernet ciphertext when a key is configured, as every
-EncryptedString column is), a digest of the folder import's namespace (never the
+import: the filename, a digest of the folder import's namespace (never the
 namespace itself), the digest id the upload
 was addressed by, Creek's opaque ref, and the two closed vocabularies. No
 document content is stored.
@@ -39,6 +38,7 @@ _INDEX = "ix_uploadreceipt_user_id_id"
 _DESTINATIONS = ("vault", "corpus")
 _VAULT_STATUSES = ("accepted", "vault_unavailable", "capability_unsupported", "degraded")
 
+_FILENAME_WIDTH = 255
 _BATCH_WIDTH = 16
 _EXTERNAL_ID_WIDTH = 64
 _VAULT_REF_WIDTH = 512
@@ -56,7 +56,9 @@ def upgrade() -> None:
         _TABLE,
         sa.Column("id", sa.Integer(), nullable=False),
         sa.Column("user_id", sa.Integer(), nullable=False),
-        sa.Column("filename", sa.Text(), nullable=False),
+        sa.Column(
+            "filename", sqlmodel.sql.sqltypes.AutoString(length=_FILENAME_WIDTH), nullable=False
+        ),
         sa.Column("batch", sqlmodel.sql.sqltypes.AutoString(length=_BATCH_WIDTH), nullable=True),
         sa.Column(
             "external_id",

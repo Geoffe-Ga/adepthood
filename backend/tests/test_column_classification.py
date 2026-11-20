@@ -313,6 +313,8 @@ _PLAINTEXT_COLUMNS: dict[str, frozenset[str]] = {
             "goalgroup.name",
             "habit.icon",
             "habit.name",
+            # The name a writer gave a file they sent to their vault (#3775).
+            "uploadreceipt.filename",
             "user.display_name",
             "userpractice.custom_name",
         }
