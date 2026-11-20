@@ -1,8 +1,16 @@
 /* eslint-env jest */
 import { describe, expect, it } from '@jest/globals';
 
+import { dayKeyInTZ } from '../../../../utils/dateUtils';
 import type { Habit } from '../../Habits.types';
-import { displaySlots, insertAt, stagePreview, stampPositionalOrder } from '../habitOrdering';
+import {
+  displaySlots,
+  insertAt,
+  isPassRow,
+  shiftPassRows,
+  stagePreview,
+  stampPositionalOrder,
+} from '../habitOrdering';
 
 /** A habit row with only the fields ordering cares about. */
 function row(overrides: Partial<Habit> & { id: number }): Habit {
@@ -101,5 +109,57 @@ describe('stampPositionalOrder — sort_order globally, stage by partition', () 
     stampPositionalOrder([rows[1] as Habit, rows[0] as Habit]);
 
     expect(rows.map((h) => h.stage)).toEqual(['Beige', 'Purple']);
+  });
+});
+
+describe('shiftPassRows — the habits move with a rescheduled pass (#3762)', () => {
+  const ZONE = 'America/New_York';
+  const OLD = '2026-11-19';
+  /** An account-zone midnight, the way the server stores a row's start. */
+  const midnight = (day: string): Date =>
+    new Date(new Date(`${day}T00:00:00Z`).getTime() + 5 * 60 * 60 * 1000);
+  const keys = (habits: readonly Habit[]) => habits.map((h) => dayKeyInTZ(h.start_date, ZONE));
+  const ROWS = [
+    // The running pass: began before the pending day.
+    row({ id: 1, start_date: midnight('2026-09-13') }),
+    row({ id: 2, start_date: midnight('2026-11-18') }),
+    // Laid for the pass: from the pending day on, 21 days apart.
+    row({ id: 3, start_date: midnight(OLD) }),
+    row({ id: 4, start_date: midnight('2026-12-10') }),
+  ];
+
+  it('moves every row on or after the old day by +21 days and leaves earlier rows alone', () => {
+    const shifted = shiftPassRows(ROWS, OLD, '2026-12-10', ZONE);
+
+    expect(keys(shifted)).toEqual(['2026-09-13', '2026-11-18', '2026-12-10', '2026-12-31']);
+    // Unmoved rows are the very objects passed in, so a writer can tell them apart.
+    expect(shifted[0]).toBe(ROWS[0]);
+    expect(shifted[1]).toBe(ROWS[1]);
+    expect(shifted.map((h) => h.id)).toEqual([1, 2, 3, 4]);
+  });
+
+  it('moves them back by 7 calendar days, across the DST change, keeping the time of day', () => {
+    const late = [row({ id: 5, start_date: midnight('2026-11-05') })];
+
+    const shifted = shiftPassRows(late, '2026-11-05', '2026-10-29', ZONE);
+
+    expect(keys(shifted)).toEqual(['2026-10-29']);
+    // Still the account-zone midnight, although New York changed offset between.
+    expect(new Date(shifted[0]!.start_date).toISOString()).toBe('2026-10-29T04:00:00.000Z');
+  });
+
+  it('moves nothing when the day does not change', () => {
+    const shifted = shiftPassRows(ROWS, OLD, OLD, ZONE);
+
+    shifted.forEach((habit, index) => expect(habit).toBe(ROWS[index]));
+  });
+
+  it('leaves demo tiles and undated rows alone', () => {
+    const demo = row({ id: 6, start_date: midnight('2026-12-01'), isDemoSeed: true });
+    const undated = row({ id: 7, start_date: new Date('not a date') });
+
+    expect(isPassRow(demo, OLD, ZONE)).toBe(false);
+    expect(isPassRow(undated, OLD, ZONE)).toBe(false);
+    expect(shiftPassRows([demo, undated], OLD, '2026-12-10', ZONE)).toEqual([demo, undated]);
   });
 });

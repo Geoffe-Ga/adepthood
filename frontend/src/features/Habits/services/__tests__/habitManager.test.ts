@@ -185,6 +185,7 @@ import {
   HABIT_ORDER_NOT_SAVED_COPY,
   HABIT_ROWS_NOT_MOVED_COPY,
   habitManager,
+  PASS_HABITS_NOT_MOVED_COPY,
 } from '../habitManager';
 import { habitSyncScopeKey } from '../habitSyncScope';
 import { MAX_CHECK_IN_REPLAY_ATTEMPTS, MIN_POISON_AGE_MS, checkInIdentity } from '../replayPolicy';
@@ -6773,6 +6774,148 @@ describe("the program start date is the server's (#3097)", () => {
       expect(outcome.kind).toBe('refused');
       expect(habitsApi.update).not.toHaveBeenCalled();
       expect(dayKeyInTZ(useHabitStore.getState().habits[0]!.start_date, 'UTC')).toBe('2026-05-01');
+    });
+  });
+});
+
+describe('the habits move with a rescheduled pending pass (#3762)', () => {
+  const ZONE = 'UTC';
+  const OLD = '2026-11-19';
+  const { Alert } = jest.requireMock('react-native') as { Alert: { alert: jest.Mock } };
+  const update = () => habitsApi.update as jest.Mock;
+  const openPass = () => stagesApi.openPass as jest.Mock;
+  const at = (day: string) => new Date(`${day}T00:00:00Z`);
+  const startsByName = () =>
+    Object.fromEntries(
+      useHabitStore.getState().habits.map((h) => [h.name, dayKeyInTZ(h.start_date, ZONE)]),
+    );
+  /** Ids of the rows PUT so far, in order. */
+  const putIds = () => update().mock.calls.map((call) => call[0]);
+
+  beforeEach(() => {
+    useHabitStore.setState({
+      habits: [
+        // The running pass's rows: begun before the pending day.
+        makeServerHabit({ id: 11, name: 'Running', start_date: at('2026-09-13') }),
+        makeServerHabit({ id: 12, name: 'Kept', start_date: at('2026-11-18') }),
+        // The rows the Energy Scaffolding save laid for the pending pass.
+        makeServerHabit({ id: 13, name: 'Pass first', start_date: at(OLD) }),
+        makeServerHabit({ id: 14, name: 'Pass second', start_date: at('2026-12-10') }),
+      ],
+    });
+  });
+
+  describe('movePassHabits', () => {
+    it('moves rows on or after the old day by +21 days, PUTs each once, and leaves earlier rows alone', async () => {
+      const moved = await habitManager.movePassHabits(OLD, '2026-12-10', ZONE);
+
+      expect(moved).toBe(true);
+      expect(startsByName()).toEqual({
+        Running: '2026-09-13',
+        Kept: '2026-11-18',
+        'Pass first': '2026-12-10',
+        'Pass second': '2026-12-31',
+      });
+      expect(putIds()).toEqual([13, 14]);
+      expect(update().mock.calls[0]![1]).toMatchObject({ start_date: '2026-12-10' });
+      expect(habitsApi.create).not.toHaveBeenCalled();
+    });
+
+    it('moves them back by 7 days the same way', async () => {
+      await habitManager.movePassHabits(OLD, '2026-11-12', ZONE);
+
+      expect(startsByName()).toEqual({
+        Running: '2026-09-13',
+        Kept: '2026-11-18',
+        'Pass first': '2026-11-12',
+        'Pass second': '2026-12-03',
+      });
+      expect(putIds()).toEqual([13, 14]);
+    });
+
+    it('puts every row back, silently, when a PUT fails', async () => {
+      update().mockRejectedValueOnce(new TypeError('Failed to fetch') as never);
+
+      const moved = await habitManager.movePassHabits(OLD, '2026-12-10', ZONE);
+
+      expect(moved).toBe(false);
+      expect(startsByName()['Pass first']).toBe(OLD);
+      expect(startsByName()['Pass second']).toBe('2026-12-10');
+      expect(Alert.alert).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('movePendingPass', () => {
+    it('POSTs the new day, then writes the moved rows once', async () => {
+      const order: string[] = [];
+      openPass().mockImplementationOnce((day: unknown) => {
+        order.push(`POST ${String(day)}`);
+        return Promise.resolve({
+          program_started_at: '2026-09-13T00:00:00Z',
+          calendar_stage: 4,
+          calendar_week: 10,
+          current_stage: 4,
+          cycle_number: 1,
+          program_start_window: null,
+          days_until_start: 0,
+          pending_pass_starts_on: day,
+          pass_start_window: { earliest: '2026-09-13', latest: '2027-12-31' },
+        });
+      });
+      update().mockImplementation((id: unknown) => {
+        order.push(`PUT ${String(id)}`);
+        return Promise.resolve({});
+      });
+
+      const outcome = await habitManager.movePendingPass(OLD, '2026-12-10', ZONE);
+
+      expect(outcome).toEqual({ kind: 'saved' });
+      expect(order).toEqual(['POST 2026-12-10', 'PUT 13', 'PUT 14']);
+      expect(startsByName()['Pass first']).toBe('2026-12-10');
+    });
+
+    it('starts the pass now and moves its rows onto the chosen day', async () => {
+      const outcome = await habitManager.movePendingPass(OLD, '2026-11-15', ZONE);
+
+      expect(outcome).toEqual({ kind: 'saved' });
+      expect(openPass().mock.calls[0]![0]).toBe('2026-11-15');
+      expect(startsByName()).toEqual({
+        Running: '2026-09-13',
+        Kept: '2026-11-18',
+        'Pass first': '2026-11-15',
+        'Pass second': '2026-12-06',
+      });
+    });
+
+    it('writes no row when the server refuses the move', async () => {
+      openPass().mockRejectedValueOnce(
+        new ApiError(422, 'pass_start_before_current_pass') as never,
+      );
+
+      const outcome = await habitManager.movePendingPass(OLD, '2026-12-10', ZONE);
+
+      expect(outcome.kind).toBe('refused');
+      expect(update()).not.toHaveBeenCalled();
+      expect(startsByName()['Pass first']).toBe(OLD);
+    });
+
+    it('writes no row when the move never reached the server', async () => {
+      openPass().mockRejectedValueOnce(new TypeError('Failed to fetch') as never);
+
+      const outcome = await habitManager.movePendingPass(OLD, '2026-12-10', ZONE);
+
+      expect(outcome.kind).toBe('unsaved');
+      expect(update()).not.toHaveBeenCalled();
+      expect(startsByName()['Pass first']).toBe(OLD);
+    });
+
+    it('says the pass moved but its habits did not when the rows are refused', async () => {
+      update().mockRejectedValueOnce(new TypeError('Failed to fetch') as never);
+
+      const outcome = await habitManager.movePendingPass(OLD, '2026-12-10', ZONE);
+
+      expect(outcome).toEqual({ kind: 'rows_unsaved', message: PASS_HABITS_NOT_MOVED_COPY });
+      expect(startsByName()['Pass first']).toBe(OLD);
     });
   });
 });

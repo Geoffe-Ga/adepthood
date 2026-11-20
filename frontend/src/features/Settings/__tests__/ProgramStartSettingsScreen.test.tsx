@@ -7,8 +7,10 @@ import ProgramStartSettingsScreen from '../ProgramStartSettingsScreen';
 import DatePicker, { parseISODate } from '@/components/DatePicker';
 import { TOTAL_PROGRAM_DAYS } from '@/constants/program';
 import { useAuth } from '@/context/AuthContext';
+import type { Habit } from '@/features/Habits/Habits.types';
 import type { ProgramStartChangeOutcome } from '@/features/Habits/services/habitManager';
 import type { ProgramStartOutcome } from '@/features/Program/programAnchor';
+import { useHabitStore } from '@/store/useHabitStore';
 import { useProgramStore } from '@/store/useProgramStore';
 import { addDaysInTZ, todayInUserTZ } from '@/utils/dateUtils';
 
@@ -24,9 +26,24 @@ jest.mock('@/features/Program/programAnchor', () => ({
 
 const mockChangeProgramStart =
   jest.fn<(_day: string, _tz?: string) => Promise<ProgramStartChangeOutcome>>();
+/** The row write that follows a saved pass move (#3762); resolves whether it landed. */
+const mockMovePassHabits =
+  jest.fn<(_from: string, _to: string, _tz?: string) => Promise<boolean>>();
+const mockPassHabitsNotMoved =
+  "Your next pass moved, but its habits' start dates didn't move with it. Check your connection and save again.";
 jest.mock('@/features/Habits/services/habitManager', () => ({
+  PASS_HABITS_NOT_MOVED_COPY: mockPassHabitsNotMoved,
   habitManager: {
     changeProgramStart: (day: string, tz?: string) => mockChangeProgramStart(day, tz),
+    // The real order: the POST, then -- only once it saved -- the rows.
+    movePendingPass: async (from: string, to: string, tz: string) => {
+      const outcome = await mockCommitPassStart(to, { tz });
+      if (outcome.kind !== 'saved') return outcome;
+      return (await mockMovePassHabits(from, to, tz))
+        ? outcome
+        : { kind: 'rows_unsaved', message: mockPassHabitsNotMoved };
+    },
+    movePassHabits: (from: string, to: string, tz?: string) => mockMovePassHabits(from, to, tz),
   },
 }));
 
@@ -96,9 +113,11 @@ beforeEach(() => {
   mockReconcile.mockReset().mockResolvedValue(undefined);
   mockChangeProgramStart.mockReset().mockResolvedValue({ kind: 'saved' });
   mockCommitPassStart.mockReset().mockImplementation(echoPass);
+  mockMovePassHabits.mockReset().mockResolvedValue(true);
 });
 
 afterEach(() => {
+  useHabitStore.setState({ habits: [] });
   useProgramStore.setState({
     programStartDay: null,
     programStartDate: null,
@@ -254,7 +273,7 @@ describe('ProgramStartSettingsScreen (#3097)', () => {
       expect(result.queryByTestId('save-program-start-button')).toBeNull();
     });
 
-    it('reschedules a later day with one POST: no PUT, no habit re-lay', async () => {
+    it('reschedules a later day with one POST and no PUT', async () => {
       holdPending();
       const result = render(<ProgramStartSettingsScreen />);
       const later = addDaysInTZ(PENDING_DAY, MOVED_DAYS, ZONE);
@@ -350,6 +369,139 @@ describe('ProgramStartSettingsScreen (#3097)', () => {
       expect(picker(result).value).toBe(PENDING_DAY);
       expect(result.getByTestId('save-pending-pass-button')).toBeTruthy();
       expect(result.getByText(/begin again/i)).toBeTruthy();
+    });
+  });
+
+  describe('the habits move with the pass (#3762)', () => {
+    /** A habit row starting on ``day`` in the account zone. */
+    const rowOn = (id: number, day: string): Habit => ({
+      id,
+      stage: 'Beige',
+      name: `Habit ${id}`,
+      icon: '✨',
+      streak: 0,
+      energy_cost: 5,
+      energy_return: 5,
+      start_date: `${day}T12:00:00Z` as unknown as Date,
+      goals: [],
+    });
+    /** One row of the running pass, and one laid for the pending pass. */
+    const holdRows = () =>
+      act(() => useHabitStore.setState({ habits: [rowOn(1, HELD_DAY), rowOn(2, PENDING_DAY)] }));
+
+    it('says the habits move too, and moves them from the held day once the POST saved', async () => {
+      holdPending();
+      holdRows();
+      const result = render(<ProgramStartSettingsScreen />);
+      const later = addDaysInTZ(PENDING_DAY, MOVED_DAYS, ZONE);
+
+      act(() => picker(result).onChange(later));
+      expect(result.getByTestId('pending-pass-sentence')).toHaveTextContent(
+        /^Saving moves your next pass, and its habits, to /,
+      );
+      fireEvent.press(result.getByTestId('save-pending-pass-button'));
+
+      await waitFor(() =>
+        expect(result.getByTestId('pending-pass-status')).toHaveTextContent(
+          /, and its habits moved with it\.$/,
+        ),
+      );
+      expect(mockCommitPassStart).toHaveBeenCalledTimes(1);
+      expect(mockMovePassHabits).toHaveBeenCalledTimes(1);
+      expect(mockMovePassHabits).toHaveBeenCalledWith(PENDING_DAY, later, ZONE);
+      expect(mockChangeProgramStart).not.toHaveBeenCalled();
+    });
+
+    it('moves the habits onto the day a start-now picks', async () => {
+      holdPending();
+      holdRows();
+      const result = render(<ProgramStartSettingsScreen />);
+      const earlier = addDaysInTZ(TODAY, -STARTED_DAYS_BACK, ZONE);
+
+      act(() => picker(result).onChange(earlier));
+      expect(result.getByTestId('pending-pass-sentence')).toHaveTextContent(
+        /, and moves its habits to match; your current pass stays on Stats and progress\.$/,
+      );
+      fireEvent.press(result.getByTestId('save-pending-pass-button'));
+
+      await waitFor(() =>
+        expect(mockMovePassHabits).toHaveBeenCalledWith(PENDING_DAY, earlier, ZONE),
+      );
+    });
+
+    it('moves no habit when the move is refused or never reaches the server', async () => {
+      holdPending();
+      holdRows();
+      mockCommitPassStart
+        .mockResolvedValueOnce({ kind: 'refused', message: 'Too far ahead.' })
+        .mockResolvedValueOnce({ kind: 'unsaved', message: 'ignored' });
+      const result = render(<ProgramStartSettingsScreen />);
+      const later = addDaysInTZ(PENDING_DAY, MOVED_DAYS, ZONE);
+
+      act(() => picker(result).onChange(later));
+      fireEvent.press(result.getByTestId('save-pending-pass-button'));
+      await waitFor(() =>
+        expect(result.getByTestId('pending-pass-error')).toHaveTextContent('Too far ahead.'),
+      );
+      act(() => picker(result).onChange(later));
+      fireEvent.press(result.getByTestId('save-pending-pass-button'));
+      await waitFor(() =>
+        expect(result.getByTestId('pending-pass-error')).toHaveTextContent(/didn't save/),
+      );
+
+      expect(mockMovePassHabits).not.toHaveBeenCalled();
+    });
+
+    it('says the habits did not follow, and moves them on the next Save without a second POST', async () => {
+      holdPending();
+      holdRows();
+      mockMovePassHabits.mockResolvedValueOnce(false);
+      const result = render(<ProgramStartSettingsScreen />);
+      const later = addDaysInTZ(PENDING_DAY, MOVED_DAYS, ZONE);
+
+      act(() => picker(result).onChange(later));
+      fireEvent.press(result.getByTestId('save-pending-pass-button'));
+      await waitFor(() =>
+        expect(result.getByTestId('pending-pass-error')).toHaveTextContent(mockPassHabitsNotMoved),
+      );
+      const save = result.getByTestId('save-pending-pass-button');
+      expect(save.props.accessibilityState).toMatchObject({ disabled: false });
+
+      fireEvent.press(save);
+
+      await waitFor(() =>
+        expect(result.getByTestId('pending-pass-status')).toHaveTextContent(
+          /and its habits moved with it\.$/,
+        ),
+      );
+      expect(mockCommitPassStart).toHaveBeenCalledTimes(1);
+      expect(mockMovePassHabits).toHaveBeenLastCalledWith(PENDING_DAY, later, ZONE);
+    });
+
+    it('offers the retry after a start-now whose habits did not follow', async () => {
+      holdPending();
+      holdRows();
+      mockMovePassHabits.mockResolvedValueOnce(false);
+      const result = render(<ProgramStartSettingsScreen />);
+
+      act(() => picker(result).onChange(TODAY));
+      fireEvent.press(result.getByTestId('save-pending-pass-button'));
+      await waitFor(() =>
+        expect(result.getByTestId('pending-pass-error')).toHaveTextContent(mockPassHabitsNotMoved),
+      );
+      // Nothing is pending now, but the correction is not offered over the owed rows.
+      expect(result.queryByTestId('save-program-start-button')).toBeNull();
+
+      fireEvent.press(result.getByTestId('save-pending-pass-button'));
+
+      // Once they follow, the correction is offered again, under the same message.
+      await waitFor(() =>
+        expect(result.getByTestId('program-start-status')).toHaveTextContent(
+          /^Saved\. Your new pass has begun, counted from .*, and its habits moved with it\.$/,
+        ),
+      );
+      expect(mockMovePassHabits).toHaveBeenLastCalledWith(PENDING_DAY, TODAY, ZONE);
+      expect(result.getByTestId('save-program-start-button')).toBeTruthy();
     });
   });
 

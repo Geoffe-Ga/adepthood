@@ -30,8 +30,8 @@ import {
   stageAtIndex,
   stageRangeForPage,
 } from '../HabitUtils';
-import { HABIT_ROWS_NOT_MOVED_COPY } from '../services/habitManager';
-import { layProgramRows } from '../services/habitOrdering';
+import { HABIT_ROWS_NOT_MOVED_COPY, PASS_HABITS_NOT_MOVED_COPY } from '../services/habitManager';
+import { layProgramRows, shiftPassRows } from '../services/habitOrdering';
 
 import { REORDER_HABITS_CLOSE_LABEL } from './modalCloseLabels';
 import ModalHeader from './ModalHeader';
@@ -273,6 +273,13 @@ interface ReorderDateButtonProps {
 
 const START_DATE_LABEL = 'First Habit Start Date:';
 const PASS_DATE_LABEL = 'Next Pass Begins:';
+/**
+ * Why the two dates can differ while a pass is pending (#3762): the first
+ * habit belongs to the running pass, and only the rows laid for the next pass
+ * move with it.
+ */
+export const KEPT_HABITS_COPY =
+  "Habits you've already begun keep their start dates. Only the habits laid for your next pass move with it.";
 
 interface WebDateButtonProps {
   date: Date;
@@ -380,6 +387,11 @@ const PendingPassDate = ({
     <Text style={styles.reorderPassSentence} testID="reorder-pass-sentence">
       {pass.sentence}
     </Text>
+    {toISODate(startDate) < pass.day && (
+      <Text style={styles.reorderPassSentence} testID="reorder-pass-kept-hint">
+        {KEPT_HABITS_COPY}
+      </Text>
+    )}
     <DateNotice notice={notice} />
   </>
 );
@@ -744,6 +756,8 @@ interface StartDateGateInput {
   range: ProgramStartRange;
   /** Put the picker and the previewed rows back on the date that still stands. */
   restore: (_prior: Date) => void;
+  /** Whether a pass move changes any previewed row (#3762). */
+  movesRows: (_move: PassMove) => boolean;
 }
 
 /**
@@ -758,22 +772,124 @@ interface StartDateGateInput {
 /**
  * The pending pass's half of the gate (#3747): ``POST /stages/passes`` with the
  * picked day, before the order. A later day reschedules the pass, an earlier
- * one starts it now; either way no anchor PUT is sent and the rows owe nothing
- * to it, so they are not re-laid. A refusal or a dropped connection puts the
- * held day back, says why, and the order is not sent.
+ * one starts it now; either way no anchor PUT is sent. The rows laid for the
+ * pass were already previewed moved with it (#3762) and are sent once, with
+ * the order -- so the POST goes alone (``moveHabits: false``). A refusal or a
+ * dropped connection puts the held day back, says why, and the order is not
+ * sent.
  */
-const passGate = (pass: PendingPassPick, say: (_notice: string) => void): StartDateGate => {
+const passGate = (
+  pass: PendingPassPick,
+  say: (_notice: string) => void,
+  saved: (_day: string) => void,
+): StartDateGate => {
   if (!pass.changed) return () => true;
+  const { day } = pass;
   return () =>
-    pass.commit().then((outcome) => {
-      if (outcome.kind === 'saved' || outcome.kind === 'unchanged') return true;
+    pass.commit({ moveHabits: false }).then((outcome) => {
+      if (outcome.kind === 'unchanged') return true;
+      if (outcome.kind === 'saved') {
+        saved(day);
+        return true;
+      }
       say(outcome.message);
       return false;
     });
 };
 
-const useStartDateGate = ({ startDate, userTimezone, range, restore }: StartDateGateInput) => {
+/**
+ * A pending pass's move in this sitting (#3762): ``from`` is the day its rows
+ * were laid for, ``to`` the day they are previewed on. ``to`` is the person's
+ * pick until it saves, then the saved day -- kept even once the pass has begun
+ * and nothing is pending, so a retry after the rows failed sends them moved.
+ */
+interface PassMove {
+  from: string;
+  to: string;
+}
+
+/** The pending pass's day as the rows see it: picked, saved, or not moved at all. */
+const usePassMove = (held: string | null) => {
+  const [from, setFrom] = useState<string | null>(null);
+  const [pickedTo, setPickedTo] = useState<string | null>(null);
+  const [savedTo, setSavedTo] = useState<string | null>(null);
+  const to = pickedTo ?? savedTo;
+  const move: PassMove | null = from !== null && to !== null ? { from, to } : null;
+  return {
+    move,
+    pick: (day: string) => {
+      // Rows are laid for the day held when the sitting first moved the pass.
+      if (from === null) setFrom(held);
+      setPickedTo(day);
+    },
+    /** The pick saved: the rows stay moved to it. */
+    keep: (day: string) => {
+      setSavedTo(day);
+      setPickedTo(null);
+    },
+    /** The pick did not save: the rows go back to the last saved day, if any. */
+    drop: () => setPickedTo(null),
+    clear: () => {
+      setFrom(null);
+      setPickedTo(null);
+      setSavedTo(null);
+    },
+  };
+};
+
+/**
+ * The pending pass's half of one sitting (#3747): its pick, its gate, and the
+ * move its rows are previewed with (#3762). ``anchorSavedRef`` is the sitting's
+ * own: rows a saved move changed are owed to it, as a saved start date's are.
+ */
+const usePassSitting = (
+  userTimezone: string,
+  say: (_notice: string) => void,
+  movesRows: (_move: PassMove) => boolean,
+  anchorSavedRef: { current: boolean },
+) => {
   const pass = usePendingPassPick(userTimezone);
+  const passMove = usePassMove(pass.held);
+  // Whether the pass moved in this sitting, so owed rows are its. A ref, like
+  // ``anchorSavedRef``: the commit reads it after the save, not at the press.
+  const savedRef = useRef(false);
+  const gate = passGate(
+    pass,
+    (message) => {
+      passMove.drop();
+      say(message);
+    },
+    (day) => {
+      passMove.keep(day);
+      savedRef.current = true;
+      if (passMove.move !== null && movesRows(passMove.move)) anchorSavedRef.current = true;
+    },
+  );
+  return {
+    pass,
+    move: passMove.move,
+    gate,
+    /** Why the rows a save still owes did not follow: the pass's move, or the date's. */
+    owedCopy: () => (savedRef.current ? PASS_HABITS_NOT_MOVED_COPY : HABIT_ROWS_NOT_MOVED_COPY),
+    pick: (day: string) => {
+      pass.pick(day);
+      passMove.pick(day);
+    },
+    end: () => {
+      pass.reset();
+      passMove.clear();
+      savedRef.current = false;
+    },
+  };
+};
+
+const useStartDateGate = ({
+  startDate,
+  userTimezone,
+  range,
+  restore,
+  movesRows,
+}: StartDateGateInput) => {
   const programStartDay = useProgramStore((s) => s.programStartDay);
   const programStartDate = useProgramStore((s) => s.programStartDate);
   const [notice, setNotice] = useState<string | null>(null);
@@ -785,8 +901,10 @@ const useStartDateGate = ({ startDate, userTimezone, range, restore }: StartDate
   // the end of the sitting clears it -- a new pick does not, because the rows
   // are still laid from the old day until one of these saves lands.
   const anchorSavedRef = useRef(false);
+  const passSitting = usePassSitting(userTimezone, setNotice, movesRows, anchorSavedRef);
+  const { pass } = passSitting;
   const gate: StartDateGate = () => {
-    if (pass.held !== null) return passGate(pass, setNotice)();
+    if (pass.held !== null) return passSitting.gate();
     const day = toISODate(startDate);
     if (!picked || range.locked || day === programStartDay) return true;
     return commitProgramStart(day, { tz: userTimezone }).then((outcome) => {
@@ -806,22 +924,22 @@ const useStartDateGate = ({ startDate, userTimezone, range, restore }: StartDate
   };
   /** A new pick of the pending pass's day (#3747), sent at Save Order. */
   const pickPassDay = (day: string) => {
-    pass.pick(day);
+    passSitting.pick(day);
     setNotice(null);
   };
   /** The sitting is over: nothing picked, nothing saved, nothing to say. */
   const endSitting = () => {
     setPicked(false);
     setNotice(null);
-    pass.reset();
+    passSitting.end();
     anchorSavedRef.current = false;
   };
   const sitting: StartDateSitting = {
     gate,
     anchorSaved: () => anchorSavedRef.current,
-    rowsUnsaved: () => setNotice(HABIT_ROWS_NOT_MOVED_COPY),
+    rowsUnsaved: () => setNotice(passSitting.owedCopy()),
   };
-  return { notice, sitting, markPicked, pass, pickPassDay, endSitting };
+  return { notice, sitting, markPicked, pass, passMove: passSitting.move, pickPassDay, endSitting };
 };
 
 /**
@@ -852,6 +970,15 @@ const useOpenSeed = (visible: boolean, habits: Habit[], seed: (_grouped: Habit[]
   }, [visible, habits]);
 };
 
+/** ``rows`` with each start date as laid, before any pass move (#3762). */
+const unmoved = (rows: Habit[], laid: readonly Habit[]): Habit[] => {
+  const laidStart = new Map(laid.map((habit) => [habit.id, habit.start_date]));
+  return rows.map((habit) => {
+    const start = laidStart.get(habit.id);
+    return start === undefined ? habit : { ...habit, start_date: start };
+  });
+};
+
 /** The rows a drag left behind, whichever shape the list handed back. */
 const droppedHabits = (data: Array<Habit | ReorderEntry>): Habit[] =>
   data.some(isReorderEntry) ? habitsFromEntries(data.filter(isReorderEntry)) : (data as Habit[]);
@@ -868,13 +995,15 @@ const useStartDatePreview = (userTimezone: string) => {
     setStartDate(date);
     setOrderedHabits((prev) => updateStartDates(prev, date, userTimezone));
   };
-  // While a next pass is pending the rows are laid from their own first day,
-  // not the running start, so a sitting that only moves that pass -- or starts
-  // it now -- re-lays no row (#3747).
+  // While a next pass is pending the rows keep their own dates and the start
+  // shown is their own first day, not the running start, so a sitting that only
+  // moves that pass -- or starts it now -- re-lays no row (#3747): the rows laid
+  // for the pass only move with it (#3762), and the running pass's never move.
   const seed = (rows: Habit[], pending: boolean) => {
-    const from = (pending ? heldRowsStart(rows, userTimezone) : null) ?? startDate;
+    const held = pending ? heldRowsStart(rows, userTimezone) : null;
+    const from = held ?? startDate;
     setStartDate(from);
-    setOrderedHabits(updateStartDates(rows, from, userTimezone));
+    setOrderedHabits(held === null ? updateStartDates(rows, from, userTimezone) : rows);
   };
   return {
     programStartDate,
@@ -884,6 +1013,30 @@ const useStartDatePreview = (userTimezone: string) => {
     setStartDate,
     restartFrom,
     seed,
+  };
+};
+
+/**
+ * The preview as a pending pass's move shows it (#3762): the laid rows with
+ * those laid for the pass moved, and the first habit's day read off them. A drag
+ * re-lays from the laid start and the move is applied on top, so no row is
+ * ever moved twice.
+ */
+const usePassPreview = (preview: ReturnType<typeof useStartDatePreview>, userTimezone: string) => {
+  const { orderedHabits: laid, startDate: laidStart, setOrderedHabits } = preview;
+  const moveRows = (move: PassMove | null): Habit[] =>
+    move === null ? laid : shiftPassRows(laid, move.from, move.to, userTimezone);
+  return {
+    movesRows: (move: PassMove) => moveRows(move).some((row, index) => row !== laid[index]),
+    shown: (move: PassMove | null) => {
+      const rows = moveRows(move);
+      const start = move === null ? laidStart : (heldRowsStart(rows, userTimezone) ?? laidStart);
+      return { rows, start };
+    },
+    dragEnd: ({ data }: { data: Array<Habit | ReorderEntry> }) =>
+      setOrderedHabits(
+        updateStartDates(unmoved(droppedHabits(data), laid), laidStart, userTimezone),
+      ),
   };
 };
 
@@ -897,14 +1050,16 @@ const useReorderState = ({
   const range = useProgramStartRange(userTimezone);
   const { saving, commit } = useOrderCommit(onSaveOrder, onClose);
   const preview = useStartDatePreview(userTimezone);
-  const { orderedHabits, setOrderedHabits, startDate, restartFrom } = preview;
+  const { restartFrom, startDate: laidStart } = preview;
+  const passPreview = usePassPreview(preview, userTimezone);
   const [pickerVisible, setPickerVisible] = useState(false);
-  const { notice, sitting, markPicked, pass, pickPassDay, endSitting } = useStartDateGate({
-    startDate,
-    userTimezone,
-    range,
-    restore: restartFrom,
-  });
+  const { movesRows } = passPreview;
+  const gateInput = { startDate: laidStart, userTimezone, range, restore: restartFrom, movesRows };
+  const { notice, sitting, markPicked, pass, passMove, pickPassDay, endSitting } =
+    useStartDateGate(gateInput);
+  // The rows as previewed and saved: those laid for the pending pass moved with
+  // it (#3762), so the first habit's date and the pass's day agree again.
+  const { rows: orderedHabits, start: startDate } = passPreview.shown(passMove);
 
   useClosedReset(visible, () => {
     if (preview.programStartDate) preview.setStartDate(preview.programStartDate);
@@ -919,8 +1074,7 @@ const useReorderState = ({
     startDate,
     pickerVisible,
     setPickerVisible,
-    handleDragEnd: ({ data }) =>
-      setOrderedHabits(updateStartDates(droppedHabits(data), startDate, userTimezone)),
+    handleDragEnd: passPreview.dragEnd,
     // Preview only. The restamped rows live here until Save Order, so writing
     // the global anchor now would let a date the user previewed and then
     // abandoned outlive the modal, with no row on disk agreeing with it.
@@ -929,7 +1083,7 @@ const useReorderState = ({
       markPicked();
       restartFrom(selectedDate);
     },
-    // The pending pass's day moves no row: the rows stay laid from the running start.
+    // The pending pass's day moves the rows laid for it, in the preview (#3762).
     handleConfirmPassDate: (selectedDate) => {
       setPickerVisible(false);
       pickPassDay(toISODate(selectedDate));

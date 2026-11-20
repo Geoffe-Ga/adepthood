@@ -34,7 +34,7 @@
  * paint, so stamping it makes the stored field agree with the visible one
  * instead of introducing a third answer.
  */
-import { dayKeyToInstant } from '../../../utils/dateUtils';
+import { addDaysInTZ, dayKeyInTZ, dayKeyToInstant, MS_PER_DAY } from '../../../utils/dateUtils';
 import type { Habit } from '../Habits.types';
 import {
   calculateHabitStartDate,
@@ -145,4 +145,50 @@ export const stampPositionalOrder = (ordered: readonly Habit[]): Habit[] => {
     sort_order: index,
     stage: stages[index] ?? habit.stage,
   }));
+};
+
+/** Whole calendar days from one ``YYYY-MM-DD`` key to another. */
+const daysBetween = (fromDay: string, toDay: string): number =>
+  Math.round((Date.parse(`${toDay}T00:00:00Z`) - Date.parse(`${fromDay}T00:00:00Z`)) / MS_PER_DAY);
+
+/**
+ * Whether ``habit`` was laid for a pass that begins on ``fromDay``: its start is
+ * on or after that day in the account zone (#3762). A row that began earlier
+ * belongs to the running pass, or kept its own beginning, and is history. Demo
+ * tiles and undated rows carry no program date at all.
+ */
+export const isPassRow = (habit: Habit, fromDay: string, tz: string): boolean => {
+  if (habit.isDemoSeed === true) return false;
+  const start = new Date(habit.start_date);
+  return !Number.isNaN(start.getTime()) && dayKeyInTZ(start, tz) >= fromDay;
+};
+
+/** ``start`` moved by ``days`` calendar days in ``tz``, keeping its time of day. */
+const shiftStart = (start: Date, days: number, tz: string): Date => {
+  const day = dayKeyInTZ(start, tz);
+  const intoDay = start.getTime() - dayKeyToInstant(day, tz).getTime();
+  return new Date(dayKeyToInstant(addDaysInTZ(day, days, tz), tz).getTime() + intoDay);
+};
+
+/**
+ * Move the rows laid for a pending pass with the pass (#3762): when its day
+ * moves from ``fromDay`` to ``toDay``, every row starting on or after
+ * ``fromDay`` moves by the same number of calendar days in the account zone,
+ * so each keeps its place on the cadence. A row that began before ``fromDay``
+ * -- the running pass's, or one that kept its own beginning -- is returned as
+ * the very object passed in, so a writer can tell what moved by identity.
+ */
+export const shiftPassRows = (
+  habits: readonly Habit[],
+  fromDay: string,
+  toDay: string,
+  tz: string,
+): Habit[] => {
+  const days = daysBetween(fromDay, toDay);
+  if (days === 0) return [...habits];
+  return habits.map((habit) =>
+    isPassRow(habit, fromDay, tz)
+      ? { ...habit, start_date: shiftStart(new Date(habit.start_date), days, tz) }
+      : habit,
+  );
 };
