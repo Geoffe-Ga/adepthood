@@ -27,6 +27,13 @@ jest.mock('@react-navigation/native', () => ({
   }),
 }));
 
+// The finished run's receipt read (#3776) is SeedCorpusScreenReceipts.test.tsx's
+// to pin; here it is kept off the fetch these tests count imports on.
+jest.mock('@/features/Settings/useVaultPipeline', () => ({
+  refreshVaultPipeline: () => Promise.resolve(false),
+  useVaultPipeline: () => ({ answer: null, failed: false }),
+}));
+
 const mockImportFetch = jest.fn() as jest.Mock;
 global.fetch = ((url: string, init?: RequestInit) =>
   String(url).endsWith('/vault/connection')

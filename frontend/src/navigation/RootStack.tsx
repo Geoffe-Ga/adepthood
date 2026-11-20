@@ -25,6 +25,7 @@ import ProgramStartSettingsScreen from '../features/Settings/ProgramStartSetting
 import SettingsHubScreen from '../features/Settings/SettingsHubScreen';
 import SupportCareScreen from '../features/Settings/SupportCareScreen';
 import TimezoneSettingsScreen from '../features/Settings/TimezoneSettingsScreen';
+import VaultDashboardScreen from '../features/Settings/VaultDashboardScreen';
 import VaultSettingsScreen from '../features/Settings/VaultSettingsScreen';
 
 import type { RootTabParamList } from './BottomTabs';
@@ -62,6 +63,8 @@ export type RootStackParamList = {
   ExportData: undefined;
   SupportCare: undefined;
   VaultSettings: undefined;
+  /** "Your vault" (#3776): what landed, what Creek did with it, the vault's shape. */
+  VaultDashboard: undefined;
   VaultActivation: undefined;
   SharePreview: { token: string };
   PracticeDetail: { practiceId: number; assignError?: string };
@@ -314,6 +317,11 @@ const RootStack = (): React.JSX.Element => (
       name="VaultSettings"
       component={VaultSettingsScreen}
       options={{ title: 'Where your writing lives' }}
+    />
+    <Stack.Screen
+      name="VaultDashboard"
+      component={VaultDashboardScreen}
+      options={{ title: 'Your vault' }}
     />
     <Stack.Screen
       name="VaultActivation"

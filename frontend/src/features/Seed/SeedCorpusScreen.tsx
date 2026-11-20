@@ -57,6 +57,7 @@ import {
 import { SEED_CHOOSE_FOLDER_LABEL } from './seedFolderCopy';
 import { SeedFolderReview } from './SeedFolderReview';
 import type { SeedItem } from './seedRun';
+import { SeedRowLanding, SeedVaultReceiptsLink } from './SeedVaultReceipts';
 import { useSeedFolder, type SeedFolderController } from './useSeedFolder';
 import { useSeedRun, type SeedBatchView, type SeedRunController } from './useSeedRun';
 
@@ -83,6 +84,7 @@ const SeedItemRow = ({ item }: { item: SeedItem }): React.JSX.Element => {
       <Text style={styles.rowStatus} testID={`seed-item-status-${item.id}`}>
         {SEED_STATUS_LINES[item.status]}
       </Text>
+      <SeedRowLanding item={item} />
     </View>
   );
 };
@@ -377,6 +379,7 @@ const SeedCorpusBody = ({ run, folder, onOpenConsent }: SeedCorpusBodyProps): Re
         />
       ) : null}
       <RetryButton run={run} />
+      <SeedVaultReceiptsLink items={run.items} isSending={run.isSending} />
       <SeedRunList run={run} />
     </>
   );
