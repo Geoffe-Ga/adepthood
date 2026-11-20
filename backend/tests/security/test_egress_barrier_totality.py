@@ -141,6 +141,12 @@ EXCLUSIONS: Mapping[_Route, str] = {
         "audit projection (#3535) with no body and transmits no stored adepthood "
         "content, so a late call after erasure exposes nothing"
     ),
+    ("GET", "/vault/pipeline"): (
+        "read-only dial: read_vault_pipeline asks the caller's own vault for its "
+        "content-free pipeline status (#3775) with no body -- only a page size -- "
+        "and transmits no stored adepthood content, so a late call after erasure "
+        "exposes nothing"
+    ),
     ("GET", "/users/me/export/vault"): (
         "read-only dial: open_vault_export and stream_vault_export ask the "
         "caller's own vault for pages of its owner export (#3579) with no body "

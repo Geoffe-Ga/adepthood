@@ -8,7 +8,7 @@ reached the vault branch, whatever it settled as, and ``GET /vault/pipeline``
 reads them back newest first.
 
 **Names and refs, never content.** ``filename`` is the name the writer gave the
-file and ``batch`` a digest of the folder import's namespace -- enough to
+file, encrypted at rest and ``batch`` a digest of the folder import's namespace -- enough to
 group one import's receipts together without keeping the folder's name, which
 the import path treats as private and never logs; ``external_id``
 is the digest adepthood addressed the upload by (:func:`
@@ -31,13 +31,13 @@ from sqlmodel import Field, SQLModel
 
 from domain.corpus_import import ImportDestination
 from domain.creek_vault import VaultUploadStatus
+from services.journal_encryption import EncryptedString
 
-# Widths: the request schema's own bound for the filename, the batch digest's
-# fixed length (``services.upload_receipts.BATCH_DIGEST_CHARS``), the digest id's
-# prefix plus 32 hex characters with headroom, and Creek's published external id
-# bound for the vault's opaque ref. The two vocabularies get the
+# Widths: the batch digest's fixed length
+# (``services.upload_receipts.BATCH_DIGEST_CHARS``), the digest id's prefix plus
+# 32 hex characters with headroom, and Creek's published external id bound for
+# the vault's opaque ref. The two vocabularies get the
 # ``corpusconsentevent`` convention rather than today's longest member.
-_FILENAME_WIDTH = 255
 _BATCH_WIDTH = 16
 _EXTERNAL_ID_WIDTH = 64
 _VAULT_REF_WIDTH = 512
@@ -71,7 +71,9 @@ class UploadReceipt(SQLModel, table=True):
 
     id: int | None = Field(default=None, primary_key=True)
     user_id: int = Field(foreign_key="user.id", ondelete="CASCADE")
-    filename: str = Field(max_length=_FILENAME_WIDTH)
+    #: The writer's own name for the file: their words, so encrypted at rest like
+    #: every other thing they wrote (bounded upstream by the request schema).
+    filename: str = Field(sa_column=Column(EncryptedString(), nullable=False))
     batch: str | None = Field(default=None, max_length=_BATCH_WIDTH)
     external_id: str = Field(max_length=_EXTERNAL_ID_WIDTH)
     vault_ref: str | None = Field(default=None, max_length=_VAULT_REF_WIDTH)

@@ -29,8 +29,8 @@ from typing import Final
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from domain.corpus_import import ImportDestination
+from domain.privacy_tier import admits_egress
 from domain.upload_source import normalize_source_text
-from models.journal_entry import JournalClassification
 from models.upload_receipt import UploadReceipt
 from services.corpus_import import DocumentImportResult, VaultImportResult
 from services.creek_vault_upload import FolderSource, UploadedDocument, upload_external_id
@@ -75,7 +75,7 @@ def record_upload_receipt(
     """
     if not isinstance(result, VaultImportResult):
         return None
-    if document.classification == JournalClassification.INTIMATE:
+    if not admits_egress(document.classification):
         return None
     receipt = UploadReceipt(
         user_id=document.owner_user_id,

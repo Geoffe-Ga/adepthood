@@ -81,6 +81,11 @@ _MODULES_IMPORTING_A_TRANSPORT = frozenset(
         # authorized transport, which it is handed; its one route commits the
         # request's transaction before the vault is called.
         "services.creek_vault_export_wire",
+        # The pipeline-status read (#3775) imports httpx for its response type,
+        # as the export read does, and dials only through the client's own
+        # authorized transport, which it is handed; its one route commits the
+        # request's transaction before the vault is called.
+        "services.creek_vault_pipeline_status_wire",
         # Reads a refused writer key off a reflection or letter response
         # (contract 0.28). It imports httpx for the response type alone and
         # never sends anything: the client hands it an answer already received.
