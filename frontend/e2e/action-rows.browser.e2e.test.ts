@@ -108,6 +108,13 @@ const SKIPPED_ROUTES: readonly { name: string; reason: string }[] = [
       'unsorted (#3499); the walking account has neither, and granting would send its ' +
       'writing to the provider -- the screen is pinned by CorpusSweepScreen.test.tsx',
   },
+  {
+    name: 'VaultDashboard',
+    reason:
+      'its door on Where your writing lives shows only for an account with a vault (#3776); ' +
+      'the walking account has none -- the screen is opened by the vault owner in ' +
+      'vault-dashboard.browser.e2e.test.ts and pinned by VaultDashboardScreen.test.tsx',
+  },
 ];
 
 /**
