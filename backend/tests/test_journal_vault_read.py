@@ -46,6 +46,7 @@ from domain.creek_vault import (
     VaultTierCeiling,
 )
 from domain.resonance import NO_NOTES_MESSAGES, NoNotesReason
+from domain.vault_related import VaultRelatedThread, VaultThreadStatus
 from main import app
 from models.marginalia import Marginalia
 from models.user import User
@@ -111,6 +112,7 @@ def _vault_reflection(
     *notes: VaultReflectionNote,
     related_praxis: tuple[VaultRelatedPraxis, ...] = (),
     related_eddies: tuple[VaultRelatedEddy, ...] = (),
+    related_threads: tuple[VaultRelatedThread, ...] = (),
 ) -> VaultReflection:
     """Build the structured reflection the vault's reflect() answers with.
 
@@ -126,6 +128,7 @@ def _vault_reflection(
         routed_tier=VaultTierCeiling.PERSONAL,
         related_praxis=related_praxis,
         related_eddies=related_eddies,
+        related_threads=related_threads,
     )
 
 
@@ -141,6 +144,9 @@ _VAULT_EDDY = VaultRelatedEddy(
     description="A cluster the writer keeps returning to.",
     fragment_count=9,
     formed="2026-03-04",
+)
+_VAULT_THREAD = VaultRelatedThread(
+    id="thread-willow", title="Learning to bend", status=VaultThreadStatus.DORMANT
 )
 
 
@@ -678,6 +684,7 @@ async def test_vault_related_pages_reach_the_resonance_response(
             VaultReflectionNote(kind="theme", quote=_VERBATIM_QUOTE, note=_VAULT_NOTE),
             related_praxis=(_VAULT_PRAXIS,),
             related_eddies=(_VAULT_EDDY,),
+            related_threads=(_VAULT_THREAD,),
         )
     )
     cloud_calls = _fake_cloud_llm(
@@ -707,6 +714,9 @@ async def test_vault_related_pages_reach_the_resonance_response(
             "fragment_count": _VAULT_EDDY.fragment_count,
             "formed": _VAULT_EDDY.formed,
         }
+    ]
+    assert body["related_threads"] == [
+        {"id": _VAULT_THREAD.id, "title": _VAULT_THREAD.title, "status": "dormant"}
     ]
     assert cloud_calls == []
 
@@ -738,6 +748,7 @@ async def test_a_cloud_reflection_carries_no_related_pages(
     assert [note["note"] for note in body["marginalia"]] == [_CLOUD_NOTE]
     assert body["related_praxis"] == []
     assert body["related_eddies"] == []
+    assert body["related_threads"] == []
     assert len(cloud_calls) == 1
 
 

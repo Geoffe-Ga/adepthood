@@ -12,6 +12,7 @@ from typing import TYPE_CHECKING
 from sqlalchemy import CheckConstraint, Column, DateTime, Index, SmallInteger
 from sqlmodel import Field, Relationship, SQLModel
 
+from domain.vault_related import VaultReplyVoice
 from services.journal_encryption import EncryptedString
 
 if TYPE_CHECKING:
@@ -147,6 +148,7 @@ class Marginalia(SQLModel, table=True):
         _nullable_vocabulary_check("source", MarginaliaSource),
         _nullable_vocabulary_check("source_provider", InferenceProvider),
         _nullable_vocabulary_check("essay_source", MarginaliaSource),
+        _nullable_vocabulary_check("essay_voice", VaultReplyVoice),
     )
 
     id: int | None = Field(default=None, primary_key=True)
@@ -196,6 +198,18 @@ class Marginalia(SQLModel, table=True):
     essay_source: str | None = Field(default=None, max_length=_SOURCE_COLUMN_MAX)
     receipt_version: int | None = Field(
         default=None, sa_column=Column(SmallInteger(), nullable=True)
+    )
+    # Which voice the vault says wrote the letter (Creek 0.35, #3778): ``owner``
+    # when the writer's own style shaped it. ``NULL`` for every letter the vault
+    # made no claim about -- an app-provider letter, or one from an older vault
+    # -- so nothing is ever labelled the writer's voice on a guess.
+    essay_voice: str | None = Field(default=None, max_length=_SOURCE_COLUMN_MAX)
+    # The writer's own vault pages the letter's entry touched (Creek 0.36,
+    # #3778), as the JSON :mod:`services.letter_surfaces` writes, so a reopened
+    # letter still shows them. Encrypted like the essay: page titles and praxis
+    # excerpts are the writer's own words. ``NULL`` when the vault named none.
+    essay_related: str | None = Field(
+        default=None, sa_column=Column(EncryptedString(), nullable=True)
     )
 
     entry: "JournalEntry" = Relationship(back_populates="marginalia")

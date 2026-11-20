@@ -76,5 +76,11 @@ def served_note(note: Marginalia) -> MarginaliaResponse:
     if note.essay is None or has_served_letter(note):
         return response
     return response.model_copy(
-        update={"essay": None, "essay_generated_at": None, "essay_source": None}
+        update={
+            "essay": None,
+            "essay_generated_at": None,
+            "essay_source": None,
+            "essay_voice": None,
+            "essay_related": None,
+        }
     )

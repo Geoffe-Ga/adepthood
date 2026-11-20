@@ -2,15 +2,17 @@
 
 from __future__ import annotations
 
+import json
 from datetime import datetime
 from enum import StrEnum
 from typing import Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from domain.care import CareKind
 from domain.contraction import ContractionVariant
 from domain.creek_vault import VaultPraxisKind, VaultPraxisStatus
+from domain.vault_related import VaultReplyVoice, VaultThreadStatus
 from models.marginalia import (
     InferenceProvider,
     MarginaliaKind,
@@ -69,6 +71,24 @@ class MarginaliaResponse(BaseModel):
     source_model: str | None = None
     essay_source: MarginaliaSource | None = None
     receipt_version: int | None = None
+    essay_voice: VaultReplyVoice | None = None
+    essay_related: LetterRelatedResponse | None = None
+
+    @field_validator("essay_related", mode="before")
+    @classmethod
+    def _stored_related(cls, value: object) -> object:
+        """Read the encrypted JSON a letter's pages are stored as (#3778).
+
+        The row holds the pages as a JSON string; anything that will not decode
+        is read as no pages rather than failing the whole note.
+        """
+        if not isinstance(value, str):
+            return value
+        try:
+            decoded: object = json.loads(value)
+        except ValueError:
+            return None
+        return decoded
 
 
 class EssayRequest(BaseModel):
@@ -216,6 +236,31 @@ class RelatedEddyResponse(BaseModel):
     formed: str
 
 
+class RelatedThreadResponse(BaseModel):
+    """One narrative thread of the writer's own vault this entry belongs to (#3778).
+
+    Mirrors :class:`domain.vault_related.VaultRelatedThread`: only the page's id,
+    title and lifecycle -- never its body.
+    """
+
+    id: str
+    title: str
+    status: VaultThreadStatus
+
+
+class LetterRelatedResponse(BaseModel):
+    """The writer's own vault pages a letter's entry touched (Creek 0.36, #3778).
+
+    The same three kinds a resonance pass carries, kept beside the cached letter
+    so a reopened letter shows them again. Each list may be empty; the whole
+    object is ``None`` on a note whose letter named none.
+    """
+
+    praxis: list[RelatedPraxisResponse] = []
+    eddies: list[RelatedEddyResponse] = []
+    threads: list[RelatedThreadResponse] = []
+
+
 class ProvenanceReceipt(BaseModel):
     """Which side answered one operation of a resonance pass (#3062).
 
@@ -282,10 +327,11 @@ class ResonanceResponse(BaseModel):
     several ways to arrive at zero notes actually happened, and a client
     inventing a second explanation would be guessing at a cause it cannot see.
 
-    ``related_praxis`` and ``related_eddies`` are the writer's own compiled vault
-    pages this entry touched — surfaced only when a connected vault answered the
-    reflection, and empty on every other path (no vault, a vault that degraded or
-    deferred to the cloud, the private/intimate floor, the care short-circuit).
+    ``related_praxis``, ``related_eddies`` and ``related_threads`` (#3778) are
+    the writer's own compiled vault pages this entry touched — surfaced only
+    when a connected vault answered the reflection, and empty on every other
+    path (no vault, a vault that degraded or deferred to the cloud, the
+    private/intimate floor, the care short-circuit).
     Empty rather than absent, so a client never has to tell "this server does not
     send them" apart from "this pass surfaced none". Both are bounded at the
     seam that reads them, so the margin stays a note rather than a dashboard.
@@ -307,6 +353,7 @@ class ResonanceResponse(BaseModel):
     no_notes_message: str | None = None
     related_praxis: list[RelatedPraxisResponse] = []
     related_eddies: list[RelatedEddyResponse] = []
+    related_threads: list[RelatedThreadResponse] = []
     provenance: PassProvenance | None = None
 
 

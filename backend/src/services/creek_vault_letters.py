@@ -63,6 +63,7 @@ from services.creek_vault_voice_drafts import (
     stage_mirror_intent,
     voice_draft_external_id,
 )
+from services.letter_surfaces import LetterSurfaces
 from services.llm_usage import GenerationFeature
 from services.privacy_lineage import LineageOperation, observe_entry_lineage
 from services.reflection_boundary import (
@@ -103,6 +104,8 @@ class VaultLetterAnswer:
 
     outcome: VaultLetterOutcome
     letter: str | None = field(default=None, repr=False)
+    #: The letter's voice and related pages (#3778); empty unless it was written.
+    surfaces: LetterSurfaces = field(default_factory=LetterSurfaces, repr=False)
 
 
 #: The endings that provably left no letter in the vault, so the intent staged for
@@ -308,7 +311,7 @@ def _answer_written(written: VaultLetter, external_id: str) -> VaultLetterAnswer
     _LOGGER.info(
         _LETTER_WRITTEN_EVENT, extra={"external_id": external_id, "action": written.action.value}
     )
-    return VaultLetterAnswer(VaultLetterOutcome.WRITTEN, letter)
+    return VaultLetterAnswer(VaultLetterOutcome.WRITTEN, letter, LetterSurfaces.of(written))
 
 
 def _degraded(
@@ -424,14 +427,15 @@ async def answer_vault_letter(
 class VaultLetterSettlement:
     """Where a letter is offered, and how the caller keeps or refunds its charge.
 
-    ``keep`` caches the letter and settles the charge in one commit; ``refund``
+    ``keep`` caches the letter -- with its voice and related pages (#3778) --
+    and settles the charge in one commit; ``refund``
     compensates the charge. The economy is the route's (#623); this module only
     decides which of the two every ending owes.
     """
 
     entry: JournalEntry
     destination: str | None
-    keep: Callable[[str], Awaitable[None]]
+    keep: Callable[[str, LetterSurfaces], Awaitable[None]]
     refund: Callable[[], Awaitable[None]]
 
 
@@ -457,7 +461,7 @@ async def settle_vault_letter(
                 session, client, ask, entry=entry, destination=settlement.destination
             )
             if answer.letter is not None:
-                await settlement.keep(answer.letter)
+                await settlement.keep(answer.letter, answer.surfaces)
                 settled = True
     finally:
         if not settled:

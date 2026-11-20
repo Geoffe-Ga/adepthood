@@ -117,6 +117,7 @@ from schemas.marginalia import (
     PassProvenance,
     RelatedEddyResponse,
     RelatedPraxisResponse,
+    RelatedThreadResponse,
     ResonanceResponse,
     VoiceDraftListResponse,
     VoiceDraftResponse,
@@ -210,6 +211,7 @@ from services.journal_withdrawal_obligation import (
     withdrawal_pending_detail,
     withdrawal_refusal,
 )
+from services.letter_surfaces import LetterSurfaces, stamp_letter_surfaces
 from services.llm_usage import (
     GenerationFeature,
     GenerationKey,
@@ -2043,6 +2045,17 @@ class _ResonanceSurfaces:
     provenance: PassProvenance | None = None
 
 
+def _related_page_responses(
+    related: VaultRelatedSurfaces,
+) -> tuple[list[RelatedPraxisResponse], list[RelatedEddyResponse], list[RelatedThreadResponse]]:
+    """The praxis, eddy and thread responses of the pages a pass surfaced (#3778)."""
+    return (
+        [RelatedPraxisResponse.model_validate(p, from_attributes=True) for p in related.praxis],
+        [RelatedEddyResponse.model_validate(e, from_attributes=True) for e in related.eddies],
+        [RelatedThreadResponse.model_validate(t, from_attributes=True) for t in related.threads],
+    )
+
+
 def _resonance_response(
     rows: list[Marginalia],
     suggestions: list[CompletionSuggestion],
@@ -2051,6 +2064,7 @@ def _resonance_response(
     surfaces: _ResonanceSurfaces,
 ) -> ResonanceResponse:
     """Build the success response: notes, suggestions, refreshed balances, surfaces."""
+    praxis, eddies, threads = _related_page_responses(surfaces.related)
     return ResonanceResponse(
         marginalia=[MarginaliaResponse.model_validate(r, from_attributes=True) for r in rows],
         suggestions=[
@@ -2063,14 +2077,9 @@ def _resonance_response(
         care=surfaces.care,
         contraction=surfaces.contraction,
         no_notes_message=surfaces.no_notes_message,
-        related_praxis=[
-            RelatedPraxisResponse.model_validate(praxis, from_attributes=True)
-            for praxis in surfaces.related.praxis
-        ],
-        related_eddies=[
-            RelatedEddyResponse.model_validate(eddy, from_attributes=True)
-            for eddy in surfaces.related.eddies
-        ],
+        related_praxis=praxis,
+        related_eddies=eddies,
+        related_threads=threads,
         provenance=surfaces.provenance,
     )
 
@@ -3506,7 +3515,9 @@ async def _cache_vault_letter(
     await session.commit()
     charge = EssayCharge(spent=spent, key=GenerationKey.for_spend(spent))
 
-    async def keep(letter: str) -> None:
+    async def keep(letter: str, surfaces: LetterSurfaces) -> None:
+        # Staged beside the letter, so keep_letter's one commit holds both (#3778).
+        stamp_letter_surfaces(note, surfaces)
         outcome = await keep_letter(session, note, letter, VAULT_RECEIPT, charge)
         log_settled_essay(note, charge, summarize_usage(()), outcome)
 

@@ -94,6 +94,7 @@ from domain.creek_vault import (
     wire_ceiling_for,
 )
 from domain.resonance import ANCHOR_TEXT_MAX, NOTE_MAX
+from domain.vault_related import VaultRelatedThread, VaultReplyVoice, VaultThreadStatus
 
 # The status a reflection response reports when it is a care handoff rather than
 # a reflection. Creek publishes it as a ``const`` on its own ``CareEscalationResponse``
@@ -145,6 +146,12 @@ _MAX_REFLECT_NOTES = 12
 # margin, not a dashboard.
 _MAX_RELATED_PRAXIS = 3
 _MAX_RELATED_EDDIES = 2
+# Threads (contract 0.36, #3778), on the same terms as the two above.
+_MAX_RELATED_THREADS = 2
+
+# How long a thread page's own ``id`` may be before adepthood stops reading it:
+# an opaque handle, bounded like a fragment id rather than like prose.
+_RELATED_THREAD_ID_MAX = 256
 
 # How long a compiled page's own title may be before adepthood stops reading it.
 # A title is a page's identity, so it is bounded like a note's quote rather than
@@ -461,7 +468,7 @@ def _related_eddy(item: object) -> VaultRelatedEddy | None:
 
 
 def _related_praxis_pages(raw: object) -> tuple[VaultRelatedPraxis, ...]:
-    """Project a reflection's praxis array, bounded at :data:`_MAX_RELATED_PRAXIS`."""
+    """Project a reflection's or letter's praxis array, bounded at :data:`_MAX_RELATED_PRAXIS`."""
     return tuple(
         page
         for item in _bounded_items(raw, _MAX_RELATED_PRAXIS)
@@ -470,12 +477,45 @@ def _related_praxis_pages(raw: object) -> tuple[VaultRelatedPraxis, ...]:
 
 
 def _related_eddy_pages(raw: object) -> tuple[VaultRelatedEddy, ...]:
-    """Project a reflection's eddy array, bounded at :data:`_MAX_RELATED_EDDIES`."""
+    """Project a reflection's or letter's eddy array, bounded at :data:`_MAX_RELATED_EDDIES`."""
     return tuple(
         eddy
         for item in _bounded_items(raw, _MAX_RELATED_EDDIES)
         if (eddy := _related_eddy(item)) is not None
     )
+
+
+def _related_thread(item: object) -> VaultRelatedThread | None:
+    """Project one thread page onto the seam's value, or drop it whole (0.36, #3778).
+
+    Item-wise fail-soft on the same terms as :func:`_related_praxis`: an id and
+    a title that are real text within their bounds, and a lifecycle inside
+    Creek's published three. Only those labels are read -- Creek sends nothing
+    else about a thread.
+    """
+    if not isinstance(item, Mapping):
+        return None
+    thread_id = _bounded_text(item.get("id"), _RELATED_THREAD_ID_MAX)
+    title = _bounded_text(item.get("title"), _RELATED_TITLE_MAX)
+    status = _wire_value(VaultThreadStatus, item.get("status"))
+    if thread_id is None or title is None or status is None:
+        return None
+    return VaultRelatedThread(id=thread_id, title=title, status=VaultThreadStatus(status))
+
+
+def _related_thread_pages(raw: object) -> tuple[VaultRelatedThread, ...]:
+    """Project a reply's thread array, bounded at :data:`_MAX_RELATED_THREADS`."""
+    return tuple(
+        thread
+        for item in _bounded_items(raw, _MAX_RELATED_THREADS)
+        if (thread := _related_thread(item)) is not None
+    )
+
+
+def _reply_voice(raw: object) -> VaultReplyVoice | None:
+    """The voice a reply says wrote it (0.35), or ``None`` for no readable claim."""
+    voice = _wire_value(VaultReplyVoice, raw)
+    return None if voice is None else VaultReplyVoice(voice)
 
 
 def _admissible_ceiling(echoed: object, accepted: VaultTierCeiling) -> VaultTierCeiling | None:
@@ -665,6 +705,7 @@ def _readable_reflection(
         routed_tier=routed_tier,
         related_praxis=_related_praxis_pages(payload.get("related_praxis")),
         related_eddies=_related_eddy_pages(payload.get("related_eddies")),
+        related_threads=_related_thread_pages(payload.get("related_threads")),
         inference_source=_inference_source(payload.get("inference_source")),
     )
 
@@ -1018,6 +1059,10 @@ def _readable_letter(
         vault_ref=fragment_id,
         action=action,
         inference_source=_inference_source(payload.get("inference_source")),
+        voice=_reply_voice(payload.get("voice")),
+        related_praxis=_related_praxis_pages(payload.get("related_praxis")),
+        related_eddies=_related_eddy_pages(payload.get("related_eddies")),
+        related_threads=_related_thread_pages(payload.get("related_threads")),
     )
 
 

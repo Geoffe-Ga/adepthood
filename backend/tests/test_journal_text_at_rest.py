@@ -81,6 +81,9 @@ _JOURNAL_TEXT_COLUMNS: frozenset[str] = frozenset(
         "marginalia.anchor_text",
         "marginalia.note",
         "marginalia.essay",
+        # The writer's own vault pages a vault letter's entry touched (#3778):
+        # praxis excerpts are their words verbatim, and every title names them.
+        "marginalia.essay_related",
         # The passage a completion suggestion claims attests to a habit, and the
         # label — which is that same passage, sanitized.
         "completionsuggestion.anchor_text",
@@ -167,6 +170,10 @@ _OTHER_ENCRYPTED_COLUMNS: frozenset[str] = frozenset(
 _ANCHOR = "the willow bending without breaking"
 _NOTE = "A recurring image of yielding strength."
 _ESSAY = "The willow is this entry's whole argument, in one plant."
+_ESSAY_RELATED = (
+    '{"praxis": [], "eddies": [], '
+    '"threads": [{"id": "t-1", "title": "Bending", "status": "active"}]}'
+)
 _TITLE = "What I could not say out loud"
 _PROMPT_RESPONSE = "The week I stopped pretending it was fine."
 _ANCHOR_START = 11
@@ -285,6 +292,7 @@ _RAW_READS: dict[str, str] = {
     "marginalia.anchor_text": "SELECT anchor_text FROM marginalia",
     "marginalia.note": "SELECT note FROM marginalia",
     "marginalia.essay": "SELECT essay FROM marginalia",
+    "marginalia.essay_related": "SELECT essay_related FROM marginalia",
     "completionsuggestion.anchor_text": "SELECT anchor_text FROM completionsuggestion",
     "completionsuggestion.label": "SELECT label FROM completionsuggestion",
     "practicesession.reflection": "SELECT reflection FROM practicesession",
@@ -356,6 +364,7 @@ async def test_marginalia_text_is_ciphertext_in_the_raw_columns(
             essay=_ESSAY,
             # essay and its timestamp are set together or the paired CHECK fires.
             essay_generated_at=datetime.now(UTC),
+            essay_related=_ESSAY_RELATED,
         )
     )
     await db_session.commit()
@@ -364,6 +373,7 @@ async def test_marginalia_text_is_ciphertext_in_the_raw_columns(
         ("marginalia.anchor_text", _ANCHOR),
         ("marginalia.note", _NOTE),
         ("marginalia.essay", _ESSAY),
+        ("marginalia.essay_related", _ESSAY_RELATED),
     ):
         _assert_ciphertext_of(await _raw(db_session, column), plaintext, column)
 

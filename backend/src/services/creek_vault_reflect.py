@@ -92,6 +92,7 @@ from domain.creek_vault import (
 from domain.privacy_tier import admits_egress
 from domain.resonance import ResonanceLLM
 from domain.vault_key_rejection import CreekVaultRequestKeyRejectedError
+from domain.vault_related import VaultRelatedThread
 from services.botmason import LLMResponse
 from services.creek_vault_read import log_read_degraded
 from services.creek_vault_relay import forwarded_key_vendor
@@ -122,6 +123,7 @@ class VaultRelatedSurfaces:
 
     praxis: tuple[VaultRelatedPraxis, ...] = ()
     eddies: tuple[VaultRelatedEddy, ...] = ()
+    threads: tuple[VaultRelatedThread, ...] = ()
 
 
 def _marginalia_contract(notes: tuple[VaultReflectionNote, ...]) -> str:
@@ -256,7 +258,9 @@ class VaultResonanceLLM:
             return _marginalia_contract(())
         self._require_spent_key(reflection)
         self._related = VaultRelatedSurfaces(
-            praxis=reflection.related_praxis, eddies=reflection.related_eddies
+            praxis=reflection.related_praxis,
+            eddies=reflection.related_eddies,
+            threads=reflection.related_threads,
         )
         return _marginalia_contract(reflection.notes)
 
