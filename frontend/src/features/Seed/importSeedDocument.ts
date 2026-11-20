@@ -62,7 +62,7 @@ const HTTP_REQUEST_TIMEOUT = 408;
 
 /**
  * The vault's outcomes in the run's own vocabulary. `accepted` is renamed
- * `ingested`; the other four keep the wire word so the copy layer can say the
+ * `ingested`; the others keep the wire word so the copy layer can say the
  * specific, actionable thing each one calls for.
  */
 const VAULT_SEED_STATUS: Record<VaultUploadStatusT, VaultSeedStatus> = {
@@ -71,6 +71,7 @@ const VAULT_SEED_STATUS: Record<VaultUploadStatusT, VaultSeedStatus> = {
   capability_unsupported: 'capability_unsupported',
   degraded: 'degraded',
   vault_busy: 'vault_busy',
+  unsupported_source: 'unsupported_source',
 };
 
 /**

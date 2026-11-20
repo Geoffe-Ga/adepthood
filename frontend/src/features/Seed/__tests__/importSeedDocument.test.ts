@@ -164,6 +164,8 @@ describe('an account that has a vault', () => {
     ['vault_unavailable', 'vault_unavailable'],
     ['capability_unsupported', 'capability_unsupported'],
     ['degraded', 'degraded'],
+    // A 415 refusing the file's type (#3771): its own outcome, never `degraded`.
+    ['unsupported_source', 'unsupported_source'],
   ])('renders the vault %s answer as %s', async (wire, expected) => {
     mockFetch.mockReturnValueOnce(vaultReply(wire as string));
 

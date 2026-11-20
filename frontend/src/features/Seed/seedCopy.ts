@@ -59,6 +59,12 @@ export const SEED_STATUS_LINES: Record<SeedItemStatus, string> = {
   vault_busy:
     'Your vault stayed busy the whole time, so this one is still with you and nothing was ' +
     'stored. Send it again once your vault has settled.',
+  // The vault refused the file's type with a 415 (#3771) before writing
+  // anything. Counted with the skipped files, and offered no resend: the same
+  // file is refused the same way.
+  unsupported_source:
+    "Skipped · your vault doesn't take this kind of file as a document, so nothing was " +
+    'stored. It is still with you.',
   in_corpus: 'Kept with the rest of your writing. It will show up in reflections from here on.',
   // The ordinary first answer rather than an error state: the corpus is off
   // until somebody turns it on. It names the setting rather than the endpoint,

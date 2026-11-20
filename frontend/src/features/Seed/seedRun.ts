@@ -19,14 +19,22 @@
  */
 
 /**
- * The five outcomes the vault itself answers with, in this run's words.
+ * The six outcomes the vault itself answers with, in this run's words.
  *
  * `vault_busy` is settled only once the run has waited out a busy vault as many
  * times as it will (#3770): nothing was kept, and the cause was the vault's
  * moment rather than the document, so it can go again.
+ *
+ * `unsupported_source` is the vault refusing the file's type with a 415
+ * (#3771): nothing was kept, and the same file is refused the same way.
  */
 export type VaultSeedStatus =
-  'ingested' | 'vault_unavailable' | 'capability_unsupported' | 'degraded' | 'vault_busy';
+  | 'ingested'
+  | 'vault_unavailable'
+  | 'capability_unsupported'
+  | 'degraded'
+  | 'vault_busy'
+  | 'unsupported_source';
 
 /**
  * The outcomes answered when no vault took the document.
