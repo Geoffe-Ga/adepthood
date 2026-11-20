@@ -176,6 +176,7 @@ const EXPECTED_BROWSER_JOURNEYS = [
   'screen-title-heading.browser.e2e.test.ts',
   'seed-folder-import.browser.e2e.test.ts',
   'seed-leave-mid-run.browser.e2e.test.ts',
+  'seed-settle-after-drain.browser.e2e.test.ts',
   'seed-skip-unsupported.browser.e2e.test.ts',
   'seed-upload-unconfirmed.browser.e2e.test.ts',
   'seed-upload-vault-busy.browser.e2e.test.ts',

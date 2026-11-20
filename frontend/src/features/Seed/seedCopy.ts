@@ -337,6 +337,24 @@ export function uploadQueueIndicatorLine(remaining: number, failed = 0): string 
   return failed > 0 ? `${line}${COUNT_SEPARATOR}${failed} failed` : line;
 }
 
+// ---------------------------------------------------------------------------
+// After the queue drains: the one vault pass over what landed (#3773)
+// ---------------------------------------------------------------------------
+//
+// Quiet lines, said from the same place the queue's own line was, once nothing
+// is left to send. The pass runs on the server whether or not this app stays
+// open, so none of them asks anything of the person.
+
+/** While the vault weaves in what the run landed. */
+export const SETTLING_LINE = "Settling what you've sent…";
+
+/** Once the pass has gone through the whole ladder. */
+export const SETTLED_LINE = "What you've sent has settled into your vault.";
+
+/** When the vault could not be reached for the pass; what landed stays landed. */
+export const SETTLE_DEFERRED_LINE =
+  'Your vault was out of reach just now. What you sent is kept, and will settle on a later pass.';
+
 /** What a batch header needs to say where the batch stands. */
 export interface SeedBatchHeader {
   /** The folder's import name; null for files picked one by one. */
