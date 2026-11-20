@@ -171,11 +171,16 @@ function attemptForOutcome(outcome: DocumentImportT): SeedAttempt {
  * Make one attempt at a document: refuse it on device, or send it once and read
  * the answer. Never retries and never waits; the run decides what a 429 costs.
  * Never throws, for the same reason {@link importSeedDocument} does not.
+ *
+ * `signal` takes back a request already on its way; only signing out uses it
+ * (#3772). An aborted request settles as `unconfirmed`, but nobody reads it:
+ * the queue that sent it has already been emptied.
  */
 export async function attemptSeedDocument(
   document: PickedDocument,
   classification: JournalClassification,
   runId?: string,
+  signal?: AbortSignal,
 ): Promise<SeedAttempt> {
   if (!document.seedable) {
     return decidedOnDevice('unsupported_format');
@@ -197,6 +202,7 @@ export async function attemptSeedDocument(
       classification,
       ...(document.source ? { source: document.source } : {}),
       ...(runId === undefined ? {} : { runId }),
+      ...(signal === undefined ? {} : { signal }),
     });
     return attemptForOutcome(outcome);
   } catch (error: unknown) {

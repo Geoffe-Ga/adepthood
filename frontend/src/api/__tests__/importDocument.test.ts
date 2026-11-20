@@ -1,5 +1,7 @@
 /* eslint-env jest */
 /* global describe, test, expect, beforeEach, jest */
+import { waitFor } from '@testing-library/react-native';
+
 import { corpus, DocumentUploadError, UPLOAD_DOCUMENT_TIMEOUT_MS } from '../index';
 import { documentImportSchema } from '../schemas';
 
@@ -311,5 +313,37 @@ describe('corpus.importDocument failures', () => {
 
   test('allows a slow, large import the default fetch timeout would abort', () => {
     expect(UPLOAD_DOCUMENT_TIMEOUT_MS).toBeGreaterThan(30_000);
+  });
+});
+
+describe('corpus.importDocument abort (#3772)', () => {
+  test('hands the caller signal to the request, so signing out can abort it', async () => {
+    const controller = new AbortController();
+    let seen: AbortSignal | undefined;
+    mockFetch.mockImplementationOnce((_url: string, init: { signal: AbortSignal }) => {
+      seen = init.signal;
+      return new Promise((_resolve, reject) => {
+        init.signal.addEventListener('abort', () => {
+          reject(Object.assign(new Error('aborted'), { name: 'AbortError' }));
+        });
+      });
+    });
+
+    const sending = corpus.importDocument(
+      {
+        filename: 'seed.md',
+        contentBase64: SENTINEL_BASE64,
+        classification: 'personal',
+        signal: controller.signal,
+      },
+      'tok',
+    );
+    await waitFor(() => {
+      expect(mockFetch).toHaveBeenCalledTimes(1);
+    });
+    controller.abort();
+
+    await expect(sending).rejects.toBeInstanceOf(DocumentUploadError);
+    expect(seen?.aborted).toBe(true);
   });
 });
