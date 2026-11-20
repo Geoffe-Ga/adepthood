@@ -15,6 +15,10 @@ and body are deliberately absent.
 from sqlalchemy import CheckConstraint, Index
 from sqlmodel import Field, SQLModel
 
+from models.vault_pipeline_run import PIPELINE_TRIGGERS
+
+_TRIGGER_LIST = ", ".join(f"'{value}'" for value in PIPELINE_TRIGGERS)
+
 _TRIGGER_WIDTH = 20
 
 
@@ -29,7 +33,7 @@ class VaultPipelineFollowUp(SQLModel, table=True):
             unique=True,
         ),
         CheckConstraint(
-            "trigger IN ('journal_write', 'document_import')",
+            f"trigger IN ({_TRIGGER_LIST})",
             name="ck_vaultpipelinefollowup_trigger_valid",
         ),
     )

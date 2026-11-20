@@ -630,6 +630,7 @@ RETENTION: Mapping[str, RetentionRule] = {
         "The writer's stored provider key; also deleted on removal, replacement, "
         "vault disconnect, vendor rejection and enrolment."
     ),
+    "vaultbulkimportrun": until_account_deletion("Content-free bulk upload pass progress."),
     "vaultpipelinefollowup": until_account_deletion("Content-free scheduling marker."),
     "vaultpipelinerun": until_account_deletion("Content-free vault pipeline progress."),
     "vaultteardownreceipt": nightly(

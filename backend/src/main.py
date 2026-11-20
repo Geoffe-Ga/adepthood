@@ -130,6 +130,7 @@ from services.managed_vault_rollout import (
 )
 from services.privacy_suspension import log_suspension_state
 from services.restore_suppression import assert_restore_reapplied
+from services.vault_bulk_import_run import close_bulk_import_tasks, resume_bulk_import_runs
 
 logger = logging.getLogger(__name__)
 
@@ -188,6 +189,12 @@ async def _recover_provisioning_until_shutdown() -> None:
         await _recover_step(
             resume_corpus_sort_runs(async_session_factory, resolve_creek_vault_client),
             "corpus sort recovery could not read its durable state",
+        )
+        # Likewise a bulk upload's vault pass (#3773): a stale run is carried
+        # on, and a batch queued behind a finished one gets its turn.
+        await _recover_step(
+            resume_bulk_import_runs(async_session_factory, resolve_creek_vault_client),
+            "bulk import recovery could not read its durable state",
         )
         await asyncio.sleep(_PROVISIONING_RECOVERY_INTERVAL_SECONDS)
 
@@ -1210,6 +1217,7 @@ async def lifespan(_application: FastAPI) -> AsyncIterator[None]:
     # Sort drivers too: cancelled rather than failed, so their rows stay
     # running and the next lifespan's recovery loop resumes them.
     await close_corpus_sort_tasks()
+    await close_bulk_import_tasks()
 
     # The pooled Creek Vault connection must not outlive the app: closing it on
     # shutdown releases its sockets deterministically instead of leaving an open

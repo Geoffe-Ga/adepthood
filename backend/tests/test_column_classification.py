@@ -94,6 +94,10 @@ _PLAINTEXT_COLUMNS: dict[str, frozenset[str]] = {
             "vaultpipelinerun.resume_claim_id",
             # A background sort's lease token: an opaque UUID, never user text.
             "corpussortrun.owner_id",
+            # A bulk upload's vault pass (#3773): the client's random upload_run
+            # id and the driver's lease token, both opaque, never user text.
+            "vaultbulkimportrun.batch_id",
+            "vaultbulkimportrun.owner_id",
             "journalwithdrawalnote.destination",
             "journalwithdrawalobligation.destination",
             "vaultteardownreceipt.creek_job_id",
@@ -172,6 +176,9 @@ _PLAINTEXT_COLUMNS: dict[str, frozenset[str]] = {
             "corpussortrun.lane",
             "corpussortrun.state",
             "corpussortrun.stop_reason",
+            # A bulk upload's vault pass (models.vault_bulk_import_run).
+            "vaultbulkimportrun.state",
+            "vaultbulkimportrun.stop_reason",
             "restoremarker.state",
             "journalwithdrawalobligation.state",
             "vaultteardownreceipt.state",

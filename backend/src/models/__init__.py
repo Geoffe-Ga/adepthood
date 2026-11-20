@@ -67,6 +67,7 @@ from .vault_activation import (
     VaultCustodyMode,
     VaultTeardownReceipt,
 )
+from .vault_bulk_import_run import VaultBulkImportRun
 from .vault_classification_key import VaultClassificationKey
 from .vault_pipeline_follow_up import VaultPipelineFollowUp
 from .vault_pipeline_run import VaultPipelineOutcome, VaultPipelineRun
@@ -142,6 +143,7 @@ __all__ = [
     "UserVaultConfig",
     "VaultActivation",
     "VaultActivationState",
+    "VaultBulkImportRun",
     "VaultClassificationKey",
     "VaultCustodyMode",
     "VaultPipelineFollowUp",

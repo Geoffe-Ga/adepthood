@@ -74,6 +74,13 @@ AI_EXCLUSIONS: Final[dict[Route, str]] = {
         "suspended (corpus_backfill._offer_one); the run ends stopped:suspended with "
         "every entry left unmarked, and the 202 carries the run"
     ),
+    Route("POST", "/corpus/import/complete"): (
+        "records a bulk upload's vault pass (services.vault_bulk_import_run) whose "
+        "background driver may start or join that same sort, so it reaches the model "
+        "only through corpus_backfill.offer_entry and stops there while suspended "
+        "exactly as POST /corpus/sweep does; the vault pass itself sends no writing "
+        "to a model, and the 202 carries the run"
+    ),
 }
 
 

@@ -31,6 +31,8 @@
   "/corpus/consent",
   "/corpus/consent/{source}",
   "/corpus/import",
+  "/corpus/import/complete",
+  "/corpus/import/complete/{batch_id}",
   "/corpus/invitation",
   "/corpus/sweep",
   "/corpus/voice-readiness",

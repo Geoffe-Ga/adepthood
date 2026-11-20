@@ -54,7 +54,6 @@ them either; :func:`drive_vault_pipeline` never raises.
 from __future__ import annotations
 
 import asyncio
-import enum
 import logging
 import time
 from collections.abc import AsyncIterator, Awaitable, Callable, Mapping
@@ -66,12 +65,11 @@ from functools import partial
 from typing import Final, cast
 from uuid import uuid4
 
-from sqlalchemy import case, delete, func, or_, text, update
+from sqlalchemy import case, delete, func, text, update
 from sqlalchemy.dialects.postgresql import insert as postgresql_insert
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
-from sqlalchemy.sql.elements import ColumnElement
 from sqlmodel import SQLModel, col, select
 
 from domain.creek_vault import (
@@ -123,12 +121,27 @@ from services.creek_vault_pipeline_results import persisted_counts as _persisted
 from services.creek_vault_pipeline_results import (
     poll_needs_reconciliation as _poll_needs_reconciliation,
 )
+from services.creek_vault_pipeline_scope import (
+    LADDER,
+    VaultPipelineTrigger,
+    due_stages,
+    kept_or_deeper,
+    stages_to_run,
+    stronger_scope_expression,
+)
+from services.creek_vault_pipeline_scope import STAGES_BY_TRIGGER as _STAGES_BY_TRIGGER
+from services.creek_vault_pipeline_scope import strongest_trigger as _strongest_trigger
 from services.creek_vault_relay import has_forwarded_provider_key, keyless_context
 from services.vault_classification_key import (
     classification_submit_key,
     forget_if_rejected,
     relaying,
 )
+
+#: Re-exported: the ladder and its occasions moved to
+#: :mod:`services.creek_vault_pipeline_scope` (#3773), and every caller that
+#: drives a pass names them from here.
+__all__ = ["LADDER", "VaultPipelineTrigger"]
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -237,18 +250,6 @@ _LABELS_LANDED: tuple[str, ...] = (
     VaultPipelineOutcome.INCOMPLETE.value,
 )
 
-#: The ladder, in the order Creek documents it. Classification first because the
-#: thread stage reads the labels it writes; then the linker stages cheapest
-#: first, so a truncated pass leaves the corpus navigable rather than leaving it
-#: exactly as it found it.
-LADDER: tuple[VaultPipelineStage, ...] = (
-    VaultPipelineStage.CLASSIFY,
-    VaultPipelineStage.TEMPORAL,
-    VaultPipelineStage.EMBEDDINGS,
-    VaultPipelineStage.EDDIES,
-    VaultPipelineStage.THREADS,
-)
-
 #: How each rung of the ladder is spelled on Creek's linker route. A table rather
 #: than a branch: classification has no entry, so "classification is not a link
 #: stage" is a fact about this mapping rather than a condition somebody could
@@ -277,78 +278,6 @@ _JOB_ADMITTING_STAGES: frozenset[VaultPipelineStage] = frozenset(
 # every job admission, the adapter's own deadline still bounds the submit.
 _ADMISSION_ONLY_BUDGET_SECONDS: Final = 0.0
 
-
-class VaultPipelineTrigger(enum.StrEnum):
-    """What occasioned a pass, and therefore how much of the ladder it may climb.
-
-    Two triggers because there are two honest answers to "how long may this
-    request take". A journal save is the most frequent write in the app and the
-    one a person is waiting on with something they just wrote; a document import
-    is deliberate, rare, and already a file upload, so a caller has different
-    patience for each. The depth is a property of the occasion rather than of the
-    caller, which is why it is an enum here and not a parameter.
-
-    Attributes:
-        JOURNAL_WRITE: After an entry replicated to the vault. The cheap half
-            only — classification and temporal linking — under the adapter's
-            standing deadline.
-        DOCUMENT_IMPORT: After a document was stored in the vault. The whole
-            ladder, under a wall clock.
-    """
-
-    JOURNAL_WRITE = "journal_write"
-    DOCUMENT_IMPORT = "document_import"
-
-
-def _strongest_trigger(*values: str | None) -> VaultPipelineTrigger:
-    """Return the deepest valid scope represented by ``values``."""
-    if VaultPipelineTrigger.DOCUMENT_IMPORT.value in values:
-        return VaultPipelineTrigger.DOCUMENT_IMPORT
-    return VaultPipelineTrigger.JOURNAL_WRITE
-
-
-#: Which rungs each trigger is willing to pay for. The journal path's exclusion
-#: of the two clustering stages is the single most load-bearing line in this
-#: module: those stages run a local sentence-transformer pass over every uncached
-#: fragment on a cold vault, which is minutes, and a journal save that could take
-#: minutes is a broken journal however well it is bounded.
-_STAGES_BY_TRIGGER: Mapping[VaultPipelineTrigger, frozenset[VaultPipelineStage]] = {
-    VaultPipelineTrigger.JOURNAL_WRITE: frozenset(
-        {VaultPipelineStage.CLASSIFY, VaultPipelineStage.TEMPORAL}
-    ),
-    VaultPipelineTrigger.DOCUMENT_IMPORT: frozenset(LADDER),
-}
-
-# How long a stage stands down for after an attempt, successful or not.
-#
-# The cheap window is minutes because classification is what makes new writing
-# visible to everything downstream, and because the pass short-circuits on the
-# fragments it already stamped — so a repeat costs the vault a walk over its own
-# frontmatter rather than a reclassification. Fifteen is a compromise between
-# "the entry I wrote this morning is in my wheel" and "forty entries in an hour
-# is forty passes".
-#
-# The expensive window is hours because the two clustering stages are the ones
-# that actually cost a vault something, and because what they produce — topic
-# clusters and narrative currents over a whole corpus — does not meaningfully
-# change between one document and the next. Six is chosen so a person importing
-# a morning's worth of files pays for one clustering pass rather than one per
-# file, while a corpus that grows over a week is re-clustered several times
-# across it.
-_CHEAP_STAGE_INTERVAL = timedelta(minutes=15)
-_CLUSTERING_STAGE_INTERVAL = timedelta(hours=6)
-
-#: How long each rung stands down for after an attempt. A table for the reason
-#: :data:`LINK_STAGE_BY_PIPELINE_STAGE` is one: a stage added without an interval
-#: should fail to be schedulable rather than inherit somebody else's by falling
-#: through an ``else``.
-_STAGE_INTERVAL: Mapping[VaultPipelineStage, timedelta] = {
-    VaultPipelineStage.CLASSIFY: _CHEAP_STAGE_INTERVAL,
-    VaultPipelineStage.TEMPORAL: _CHEAP_STAGE_INTERVAL,
-    VaultPipelineStage.EMBEDDINGS: _CLUSTERING_STAGE_INTERVAL,
-    VaultPipelineStage.EDDIES: _CLUSTERING_STAGE_INTERVAL,
-    VaultPipelineStage.THREADS: _CLUSTERING_STAGE_INTERVAL,
-}
 
 # Status reads are cheap and carry no content, but a hot polling loop over a
 # minutes-long local model pass is still load. The delay grows geometrically and
@@ -423,9 +352,9 @@ def _run_budget(trigger: VaultPipelineTrigger) -> float:
     nor a test can move, which is the same reason the adapter reads its own
     deadline per call instead of capturing it.
     """
-    if trigger is VaultPipelineTrigger.DOCUMENT_IMPORT:
-        return _DEEP_RUN_BUDGET_SECONDS
-    return _JOURNAL_RUN_BUDGET_SECONDS
+    if trigger is VaultPipelineTrigger.JOURNAL_WRITE:
+        return _JOURNAL_RUN_BUDGET_SECONDS
+    return _DEEP_RUN_BUDGET_SECONDS
 
 
 def _stamps_by_stage(rows: list[VaultPipelineRun]) -> dict[str, datetime]:
@@ -485,12 +414,6 @@ async def _classification_has_landed(session: AsyncSession, user_id: int) -> boo
         .limit(1)
     )
     return result.first() is not None
-
-
-def _due(stage: VaultPipelineStage, stamps: Mapping[str, datetime], now: datetime) -> bool:
-    """Whether this stage's own window has reopened."""
-    last = stamps.get(stage.value)
-    return last is None or now - last >= _STAGE_INTERVAL[stage]
 
 
 _NOTHING_REACHED = _StageCounts()
@@ -561,7 +484,7 @@ async def _persist_follow_up_intent(
         else sqlite_insert(table)
     )
     incoming = trigger.value
-    merged = incoming if trigger is VaultPipelineTrigger.DOCUMENT_IMPORT else table.c.trigger
+    merged = kept_or_deeper(table.c.trigger, trigger)
     statement = insert.values(user_id=user_id, trigger=incoming).on_conflict_do_update(
         index_elements=[table.c.user_id],
         set_={"trigger": merged},
@@ -1325,39 +1248,6 @@ async def _reconcile_run(
     return state
 
 
-def _due_stages(
-    permitted: frozenset[VaultPipelineStage], stamps: Mapping[str, datetime], now: datetime
-) -> tuple[VaultPipelineStage, ...]:
-    """The rungs this trigger may pay for whose own windows have reopened.
-
-    Walks :data:`LADDER` rather than the permitted set, so the answer comes back
-    in the order Creek documents the passes in rather than in whatever order a
-    set happens to iterate.
-    """
-    return tuple(stage for stage in LADDER if stage in permitted and _due(stage, stamps, now))
-
-
-def _stages_to_run(
-    trigger: VaultPipelineTrigger,
-    stamps: Mapping[str, datetime],
-    now: datetime,
-    *,
-    classification_landed: bool,
-) -> tuple[VaultPipelineStage, ...]:
-    """Which rungs this pass may climb, in ladder order.
-
-    Three filters, and the third is what makes the ordering safe to rely on: the
-    trigger's depth, each stage's own window, and the requirement that a
-    classification pass has landed at some point -- in this run or an earlier
-    one. Without the third, a vault whose classification window is still closed
-    would have its clustering stages run over labels that were never written.
-    """
-    due = _due_stages(_STAGES_BY_TRIGGER[trigger], stamps, now)
-    if classification_landed or VaultPipelineStage.CLASSIFY in due:
-        return due
-    return ()
-
-
 @dataclass(frozen=True)
 class _ClassificationJoin:
     """Result of joining a snapshot, including work this caller must start."""
@@ -1379,26 +1269,6 @@ async def _observe_active_snapshot(
     await session.commit()
     await _persist_follow_up_intent(session, user_id, trigger)
     return snapshot
-
-
-def _stronger_scope_expression(
-    trigger: VaultPipelineTrigger,
-) -> str | ColumnElement[str]:
-    """Build the SQL expression merging requested, original, and joined scope."""
-    requested = trigger.value
-    if trigger is VaultPipelineTrigger.DOCUMENT_IMPORT:
-        return requested
-    document = VaultPipelineTrigger.DOCUMENT_IMPORT.value
-    return case(
-        (
-            or_(
-                col(VaultPipelineRun.trigger) == document,
-                col(VaultPipelineRun.follow_up_trigger) == document,
-            ),
-            document,
-        ),
-        else_=requested,
-    )
 
 
 async def _finish_active_join(
@@ -1472,7 +1342,7 @@ async def _join_active_classification(
         return _ClassificationJoin(joined=False)
 
     await _lock_classification_scheduler(session, user_id)
-    stronger_scope = _stronger_scope_expression(trigger)
+    stronger_scope = stronger_scope_expression(trigger)
     joined = await session.execute(
         update(VaultPipelineRun)
         .where(col(VaultPipelineRun.user_id) == user_id)
@@ -1558,7 +1428,7 @@ async def _scope_after_classification(
     await session.commit()
     successors = tuple(
         stage
-        for stage in _due_stages(_STAGES_BY_TRIGGER[trigger], stamps, datetime.now(UTC))
+        for stage in due_stages(trigger, stamps, datetime.now(UTC))
         if stage is not VaultPipelineStage.CLASSIFY
     )
     return trigger, successors
@@ -2059,6 +1929,22 @@ async def close_vault_pipeline_tasks() -> None:
     _BACKGROUND_TASKS.clear()
 
 
+async def wait_for_account_pipeline(user_id: int) -> None:
+    """Wait until no continuation for ``user_id`` is running in this process.
+
+    A climb hands each rung to the next inside one task, and a terminalized
+    classification can queue a successor the same task then adopts, so the
+    loop re-reads the table until it holds nothing live for the account.
+    Faults are the continuation's own to log; nothing is raised here.
+    """
+    while tasks := tuple(
+        task
+        for (owner, _stage), task in _BACKGROUND_TASKS.items()
+        if owner == user_id and not task.done()
+    ):
+        await asyncio.gather(*tasks, return_exceptions=True)
+
+
 async def wait_for_vault_pipeline_tasks() -> None:
     """Wait for current continuations; used by deterministic lifecycle checks."""
     tasks = tuple(_BACKGROUND_TASKS.values())
@@ -2248,7 +2134,7 @@ async def _evaluate_pipeline_stages(
     stamps = _stamps_by_stage(await _latest_attempt_per_stage(session, user_id))
     landed = await _classification_has_landed(session, user_id)
     return (
-        _stages_to_run(
+        stages_to_run(
             trigger,
             stamps,
             datetime.now(UTC),
@@ -2331,6 +2217,45 @@ async def _pipeline_stages(
         trigger,
         classification_landed=landed,
     )
+
+
+async def _bulk_pipeline_plan(session: AsyncSession, user_id: int) -> _PipelinePlan:
+    """Durably queue one window-free pass, or fold it into the classification going.
+
+    Never climbed in the caller: a bulk pass is the whole ladder over a whole
+    upload, which is minutes on a cold vault, so it goes straight to the durable
+    queue and the keyless continuation that owns, heartbeats and resumes it.
+
+    An admitted classification already going cannot see what this upload
+    landed, so the join records a ``bulk_import`` follow-up on it and its
+    terminalizer queues the pass; a queued one not yet admitted simply takes
+    the deeper scope. With nothing active, the queued row is written here,
+    under the same scheduler lock, carrying any intent another write left.
+    """
+    trigger = VaultPipelineTrigger.BULK_IMPORT
+    joined = await _join_active_classification(session, user_id, trigger)
+    if joined.joined:
+        return _PipelinePlan(queued=joined.queued)
+    await _lock_classification_scheduler(session, user_id)
+    pending = await _pending_follow_up(session, user_id, for_update=True)
+    queued = _record(
+        session,
+        _StageContext(user_id=user_id, stage=VaultPipelineStage.CLASSIFY, trigger=trigger),
+        VaultPipelineOutcome.QUEUED,
+    )
+    if pending is not None:
+        await _consume_follow_up(session, user_id)
+    await session.commit()
+    return _PipelinePlan(queued=queued)
+
+
+async def _plan_for(
+    session: AsyncSession, user_id: int, trigger: VaultPipelineTrigger
+) -> _PipelinePlan:
+    """Plan a bulk pass onto the durable queue, and every other occasion as before."""
+    if trigger is VaultPipelineTrigger.BULK_IMPORT:
+        return await _bulk_pipeline_plan(session, user_id)
+    return await _pipeline_stages(session, user_id, trigger)
 
 
 async def _recover_scheduler_conflict(
@@ -2436,7 +2361,7 @@ async def drive_vault_pipeline(
     # advertising it implements the narrower polling protocol.
     pipeline_client = cast("CreekVaultPipelineClient", client)
     try:
-        plan = await _pipeline_stages(session, user_id, trigger)
+        plan = await _plan_for(session, user_id, trigger)
         await _execute_pipeline_plan(
             session,
             pipeline_client,

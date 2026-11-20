@@ -422,6 +422,13 @@ POLICY: Mapping[str, TablePolicy] = {
         "third-party secret: leaving it behind would keep a working key to "
         "somebody else's account after they asked to be forgotten.",
     ),
+    "vaultbulkimportrun": _erase(
+        "user_id",
+        "How each of the account's bulk uploads was settled into its vault and "
+        "why a pass stopped. The vault and the documents go with the account, "
+        "so a record of their settling is a record about nobody once the "
+        "account is gone -- and it names the account directly.",
+    ),
     "vaultpipelinefollowup": _erase(
         "user_id",
         "A content-free scheduling marker saying the account's vault needs one "
