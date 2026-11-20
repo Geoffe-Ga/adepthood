@@ -233,14 +233,34 @@ const DEPLOYMENT_VAULT_CONNECTION = {
   mcp_address: null,
 } as const;
 
+/** The path of the Settings screen, which reads the vault's connection on load. */
+const SETTINGS_PATH = '/settings';
+
+/**
+ * Whether `request` is Settings' own read of the vault connection: a GET of
+ * `/vault/connection` made by the document loaded at {@link SETTINGS_PATH}.
+ *
+ * The document matters. The screen a login lands on reads the same route, and
+ * its read can still be in flight when `goto` replaces that document; matching
+ * its response then waits on a body the browser discarded with the old page
+ * ("Response body is not available … navigated away", or a read that never
+ * returns). The frame's URL is read when the request is made, so a request from
+ * the document being left is never the one awaited.
+ */
+function isSettingsVaultRead(request: Request): boolean {
+  return (
+    request.method() === 'GET' &&
+    request.url().endsWith('/vault/connection') &&
+    new URL(request.frame().url()).pathname === SETTINGS_PATH
+  );
+}
+
 /** Open "Bring in what you've written" from Settings, as a person would. */
 export async function openSeedScreen(page: Page): Promise<void> {
-  const vaultRead = page.waitForResponse(
-    (response) =>
-      response.url().endsWith('/vault/connection') && response.request().method() === 'GET',
-  );
-  await page.goto(`${frontendUrl()}/settings`);
-  const connection = await vaultRead;
+  const vaultRead = page.waitForRequest(isSettingsVaultRead);
+  await page.goto(`${frontendUrl()}${SETTINGS_PATH}`);
+  const connection = await (await vaultRead).response();
+  if (connection === null) throw new Error('Settings read the vault connection and got no answer');
   // The real server's answer, unaltered: the binding is reported as the
   // deployment source and the operator's vault address is never in it.
   expect(connection.status()).toBe(200);
