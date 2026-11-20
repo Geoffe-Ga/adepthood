@@ -19,7 +19,7 @@ import { instantAt } from './zonedClock';
  * #3097, #3728, #3747, #3762: a person with habits corrects the pass they are
  * in, then opens their next pass on a day that has not come yet, moves that day
  * from Settings, replaces it from the scaffolding, and starts it now from
- * Reorder -- and the habits laid for that pass move with it each time.
+ * Reorder -- and the habits waiting for that pass move with it each time.
  *
  * The server owns the anchor (`program_started_at`). Here the real client
  * drives the real server:
@@ -37,13 +37,14 @@ import { instantAt } from './zonedClock';
  *    from the running pass;
  *  - while the pass is pending, Settings offers that pass's day instead of a
  *    correction (which would drop it), says before saving that a later day
- *    moves the pass and its habits, and moves it with one `POST /stages/passes`
- *    -- no PUT; the habit laid for the pass moves by the same number of days,
- *    and the running pass's habit stays where it is;
+ *    moves the pass and the habits waiting for it, and moves it with one
+ *    `POST /stages/passes` -- no PUT; the locked habit laid for the pass
+ *    re-cascades from the new day at its own slot, and the unlocked habit the
+ *    person is meeting every day keeps its date;
  *  - a second scaffolding save opens on the held day and replaces it;
  *  - the Reorder modal offers the pending day too, says today starts the pass
  *    today, and starts it with one POST: the pass opens on today, nothing is
- *    pending, no PUT is sent, and again only the pass's habit moves.
+ *    pending, no PUT is sent, and again only the locked habit moves.
  *
  * The zone is pinned to UTC and checked against the server's record, and the
  * page clock is installed at midday on the host's today, so the oracle, the
@@ -58,7 +59,7 @@ const HABITS_PATH = '/habits/';
 const COMPLETIONS_PATH = '/goal_completions/';
 const HABIT_NAME = 'Dawn sit';
 /** A habit not yet begun, which each scaffolding save lays for the new pass (#3762). */
-const PASS_HABIT_NAME = 'Evening sit';
+const PASS_HABIT_NAMES = ['Evening sit', 'Night walk'];
 /** Far enough ahead that it has not begun when the first pass is held. */
 const PASS_HABIT_DAYS_AHEAD = 40;
 /** The running pass: inside the first stage. */
@@ -69,12 +70,17 @@ const FUTURE_PICK_DAYS_AHEAD = 13;
 const MOVED_PICK_DAYS_AHEAD = 17;
 /** The day a second save replaces it with. */
 const REPLACED_PICK_DAYS_AHEAD = 20;
-const MOVES_SENTENCE = 'Saving moves your next pass, and its habits, to';
+const MOVES_SENTENCE = 'Saving moves your next pass, and the habits waiting for it, to';
 const STARTS_TODAY_SENTENCE =
-  'Saving starts your next pass today and moves its habits to match; your current pass stays on Stats and progress.';
-/** The Settings edit: two 21-day stages have closed, so stage 3 is open. */
-const EDIT_DAYS_BACK = 50;
-const EDITED_STAGE = 3;
+  'Saving starts your next pass today and moves the habits waiting for it to match; your current pass stays on Stats and progress.';
+/**
+ * The Settings edit: still inside stage 1. The server auto-reveals a program
+ * habit once its stage is open, so a later stage would unlock the habit waiting
+ * for the next pass before the pass began -- and an unlocked habit keeps its
+ * date (#3762).
+ */
+const EDIT_DAYS_BACK = 15;
+const EDITED_STAGE = 1;
 /** A stage still ahead of both anchors, whose countdown the Map shows. */
 const OBSERVED_STAGE = 4;
 const OBSERVED_STAGE_OPENS_ON_DAY = STAGE_DURATIONS_DAYS.slice(0, OBSERVED_STAGE - 1).reduce(
@@ -82,7 +88,6 @@ const OBSERVED_STAGE_OPENS_ON_DAY = STAGE_DURATIONS_DAYS.slice(0, OBSERVED_STAGE
   0,
 );
 const ISO_DATE_LENGTH = 10;
-const MS_PER_DAY = 86_400_000;
 
 test.use({ timezoneId: PINNED_ZONE });
 
@@ -109,6 +114,22 @@ interface CalendarRead {
   calendar_stage: number;
   pending_pass_starts_on: string | null;
   pass_start_window: { earliest: string; latest: string } | null;
+}
+
+/** A habit row as the server holds it, in the order it lists them (`sort_order`). */
+interface HabitRow {
+  name: string;
+  start_date: string;
+  revealed: boolean;
+  is_carryover: boolean;
+}
+
+async function habitRows(page: Page, token: string): Promise<HabitRow[]> {
+  const listed = await page.request.get(`${backendUrl()}${HABITS_PATH}`, {
+    headers: bearer(token),
+  });
+  expect(listed.ok()).toBe(true);
+  return (await listed.json()) as HabitRow[];
 }
 
 /** Every habit row's start day, by name, as the server holds them. */
@@ -145,24 +166,32 @@ async function checkIn(page: Page, token: string, name: string): Promise<void> {
   expect(logged.ok(), `checking ${name} in failed`).toBe(true);
 }
 
+/** Days from a pass's first day to program slot `slot`: 21 apart, 42 for habits 9-10. */
+const slotOffset = (slot: number): number =>
+  STAGE_DURATIONS_DAYS.slice(0, slot).reduce((sum, days) => sum + days, 0);
+
 /**
- * The rows as they should stand once a pending pass moved from `from` by `days`
- * (#3762): a row starting on or after `from` was laid for the pass and moves
- * with it; an earlier one belongs to the running pass and stays.
+ * The rows as they should stand once a pending pass moves to `to` (#3762): each
+ * locked program habit -- waiting for the pass, recalculated -- lands on `to`
+ * plus its own slot's interval; an unlocked habit keeps its date whatever it
+ * is. Slots count program rows in the server's order, as the client does.
  */
-function movedWithPass(
-  rows: Record<string, string>,
-  from: string,
-  days: number,
-): Record<string, string> {
+function recalculatedFrom(rows: readonly HabitRow[], to: string): Record<string, string> {
+  let slot = 0;
   return Object.fromEntries(
-    Object.entries(rows).map(([name, day]) => [name, day >= from ? addDaysToKey(day, days) : day]),
+    rows.map((row) => {
+      const own = row.start_date.slice(0, ISO_DATE_LENGTH);
+      if (row.is_carryover) return [row.name, own];
+      const day = row.revealed ? own : addDaysToKey(to, slotOffset(slot));
+      slot += 1;
+      return [row.name, day];
+    }),
   );
 }
 
-/** Whole days from one day key to another. */
-const daysBetween = (from: string, to: string): number =>
-  Math.round((Date.parse(`${to}T00:00:00Z`) - Date.parse(`${from}T00:00:00Z`)) / MS_PER_DAY);
+/** How many rows `expected` moves, against the rows as they were. */
+const movedCount = (before: readonly HabitRow[], expected: Record<string, string>): number =>
+  before.filter((row) => expected[row.name] !== row.start_date.slice(0, ISO_DATE_LENGTH)).length;
 
 async function readCalendar(page: Page, token: string): Promise<CalendarRead> {
   const read = await page.request.get(`${backendUrl()}${PROGRAM_CALENDAR_PATH}`, {
@@ -233,7 +262,8 @@ test('a person with habits corrects their pass, then holds, moves and starts the
   const email = await signUp(page, 'program-start-date');
   const { token, timezone } = await sessionFor(page.request, email);
   expect(timezone, 'the account did not take the pinned zone').toBe(PINNED_ZONE);
-  await seedHabit(page.request, token, HABIT_NAME, todayKey);
+  // Unlocked: a habit the person is meeting every day keeps its own date (#3762).
+  await seedHabit(page.request, token, HABIT_NAME, todayKey, true);
   // The pass the person is in began RUNNING_DAYS_BACK ago (faked in the lane DB).
   setProgramAnchorDaysAgo(email, RUNNING_DAYS_BACK);
 
@@ -287,15 +317,12 @@ test('a person with habits corrects their pass, then holds, moves and starts the
     countdown(EDIT_DAYS_BACK),
   );
 
-  // The running habit has been lived, so it keeps its day; a habit not yet
-  // begun is laid for the new pass by the scaffolding save.
+  // The running habit has been lived, so the scaffolding keeps its day; a
+  // locked habit not yet begun is laid for the new pass, and waits for it.
   await checkIn(page, token, HABIT_NAME);
-  await seedHabit(
-    page.request,
-    token,
-    PASS_HABIT_NAME,
-    addDaysToKey(todayKey, PASS_HABIT_DAYS_AHEAD),
-  );
+  for (const name of PASS_HABIT_NAMES) {
+    await seedHabit(page.request, token, name, addDaysToKey(todayKey, PASS_HABIT_DAYS_AHEAD));
+  }
   // A reload reads it into the app, back on the Map it was opened from.
   await page.reload();
   await openHabitsFromMap(page);
@@ -319,7 +346,7 @@ test('a person with habits corrects their pass, then holds, moves and starts the
   // The save laid the new habit for the pass; the running pass's habit kept its day.
   const laid = await habitStarts(page, token);
   expect(laid[HABIT_NAME]).toBe(edit);
-  expect(laid[PASS_HABIT_NAME]! >= futurePick).toBe(true);
+  for (const name of PASS_HABIT_NAMES) expect(laid[name]! >= futurePick).toBe(true);
 
   // --- Habits names the day; the Map still paces the running pass.
   await expect(page.getByTestId('pass-begins-notice')).toContainText('Your next pass begins');
@@ -336,7 +363,10 @@ test('a person with habits corrects their pass, then holds, moves and starts the
   // The scaffold picker's floor rule: never the running pass's own start.
   await expect(pendingInput).toHaveAttribute('min', addDaysToKey(edit, 1));
   await expect(pendingInput).toHaveAttribute('max', held.pass_start_window!.latest);
-  const rowsBeforeMove = await habitStarts(page, token);
+  const rowsBeforeMove = await habitRows(page, token);
+  // The server unlocks a habit once its stage opens, so the Beige one is
+  // unlocked and keeps its date; the next rung still waits for the pass.
+  expect(rowsBeforeMove.some((row) => !row.revealed && row.name !== HABIT_NAME)).toBe(true);
   habitPuts.length = 0;
   const moved = addDaysToKey(todayKey, MOVED_PICK_DAYS_AHEAD);
   await pendingInput.fill(moved);
@@ -352,13 +382,13 @@ test('a person with habits corrects their pass, then holds, moves and starts the
   const movedRead = await readCalendar(page, token);
   expect(movedRead.pending_pass_starts_on).toBe(moved);
   expect(dayKeyIn(movedRead.program_started_at, PINNED_ZONE)).toBe(edit);
-  // The pass's habit moved with it by the same days; the running pass's did not (#3762).
-  const shiftedByMove = movedWithPass(rowsBeforeMove, futurePick, daysBetween(futurePick, moved));
-  expect(shiftedByMove[PASS_HABIT_NAME]).not.toBe(rowsBeforeMove[PASS_HABIT_NAME]);
-  expect(shiftedByMove[HABIT_NAME]).toBe(rowsBeforeMove[HABIT_NAME]);
+  // The locked habit re-cascaded from the new day at its slot; the unlocked one stayed (#3762).
+  const shiftedByMove = recalculatedFrom(rowsBeforeMove, moved);
+  expect(shiftedByMove[HABIT_NAME]).toBe(rowsBeforeMove[0]!.start_date.slice(0, ISO_DATE_LENGTH));
   await expect.poll(() => habitStarts(page, token)).toEqual(shiftedByMove);
-  // Only the pass's habit was written, once, after the POST.
-  expect(habitPuts).toHaveLength(1);
+  // Only the waiting habits were written, each once, after the POST.
+  expect(movedCount(rowsBeforeMove, shiftedByMove)).toBeGreaterThan(0);
+  expect(habitPuts).toHaveLength(movedCount(rowsBeforeMove, shiftedByMove));
 
   // --- A second save opens on the held day and replaces it.
   await backToMap(page);
@@ -380,9 +410,12 @@ test('a person with habits corrects their pass, then holds, moves and starts the
 
   // --- Reorder offers the pending day too; today starts the pass now.
   await expect(page.getByTestId('pass-begins-notice')).toBeVisible();
-  const rowsBeforeStart = await habitStarts(page, token);
+  const rowsBeforeStart = await habitRows(page, token);
   await openReorder(page);
   await expect(page.getByTestId('reorder-start-date-input')).toHaveCount(0);
+  // No shared "first habit" date while a pass is pending: the kept habit holds its own.
+  await expect(page.getByTestId('program-start-fixed')).toHaveCount(0);
+  await expect(page.getByTestId('reorder-pass-kept-hint')).toBeVisible();
   const reorderPass = page.getByTestId('reorder-pass-date-input');
   await expect(reorderPass).toHaveValue(replacement);
   await reorderPass.fill(todayKey);
@@ -399,12 +432,8 @@ test('a person with habits corrects their pass, then holds, moves and starts the
   expect(begun.pending_pass_starts_on).toBeNull();
   expect(dayKeyIn(begun.program_started_at, PINNED_ZONE)).toBe(todayKey);
   await expect(page.getByTestId('pass-begins-notice')).toHaveCount(0);
-  // Save Order sends the pass's habit moved onto today, once; the running habit stays.
-  const startedNow = movedWithPass(
-    rowsBeforeStart,
-    replacement,
-    daysBetween(replacement, todayKey),
-  );
-  expect(startedNow[PASS_HABIT_NAME]).not.toBe(rowsBeforeStart[PASS_HABIT_NAME]);
+  // Save Order sends the locked habit re-cascaded from today, once; the unlocked one stays.
+  const startedNow = recalculatedFrom(rowsBeforeStart, todayKey);
+  expect(movedCount(rowsBeforeStart, startedNow)).toBeGreaterThan(0);
   await expect.poll(() => habitStarts(page, token)).toEqual(startedNow);
 });
