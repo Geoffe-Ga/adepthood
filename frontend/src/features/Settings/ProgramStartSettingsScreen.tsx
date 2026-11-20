@@ -35,8 +35,9 @@ import { useProgramStore } from '@/store/useProgramStore';
  * While a next pass is pending, the screen offers that pass's day instead
  * (#3747): a correction of the running pass would drop it, so the start date is
  * shown and the pending day is saved through ``POST /stages/passes``, which
- * moves the pass to a later day or starts it now on today or earlier. No habit
- * row is re-laid by that save.
+ * moves the pass to a later day or starts it now on today or earlier. The
+ * habits laid for that pass move with it, by the same number of days (#3762);
+ * the running pass's rows are never re-laid by that save.
  */
 
 const INTRO_COPY =
@@ -214,8 +215,37 @@ const PendingPassSection = ({
 };
 
 /**
+ * A pass that has begun while its habits are still owed to it (#3762): nothing
+ * is pending any more, so there is no day to pick, only the rows to send again.
+ * The correction is not offered meanwhile -- it would re-lay rows still on the
+ * old day.
+ */
+const OwedHabitsSection = ({
+  state,
+  onSave,
+}: Pick<PendingPassSectionProps, 'state' | 'onSave'>): React.JSX.Element => (
+  <>
+    <SettingsFeedbackBanner idPrefix="pending-pass" error={state.error} status={state.status} />
+    <TouchableOpacity
+      onPress={onSave}
+      style={settingsFormStyles.primaryButton}
+      disabled={state.submitting}
+      testID="save-pending-pass-button"
+      accessibilityLabel="Move the habits to your new pass"
+      accessibilityRole="button"
+      accessibilityState={{ disabled: state.submitting, busy: state.submitting }}
+    >
+      <Text style={settingsFormStyles.primaryButtonText}>
+        {state.submitting ? 'Saving…' : 'Save'}
+      </Text>
+    </TouchableOpacity>
+  </>
+);
+
+/**
  * The pending pass's day as a form (#3747): a pick clears the last message, and
- * Save sends a POST -- never the PUT -- with no habit re-lay.
+ * Save sends a POST -- never the PUT -- then moves the pass's habits with it
+ * (#3762). Habits the pass moved without are sent again by the next Save.
  */
 function usePendingPassForm(form: SettingsFormState, tz: string) {
   const pass = usePendingPassPick(tz);
@@ -254,6 +284,37 @@ const BackLink = ({ onBack }: { onBack?: () => void }): React.JSX.Element | null
     </TouchableOpacity>
   ) : null;
 
+interface ProgramStartFormProps {
+  state: SettingsFormState;
+  range: ProgramStartRange;
+  pending: ReturnType<typeof usePendingPassForm>;
+  onChange: (_day: string) => void;
+  onSave: () => void;
+}
+
+/** The pending pass's day while one is held, its owed habits, else the correction. */
+const ProgramStartForm = ({
+  state,
+  range,
+  pending,
+  onChange,
+  onSave,
+}: ProgramStartFormProps): React.JSX.Element | null => {
+  const savePending = () => void pending.save();
+  if (pending.pass.held !== null)
+    return (
+      <PendingPassSection
+        state={state}
+        pass={pending.pass}
+        onChange={pending.onChange}
+        onSave={savePending}
+      />
+    );
+  if (pending.pass.owed) return <OwedHabitsSection state={state} onSave={savePending} />;
+  if (range.locked) return null;
+  return <PickerSection state={state} range={range} onChange={onChange} onSave={onSave} />;
+};
+
 export default function ProgramStartSettingsScreen({ navigation }: Props = {}): React.JSX.Element {
   const { userTimezone } = useAuth();
   const held = useProgramStore((s) => s.programStartDay);
@@ -288,23 +349,13 @@ export default function ProgramStartSettingsScreen({ navigation }: Props = {}): 
       <Text style={settingsFormStyles.body}>{INTRO_COPY}</Text>
       <CurrentDateCard day={held} />
       {range.locked && <Text style={settingsFormStyles.body}>{PROGRAM_START_FIXED_COPY}</Text>}
-      {pending.pass.held !== null ? (
-        <PendingPassSection
-          state={state}
-          pass={pending.pass}
-          onChange={pending.onChange}
-          onSave={() => void pending.save()}
-        />
-      ) : (
-        !range.locked && (
-          <PickerSection
-            state={state}
-            range={range}
-            onChange={onChange}
-            onSave={() => void save()}
-          />
-        )
-      )}
+      <ProgramStartForm
+        state={state}
+        range={range}
+        pending={pending}
+        onChange={onChange}
+        onSave={() => void save()}
+      />
       <BackLink onBack={onBack} />
     </ScreenScaffold>
   );

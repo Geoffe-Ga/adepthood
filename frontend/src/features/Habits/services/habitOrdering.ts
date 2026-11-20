@@ -34,7 +34,7 @@
  * paint, so stamping it makes the stored field agree with the visible one
  * instead of introducing a third answer.
  */
-import { dayKeyToInstant } from '../../../utils/dateUtils';
+import { dayKeyInTZ, dayKeyToInstant } from '../../../utils/dateUtils';
 import type { Habit } from '../Habits.types';
 import {
   calculateHabitStartDate,
@@ -145,4 +145,38 @@ export const stampPositionalOrder = (ordered: readonly Habit[]): Habit[] => {
     sort_order: index,
     stage: stages[index] ?? habit.stage,
   }));
+};
+
+/**
+ * Whether ``habit`` is being recalculated when a pending pass moves (#3762):
+ * a program habit still locked -- laid for the pass and waiting for it. A habit
+ * already unlocked is one the person is meeting every day, so it keeps its own
+ * date whatever that date is; a carryover habit's date is its history; a demo
+ * tile carries no program date at all.
+ */
+export const isRecalculated = (habit: Habit): boolean =>
+  habit.revealed === false && habit.isDemoSeed !== true && !isCarryoverHabit(habit);
+
+/**
+ * Re-cascade the habits waiting for a pending pass from its new day ``toDay``
+ * (#3762), the way the Reorder lay does (``layProgramRows``): each recalculated
+ * row keeps its program slot and lands on ``toDay`` plus that slot's interval
+ * -- 21 days apart, 42 for habits 9 and 10 -- so a row's date always matches
+ * its position, kept rows around it included. Every other row is returned as
+ * the very object passed in, as is a recalculated row already on its day, so a
+ * writer can tell what moved by identity.
+ */
+export const recalculatePassRows = (
+  habits: readonly Habit[],
+  toDay: string,
+  tz: string,
+): Habit[] => {
+  const laid = layProgramRows(habits, toDay, tz);
+  return habits.map((habit, index) => {
+    const relaid = laid[index];
+    if (relaid === undefined || !isRecalculated(habit)) return habit;
+    // Already on its day in the account zone: nothing to write.
+    const same = dayKeyInTZ(relaid.start_date, tz) === dayKeyInTZ(habit.start_date, tz);
+    return same ? habit : relaid;
+  });
 };

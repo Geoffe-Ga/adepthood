@@ -52,20 +52,34 @@ const KEPT_PASS = 'your current pass stays on Stats and progress.';
  * What saving a pending pass's day will do, said before the save (#3747): the
  * held day unchanged sends nothing; a later day moves the pass; today or an
  * earlier day starts it now, because ``POST /stages/passes`` opens a pass on
- * any day that has come.
+ * any day that has come. ``withHabits`` says the habits waiting for the pass --
+ * the locked ones, recalculated from its day -- move with it (#3762), when there
+ * are any. Unlocked habits keep their own dates, so they are not promised.
  */
-export const pendingPassSentence = (day: string, held: string, today: string): string => {
+export const pendingPassSentence = (
+  day: string,
+  held: string,
+  today: string,
+  withHabits = false,
+): string => {
   if (day === held) return nextPassNotice(day);
-  if (day > today) return `Saving moves your next pass to ${formatPassDay(day)}.`;
-  if (day === today) return `Saving starts your next pass today; ${KEPT_PASS}`;
-  return `Saving starts your next pass now, counted from ${formatPassDay(day)}; ${KEPT_PASS}`;
+  if (day > today)
+    return withHabits
+      ? `Saving moves your next pass, and the habits waiting for it, to ${formatPassDay(day)}.`
+      : `Saving moves your next pass to ${formatPassDay(day)}.`;
+  const habits = withHabits ? ' and moves the habits waiting for it to match' : '';
+  if (day === today) return `Saving starts your next pass today${habits}; ${KEPT_PASS}`;
+  const counted = `counted from ${formatPassDay(day)}${withHabits ? ',' : ''}`;
+  return `Saving starts your next pass now, ${counted}${habits}; ${KEPT_PASS}`;
 };
 
-/** The confirmation once a pending pass's new day has saved (#3747). */
-export const pendingPassSavedCopy = (day: string, today: string): string =>
-  day > today
-    ? `Saved. Your next pass now begins ${formatPassDay(day)}.`
-    : `Saved. Your new pass has begun, counted from ${formatPassDay(day)}.`;
+/** The confirmation once a pending pass's new day has saved (#3747), its waiting habits with it (#3762). */
+export const pendingPassSavedCopy = (day: string, today: string, withHabits = false): string => {
+  const habits = withHabits ? ', and the habits waiting for it moved with it' : '';
+  return day > today
+    ? `Saved. Your next pass now begins ${formatPassDay(day)}${habits}.`
+    : `Saved. Your new pass has begun, counted from ${formatPassDay(day)}${habits}.`;
+};
 
 /**
  * A pending pass's new day that never reached the server (offline, timeout,

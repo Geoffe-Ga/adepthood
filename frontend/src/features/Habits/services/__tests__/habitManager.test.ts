@@ -185,6 +185,7 @@ import {
   HABIT_ORDER_NOT_SAVED_COPY,
   HABIT_ROWS_NOT_MOVED_COPY,
   habitManager,
+  PASS_HABITS_NOT_MOVED_COPY,
 } from '../habitManager';
 import { habitSyncScopeKey } from '../habitSyncScope';
 import { MAX_CHECK_IN_REPLAY_ATTEMPTS, MIN_POISON_AGE_MS, checkInIdentity } from '../replayPolicy';
@@ -6773,6 +6774,165 @@ describe("the program start date is the server's (#3097)", () => {
       expect(outcome.kind).toBe('refused');
       expect(habitsApi.update).not.toHaveBeenCalled();
       expect(dayKeyInTZ(useHabitStore.getState().habits[0]!.start_date, 'UTC')).toBe('2026-05-01');
+    });
+  });
+});
+
+describe('the habits waiting for a rescheduled pending pass move with it (#3762)', () => {
+  const ZONE = 'UTC';
+  const { Alert } = jest.requireMock('react-native') as { Alert: { alert: jest.Mock } };
+  const update = () => habitsApi.update as jest.Mock;
+  const openPass = () => stagesApi.openPass as jest.Mock;
+  const at = (day: string) => new Date(`${day}T00:00:00Z`);
+  const startsByName = () =>
+    Object.fromEntries(
+      useHabitStore.getState().habits.map((h) => [h.name, dayKeyInTZ(h.start_date, ZONE)]),
+    );
+  /** Ids of the rows PUT so far, in order. */
+  const putIds = () => update().mock.calls.map((call) => call[0]);
+  /** Where the unlocked rows stand before any move: they never move. */
+  const KEPT = { Running: '2026-09-13', 'Unlocked later': '2027-01-21' };
+
+  beforeEach(() => {
+    useHabitStore.setState({
+      habits: [
+        // Slot 0: unlocked, met every day -- it keeps its date.
+        makeServerHabit({ id: 11, name: 'Running', start_date: at('2026-09-13'), revealed: true }),
+        // Slots 1 and 2: locked, laid for the pending pass from Nov 19.
+        makeServerHabit({
+          id: 13,
+          name: 'Waiting 1',
+          start_date: at('2026-12-10'),
+          revealed: false,
+        }),
+        makeServerHabit({
+          id: 14,
+          name: 'Waiting 2',
+          start_date: at('2026-12-31'),
+          revealed: false,
+        }),
+        // Slot 3: unlocked although dated after the pending day -- it stays put.
+        makeServerHabit({
+          id: 15,
+          name: 'Unlocked later',
+          start_date: at('2027-01-21'),
+          revealed: true,
+        }),
+      ],
+    });
+  });
+
+  describe('movePassHabits', () => {
+    it('re-cascades the locked rows from a day 21 later at their slots, PUTs each once, and leaves unlocked rows', async () => {
+      const moved = await habitManager.movePassHabits('2026-12-10', ZONE);
+
+      expect(moved).toBe(true);
+      expect(startsByName()).toEqual({
+        ...KEPT,
+        'Waiting 1': '2026-12-31',
+        'Waiting 2': '2027-01-21',
+      });
+      expect(putIds()).toEqual([13, 14]);
+      expect(update().mock.calls[0]![1]).toMatchObject({ start_date: '2026-12-31' });
+      expect(habitsApi.create).not.toHaveBeenCalled();
+    });
+
+    it('re-cascades them from a day 7 earlier the same way', async () => {
+      await habitManager.movePassHabits('2026-11-12', ZONE);
+
+      expect(startsByName()).toEqual({
+        ...KEPT,
+        'Waiting 1': '2026-12-03',
+        'Waiting 2': '2026-12-24',
+      });
+      expect(putIds()).toEqual([13, 14]);
+    });
+
+    it('puts every row back, silently, when a PUT fails', async () => {
+      update().mockRejectedValueOnce(new TypeError('Failed to fetch') as never);
+
+      const moved = await habitManager.movePassHabits('2026-12-10', ZONE);
+
+      expect(moved).toBe(false);
+      expect(startsByName()).toEqual({
+        ...KEPT,
+        'Waiting 1': '2026-12-10',
+        'Waiting 2': '2026-12-31',
+      });
+      expect(Alert.alert).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('movePendingPass', () => {
+    it('POSTs the new day, then writes the recalculated rows once', async () => {
+      const order: string[] = [];
+      openPass().mockImplementationOnce((day: unknown) => {
+        order.push(`POST ${String(day)}`);
+        return Promise.resolve({
+          program_started_at: '2026-09-13T00:00:00Z',
+          calendar_stage: 4,
+          calendar_week: 10,
+          current_stage: 4,
+          cycle_number: 1,
+          program_start_window: null,
+          days_until_start: 0,
+          pending_pass_starts_on: day,
+          pass_start_window: { earliest: '2026-09-13', latest: '2027-12-31' },
+        });
+      });
+      update().mockImplementation((id: unknown) => {
+        order.push(`PUT ${String(id)}`);
+        return Promise.resolve({});
+      });
+
+      const outcome = await habitManager.movePendingPass('2026-12-10', ZONE);
+
+      expect(outcome).toEqual({ kind: 'saved' });
+      expect(order).toEqual(['POST 2026-12-10', 'PUT 13', 'PUT 14']);
+      expect(startsByName()['Waiting 1']).toBe('2026-12-31');
+    });
+
+    it('starts the pass now and re-cascades the locked rows from the chosen day', async () => {
+      const outcome = await habitManager.movePendingPass('2026-11-15', ZONE);
+
+      expect(outcome).toEqual({ kind: 'saved' });
+      expect(openPass().mock.calls[0]![0]).toBe('2026-11-15');
+      expect(startsByName()).toEqual({
+        ...KEPT,
+        'Waiting 1': '2026-12-06',
+        'Waiting 2': '2026-12-27',
+      });
+    });
+
+    it('writes no row when the server refuses the move', async () => {
+      openPass().mockRejectedValueOnce(
+        new ApiError(422, 'pass_start_before_current_pass') as never,
+      );
+
+      const outcome = await habitManager.movePendingPass('2026-12-10', ZONE);
+
+      expect(outcome.kind).toBe('refused');
+      expect(update()).not.toHaveBeenCalled();
+      expect(startsByName()['Waiting 1']).toBe('2026-12-10');
+    });
+
+    it('writes no row when the move never reached the server', async () => {
+      openPass().mockRejectedValueOnce(new TypeError('Failed to fetch') as never);
+
+      const outcome = await habitManager.movePendingPass('2026-12-10', ZONE);
+
+      expect(outcome.kind).toBe('unsaved');
+      expect(update()).not.toHaveBeenCalled();
+      expect(startsByName()['Waiting 1']).toBe('2026-12-10');
+    });
+
+    it('says the pass moved but its habits did not when the rows are refused', async () => {
+      update().mockRejectedValueOnce(new TypeError('Failed to fetch') as never);
+
+      const outcome = await habitManager.movePendingPass('2026-12-10', ZONE);
+
+      expect(outcome).toEqual({ kind: 'rows_unsaved', message: PASS_HABITS_NOT_MOVED_COPY });
+      expect(startsByName()['Waiting 1']).toBe('2026-12-10');
     });
   });
 });

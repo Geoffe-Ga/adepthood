@@ -117,7 +117,13 @@ import {
   planHabitMerge,
   toApiPayload,
 } from './habitMerge';
-import { clampPosition, insertAt, layProgramRows, stampPositionalOrder } from './habitOrdering';
+import {
+  clampPosition,
+  insertAt,
+  layProgramRows,
+  recalculatePassRows,
+  stampPositionalOrder,
+} from './habitOrdering';
 import { habitSyncScopeKey } from './habitSyncScope';
 import {
   clearLogUnitRollbackBaseline,
@@ -1439,6 +1445,44 @@ const commitOrderedRows = async (
     () => true,
     (err: unknown) => {
       onFailure(err);
+      return false;
+    },
+  );
+};
+
+/**
+ * Copy for a pending pass the server moved whose habit rows could not follow
+ * (#3762). Saving again is safe: the move is not sent twice, and the rows are
+ * re-cascaded from the day the pass now begins.
+ */
+export const PASS_HABITS_NOT_MOVED_COPY =
+  "Your next pass moved, but its habits' start dates didn't move with it. Check your connection and save again.";
+
+/**
+ * Move the habits waiting for a pending pass with it (#3762): every row being
+ * recalculated -- a locked program habit -- is re-cascaded from ``toDay`` at
+ * its own slot's interval (``recalculatePassRows``), in the store, on disk and
+ * on the server. Only the rows that moved are PUT, each once; an unlocked habit
+ * keeps its own date whatever that date is. Resolves whether every PUT landed;
+ * a refusal puts every row back silently, for the caller to say so. Never
+ * rejects.
+ */
+const movePassHabits = async (toDay: string, zone: string): Promise<boolean> => {
+  const scope = captureHabitMutationScope();
+  if (!scope.authorized) return false;
+  const prev = getHabits();
+  const next = recalculatePassRows(prev, toDay, zone);
+  const moved = next.filter((habit, index) => habit !== prev[index]);
+  if (moved.length === 0) return true;
+  setHabits(next);
+  void persistHabits(next);
+  const updates = moved
+    .filter(isServerBackedHabit)
+    .map((habit) => habitsApi.update(habit.id, toApiPayload(habit, zone), ...scope.credentials));
+  return Promise.all(updates).then(
+    () => true,
+    () => {
+      restoreRows(prev, scope)();
       return false;
     },
   );
@@ -2789,6 +2833,33 @@ export const habitManager = {
       restoreRows(current),
     );
     return moved ? outcome : { kind: 'rows_unsaved', message: HABIT_ROWS_NOT_MOVED_COPY };
+  },
+
+  /**
+   * Re-cascade the habits waiting for a pending pass from ``toDay`` (#3762),
+   * without moving the pass: the retry after ``movePendingPass`` came back
+   * ``rows_unsaved``, whose pass already stands on ``toDay``. Resolves whether
+   * the rows landed.
+   */
+  movePassHabits: (toDay: string, tz?: string): Promise<boolean> =>
+    movePassHabits(toDay, tz ?? detectDeviceTimezone()),
+
+  /**
+   * Move a pending pass to ``toDay`` -- a later day reschedules it, today or an
+   * earlier day starts it now -- and the habits waiting for it with it (#3762).
+   * The server moves the pass first through ``POST /stages/passes``; only once
+   * it has agreed are the locked program habits re-cascaded from ``toDay``,
+   * each at its own slot's interval. An unlocked habit is never touched. A refusal or a dropped connection writes no row and is returned
+   * for the caller to show; when the pass moved but the rows could not follow,
+   * the rows are put back and ``rows_unsaved`` is returned -- never ``saved``.
+   */
+  movePendingPass: async (toDay: string, tz?: string): Promise<ProgramStartChangeOutcome> => {
+    const zone = tz ?? detectDeviceTimezone();
+    const outcome = await commitPassStart(toDay, { tz: zone });
+    if (outcome.kind !== 'saved') return outcome;
+    return (await movePassHabits(toDay, zone))
+      ? outcome
+      : { kind: 'rows_unsaved', message: PASS_HABITS_NOT_MOVED_COPY };
   },
 
   revealAllHabits: (tz?: string): void => {

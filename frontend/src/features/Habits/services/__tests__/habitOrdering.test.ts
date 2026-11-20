@@ -1,8 +1,16 @@
 /* eslint-env jest */
 import { describe, expect, it } from '@jest/globals';
 
+import { dayKeyInTZ } from '../../../../utils/dateUtils';
 import type { Habit } from '../../Habits.types';
-import { displaySlots, insertAt, stagePreview, stampPositionalOrder } from '../habitOrdering';
+import {
+  displaySlots,
+  insertAt,
+  isRecalculated,
+  recalculatePassRows,
+  stagePreview,
+  stampPositionalOrder,
+} from '../habitOrdering';
 
 /** A habit row with only the fields ordering cares about. */
 function row(overrides: Partial<Habit> & { id: number }): Habit {
@@ -101,5 +109,66 @@ describe('stampPositionalOrder — sort_order globally, stage by partition', () 
     stampPositionalOrder([rows[1] as Habit, rows[0] as Habit]);
 
     expect(rows.map((h) => h.stage)).toEqual(['Beige', 'Purple']);
+  });
+});
+
+describe('recalculatePassRows — the habits waiting for a pass cascade from its day (#3762)', () => {
+  const ZONE = 'UTC';
+  const NEW = '2026-12-10';
+  const at = (day: string): Date => new Date(`${day}T00:00:00Z`);
+  const keys = (habits: readonly Habit[]) => habits.map((h) => dayKeyInTZ(h.start_date, ZONE));
+  const locked = (id: number, day: string, extra: Partial<Habit> = {}) =>
+    row({ id, start_date: at(day), revealed: false, ...extra });
+  const unlocked = (id: number, day: string) => row({ id, start_date: at(day), revealed: true });
+
+  it('re-cascades each locked row from the new day at its own slot, keeping unlocked rows', () => {
+    const rows = [
+      // Slot 0: unlocked and being met every day -- it keeps its date.
+      unlocked(1, '2026-09-13'),
+      // Slots 1 and 2: locked, laid for the pass from the old day.
+      locked(2, '2026-12-10'),
+      locked(3, '2026-12-31'),
+      // Slot 3: unlocked although dated after the old day -- it stays put.
+      unlocked(4, '2027-01-21'),
+    ];
+
+    const moved = recalculatePassRows(rows, '2027-01-07', ZONE);
+
+    // Slot k lands on NEW + its interval: 21 days for slot 1, 42 for slot 2.
+    expect(keys(moved)).toEqual(['2026-09-13', '2027-01-28', '2027-02-18', '2027-01-21']);
+    expect(moved[0]).toBe(rows[0]);
+    expect(moved[3]).toBe(rows[3]);
+  });
+
+  it('starts the first locked row on the new day when it holds slot 0', () => {
+    const rows = [locked(1, '2026-11-19'), locked(2, '2026-12-10')];
+
+    expect(keys(recalculatePassRows(rows, NEW, ZONE))).toEqual(['2026-12-10', '2026-12-31']);
+  });
+
+  it('spaces habits 9 and 10 42 days apart, like the Reorder lay', () => {
+    const rows = Array.from({ length: 10 }, (_, index) =>
+      index < 8 ? unlocked(index + 1, '2026-01-01') : locked(index + 1, '2026-01-01'),
+    );
+
+    const moved = keys(recalculatePassRows(rows, NEW, ZONE));
+
+    // 8 x 21 days to slot 8, then 42 more to slot 9.
+    expect(moved.slice(8)).toEqual(['2027-05-27', '2027-07-08']);
+    expect(moved.slice(0, 8)).toEqual(Array(8).fill('2026-01-01'));
+  });
+
+  it('leaves demo tiles, carryover rows and rows already on their day alone', () => {
+    const demo = locked(1, '2026-01-01', { isDemoSeed: true });
+    const carry = locked(2, '2025-06-01', { is_carryover: true });
+    const onDay = locked(3, NEW);
+
+    const moved = recalculatePassRows([carry, onDay, demo], NEW, ZONE);
+
+    expect(isRecalculated(demo)).toBe(false);
+    expect(isRecalculated(carry)).toBe(false);
+    expect(isRecalculated(unlocked(4, NEW))).toBe(false);
+    expect(isRecalculated(onDay)).toBe(true);
+    moved.forEach((habit, index) => expect(habit).toBe([carry, onDay, demo][index]));
   });
 });
