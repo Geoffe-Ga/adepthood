@@ -392,6 +392,12 @@ POLICY: Mapping[str, TablePolicy] = {
         "user_id",
         "Where the account had reached in the 36 weeks, and the Course high-water mark.",
     ),
+    "uploadreceipt": _erase(
+        "user_id",
+        "The account's record of which documents it sent to its vault and how "
+        "each settled: filenames it chose and opaque refs. Filenames are the "
+        "account's own words, so they go with it.",
+    ),
     "user": TablePolicy(
         disposition=Disposition.ERASE,
         rationale=(

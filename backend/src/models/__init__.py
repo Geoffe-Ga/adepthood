@@ -56,6 +56,7 @@ from .restore_marker import RestoreMarker
 from .revoked_token import RevokedToken
 from .stage_content import StageContent
 from .stage_progress import StageProgress
+from .upload_receipt import UploadReceipt
 from .user import User
 from .user_depth_preferences import UserDepthPreferences
 from .user_practice import UserPractice
@@ -136,6 +137,7 @@ __all__ = [
     "StageProgress",
     "UnlockKind",
     "UnlockSource",
+    "UploadReceipt",
     "User",
     "UserDepthPreferences",
     "UserPractice",

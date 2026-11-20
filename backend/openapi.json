@@ -10748,6 +10748,71 @@
         "title": "StagePromptsResponse",
         "type": "object"
       },
+      "StageRunResponse": {
+        "additionalProperties": false,
+        "description": "One ontologization pass adepthood drove on this account's vault.\n\n``trigger`` is what occasioned it (``journal_write``, ``document_import``,\nor another trigger as they are added), ``null`` on a run recorded before\ntriggers were. ``emitted`` is what the stage produced -- fragments\nclassified, or links, eddies or threads -- and ``fragments_lost`` the\nfragments it dropped. ``failure_code`` is a published token on a failed run\nthat named one.",
+        "properties": {
+          "emitted": {
+            "title": "Emitted",
+            "type": "integer"
+          },
+          "failure_code": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Failure Code"
+          },
+          "fragments_lost": {
+            "title": "Fragments Lost",
+            "type": "integer"
+          },
+          "fragments_seen": {
+            "title": "Fragments Seen",
+            "type": "integer"
+          },
+          "outcome": {
+            "title": "Outcome",
+            "type": "string"
+          },
+          "ran_at": {
+            "format": "date-time",
+            "title": "Ran At",
+            "type": "string"
+          },
+          "stage": {
+            "title": "Stage",
+            "type": "string"
+          },
+          "trigger": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Trigger"
+          }
+        },
+        "required": [
+          "trigger",
+          "stage",
+          "outcome",
+          "failure_code",
+          "fragments_seen",
+          "emitted",
+          "fragments_lost",
+          "ran_at"
+        ],
+        "title": "StageRunResponse",
+        "type": "object"
+      },
       "SuggestionStatus": {
         "description": "The accept→dismiss lifecycle of a suggestion.\n\n``pending`` is undecided; ``accepted`` logged the completion; ``dismissed``\nwas declined by the user. A decided suggestion is terminal.",
         "enum": [
@@ -11222,6 +11287,78 @@
           "classification"
         ],
         "title": "UploadDocumentRequest",
+        "type": "object"
+      },
+      "UploadReceiptResponse": {
+        "additionalProperties": false,
+        "description": "One document this account sent to its vault, and how it settled.\n\n``destination`` and ``vault_status`` are the import's own answer, persisted\n(``vault``; ``accepted`` and the three ways it was not). ``batch`` is the\nsame opaque value for every document of one folder import, and ``null`` for\na single file; it groups an import without naming its folder. ``landed_in`` is the\nfolder Creek reports the document's fragment in, or ``null`` when Creek did\nnot say (an older vault, an outage, or an upload past its recent window).",
+        "properties": {
+          "batch": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Batch"
+          },
+          "destination": {
+            "title": "Destination",
+            "type": "string"
+          },
+          "filename": {
+            "title": "Filename",
+            "type": "string"
+          },
+          "id": {
+            "title": "Id",
+            "type": "integer"
+          },
+          "landed_at": {
+            "format": "date-time",
+            "title": "Landed At",
+            "type": "string"
+          },
+          "landed_in": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Landed In"
+          },
+          "vault_ref": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Vault Ref"
+          },
+          "vault_status": {
+            "title": "Vault Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "filename",
+          "batch",
+          "destination",
+          "vault_status",
+          "vault_ref",
+          "landed_in",
+          "landed_at"
+        ],
+        "title": "UploadReceiptResponse",
         "type": "object"
       },
       "UsageResponse": {
@@ -12080,6 +12217,168 @@
         "title": "VaultDisposition",
         "type": "object"
       },
+      "VaultDocumentResponse": {
+        "additionalProperties": false,
+        "description": "One of the account's recent uploads, as Creek reports it.",
+        "properties": {
+          "filename": {
+            "title": "Filename",
+            "type": "string"
+          },
+          "fragment_count": {
+            "title": "Fragment Count",
+            "type": "integer"
+          },
+          "landed_in": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Landed In"
+          },
+          "stages": {
+            "items": {
+              "$ref": "#/components/schemas/VaultStageResponse"
+            },
+            "title": "Stages",
+            "type": "array"
+          }
+        },
+        "required": [
+          "filename",
+          "landed_in",
+          "fragment_count",
+          "stages"
+        ],
+        "title": "VaultDocumentResponse",
+        "type": "object"
+      },
+      "VaultDocumentStage": {
+        "description": "One stage a whole-vault pass may have run over an uploaded document.",
+        "enum": [
+          "ingested",
+          "classified",
+          "praxis_scanned",
+          "linked:embeddings",
+          "linked:temporal",
+          "linked:eddies",
+          "linked:threads"
+        ],
+        "title": "VaultDocumentStage",
+        "type": "string"
+      },
+      "VaultFolderResponse": {
+        "additionalProperties": false,
+        "description": "One ontology folder in the vault: how many notes, and who fills it.",
+        "properties": {
+          "count": {
+            "title": "Count",
+            "type": "integer"
+          },
+          "last_written_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Written At"
+          },
+          "path": {
+            "title": "Path",
+            "type": "string"
+          },
+          "writer": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Writer"
+          },
+          "writer_reason": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/VaultFolderWriterlessReason"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "path",
+          "count",
+          "last_written_at",
+          "writer",
+          "writer_reason"
+        ],
+        "title": "VaultFolderResponse",
+        "type": "object"
+      },
+      "VaultFolderWriterlessReason": {
+        "description": "Why a scaffolded folder has no subsystem that fills it (Creek's closed set).\n\nAttributes:\n    CONTAINER: The folder only holds other folders.\n    OWNER_CURATED: The owner puts things here by hand; Creek never does.\n    INDEXED_AT_PARENT: Its notes are counted on the parent folder's index.\n    TEMPLATE_EXAMPLE: A scaffolded example, not a place writing lands.",
+        "enum": [
+          "container",
+          "owner_curated",
+          "indexed_at_parent",
+          "template_example"
+        ],
+        "title": "VaultFolderWriterlessReason",
+        "type": "string"
+      },
+      "VaultJobResponse": {
+        "additionalProperties": false,
+        "description": "One of the vault's newest durable pipeline jobs.",
+        "properties": {
+          "failure_code": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Failure Code"
+          },
+          "kind": {
+            "$ref": "#/components/schemas/VaultStatusJobKind"
+          },
+          "method": {
+            "title": "Method",
+            "type": "string"
+          },
+          "state": {
+            "$ref": "#/components/schemas/VaultStatusJobState"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "title": "Updated At",
+            "type": "string"
+          }
+        },
+        "required": [
+          "kind",
+          "method",
+          "state",
+          "failure_code",
+          "updated_at"
+        ],
+        "title": "VaultJobResponse",
+        "type": "object"
+      },
       "VaultKeyProvider": {
         "description": "A vendor whose writer-supplied key a managed vault will spend (Creek contract 0.18).\n\nCreek-Vault's ADR-0015 (Creek-Vault#1873) lets a managed vault answer OPEN and\nPERSONAL work with the writer's own Anthropic or OpenAI key, sent per\nrequest. A vault lists the vendors it accepts in its handshake's\n``request_key_providers``; anything else on the wire is dropped at the parse\nboundary rather than trusted.",
         "enum": [
@@ -12101,6 +12400,64 @@
           }
         },
         "title": "VaultKeyVendorsResponse",
+        "type": "object"
+      },
+      "VaultPipelineResponse": {
+        "additionalProperties": false,
+        "description": "The whole dashboard read.\n\n``next_before`` is the cursor for the next page of ``recent_uploads``\n(pass it back as ``?before=``), or ``null`` on the last page.",
+        "properties": {
+          "next_before": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Next Before"
+          },
+          "recent_uploads": {
+            "items": {
+              "$ref": "#/components/schemas/UploadReceiptResponse"
+            },
+            "title": "Recent Uploads",
+            "type": "array"
+          },
+          "stage_runs": {
+            "items": {
+              "$ref": "#/components/schemas/StageRunResponse"
+            },
+            "title": "Stage Runs",
+            "type": "array"
+          },
+          "vault": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/VaultSnapshotResponse"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "vault_status": {
+            "$ref": "#/components/schemas/VaultStatusReach"
+          },
+          "vault_unreachable": {
+            "title": "Vault Unreachable",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "recent_uploads",
+          "next_before",
+          "stage_runs",
+          "vault",
+          "vault_status",
+          "vault_unreachable"
+        ],
+        "title": "VaultPipelineResponse",
         "type": "object"
       },
       "VaultPraxisKind": {
@@ -12154,6 +12511,110 @@
         ],
         "title": "VaultReachabilityResponse",
         "type": "object"
+      },
+      "VaultSnapshotResponse": {
+        "additionalProperties": false,
+        "description": "Creek's half: folders, recent uploads, the withheld count and jobs.",
+        "properties": {
+          "documents": {
+            "items": {
+              "$ref": "#/components/schemas/VaultDocumentResponse"
+            },
+            "title": "Documents",
+            "type": "array"
+          },
+          "documents_withheld": {
+            "title": "Documents Withheld",
+            "type": "integer"
+          },
+          "folders": {
+            "items": {
+              "$ref": "#/components/schemas/VaultFolderResponse"
+            },
+            "title": "Folders",
+            "type": "array"
+          },
+          "jobs": {
+            "items": {
+              "$ref": "#/components/schemas/VaultJobResponse"
+            },
+            "title": "Jobs",
+            "type": "array"
+          }
+        },
+        "required": [
+          "folders",
+          "documents",
+          "documents_withheld",
+          "jobs"
+        ],
+        "title": "VaultSnapshotResponse",
+        "type": "object"
+      },
+      "VaultStageOutcome": {
+        "description": "How a stage went for one document.\n\nAttributes:\n    OK: The stage covered the document cleanly.\n    PARTIAL: It completed but left work for a retry.\n    FAILED: It was attempted and refused, with no later success.",
+        "enum": [
+          "ok",
+          "partial",
+          "failed"
+        ],
+        "title": "VaultStageOutcome",
+        "type": "string"
+      },
+      "VaultStageResponse": {
+        "additionalProperties": false,
+        "description": "One stage stamp on one document.",
+        "properties": {
+          "at": {
+            "format": "date-time",
+            "title": "At",
+            "type": "string"
+          },
+          "outcome": {
+            "$ref": "#/components/schemas/VaultStageOutcome"
+          },
+          "stage": {
+            "$ref": "#/components/schemas/VaultDocumentStage"
+          }
+        },
+        "required": [
+          "stage",
+          "at",
+          "outcome"
+        ],
+        "title": "VaultStageResponse",
+        "type": "object"
+      },
+      "VaultStatusJobKind": {
+        "description": "Which pass a durable pipeline job is.",
+        "enum": [
+          "classification",
+          "link"
+        ],
+        "title": "VaultStatusJobKind",
+        "type": "string"
+      },
+      "VaultStatusJobState": {
+        "description": "Where a durable pipeline job stands, as Creek reads it.",
+        "enum": [
+          "queued",
+          "running",
+          "succeeded",
+          "failed"
+        ],
+        "title": "VaultStatusJobState",
+        "type": "string"
+      },
+      "VaultStatusReach": {
+        "description": "Whether Creek's half of the answer could be read, and if not, why.\n\nAttributes:\n    OK: ``vault`` carries Creek's answer.\n    NOT_CONNECTED: The account has no vault; there is nothing to ask.\n    UNREACHABLE: The vault is connected but could not be read right now.\n    UPDATE_NEEDED: The vault answers, but on an image older than the\n        status read (contract 0.34). It needs an update to show this.",
+        "enum": [
+          "ok",
+          "not_connected",
+          "unreachable",
+          "update_needed"
+        ],
+        "title": "VaultStatusReach",
+        "type": "string"
       },
       "VaultTeardownStatus": {
         "description": "Content-free reconciliation state visible only to operations.\n\n``pending_since`` is when the teardown was *requested*, not when it was last\nretried: a stuck deletion keeps its true age across every retry, which is\nthe one number an operator triaging it needs (#3075).",
@@ -36266,6 +36727,136 @@
           }
         },
         "summary": "Check Vault Connection",
+        "tags": [
+          "vault"
+        ]
+      }
+    },
+    "/vault/pipeline": {
+      "get": {
+        "description": "This account's upload receipts, its stage runs, and its vault's own status.\n\nAlways a ``200``: a vault that is absent, out, or too old to answer leaves\n``vault`` ``null`` and says which in ``vault_status`` (``vault_unreachable``\nis the outage case), so the dashboard renders a sentence, never an error.",
+        "operationId": "read_vault_pipeline_status_vault_pipeline_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 100,
+              "maximum": 100,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "before",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maximum": 2147483647,
+                  "minimum": 1,
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Before"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/VaultPipelineResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "The request body could not be parsed, or a value it carried was refused."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "No usable credential was presented."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "The caller is authenticated but does not own the resource."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "No such resource -- or none this caller is allowed to see."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ValidationErrorResponse"
+                }
+              }
+            },
+            "description": "The request failed validation -- an array of rejected fields -- or a check applied after the schema refused it, as one snake_case code."
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "The caller went past a rate limit."
+          }
+        },
+        "summary": "Read Vault Pipeline Status",
         "tags": [
           "vault"
         ]

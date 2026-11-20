@@ -90,6 +90,7 @@ from routers.users import router as users_router
 from routers.vault_activation import router as vault_activation_router
 from routers.vault_agents import router as vault_agents_router
 from routers.vault_config import router as vault_config_router
+from routers.vault_pipeline import router as vault_pipeline_router
 from routers.vault_provisioning_internal import router as vault_provisioning_internal_router
 from seed_content import seed_content
 from seed_practice_recipes import seed_practice_recipes
@@ -1352,6 +1353,7 @@ app.include_router(invitations_router)
 app.include_router(metta_return_router)
 app.include_router(vault_config_router)
 app.include_router(vault_agents_router)
+app.include_router(vault_pipeline_router)
 app.include_router(vault_activation_router)
 app.include_router(vault_provisioning_internal_router)
 app.include_router(corpus_router)

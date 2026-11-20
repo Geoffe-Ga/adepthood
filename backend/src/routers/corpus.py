@@ -153,6 +153,7 @@ from services.creek_vault_pipeline import VaultPipelineTrigger, drive_vault_pipe
 from services.creek_vault_relay import forwarding_provider_key
 from services.creek_vault_upload import FolderSource, UploadedDocument
 from services.creek_vault_upload_limits import ManagedUploadTooLargeError
+from services.upload_receipts import record_upload_receipt
 from services.vault_bulk_import_run import find_run as find_bulk_import_run
 from services.vault_bulk_import_run import start_or_join as start_or_join_bulk_import
 from services.voice_readiness import VoiceReadiness, load_voice_readiness
@@ -565,23 +566,22 @@ async def import_corpus_document(
     ``POST /import/complete``.
     """
     guard_document_payload(payload.content_base64)
+    document = UploadedDocument(
+        owner_user_id=user_id,
+        filename=payload.filename,
+        content_base64=payload.content_base64,
+        classification=payload.classification,
+        created_at=datetime.now(UTC),
+        source=_folder_source(payload),
+        run_id=payload.upload_run,
+    )
     async with hold_account(session, user_id):
         await ensure_account_live(session, user_id)
         try:
-            result = await import_document(
-                vault.client,
-                UploadedDocument(
-                    owner_user_id=user_id,
-                    filename=payload.filename,
-                    content_base64=payload.content_base64,
-                    classification=payload.classification,
-                    created_at=datetime.now(UTC),
-                    source=_folder_source(payload),
-                    run_id=payload.upload_run,
-                ),
-            )
+            result = await import_document(vault.client, document)
         except ManagedUploadTooLargeError:
             raise payload_too_large("managed_document_too_large") from None
+        record_upload_receipt(session, document, result)
         await session.commit()
         if _drives_inline(payload, result):
             with forwarding_provider_key(vault.relay_key):

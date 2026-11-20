@@ -79,12 +79,14 @@ from models.prompt_dismissal import PromptDismissal
 from models.prompt_response import PromptResponse
 from models.stage_content import StageContent
 from models.stage_progress import StageProgress
+from models.upload_receipt import UploadReceipt
 from models.user import User
 from models.user_practice import UserPractice
 from models.user_ui_flags import UserUiFlags
 from models.user_vault_config import UserVaultConfig
 from models.vault_activation import VaultActivation, VaultActivationState
 from models.vault_bulk_import_run import VaultBulkImportRun
+from models.vault_pipeline_run import VaultPipelineRun
 from security.idempotency import hash_idem_key
 from services import corpus_sort_run, vault_bulk_import_run
 from services import frequency_classification as fc
@@ -3640,3 +3642,104 @@ async def test_idor_a_bulk_import_batch_id_reaches_only_the_callers_own_run(
         (alice_id, batch_id, 2),
         (bob_id, batch_id, 7),
     ]
+
+
+_PIPELINE_STATUS_SLICE = Path(__file__).parent.parent / "fixtures" / "creek_pipeline_status_v034"
+_ALICE_RECEIPT_NAME = "alice-only-divorce-notes-7c3e.md"
+
+
+@pytest.mark.asyncio
+async def test_idor_vault_pipeline_shows_only_the_callers_receipts_runs_and_vault(
+    async_client: AsyncClient,
+    db_session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Bob's dashboard is his receipts, runs and vault, and nothing of Alice's (#3775).
+
+    ``GET /vault/pipeline`` takes no account or vault id. Its one id-shaped
+    parameter, ``before``, is a cursor compared only against rows already
+    filtered to the caller, so Bob naming a cursor past Alice's receipt -- with
+    her ``user_id`` smuggled in beside it -- still reads only his own (none).
+    Her stage runs are not his, the only vault dialled is his, under his key,
+    and the read writes no row.
+    """
+    alice_key = "alice-pipeline-key-0123456789"  # pragma: allowlist secret
+    bob_key = "bob-pipeline-key-9876543210"  # pragma: allowlist secret
+    _alice_headers, alice_id = await oauth_flow.signup(async_client, "alice_pipeline")
+    bob_headers, bob_id = await oauth_flow.signup(async_client, "bob_pipeline")
+    await _ready_managed_vault(db_session, alice_id, "alice-pipeline", alice_key)
+    await _ready_managed_vault(db_session, bob_id, "bob-pipeline", bob_key)
+    alice_receipt = UploadReceipt(
+        user_id=alice_id,
+        filename=_ALICE_RECEIPT_NAME,
+        external_id="adepthood-upload-" + "a" * 32,
+        vault_ref="frag-alice",
+        destination="vault",
+        vault_status="accepted",
+    )
+    db_session.add(alice_receipt)
+    db_session.add(
+        VaultPipelineRun(
+            user_id=alice_id,
+            stage="eddies",
+            outcome="completed",
+            trigger="document_import",
+            fragments_seen=1,
+            fragments_touched=1,
+            fragments_lost=0,
+        )
+    )
+    await db_session.commit()
+    await db_session.refresh(alice_receipt)
+    assert alice_receipt.id is not None
+    capabilities = json.loads(
+        (_PIPELINE_STATUS_SLICE / "examples" / "capabilities" / "success.json").read_bytes()
+    )
+    empty = json.loads((_PIPELINE_STATUS_SLICE / "pipeline-status" / "empty.json").read_bytes())
+    dialled: list[tuple[str, str | None]] = []
+
+    def _vault(request: httpx.Request) -> httpx.Response:
+        dialled.append((request.url.host, request.headers.get("authorization")))
+        if request.url.path.endswith("/capabilities"):
+            return httpx.Response(HTTPStatus.OK, json=capabilities)
+        return httpx.Response(HTTPStatus.OK, json=empty)
+
+    def _build(url: str, api_key: str, *, managed: bool) -> HttpCreekVaultClient:
+        return HttpCreekVaultClient(
+            url,
+            api_key,
+            http_client=httpx.AsyncClient(transport=httpx.MockTransport(_vault)),
+            managed=managed,
+        )
+
+    async def _dialable(_session: AsyncSession, _vault_url: str) -> bool:
+        return False
+
+    monkeypatch.setattr("services.creek_vault_stored_client.build_connected_vault_client", _build)
+    monkeypatch.setattr("services.creek_vault_stored_client.stored_host_is_undialable", _dialable)
+
+    async def _counts() -> tuple[int, int]:
+        receipts = (
+            await db_session.execute(select(func.count()).select_from(UploadReceipt))
+        ).scalar_one()
+        runs = (
+            await db_session.execute(select(func.count()).select_from(VaultPipelineRun))
+        ).scalar_one()
+        return int(receipts), int(runs)
+
+    before_counts = await _counts()
+
+    response = await async_client.get(
+        "/vault/pipeline",
+        params={"user_id": alice_id, "before": alice_receipt.id + 1},
+        headers=bob_headers,
+    )
+
+    assert response.status_code == HTTPStatus.OK
+    body = response.json()
+    assert body["recent_uploads"] == []
+    assert body["stage_runs"] == []
+    assert body["vault_status"] == "ok"
+    assert _ALICE_RECEIPT_NAME not in response.text
+    assert set(dialled) == {("v-bob-pipeline.vaults.example", f"Bearer {bob_key}")}
+    assert await _counts() == before_counts
