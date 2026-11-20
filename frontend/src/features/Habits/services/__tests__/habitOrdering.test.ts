@@ -6,8 +6,8 @@ import type { Habit } from '../../Habits.types';
 import {
   displaySlots,
   insertAt,
-  isPassRow,
-  shiftPassRows,
+  isRecalculated,
+  recalculatePassRows,
   stagePreview,
   stampPositionalOrder,
 } from '../habitOrdering';
@@ -112,54 +112,63 @@ describe('stampPositionalOrder — sort_order globally, stage by partition', () 
   });
 });
 
-describe('shiftPassRows — the habits move with a rescheduled pass (#3762)', () => {
-  const ZONE = 'America/New_York';
-  const OLD = '2026-11-19';
-  /** An account-zone midnight, the way the server stores a row's start. */
-  const midnight = (day: string): Date =>
-    new Date(new Date(`${day}T00:00:00Z`).getTime() + 5 * 60 * 60 * 1000);
+describe('recalculatePassRows — the habits waiting for a pass cascade from its day (#3762)', () => {
+  const ZONE = 'UTC';
+  const NEW = '2026-12-10';
+  const at = (day: string): Date => new Date(`${day}T00:00:00Z`);
   const keys = (habits: readonly Habit[]) => habits.map((h) => dayKeyInTZ(h.start_date, ZONE));
-  const ROWS = [
-    // The running pass: began before the pending day.
-    row({ id: 1, start_date: midnight('2026-09-13') }),
-    row({ id: 2, start_date: midnight('2026-11-18') }),
-    // Laid for the pass: from the pending day on, 21 days apart.
-    row({ id: 3, start_date: midnight(OLD) }),
-    row({ id: 4, start_date: midnight('2026-12-10') }),
-  ];
+  const locked = (id: number, day: string, extra: Partial<Habit> = {}) =>
+    row({ id, start_date: at(day), revealed: false, ...extra });
+  const unlocked = (id: number, day: string) => row({ id, start_date: at(day), revealed: true });
 
-  it('moves every row on or after the old day by +21 days and leaves earlier rows alone', () => {
-    const shifted = shiftPassRows(ROWS, OLD, '2026-12-10', ZONE);
+  it('re-cascades each locked row from the new day at its own slot, keeping unlocked rows', () => {
+    const rows = [
+      // Slot 0: unlocked and being met every day -- it keeps its date.
+      unlocked(1, '2026-09-13'),
+      // Slots 1 and 2: locked, laid for the pass from the old day.
+      locked(2, '2026-12-10'),
+      locked(3, '2026-12-31'),
+      // Slot 3: unlocked although dated after the old day -- it stays put.
+      unlocked(4, '2027-01-21'),
+    ];
 
-    expect(keys(shifted)).toEqual(['2026-09-13', '2026-11-18', '2026-12-10', '2026-12-31']);
-    // Unmoved rows are the very objects passed in, so a writer can tell them apart.
-    expect(shifted[0]).toBe(ROWS[0]);
-    expect(shifted[1]).toBe(ROWS[1]);
-    expect(shifted.map((h) => h.id)).toEqual([1, 2, 3, 4]);
+    const moved = recalculatePassRows(rows, '2027-01-07', ZONE);
+
+    // Slot k lands on NEW + its interval: 21 days for slot 1, 42 for slot 2.
+    expect(keys(moved)).toEqual(['2026-09-13', '2027-01-28', '2027-02-18', '2027-01-21']);
+    expect(moved[0]).toBe(rows[0]);
+    expect(moved[3]).toBe(rows[3]);
   });
 
-  it('moves them back by 7 calendar days, across the DST change, keeping the time of day', () => {
-    const late = [row({ id: 5, start_date: midnight('2026-11-05') })];
+  it('starts the first locked row on the new day when it holds slot 0', () => {
+    const rows = [locked(1, '2026-11-19'), locked(2, '2026-12-10')];
 
-    const shifted = shiftPassRows(late, '2026-11-05', '2026-10-29', ZONE);
-
-    expect(keys(shifted)).toEqual(['2026-10-29']);
-    // Still the account-zone midnight, although New York changed offset between.
-    expect(new Date(shifted[0]!.start_date).toISOString()).toBe('2026-10-29T04:00:00.000Z');
+    expect(keys(recalculatePassRows(rows, NEW, ZONE))).toEqual(['2026-12-10', '2026-12-31']);
   });
 
-  it('moves nothing when the day does not change', () => {
-    const shifted = shiftPassRows(ROWS, OLD, OLD, ZONE);
+  it('spaces habits 9 and 10 42 days apart, like the Reorder lay', () => {
+    const rows = Array.from({ length: 10 }, (_, index) =>
+      index < 8 ? unlocked(index + 1, '2026-01-01') : locked(index + 1, '2026-01-01'),
+    );
 
-    shifted.forEach((habit, index) => expect(habit).toBe(ROWS[index]));
+    const moved = keys(recalculatePassRows(rows, NEW, ZONE));
+
+    // 8 x 21 days to slot 8, then 42 more to slot 9.
+    expect(moved.slice(8)).toEqual(['2027-05-27', '2027-07-08']);
+    expect(moved.slice(0, 8)).toEqual(Array(8).fill('2026-01-01'));
   });
 
-  it('leaves demo tiles and undated rows alone', () => {
-    const demo = row({ id: 6, start_date: midnight('2026-12-01'), isDemoSeed: true });
-    const undated = row({ id: 7, start_date: new Date('not a date') });
+  it('leaves demo tiles, carryover rows and rows already on their day alone', () => {
+    const demo = locked(1, '2026-01-01', { isDemoSeed: true });
+    const carry = locked(2, '2025-06-01', { is_carryover: true });
+    const onDay = locked(3, NEW);
 
-    expect(isPassRow(demo, OLD, ZONE)).toBe(false);
-    expect(isPassRow(undated, OLD, ZONE)).toBe(false);
-    expect(shiftPassRows([demo, undated], OLD, '2026-12-10', ZONE)).toEqual([demo, undated]);
+    const moved = recalculatePassRows([carry, onDay, demo], NEW, ZONE);
+
+    expect(isRecalculated(demo)).toBe(false);
+    expect(isRecalculated(carry)).toBe(false);
+    expect(isRecalculated(unlocked(4, NEW))).toBe(false);
+    expect(isRecalculated(onDay)).toBe(true);
+    moved.forEach((habit, index) => expect(habit).toBe([carry, onDay, demo][index]));
   });
 });

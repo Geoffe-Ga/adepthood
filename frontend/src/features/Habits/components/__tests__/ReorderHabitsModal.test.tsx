@@ -1663,14 +1663,19 @@ describe('ReorderHabitsModal — a pending pass is rescheduled, not locked (#374
     rows.map((row) => dayKeyInTZ(new Date(row.start_date), DEVICE_ZONE));
 
   /** The scaffolding save that held the pass laid its rows from the pending day. */
-  const PENDING_ROWS = layProgramRows(HABITS, pendingDay, DEVICE_ZONE);
+  /**
+   * The scaffolding save that held the pass laid its rows from the pending day,
+   * locked: they wait for the pass and are recalculated with it (#3762).
+   */
+  const PENDING_ROWS = layProgramRows(
+    HABITS.map((habit) => ({ ...habit, revealed: false })),
+    pendingDay,
+    DEVICE_ZONE,
+  );
   const PENDING_ROW_DAYS = startDays(PENDING_ROWS);
-  /** Whole days from one day key to another. */
-  const daysFrom = (from: string, to: string): number =>
-    Math.round((Date.parse(`${to}T00:00:00Z`) - Date.parse(`${from}T00:00:00Z`)) / 86_400_000);
-  /** The pass's row days, each moved by ``days`` (#3762). */
-  const shifted = (days: number): string[] =>
-    PENDING_ROW_DAYS.map((day) => addDaysInTZ(day, days, DEVICE_ZONE));
+  /** The pass's row days re-cascaded from ``day``, each at its own slot (#3762). */
+  const cascade = (day: string): string[] =>
+    startDays(layProgramRows(PENDING_ROWS, day, DEVICE_ZONE));
 
   const openPending = (onSaveOrder = jest.fn((_habits: Habit[]) => Promise.resolve(true))) => {
     holdPending();
@@ -1694,19 +1699,14 @@ describe('ReorderHabitsModal — a pending pass is rescheduled, not locked (#374
     });
   };
 
-  it("shows the rows' own start read-only and offers the pending day in the pass window", () => {
+  it("keeps the rows' own dates and offers the pending day in the pass window", () => {
     const { result } = openPending();
 
     expect(result.queryByTestId('reorder-start-date')).toBeNull();
-    // Laid from the rows' own first day, not the running start: opening the
-    // modal moves no row (#3747).
-    expect(result.getByTestId('program-start-fixed')).toHaveTextContent(
-      `First Habit Start Date: ${parseISODate(pendingDay).toLocaleDateString('en-US', {
-        month: 'short',
-        day: 'numeric',
-        year: 'numeric',
-      })}`,
-    );
+    // No "First Habit Start Date" while a pass is pending (#3762): kept habits
+    // hold their own dates, so the rows share no first day.
+    expect(result.queryByTestId('program-start-fixed')).toBeNull();
+    // Opening the modal moves no row (#3747).
     expect(startDays(getOrderedHabits(result))).toEqual(PENDING_ROW_DAYS);
     expect(result.getByTestId('reorder-pass-sentence')).toHaveTextContent(
       /^Your next pass begins /,
@@ -1740,9 +1740,7 @@ describe('ReorderHabitsModal — a pending pass is rescheduled, not locked (#374
     // The rows laid for the pass move with it, once, with the order (#3762).
     expect(onSaveOrder).toHaveBeenCalledTimes(1);
     expect(onSaveOrder).toHaveBeenCalledWith(expect.any(Array), { anchorSaved: true });
-    expect(startDays(onSaveOrder.mock.calls[0]![0])).toEqual(
-      shifted(MOVED_DAYS_AHEAD - PENDING_DAYS_AHEAD),
-    );
+    expect(startDays(onSaveOrder.mock.calls[0]![0])).toEqual(cascade(movedDay));
     expect(useProgramStore.getState().pendingPassStartsOn).toBe(movedDay);
   });
 
@@ -1762,9 +1760,7 @@ describe('ReorderHabitsModal — a pending pass is rescheduled, not locked (#374
     expect(mockCommitProgramStart).not.toHaveBeenCalled();
     expect(onSaveOrder).toHaveBeenCalledWith(expect.any(Array), { anchorSaved: true });
     expect(startDays(onSaveOrder.mock.calls[0]![0])[0]).toBe(EARLIER_DAY);
-    expect(startDays(onSaveOrder.mock.calls[0]![0])).toEqual(
-      shifted(daysFrom(pendingDay, EARLIER_DAY)),
-    );
+    expect(startDays(onSaveOrder.mock.calls[0]![0])).toEqual(cascade(EARLIER_DAY));
     expect(useProgramStore.getState().pendingPassStartsOn).toBeNull();
     expect(useProgramStore.getState().programStartDay).toBe(EARLIER_DAY);
   });
@@ -1805,18 +1801,31 @@ describe('ReorderHabitsModal — a pending pass is rescheduled, not locked (#374
     );
   });
 
-  describe('the habits move with the pass (#3762)', () => {
+  describe('the habits waiting for the pass move with it (#3762)', () => {
     const fmt = (day: string) =>
       parseISODate(day).toLocaleDateString('en-US', {
         month: 'short',
         day: 'numeric',
         year: 'numeric',
       });
-    /** A row of the running pass, begun before the pending day. */
+    /** An unlocked habit of the running pass, met every day: it keeps its date. */
     const RUNNING_ROW: Habit = {
       ...makeHabit(9, 'Beige', 'Running'),
       start_date: parseISODate('2026-03-10'),
+      revealed: true,
     };
+    /** An unlocked habit dated after the pending day: it keeps its date too. */
+    const LATER_KEPT_DAY = addDaysInTZ(pendingDay, 60, DEVICE_ZONE);
+    const LATER_KEPT: Habit = {
+      ...makeHabit(10, 'Red', 'Later kept'),
+      start_date: parseISODate(LATER_KEPT_DAY),
+      revealed: true,
+    };
+    /** Whether the row for habit ``id`` shows ``day``. */
+    const rowShows = (result: ReturnType<typeof render>, id: number, day: string) =>
+      expect(result.getByTestId(`reorder-habit-${id}`)).toHaveTextContent(
+        new RegExp(`${fmt(day)}$`),
+      );
 
     const openWith = (
       rows: Habit[],
@@ -1831,25 +1840,25 @@ describe('ReorderHabitsModal — a pending pass is rescheduled, not locked (#374
       return { result, onSaveOrder, onClose };
     };
 
-    it('previews the rows moved with the pass, and the two dates agree', () => {
+    it('previews the waiting habits cascading from the picked day, with no first-habit banner', () => {
       const { result } = openWith(PENDING_ROWS);
 
       pickPassDay(result, movedDay);
 
       expect(result.getByTestId('reorder-pass-sentence')).toHaveTextContent(
-        `Saving moves your next pass, and its habits, to ${parseISODate(movedDay).toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })}.`,
+        `Saving moves your next pass, and the habits waiting for it, to ${parseISODate(movedDay).toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })}.`,
       );
-      expect(startDays(getOrderedHabits(result))).toEqual(
-        shifted(MOVED_DAYS_AHEAD - PENDING_DAYS_AHEAD),
-      );
-      expect(result.getByTestId('program-start-fixed')).toHaveTextContent(
-        `First Habit Start Date: ${fmt(movedDay)}`,
-      );
-      // The dates agree, so there is nothing to explain.
+      expect(startDays(getOrderedHabits(result))).toEqual(cascade(movedDay));
+      // The first waiting habit starts on the day the pass begins.
+      expect(cascade(movedDay)[0]).toBe(movedDay);
+      expect(result.queryByTestId('program-start-fixed')).toBeNull();
+      expect(result.queryByText(/First Habit Start Date/)).toBeNull();
+      expect(result.getByTestId('reorder-pass-date')).toHaveTextContent(fmt(movedDay));
+      // Nothing is kept, so there is nothing to explain.
       expect(result.queryByTestId('reorder-pass-kept-hint')).toBeNull();
     });
 
-    it('moves the rows back 7 days with an earlier pending day', async () => {
+    it('cascades them from a day 7 earlier', async () => {
       const { result, onSaveOrder } = openWith(PENDING_ROWS);
       const earlier = addDaysInTZ(pendingDay, -7, DEVICE_ZONE);
 
@@ -1859,32 +1868,32 @@ describe('ReorderHabitsModal — a pending pass is rescheduled, not locked (#374
       });
 
       expect(mockCommitPassStart).toHaveBeenCalledWith(earlier, { tz: DEVICE_ZONE });
-      expect(startDays(onSaveOrder.mock.calls[0]![0])).toEqual(shifted(-7));
+      expect(startDays(onSaveOrder.mock.calls[0]![0])).toEqual(cascade(earlier));
     });
 
-    it("leaves the running pass's rows where they are", async () => {
-      const passRows = PENDING_ROWS.slice(0, 2).map((row, index) => ({ ...row, id: 20 + index }));
-      const { result, onSaveOrder } = openWith([RUNNING_ROW, ...passRows]);
+    it('keeps every unlocked habit on its own date, shown on its row, and re-cascades the locked ones at their slots', async () => {
+      const waiting = { ...PENDING_ROWS[1]!, id: 21 };
+      const { result, onSaveOrder } = openWith([RUNNING_ROW, waiting, LATER_KEPT]);
 
       pickPassDay(result, movedDay);
+
+      rowShows(result, 9, '2026-03-10');
+      rowShows(result, 10, LATER_KEPT_DAY);
+      // Slot 1 lands 21 days after the day the pass begins.
+      const slotOne = addDaysInTZ(movedDay, 21, DEVICE_ZONE);
+      rowShows(result, 21, slotOne);
+      expect(result.getByTestId('reorder-pass-kept-hint')).toHaveTextContent(
+        "Habits you've already begun keep their own start dates.",
+      );
       await act(async () => {
         fireEvent.press(result.getByText('Save Order'));
       });
 
-      const saved = startDays(onSaveOrder.mock.calls[0]![0]);
-      expect(saved[0]).toBe('2026-03-10');
-      expect(saved.slice(1)).toEqual(
-        startDays(passRows).map((day) =>
-          addDaysInTZ(day, MOVED_DAYS_AHEAD - PENDING_DAYS_AHEAD, DEVICE_ZONE),
-        ),
-      );
-      // The first row is the running pass's, so it keeps its own date -- and says so.
-      expect(result.getByTestId('program-start-fixed')).toHaveTextContent(
-        `First Habit Start Date: ${fmt('2026-03-10')}`,
-      );
-      expect(result.getByTestId('reorder-pass-kept-hint')).toHaveTextContent(
-        /^Habits you've already begun keep their start dates\./,
-      );
+      expect(startDays(onSaveOrder.mock.calls[0]![0])).toEqual([
+        '2026-03-10',
+        slotOne,
+        LATER_KEPT_DAY,
+      ]);
     });
 
     it('moves no row on a refusal', async () => {
@@ -1938,9 +1947,7 @@ describe('ReorderHabitsModal — a pending pass is rescheduled, not locked (#374
 
       expect(mockCommitPassStart).toHaveBeenCalledTimes(1);
       expect(onSaveOrder).toHaveBeenCalledTimes(2);
-      expect(startDays(onSaveOrder.mock.calls[1]![0])).toEqual(
-        shifted(MOVED_DAYS_AHEAD - PENDING_DAYS_AHEAD),
-      );
+      expect(startDays(onSaveOrder.mock.calls[1]![0])).toEqual(cascade(movedDay));
       expect(onSaveOrder.mock.calls[1]![1]).toEqual({ anchorSaved: true });
       expect(onClose).toHaveBeenCalledTimes(1);
     });

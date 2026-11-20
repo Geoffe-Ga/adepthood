@@ -8,19 +8,19 @@
  * (``commitPassStart``): a later day reschedules the pending pass, today or an
  * earlier day starts it now.
  *
- * The habits laid for the pass move with it (#3762): once the server has
- * agreed, every row starting on or after the held day moves by the same number
- * of days (``habitManager.movePendingPass``). Rows that began before the held
- * day -- the running pass's, or ones that kept their own beginning -- never
- * move. The Reorder modal writes the moved rows with its own order, so it asks
- * for the POST alone (``moveHabits: false``).
+ * The habits waiting for the pass move with it (#3762): once the server has
+ * agreed, every habit being recalculated -- a locked program habit -- is
+ * re-cascaded from the new day at its own slot's interval
+ * (``habitManager.movePendingPass``). An unlocked habit, which the person is
+ * meeting every day, keeps its own date. The Reorder modal writes the moved
+ * rows with its own order, so it asks for the POST alone (``moveHabits: false``).
  */
 import { useCallback, useState } from 'react';
 
 import { useHabitStore } from '../../store/useHabitStore';
 import { useProgramStore } from '../../store/useProgramStore';
 import { habitManager, PASS_HABITS_NOT_MOVED_COPY } from '../Habits/services/habitManager';
-import { isPassRow } from '../Habits/services/habitOrdering';
+import { isRecalculated } from '../Habits/services/habitOrdering';
 
 import { pendingPassNotSavedCopy, pendingPassSavedCopy, pendingPassSentence } from './passCopy';
 import { commitPassStart, type ProgramStartOutcome } from './programAnchor';
@@ -66,15 +66,14 @@ export interface PendingPassPick {
   commit: (_options?: PendingPassCommitOptions) => Promise<PendingPassOutcome>;
 }
 
-/** A pass move whose habits are still to follow: from the day they were laid for. */
+/** A pass move whose habits are still to follow: the day they cascade from. */
 interface OwedRows {
-  from: string;
   to: string;
 }
 
-/** Whether any habit row was laid for a pass held for ``held`` (#3762). */
-const usePassHasHabits = (held: string | null, tz: string): boolean =>
-  useHabitStore((s) => held !== null && s.habits.some((habit) => isPassRow(habit, held, tz)));
+/** Whether any habit is waiting for a pending pass, to move with it (#3762). */
+const usePassHasHabits = (held: string | null): boolean =>
+  useHabitStore((s) => held !== null && s.habits.some(isRecalculated));
 
 type SetOwed = (_owed: OwedRows | null) => void;
 
@@ -84,15 +83,13 @@ async function retryOwedRows(
   context: { today: string; tz: string; moveHabits: boolean; setOwed: SetOwed },
 ): Promise<PendingPassOutcome> {
   if (owed === null || !context.moveHabits) return { kind: 'unchanged' };
-  if (!(await habitManager.movePassHabits(owed.from, owed.to, context.tz)))
+  if (!(await habitManager.movePassHabits(owed.to, context.tz)))
     return { kind: 'rows_unsaved', message: PASS_HABITS_NOT_MOVED_COPY };
   context.setOwed(null);
   return { kind: 'saved', message: pendingPassSavedCopy(owed.to, context.today, true) };
 }
 
 interface MoveInput {
-  /** The day the pass's rows are laid for. */
-  from: string;
   /** The day the pass was held for when the move was sent. */
   held: string;
   day: string;
@@ -105,16 +102,16 @@ interface MoveInput {
 
 /** Send the move -- with its habits, unless the caller writes them -- and say what came of it. */
 async function sendMove(input: MoveInput): Promise<PendingPassOutcome> {
-  const { from, held, day, tz, today, setOwed } = input;
+  const { held, day, tz, today, setOwed } = input;
   const outcome = input.moveHabits
-    ? await habitManager.movePendingPass(from, day, tz)
+    ? await habitManager.movePendingPass(day, tz)
     : await commitPassStart(day, { tz });
   switch (outcome.kind) {
     case 'saved':
       setOwed(null);
       return { kind: 'saved', message: pendingPassSavedCopy(day, today, input.withHabits) };
     case 'rows_unsaved':
-      setOwed({ from, to: day });
+      setOwed({ to: day });
       return outcome;
     case 'unsaved':
       return { kind: 'unsaved', message: pendingPassNotSavedCopy(held) };
@@ -126,7 +123,7 @@ async function sendMove(input: MoveInput): Promise<PendingPassOutcome> {
 export function usePendingPassPick(tz: string): PendingPassPick {
   const held = useProgramStore((s) => s.pendingPassStartsOn);
   const range = useScaffoldStartRange(tz, true);
-  const withHabits = usePassHasHabits(held, tz);
+  const withHabits = usePassHasHabits(held);
   const [picked, setPicked] = useState<string | null>(null);
   const [owed, setOwed] = useState<OwedRows | null>(null);
   const day = picked ?? scaffoldOpeningDay(held, range);
@@ -136,9 +133,7 @@ export function usePendingPassPick(tz: string): PendingPassPick {
     async ({ moveHabits = true }: PendingPassCommitOptions = {}): Promise<PendingPassOutcome> => {
       const context = { today: range.today, tz, moveHabits, setOwed };
       if (held === null || day === held) return retryOwedRows(owed, context);
-      // Rows still owed to an earlier move were laid for that move's first day.
-      const from = owed?.from ?? held;
-      const outcome = await sendMove({ ...context, from, held, day, withHabits });
+      const outcome = await sendMove({ ...context, held, day, withHabits });
       setPicked(null);
       return outcome;
     },

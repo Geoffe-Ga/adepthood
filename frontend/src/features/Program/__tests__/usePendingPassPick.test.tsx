@@ -20,16 +20,14 @@ jest.mock('../programAnchor', () => ({
 }));
 
 type ChangeOutcome = ProgramStartOutcome | { kind: 'rows_unsaved'; message: string };
-/** Habits move with the pass (#3762): the POST, then -- once saved -- the rows. */
-const mockMovePendingPass =
-  jest.fn<(_from: string, _to: string, _tz?: string) => Promise<ChangeOutcome>>();
-const mockMovePassHabits =
-  jest.fn<(_from: string, _to: string, _tz?: string) => Promise<boolean>>();
+/** The habits waiting for the pass move with it (#3762): the POST, then -- once saved -- the rows. */
+const mockMovePendingPass = jest.fn<(_to: string, _tz?: string) => Promise<ChangeOutcome>>();
+const mockMovePassHabits = jest.fn<(_to: string, _tz?: string) => Promise<boolean>>();
 jest.mock('../../Habits/services/habitManager', () => ({
   PASS_HABITS_NOT_MOVED_COPY: 'Your next pass moved, but its habits did not.',
   habitManager: {
-    movePendingPass: (from: string, to: string, tz?: string) => mockMovePendingPass(from, to, tz),
-    movePassHabits: (from: string, to: string, tz?: string) => mockMovePassHabits(from, to, tz),
+    movePendingPass: (to: string, tz?: string) => mockMovePendingPass(to, tz),
+    movePassHabits: (to: string, tz?: string) => mockMovePassHabits(to, tz),
   },
 }));
 
@@ -77,7 +75,7 @@ beforeEach(() => {
   mockCommitPassStart.mockReset().mockImplementation(echo);
   mockMovePendingPass
     .mockReset()
-    .mockImplementation((_from, to, tz) => mockCommitPassStart(to, { tz: tz ?? ZONE }));
+    .mockImplementation((to, tz) => mockCommitPassStart(to, { tz: tz ?? ZONE }));
   mockMovePassHabits.mockReset().mockResolvedValue(true);
 });
 
@@ -208,8 +206,9 @@ describe('usePendingPassPick (#3747)', () => {
   });
 });
 
-/** A habit row starting on ``day`` (a New York midnight). */
-const rowOn = (id: number, day: string): Habit => ({
+/** A habit row starting on ``day`` (a New York midnight); locked unless ``revealed``. */
+const rowOn = (id: number, day: string, revealed = false): Habit => ({
+  revealed,
   id,
   stage: 'Beige',
   name: `Habit ${id}`,
@@ -221,15 +220,16 @@ const rowOn = (id: number, day: string): Habit => ({
   goals: [],
 });
 
-describe('the habits move with the pass (#3762)', () => {
+describe('the habits waiting for the pass move with it (#3762)', () => {
+  /** One unlocked habit of the running pass, and two locked ones waiting for the next. */
   const holdPassRows = () =>
     act(() =>
       useHabitStore.setState({
-        habits: [rowOn(1, RUNNING_DAY), rowOn(2, HELD), rowOn(3, '2026-12-22')],
+        habits: [rowOn(1, RUNNING_DAY, true), rowOn(2, HELD), rowOn(3, '2026-12-22')],
       }),
     );
 
-  it('says the habits move too, when the pass has habits laid for it', () => {
+  it('says the waiting habits move too, when the pass has any', () => {
     holdPending();
     holdPassRows();
     const { result } = renderHook(() => usePendingPassPick(ZONE));
@@ -237,13 +237,15 @@ describe('the habits move with the pass (#3762)', () => {
     act(() => result.current.pick('2026-12-20'));
 
     expect(result.current.sentence).toBe(
-      'Saving moves your next pass, and its habits, to December 20, 2026.',
+      'Saving moves your next pass, and the habits waiting for it, to December 20, 2026.',
     );
   });
 
-  it('says only the pass moves when no habit was laid for it', () => {
+  it('says only the pass moves when every habit is unlocked, whatever its date', () => {
     holdPending();
-    act(() => useHabitStore.setState({ habits: [rowOn(1, RUNNING_DAY)] }));
+    act(() =>
+      useHabitStore.setState({ habits: [rowOn(1, RUNNING_DAY, true), rowOn(2, HELD, true)] }),
+    );
     const { result } = renderHook(() => usePendingPassPick(ZONE));
 
     act(() => result.current.pick('2026-12-20'));
@@ -251,7 +253,7 @@ describe('the habits move with the pass (#3762)', () => {
     expect(result.current.sentence).toBe('Saving moves your next pass to December 20, 2026.');
   });
 
-  it('moves the pass and its habits from the held day, through the habit manager', async () => {
+  it('moves the pass and its waiting habits through the habit manager', async () => {
     holdPending();
     holdPassRows();
     const { result } = renderHook(() => usePendingPassPick(ZONE));
@@ -262,11 +264,12 @@ describe('the habits move with the pass (#3762)', () => {
       outcome = await result.current.commit();
     });
 
-    expect(mockMovePendingPass).toHaveBeenCalledWith(HELD, '2026-12-22', ZONE);
+    expect(mockMovePendingPass).toHaveBeenCalledWith('2026-12-22', ZONE);
     expect(mockCommitPassStart).toHaveBeenCalledTimes(1);
     expect(outcome).toEqual({
       kind: 'saved',
-      message: 'Saved. Your next pass now begins December 22, 2026, and its habits moved with it.',
+      message:
+        'Saved. Your next pass now begins December 22, 2026, and the habits waiting for it moved with it.',
     });
   });
 
@@ -280,7 +283,7 @@ describe('the habits move with the pass (#3762)', () => {
       await result.current.commit();
     });
 
-    expect(mockMovePendingPass).toHaveBeenCalledWith(HELD, '2026-11-15', ZONE);
+    expect(mockMovePendingPass).toHaveBeenCalledWith('2026-11-15', ZONE);
   });
 
   it('sends only the POST when the caller writes the rows itself', async () => {
@@ -301,7 +304,7 @@ describe('the habits move with the pass (#3762)', () => {
   it('owes the rows when the pass moved but they did not, and moves them on the next save', async () => {
     holdPending();
     holdPassRows();
-    mockMovePendingPass.mockImplementationOnce(async (_from, to, tz) => {
+    mockMovePendingPass.mockImplementationOnce(async (to, tz) => {
       await mockCommitPassStart(to, { tz: tz ?? ZONE });
       return { kind: 'rows_unsaved', message: 'Your next pass moved, but its habits did not.' };
     });
@@ -327,19 +330,20 @@ describe('the habits move with the pass (#3762)', () => {
       retry = await result.current.commit();
     });
 
-    expect(mockMovePassHabits).toHaveBeenCalledWith(HELD, '2026-12-22', ZONE);
+    expect(mockMovePassHabits).toHaveBeenCalledWith('2026-12-22', ZONE);
     expect(mockCommitPassStart).toHaveBeenCalledTimes(1);
     expect(retry).toEqual({
       kind: 'saved',
-      message: 'Saved. Your next pass now begins December 22, 2026, and its habits moved with it.',
+      message:
+        'Saved. Your next pass now begins December 22, 2026, and the habits waiting for it moved with it.',
     });
     expect(result.current.owed).toBe(false);
   });
 
-  it('moves the owed rows from the day they were laid for when another day is picked', async () => {
+  it('moves the owed rows to the newest day when another day is picked', async () => {
     holdPending();
     holdPassRows();
-    mockMovePendingPass.mockImplementationOnce(async (_from, to, tz) => {
+    mockMovePendingPass.mockImplementationOnce(async (to, tz) => {
       await mockCommitPassStart(to, { tz: tz ?? ZONE });
       return { kind: 'rows_unsaved', message: 'not moved' };
     });
@@ -354,7 +358,7 @@ describe('the habits move with the pass (#3762)', () => {
       await result.current.commit();
     });
 
-    expect(mockMovePendingPass).toHaveBeenLastCalledWith(HELD, '2026-12-29', ZONE);
+    expect(mockMovePendingPass).toHaveBeenLastCalledWith('2026-12-29', ZONE);
   });
 
   it('leaves the rows alone on a refusal', async () => {

@@ -34,7 +34,7 @@
  * paint, so stamping it makes the stored field agree with the visible one
  * instead of introducing a third answer.
  */
-import { addDaysInTZ, dayKeyInTZ, dayKeyToInstant, MS_PER_DAY } from '../../../utils/dateUtils';
+import { dayKeyInTZ, dayKeyToInstant } from '../../../utils/dateUtils';
 import type { Habit } from '../Habits.types';
 import {
   calculateHabitStartDate,
@@ -147,48 +147,36 @@ export const stampPositionalOrder = (ordered: readonly Habit[]): Habit[] => {
   }));
 };
 
-/** Whole calendar days from one ``YYYY-MM-DD`` key to another. */
-const daysBetween = (fromDay: string, toDay: string): number =>
-  Math.round((Date.parse(`${toDay}T00:00:00Z`) - Date.parse(`${fromDay}T00:00:00Z`)) / MS_PER_DAY);
+/**
+ * Whether ``habit`` is being recalculated when a pending pass moves (#3762):
+ * a program habit still locked -- laid for the pass and waiting for it. A habit
+ * already unlocked is one the person is meeting every day, so it keeps its own
+ * date whatever that date is; a carryover habit's date is its history; a demo
+ * tile carries no program date at all.
+ */
+export const isRecalculated = (habit: Habit): boolean =>
+  habit.revealed === false && habit.isDemoSeed !== true && !isCarryoverHabit(habit);
 
 /**
- * Whether ``habit`` was laid for a pass that begins on ``fromDay``: its start is
- * on or after that day in the account zone (#3762). A row that began earlier
- * belongs to the running pass, or kept its own beginning, and is history. Demo
- * tiles and undated rows carry no program date at all.
+ * Re-cascade the habits waiting for a pending pass from its new day ``toDay``
+ * (#3762), the way the Reorder lay does (``layProgramRows``): each recalculated
+ * row keeps its program slot and lands on ``toDay`` plus that slot's interval
+ * -- 21 days apart, 42 for habits 9 and 10 -- so a row's date always matches
+ * its position, kept rows around it included. Every other row is returned as
+ * the very object passed in, as is a recalculated row already on its day, so a
+ * writer can tell what moved by identity.
  */
-export const isPassRow = (habit: Habit, fromDay: string, tz: string): boolean => {
-  if (habit.isDemoSeed === true) return false;
-  const start = new Date(habit.start_date);
-  return !Number.isNaN(start.getTime()) && dayKeyInTZ(start, tz) >= fromDay;
-};
-
-/** ``start`` moved by ``days`` calendar days in ``tz``, keeping its time of day. */
-const shiftStart = (start: Date, days: number, tz: string): Date => {
-  const day = dayKeyInTZ(start, tz);
-  const intoDay = start.getTime() - dayKeyToInstant(day, tz).getTime();
-  return new Date(dayKeyToInstant(addDaysInTZ(day, days, tz), tz).getTime() + intoDay);
-};
-
-/**
- * Move the rows laid for a pending pass with the pass (#3762): when its day
- * moves from ``fromDay`` to ``toDay``, every row starting on or after
- * ``fromDay`` moves by the same number of calendar days in the account zone,
- * so each keeps its place on the cadence. A row that began before ``fromDay``
- * -- the running pass's, or one that kept its own beginning -- is returned as
- * the very object passed in, so a writer can tell what moved by identity.
- */
-export const shiftPassRows = (
+export const recalculatePassRows = (
   habits: readonly Habit[],
-  fromDay: string,
   toDay: string,
   tz: string,
 ): Habit[] => {
-  const days = daysBetween(fromDay, toDay);
-  if (days === 0) return [...habits];
-  return habits.map((habit) =>
-    isPassRow(habit, fromDay, tz)
-      ? { ...habit, start_date: shiftStart(new Date(habit.start_date), days, tz) }
-      : habit,
-  );
+  const laid = layProgramRows(habits, toDay, tz);
+  return habits.map((habit, index) => {
+    const relaid = laid[index];
+    if (relaid === undefined || !isRecalculated(habit)) return habit;
+    // Already on its day in the account zone: nothing to write.
+    const same = dayKeyInTZ(relaid.start_date, tz) === dayKeyInTZ(habit.start_date, tz);
+    return same ? habit : relaid;
+  });
 };
