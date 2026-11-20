@@ -20,6 +20,13 @@
  * earlier, shares the same bucket. A 429 that arrives anyway is waited out for
  * as long as the server's `Retry-After` says, a bounded number of times, and
  * every wait here can be stopped.
+ *
+ * **A busy vault is a different wait (#3770).** The server answers `vault_busy`
+ * when the vault is occupied (a classify or link pass holding its lock) and
+ * names how long to wait. That answer is not charged against the pace -- the
+ * run waits it out and sends the same document again -- and its waits are
+ * counted on their own budget, {@link MAX_SEED_VAULT_BUSY_WAITS}, so a long
+ * pass on the vault never spends the allowance meant for this endpoint's limit.
  */
 
 /** Uploads the endpoint admits per window: `UPLOAD_RATE_LIMIT = "20/minute"`. */
@@ -50,6 +57,18 @@ const MS_PER_SECOND = 1_000;
 
 /** The shortest honest wait: the server never asks for less than a second. */
 const MIN_RATE_LIMIT_WAIT_MS = MS_PER_SECOND;
+
+/**
+ * How many times one document waits out a busy vault before it settles as
+ * `vault_busy` (#3770). Generous on purpose: a classification pass can hold the
+ * vault for minutes, and at the server's default thirty seconds this outlasts
+ * one of about ten. A separate count from {@link MAX_SEED_RATE_LIMIT_WAITS}, so
+ * neither kind of wait spends the other's allowance.
+ */
+export const MAX_SEED_VAULT_BUSY_WAITS = 20;
+
+/** The wait for a busy vault whose answer named none: the server's own default. */
+export const VAULT_BUSY_FALLBACK_WAIT_MS = 30 * MS_PER_SECOND;
 
 /** The run's side of the moving window. */
 export interface SeedUploadPacer {
@@ -110,4 +129,18 @@ export function waitOrStop(ms: number, signal: AbortSignal): Promise<boolean> {
     }, ms);
     signal.addEventListener('abort', stop, { once: true });
   });
+}
+
+/**
+ * How long to wait out a busy vault, from the `retry_after_seconds` it named.
+ *
+ * Unlike {@link rateLimitWaitMs} this never declines to wait: a vault that asks
+ * for longer than {@link MAX_SEED_RATE_LIMIT_WAIT_MS} is asked again after that
+ * long, because a pass that is still running is still worth waiting for, and
+ * {@link MAX_SEED_VAULT_BUSY_WAITS} is what bounds the whole.
+ */
+export function vaultBusyWaitMs(retryAfterSeconds: number | null): number {
+  if (retryAfterSeconds === null) return VAULT_BUSY_FALLBACK_WAIT_MS;
+  const waitMs = Math.max(MIN_RATE_LIMIT_WAIT_MS, retryAfterSeconds * MS_PER_SECOND);
+  return Math.min(waitMs, MAX_SEED_RATE_LIMIT_WAIT_MS);
 }

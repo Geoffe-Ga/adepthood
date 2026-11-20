@@ -138,4 +138,13 @@ class DocumentImportResponse(BaseModel):
     fragment_id: int | None = Field(
         default=None, description="The stored corpus fragment's id, present only when stored."
     )
+    retry_after_seconds: int | None = Field(
+        default=None,
+        ge=1,
+        description=(
+            "For vault_status vault_busy only: whole seconds to wait before sending the "
+            "same document again. The vault was busy and kept nothing; the wait is the "
+            "one its Retry-After named, or 30 when it named none."
+        ),
+    )
     message: str = Field(description="Self-serve explanation for the person who imported it.")

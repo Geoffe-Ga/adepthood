@@ -177,6 +177,7 @@ const EXPECTED_BROWSER_JOURNEYS = [
   'seed-folder-import.browser.e2e.test.ts',
   'seed-leave-mid-run.browser.e2e.test.ts',
   'seed-upload-unconfirmed.browser.e2e.test.ts',
+  'seed-upload-vault-busy.browser.e2e.test.ts',
   'settings-corpus-sharing.browser.e2e.test.ts',
   'settings-hub-corpus-sorting.browser.e2e.test.ts',
   'settings-gain-copy.browser.e2e.test.ts',

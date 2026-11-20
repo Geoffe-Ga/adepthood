@@ -193,6 +193,9 @@ class TestCallOpenAIRetryWithImages:
                 completions = type("Completions", (), {"create": staticmethod(create_mock)})()
                 self.chat = type("Chat", (), {"completions": completions})()
 
+            async def close(self) -> None:
+                """Hold no connection; the code under test closes every client it builds."""
+
         monkeypatch.setattr(openai, "AsyncOpenAI", _FakeOpenAIClient)
         image = ImagePayload(data="ZmFrZQ==", media_type="image/png")
 
@@ -221,6 +224,9 @@ class TestCallOpenAIRetryWithImages:
                 constructed_kwargs.update(kwargs)
                 completions = type("Completions", (), {"create": staticmethod(create_mock)})()
                 self.chat = type("Chat", (), {"completions": completions})()
+
+            async def close(self) -> None:
+                """Hold no connection; the code under test closes every client it builds."""
 
         monkeypatch.setattr(openai, "AsyncOpenAI", _FakeOpenAIClient)
         image = ImagePayload(data="ZmFrZQ==", media_type="image/png")

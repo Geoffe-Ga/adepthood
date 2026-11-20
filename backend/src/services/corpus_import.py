@@ -67,11 +67,15 @@ class VaultImportResult:
     :class:`~domain.creek_vault.VaultUploadStatus` unwrapped and unrenamed: the
     vault's own vocabulary reaches the caller as the vault said it, because a
     second set of words for one outcome is a second thing to keep true.
+
+    ``retry_after_seconds`` is the wait a ``vault_busy`` answer names (#3770),
+    and ``None`` for every other status.
     """
 
     status: VaultUploadStatus
     vault_ref: str | None
     tags: tuple[str, ...]
+    retry_after_seconds: int | None = None
 
     @property
     def stored(self) -> bool:
@@ -136,7 +140,12 @@ async def _to_vault(client: CreekVaultClient, document: UploadedDocument) -> Vau
     router to answer (see :func:`~services.creek_vault_upload.store_upload`).
     """
     outcome = await store_upload(client, document)
-    return VaultImportResult(status=outcome.status, vault_ref=outcome.vault_ref, tags=outcome.tags)
+    return VaultImportResult(
+        status=outcome.status,
+        vault_ref=outcome.vault_ref,
+        tags=outcome.tags,
+        retry_after_seconds=outcome.retry_after_seconds,
+    )
 
 
 async def import_document(

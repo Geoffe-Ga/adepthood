@@ -54,6 +54,14 @@ MAX_UPLOAD_BYTES = 10 * 1024 * 1024
 # rejected by rounding. The same shape ``routers/transcription.py`` uses.
 MAX_UPLOAD_BASE64_CHARS = (MAX_UPLOAD_BYTES * 4) // 3 + 4
 
+# A Seed run's id (#3770): an opaque token the client mints once per run so its
+# documents can share one capability handshake. Letters, digits, ``_`` and
+# ``-`` only, long enough to be unguessable in practice and short enough to be
+# a cheap memo key. It is never stored, logged, or forwarded to a vault.
+UPLOAD_RUN_PATTERN = r"^[A-Za-z0-9_-]+$"
+MIN_UPLOAD_RUN_LENGTH = 16
+MAX_UPLOAD_RUN_LENGTH = 64
+
 
 class DocumentTooLargeError(ValueError):
     """Raised when a submitted document exceeds :data:`MAX_UPLOAD_BYTES`."""
@@ -207,6 +215,18 @@ class UploadDocumentRequest(BaseModel):
         repr=False,
     )
 
+    upload_run: str | None = Field(
+        default=None,
+        min_length=MIN_UPLOAD_RUN_LENGTH,
+        max_length=MAX_UPLOAD_RUN_LENGTH,
+        pattern=UPLOAD_RUN_PATTERN,
+        description=(
+            "Optional: an opaque id the client mints once per bulk upload run, so the "
+            "run's documents share one vault capability handshake. Decides nothing "
+            "about the document."
+        ),
+    )
+
     @field_validator("filename")
     @classmethod
     def _reject_unsafe_filename(cls, value: str) -> str:
@@ -310,6 +330,15 @@ UPLOAD_MESSAGES: Mapping[VaultUploadStatus, str] = MappingProxyType(
             "We couldn't confirm whether the upload finished — your vault may or may "
             "not have the document. Please try again; sending the same file again "
             "updates it in place rather than adding a second copy."
+        ),
+        # A refusal for now, before anything was written (#3770): Creek sheds
+        # with ``temporarily_unavailable`` while a pass holds its lock, so the
+        # document is not in the vault yet and saying so is true. The wait is in
+        # ``retry_after_seconds``; this sentence is for a client that shows it.
+        VaultUploadStatus.VAULT_BUSY: (
+            "Your vault is busy settling what it already holds, so it hasn't taken "
+            "this document yet. Give it a moment, then send the same file again — "
+            "it updates in place rather than adding a second copy."
         ),
     }
 )

@@ -194,6 +194,7 @@ from services.creek_vault_payload import (
 from services.creek_vault_pinned_transport import build_pinned_destination_transport
 from services.creek_vault_readings import recommend_from_vault
 from services.creek_vault_relay import parse_request_key_providers, relay_headers
+from services.creek_vault_retry_after import read_retry_after_seconds
 from services.creek_vault_telemetry import (
     VaultCallTimedOutError,
     VaultTelemetryOutcome,
@@ -1386,9 +1387,12 @@ def _availability_failure(
         :class:`CreekVaultUnavailableError` -- the same degrade for every
         existing caller, since the first is a subclass of the second.
     """
-    if signals_rate_limit(response.status_code, code):
-        return CreekVaultRateLimitedError(message, code=code)
-    return CreekVaultUnavailableError(message, code=code)
+    kind = (
+        CreekVaultRateLimitedError
+        if signals_rate_limit(response.status_code, code)
+        else CreekVaultUnavailableError
+    )
+    return kind(message, code=code, retry_after_seconds=read_retry_after_seconds(response.headers))
 
 
 def _faults_our_request(response: httpx.Response) -> bool:
@@ -1801,6 +1805,11 @@ class HttpCreekVaultClient:
         class still has no ``__repr__`` of its own.
         """
         return self._url
+
+    def adopt_handshake(self, result: HandshakeResult, /) -> None:
+        """Answer the cached reads from a probe this run already made (#3770)."""
+        self._last_handshake = result
+        self._degrade_reason = None
 
     def _active_client(self) -> httpx.AsyncClient:
         """Return the injected client, or borrow the shared pool's (built on demand).

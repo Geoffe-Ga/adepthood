@@ -427,16 +427,21 @@ export type TranscribePageT = z.infer<typeof transcribePageSchema>;
 
 /**
  * What the vault did with one uploaded document — the wire strings of the
- * backend's ``VaultUploadStatus``. All four are distinct outcomes with distinct
- * remedies, so the enum is pinned rather than left as a bare string: a fifth
+ * backend's ``VaultUploadStatus``. All five are distinct outcomes with distinct
+ * remedies, so the enum is pinned rather than left as a bare string: a sixth
  * value the client has no honest sentence for must surface as
  * ``ApiValidationError`` rather than render as a blank row.
+ *
+ * ``vault_busy`` (#3770) is a wait, not an answer: the vault was busy (a pass
+ * holding its lock, or a shed), kept nothing, and named how long to wait in
+ * ``retry_after_seconds``.
  */
 export const vaultUploadStatusSchema = z.enum([
   'accepted',
   'vault_unavailable',
   'capability_unsupported',
   'degraded',
+  'vault_busy',
 ]);
 export type VaultUploadStatusT = z.infer<typeof vaultUploadStatusSchema>;
 
@@ -489,6 +494,8 @@ export const documentImportSchema = z.object({
   tags: z.array(z.string()),
   corpus_status: corpusImportStatusSchema.nullable().optional(),
   fragment_id: z.number().int().nullable().optional(),
+  /** For ``vault_busy`` only: whole seconds to wait before sending it again. */
+  retry_after_seconds: z.number().int().positive().nullable().optional(),
   message: z.string(),
 });
 export type DocumentImportT = z.infer<typeof documentImportSchema>;

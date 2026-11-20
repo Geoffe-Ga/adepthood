@@ -1947,6 +1947,19 @@
             "title": "Message",
             "type": "string"
           },
+          "retry_after_seconds": {
+            "anyOf": [
+              {
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "For vault_status vault_busy only: whole seconds to wait before sending the same document again. The vault was busy and kept nothing; the wait is the one its Retry-After named, or 30 when it named none.",
+            "title": "Retry After Seconds"
+          },
           "stored": {
             "description": "Whether the document was durably kept anywhere.",
             "title": "Stored",
@@ -11070,6 +11083,21 @@
             ],
             "description": "Folder imports only: the '/'-separated path from the chosen folder's root to this file, ending in its filename. Sent together with source_namespace.",
             "title": "Source Relative Path"
+          },
+          "upload_run": {
+            "anyOf": [
+              {
+                "maxLength": 64,
+                "minLength": 16,
+                "pattern": "^[A-Za-z0-9_-]+$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Optional: an opaque id the client mints once per bulk upload run, so the run's documents share one vault capability handshake. Decides nothing about the document.",
+            "title": "Upload Run"
           }
         },
         "required": [
@@ -12071,12 +12099,13 @@
         "type": "object"
       },
       "VaultUploadStatus": {
-        "description": "The terminal outcome of a :func:`store_upload` attempt.\n\nExactly one is always returned, and the three non-accepted values stay apart\nbecause each sends the user somewhere different: ``VAULT_UNAVAILABLE`` is\n\"connect or fix your vault\", ``CAPABILITY_UNSUPPORTED`` is \"uploads do not\nwork between these two versions yet\", and ``DEGRADED`` is \"it broke, try\nagain\". Values are the wire strings the API answers with, so they are\ncontract and must not be reworded casually.\n\n``CAPABILITY_UNSUPPORTED`` deliberately does not say *whose* version is\nbehind. Either side can be: a vault too old to take files, or a vault\noffering an upload route this client recognises but cannot yet speak. What\nthe user needs from the status is the same in both -- that no retry helps --\nand splitting it would add a fourth wire value every consumer of this enum\nwould have to learn before it could render anything at all.",
+        "description": "The terminal outcome of a :func:`store_upload` attempt.\n\nExactly one is always returned, and the three non-accepted values stay apart\nbecause each sends the user somewhere different: ``VAULT_UNAVAILABLE`` is\n\"connect or fix your vault\", ``CAPABILITY_UNSUPPORTED`` is \"uploads do not\nwork between these two versions yet\", and ``DEGRADED`` is \"it broke, try\nagain\". Values are the wire strings the API answers with, so they are\ncontract and must not be reworded casually.\n\n``CAPABILITY_UNSUPPORTED`` deliberately does not say *whose* version is\nbehind. Either side can be: a vault too old to take files, or a vault\noffering an upload route this client recognises but cannot yet speak. What\nthe user needs from the status is the same in both -- that no retry helps --\nand splitting it would add a fourth wire value every consumer of this enum\nwould have to learn before it could render anything at all.\n\n``VAULT_BUSY`` (#3770) is the one outcome that is a wait rather than an\nanswer: the vault refused with a retryable ``503 temporarily_unavailable``\nor a ``429`` -- a classify or link pass holding its lock, or a shed in\nfront of it -- kept nothing, and named (or was given) a wait. It is apart\nfrom ``DEGRADED`` because the advice differs: \"try again\" after a mishap,\n\"wait this long, then send it\" for a vault that is merely occupied. Last,\nso the order of the others does not move.",
         "enum": [
           "accepted",
           "vault_unavailable",
           "capability_unsupported",
-          "degraded"
+          "degraded",
+          "vault_busy"
         ],
         "title": "VaultUploadStatus",
         "type": "string"

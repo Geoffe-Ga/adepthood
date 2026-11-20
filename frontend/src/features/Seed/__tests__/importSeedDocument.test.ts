@@ -402,3 +402,48 @@ describe('one attempt, as the run sees it', () => {
     expect(mockFetch).not.toHaveBeenCalled();
   });
 });
+
+describe('a busy vault (#3770)', () => {
+  function busyReply(retryAfterSeconds: number | null) {
+    return accepted(202, {
+      destination: 'vault',
+      stored: false,
+      vault_status: 'vault_busy',
+      vault_ref: null,
+      tags: [],
+      corpus_status: null,
+      fragment_id: null,
+      retry_after_seconds: retryAfterSeconds,
+      message: 'busy',
+    });
+  }
+
+  test('hands the run the wait the vault named, and is not charged to the pace', async () => {
+    mockFetch.mockReturnValue(busyReply(7));
+
+    await expect(attemptSeedDocument(document(), 'personal')).resolves.toEqual({
+      status: 'vault_busy',
+      answered: false,
+      retryAfterSeconds: 7,
+    });
+  });
+
+  test('names no wait when the answer named none', async () => {
+    mockFetch.mockReturnValue(busyReply(null));
+
+    const attempt = await attemptSeedDocument(document(), 'personal');
+
+    expect(attempt).toEqual({ status: 'vault_busy', answered: false, retryAfterSeconds: null });
+  });
+
+  test('sends the run id with the document, and none when there is no run', async () => {
+    mockFetch.mockImplementation(() => vaultReply('accepted'));
+
+    await attemptSeedDocument(document(), 'personal', 'run0123456789abcdef');
+    await attemptSeedDocument(document(), 'personal');
+
+    const bodies = mockFetch.mock.calls.map((call) => JSON.parse(call[1].body));
+    expect(bodies[0].upload_run).toBe('run0123456789abcdef');
+    expect(bodies[1]).not.toHaveProperty('upload_run');
+  });
+});
