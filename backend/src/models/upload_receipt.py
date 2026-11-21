@@ -4,7 +4,7 @@
 ``vault_status`` and ``vault_ref``, and until #3775 nothing kept them: the
 answer was rendered once and forgotten, so "did my files land?" had no answer
 after the request that asked. One row here is written for every import that
-reached the vault branch, whatever it settled as, and ``GET /vault/pipeline``
+reached the vault branch and settled -- landed or not -- and ``GET /vault/pipeline``
 reads them back newest first.
 
 **Names and refs, never content.** ``filename`` is the name the writer gave the
@@ -25,6 +25,7 @@ data export and erased with the account (``domain.data_export`` and
 from __future__ import annotations
 
 from datetime import UTC, datetime
+from typing import Final
 
 from sqlalchemy import CheckConstraint, Column, DateTime, Index
 from sqlmodel import Field, SQLModel
@@ -42,6 +43,22 @@ _BATCH_WIDTH = 16
 _EXTERNAL_ID_WIDTH = 64
 _VAULT_REF_WIDTH = 512
 _VOCABULARY_WIDTH = 32
+
+
+#: Outcomes that are a wait rather than an answer, so no receipt is kept for them.
+#: A busy vault (#3770) kept nothing and the client sends the same document
+#: again after the wait it named; a receipt per refusal would list one file
+#: several times, and the resend that lands is the one worth keeping.
+UNSETTLED_VAULT_STATUSES: Final = frozenset({VaultUploadStatus.VAULT_BUSY})
+
+#: Every status a receipt may carry, in the enum's order: each settled outcome,
+#: ``unsupported_source`` (#3771) included -- resending is refused the same way,
+#: so it is as final as ``accepted``. The table's CHECK admits exactly these, and
+#: the migration that deploys it freezes the same tuple
+#: (``tests/test_upload_receipt_vocabulary.py`` holds the three together).
+RECEIPT_VAULT_STATUSES: Final = tuple(
+    status.value for status in VaultUploadStatus if status not in UNSETTLED_VAULT_STATUSES
+)
 
 
 def _quoted(values: tuple[str, ...]) -> str:
@@ -64,7 +81,7 @@ class UploadReceipt(SQLModel, table=True):
             name="ck_uploadreceipt_destination_valid",
         ),
         CheckConstraint(
-            f"vault_status IN ({_quoted(tuple(s.value for s in VaultUploadStatus))})",
+            f"vault_status IN ({_quoted(RECEIPT_VAULT_STATUSES)})",
             name="ck_uploadreceipt_vault_status_valid",
         ),
     )

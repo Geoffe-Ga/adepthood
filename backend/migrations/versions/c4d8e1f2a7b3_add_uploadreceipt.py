@@ -7,7 +7,7 @@ Create Date: 2026-11-20 00:00:00.000000
 ``POST /corpus/import`` answers a vault upload with its destination, status and
 vault ref, and nothing persisted them, so "did my files land?" had no answer
 after the request (#3775). ``uploadreceipt`` holds one row per settled vault
-import: the filename, a digest of the folder import's namespace (never the
+import (a ``vault_busy`` refusal is a wait, not a settlement, and earns none): the filename, a digest of the folder import's namespace (never the
 namespace itself), the digest id the upload
 was addressed by, Creek's opaque ref, and the two closed vocabularies. No
 document content is stored.
@@ -34,9 +34,16 @@ _TABLE = "uploadreceipt"
 _INDEX = "ix_uploadreceipt_user_id_id"
 
 # Frozen at this revision (mirror domain.corpus_import.ImportDestination and
-# domain.creek_vault.VaultUploadStatus).
+# models.upload_receipt.RECEIPT_VAULT_STATUSES: every VaultUploadStatus except
+# ``vault_busy``, a wait after which the same document is sent again).
 _DESTINATIONS = ("vault", "corpus")
-_VAULT_STATUSES = ("accepted", "vault_unavailable", "capability_unsupported", "degraded")
+FROZEN_VAULT_STATUSES = (
+    "accepted",
+    "vault_unavailable",
+    "capability_unsupported",
+    "degraded",
+    "unsupported_source",
+)
 
 _FILENAME_WIDTH = 255
 _BATCH_WIDTH = 16
@@ -83,7 +90,7 @@ def upgrade() -> None:
             _in("destination", _DESTINATIONS), name="ck_uploadreceipt_destination_valid"
         ),
         sa.CheckConstraint(
-            _in("vault_status", _VAULT_STATUSES), name="ck_uploadreceipt_vault_status_valid"
+            _in("vault_status", FROZEN_VAULT_STATUSES), name="ck_uploadreceipt_vault_status_valid"
         ),
         sa.ForeignKeyConstraint(["user_id"], ["user.id"], ondelete="CASCADE"),
         sa.PrimaryKeyConstraint("id"),

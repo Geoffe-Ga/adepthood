@@ -50,6 +50,7 @@ from services.upload_receipts import batch_digest
 from tests.helpers.oauth import signup
 from tests.helpers.openapi_errors import declared_response_schema, live_document, response_validator
 from tests.test_document_upload_to_a_vault import ScriptedUploadClient
+from tests.test_upload_vault_busy import _busy_body, _BusyVault
 
 _PIPELINE: Final = "/vault/pipeline"
 _IMPORT: Final = "/corpus/import"
@@ -61,6 +62,8 @@ _STATUS_MINOR: Final = "0.34"
 _STAGE_RUN_CAP: Final = 50
 _RECEIPT_PAGE: Final = 100
 _FILENAME: Final = "on-attention.html"
+_VAULT_URL: Final = "https://vault.example.test"
+_VAULT_API_KEY: Final = "creek-pipeline-receipt-key"  # pragma: allowlist secret
 _PAGE_OF_TWO: Final = 2
 _EDDIES_EMITTED: Final = 9
 _DOCUMENT: Final = base64.b64encode(b"<p>a page about attention</p>").decode("ascii")
@@ -558,6 +561,89 @@ async def test_an_account_with_no_vault_leaves_no_receipt(
 
     assert response.json()["corpus_status"] == "vault_required"
     assert await _receipts(db_session, user_id) == []
+
+
+async def _post_through(
+    async_client: AsyncClient, vault: _BusyVault, headers: Mapping[str, str], *, times: int = 1
+) -> list[Response]:
+    """POST the same document ``times`` times through a real adapter over ``vault``."""
+    payload = {"filename": _FILENAME, "content_base64": _DOCUMENT, "classification": "personal"}
+    async with httpx.AsyncClient(transport=httpx.MockTransport(vault)) as http:
+        client = HttpCreekVaultClient(
+            _VAULT_URL, _VAULT_API_KEY, http_client=http, pin_destination=False
+        )
+        app.dependency_overrides[get_creek_vault_client] = lambda: client
+        try:
+            return [
+                await async_client.post(_IMPORT, json=payload, headers=dict(headers))
+                for _ in range(times)
+            ]
+        finally:
+            app.dependency_overrides.pop(get_creek_vault_client, None)
+
+
+@pytest.mark.asyncio
+async def test_a_busy_vault_leaves_no_receipt_and_its_retry_leaves_one(
+    async_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """``vault_busy`` is a wait, not an answer: the resend that lands is the one receipt."""
+    headers, user_id = await signup(async_client, "pipeline_import_busy")
+    vault = _BusyVault(busy_for=1)
+
+    (busy,) = await _post_through(async_client, vault, headers)
+
+    assert busy.status_code == HTTPStatus.ACCEPTED
+    assert busy.json()["vault_status"] == "vault_busy"
+    assert await _receipts(db_session, user_id) == []
+
+    (landed,) = await _post_through(async_client, vault, headers)
+
+    assert landed.status_code == HTTPStatus.ACCEPTED
+    assert landed.json()["vault_status"] == "accepted"
+    (receipt,) = await _receipts(db_session, user_id)
+    assert receipt.vault_status == "accepted"
+    assert receipt.vault_ref == landed.json()["vault_ref"]
+
+
+@pytest.mark.asyncio
+async def test_a_refused_file_type_leaves_a_receipt_saying_so(
+    async_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """``unsupported_source`` is settled -- resending is refused the same way -- so it is kept."""
+    headers, user_id = await signup(async_client, "pipeline_import_unsupported")
+    vault = _BusyVault(
+        busy_for=1,
+        status=HTTPStatus.UNSUPPORTED_MEDIA_TYPE,
+        body=_busy_body("unsupported_source"),
+        retry_after=None,
+    )
+
+    (response,) = await _post_through(async_client, vault, headers)
+
+    assert response.status_code == HTTPStatus.ACCEPTED
+    assert response.json()["vault_status"] == "unsupported_source"
+    (receipt,) = await _receipts(db_session, user_id)
+    assert receipt.vault_status == "unsupported_source"
+    assert receipt.vault_ref is None
+
+
+@pytest.mark.asyncio
+async def test_a_refused_file_types_receipt_reads_back_on_the_dashboard(
+    async_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """The dashboard read carries ``unsupported_source`` through ``recent_uploads``."""
+    headers, user_id = await signup(async_client, "pipeline_read_unsupported")
+    await _receipt(db_session, user_id, _FILENAME, vault_status="unsupported_source")
+    app.dependency_overrides[get_creek_vault_client] = LocalFallbackCreekVaultClient
+    try:
+        response = await async_client.get(_PIPELINE, headers=headers)
+    finally:
+        app.dependency_overrides.pop(get_creek_vault_client, None)
+
+    assert response.status_code == HTTPStatus.OK
+    (upload,) = response.json()["recent_uploads"]
+    assert upload["vault_status"] == "unsupported_source"
+    _validate(response)
 
 
 def test_one_imports_documents_share_a_batch_that_names_nothing() -> None:

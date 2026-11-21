@@ -13,12 +13,14 @@ namespace would put it in every statement log a database driver writes. A
 receipt carries :func:`batch_digest` instead: the same opaque value for every
 document of one import, which is all grouping needs.
 
-Two imports earn no receipt. An account with no vault was answered
-``vault_required`` and nothing was sent anywhere. An Intimate document is
-withheld from the vault by construction, and its name is the writer's own words
-about something they chose to keep closest; keeping it here as a "receipt" for
-a send that never happened would store the one thing the tier exists to keep
-put.
+Three imports earn no receipt. A busy vault (``vault_busy``, #3770) is a wait,
+not an answer: it kept nothing and the client sends the same document again, so
+the resend that settles is the receipt and the refusal before it is not. An
+account with no vault was answered ``vault_required`` and nothing was sent
+anywhere. An Intimate document is withheld from the vault by construction, and
+its name is the writer's own words about something they chose to keep closest;
+keeping it here as a "receipt" for a send that never happened would store the
+one thing the tier exists to keep put.
 """
 
 from __future__ import annotations
@@ -31,7 +33,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from domain.corpus_import import ImportDestination
 from domain.privacy_tier import admits_egress
 from domain.upload_source import normalize_source_text
-from models.upload_receipt import UploadReceipt
+from models.upload_receipt import UNSETTLED_VAULT_STATUSES, UploadReceipt
 from services.corpus_import import DocumentImportResult, VaultImportResult
 from services.creek_vault_upload import FolderSource, UploadedDocument, upload_external_id
 
@@ -74,6 +76,8 @@ def record_upload_receipt(
     document's names are read; its content is never touched.
     """
     if not isinstance(result, VaultImportResult):
+        return None
+    if result.status in UNSETTLED_VAULT_STATUSES:
         return None
     if not admits_egress(document.classification):
         return None
