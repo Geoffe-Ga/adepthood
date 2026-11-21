@@ -132,6 +132,7 @@ import {
   VAULT_WHAT_IT_IS,
   HIGHER_SELF_GAIN,
 } from './vaultCopy';
+import { VAULT_DASHBOARD_OPEN_LABEL } from './vaultDashboardCopy';
 import { VAULT_RUN_YOUR_OWN_DOC_URL } from './vaultLinks';
 
 import { ApiError, vault, vaultActivation, type VaultActivation } from '@/api';
@@ -910,6 +911,35 @@ const ManagedActivationState = ({
   return <ManagedActivationOffer continuing={activation.active} onOpen={onOpen} />;
 };
 
+/** The vault kinds there is something to see in: any vault this account writes to. */
+const HAS_A_VAULT: ReadonlySet<VaultConnectionState['kind']> = new Set([
+  'connected',
+  'managed',
+  'deployment',
+]);
+
+/**
+ * The door to "Your vault" (#3776): what landed, what Creek did with it, and
+ * the vault's shape. Only for an account that has a vault; an unread or absent
+ * one has nothing to show there.
+ */
+const VaultDashboardDoor = ({
+  state,
+  navigation,
+}: {
+  state: VaultConnectionState;
+  navigation?: VaultNavigation;
+}): React.JSX.Element | null =>
+  HAS_A_VAULT.has(state.kind) ? (
+    <Button
+      label={VAULT_DASHBOARD_OPEN_LABEL}
+      variant="secondary"
+      onPress={() => navigation?.navigate?.('VaultDashboard')}
+      testID="vault-open-dashboard"
+      style={styles.dashboardDoor}
+    />
+  ) : null;
+
 /** A vault of your own, and the form that connects or replaces one. */
 const VaultBringYourOwn = ({ controller }: { controller: VaultController }) => {
   const { state, form } = controller;
@@ -956,6 +986,7 @@ const VaultConnectionSection = ({
   return (
     <>
       <VaultConnectionNotice state={state} />
+      <VaultDashboardDoor state={state} navigation={navigation} />
       {state.kind === 'none' ? (
         <ManagedActivationState
           activation={managedActivation}
@@ -1031,6 +1062,10 @@ const styles = StyleSheet.create({
   loading: {
     alignItems: 'center',
     paddingVertical: rhythm.sectionGap,
+  },
+  dashboardDoor: {
+    alignSelf: 'flex-start',
+    marginBottom: SPACING.xl,
   },
   empty: {
     fontSize: 14,

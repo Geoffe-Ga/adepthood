@@ -184,6 +184,7 @@ const EXPECTED_BROWSER_JOURNEYS = [
   'settings-hub-corpus-sorting.browser.e2e.test.ts',
   'settings-gain-copy.browser.e2e.test.ts',
   'text-order.browser.e2e.test.ts',
+  'vault-dashboard.browser.e2e.test.ts',
   'vault-deployment-owner.browser.e2e.test.ts',
   'welcome.browser.e2e.test.ts',
   'writing-timer-habit-link.browser.e2e.test.ts',

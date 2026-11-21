@@ -1327,3 +1327,33 @@ describe('VaultSettingsScreen — agents that may read your vault', () => {
     expect(tree.indexOf('vault-advanced-toggle')).toBeLessThan(tree.indexOf(AGENTS_HEADING));
   });
 });
+
+// ---------------------------------------------------------------------------
+// The door to "Your vault" (#3776)
+// ---------------------------------------------------------------------------
+
+describe('VaultSettingsScreen — the way to see what is in the vault (#3776)', () => {
+  test.each([
+    ['a vault of their own', CONNECTED],
+    ['a managed vault', CONNECTED_WITHOUT_ADDRESS],
+    ['the deployment-wide vault', DEPLOYMENT_VAULT],
+  ])('offers "Your vault" to an account with %s', async (_label, connection) => {
+    const navigate = jest.fn();
+    mockConnection.mockResolvedValue(connection);
+    const view = render(<VaultSettingsScreen navigation={{ navigate }} />);
+    await settle();
+
+    fireEvent.press(view.getByTestId('vault-open-dashboard'));
+
+    expect(navigate).toHaveBeenCalledWith('VaultDashboard');
+  });
+
+  test('offers nothing to see to an account with no vault, or one it could not read', async () => {
+    const none = await renderVault(NOT_CONNECTED);
+    expect(none.queryByTestId('vault-open-dashboard', HIDDEN_TOO)).toBeNull();
+    none.unmount();
+
+    const unknown = await renderUnreachable();
+    expect(unknown.queryByTestId('vault-open-dashboard', HIDDEN_TOO)).toBeNull();
+  });
+});

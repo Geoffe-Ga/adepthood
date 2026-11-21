@@ -89,6 +89,13 @@ jest.mock('@/features/Auth/ReauthSheet', () => {
   const { Text } = require('react-native');
   return { ReauthSheet: () => <Text>ReauthSheet</Text> };
 });
+// #3776: RootStack mounts "Your vault", which reads on focus through
+// navigation hooks this navigator stub does not provide -- stub it out so this
+// suite stays focused on auth gating.
+jest.mock('@/features/Settings/VaultDashboardScreen', () => {
+  const { Text } = require('react-native');
+  return () => <Text>VaultDashboardScreen</Text>;
+});
 jest.mock('@/navigation/BottomTabs', () => {
   const { Text } = require('react-native');
   return () => <Text>BottomTabs</Text>;

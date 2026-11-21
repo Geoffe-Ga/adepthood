@@ -62,6 +62,7 @@ import {
   uiFlagsSchema,
   vaultConnectionResponseSchema,
   vaultReachabilityResponseSchema,
+  vaultPipelineSchema,
   connectedAgentSchema,
   vaultActivationResponseSchema,
   documentImportSchema,
@@ -132,6 +133,11 @@ import {
   type TranscribePageT,
   type VaultConnectionT,
   type VaultReachabilityT,
+  type VaultPipelineT,
+  type UploadReceiptT,
+  type StageRunT,
+  type VaultFolderT,
+  type VaultDocumentT,
   type ConnectedAgentT,
   agentActivityResponseSchema,
   type AgentActivityT,
@@ -4734,6 +4740,24 @@ export type VaultReachabilityAnswer = VaultReachabilityT;
 const vaultReachabilitySchema =
   vaultReachabilityResponseSchema as unknown as z.ZodType<VaultReachabilityAnswer>;
 
+/** The "Your vault" dashboard's one read (``GET /vault/pipeline``, #3775). */
+export type VaultPipeline = VaultPipelineT;
+/** One upload receipt on the dashboard. */
+export type UploadReceipt = UploadReceiptT;
+/** One ontologization pass adepthood drove on the vault. */
+export type StageRun = StageRunT;
+/** One ontology folder in the vault. */
+export type VaultFolder = VaultFolderT;
+/** One recent upload as Creek reports it, with its stage trail. */
+export type VaultDocument = VaultDocumentT;
+
+/** Where the dashboard's next page of receipts starts (``?before=``), or the first page. */
+export interface VaultPipelineQuery {
+  before?: number;
+}
+
+const vaultPipelineResponseSchema = vaultPipelineSchema as unknown as z.ZodType<VaultPipeline>;
+
 const connectedAgentsSchema = z.array(connectedAgentSchema) as unknown as z.ZodType<
   ConnectedAgentT[]
 >;
@@ -4795,6 +4819,24 @@ export const vault = {
       token,
       schema: vaultReachabilitySchema,
       retry: false,
+    });
+  },
+  /**
+   * This account's upload receipts, the passes run over its vault, and the
+   * vault's own folders and stages (#3775), for the "Your vault" dashboard.
+   *
+   * Always a 200 that says why Creek's half is missing when it is, so the
+   * screen renders a sentence rather than an error. Read-only and owner-only:
+   * the account is the session's, and the one thing a caller may pass is the
+   * cursor into its own receipts. No trailing slash.
+   */
+  pipeline(query: VaultPipelineQuery = {}, token?: string): Promise<VaultPipeline> {
+    const params = new URLSearchParams();
+    if (query.before !== undefined) params.set('before', String(query.before));
+    const qs = params.toString();
+    return request<VaultPipeline>(`/vault/pipeline${qs ? `?${qs}` : ''}`, {
+      token,
+      schema: vaultPipelineResponseSchema,
     });
   },
   /** Detach the vault. Idempotent, and a 204 whether one was attached or not. */

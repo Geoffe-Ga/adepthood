@@ -1849,6 +1849,149 @@ export const agentActivityResponseSchema = z
 
 export type AgentActivityT = z.infer<typeof agentActivityResponseSchema>;
 
+// ---------------------------------------------------------------------------
+// "Your vault" dashboard (``GET /vault/pipeline``, #3775 / #3776)
+// ---------------------------------------------------------------------------
+
+/** Why Creek's half of the dashboard is missing, when it is (``VaultStatusReach``). */
+export const VAULT_STATUS_REACHES = [
+  'ok',
+  'not_connected',
+  'unreachable',
+  'update_needed',
+] as const;
+
+/** Why a folder has no writer of its own (``VaultFolderWriterlessReason``). */
+export const VAULT_FOLDER_WRITERLESS_REASONS = [
+  'container',
+  'owner_curated',
+  'indexed_at_parent',
+  'template_example',
+] as const;
+
+/** The stages Creek stamps on one document (``VaultDocumentStage``). */
+export const VAULT_DOCUMENT_STAGES = [
+  'ingested',
+  'classified',
+  'praxis_scanned',
+  'linked:embeddings',
+  'linked:temporal',
+  'linked:eddies',
+  'linked:threads',
+] as const;
+
+/** How one stage went on one document (``VaultStageOutcome``). */
+export const VAULT_STAGE_OUTCOMES = ['ok', 'partial', 'failed'] as const;
+
+/** What a vault job does, and where it is (``VaultStatusJobKind`` / ``VaultStatusJobState``). */
+export const VAULT_STATUS_JOB_KINDS = ['classification', 'link'] as const;
+export const VAULT_STATUS_JOB_STATES = ['queued', 'running', 'succeeded', 'failed'] as const;
+
+/**
+ * One document this account sent to its vault, and where it landed (mirrors
+ * the backend ``UploadReceiptResponse``). ``batch`` is an opaque value shared
+ * by one folder import and never the folder's name; ``landed_in`` is the folder
+ * Creek reports, or null when Creek did not say.
+ */
+export const uploadReceiptSchema = z.object({
+  id: z.number().int().positive(),
+  filename: z.string(),
+  batch: z.string().nullable(),
+  destination: z.string(),
+  vault_status: z.string(),
+  vault_ref: z.string().nullable(),
+  landed_in: z.string().nullable(),
+  landed_at: isoDateTime,
+});
+
+export type UploadReceiptT = z.infer<typeof uploadReceiptSchema>;
+
+/**
+ * One ontologization pass adepthood drove on this account's vault (mirrors
+ * ``StageRunResponse``). ``stage``, ``outcome`` and ``trigger`` are open
+ * strings on the wire; the screen words the ones it knows and says something
+ * plain for any other, never the token.
+ */
+export const stageRunSchema = z.object({
+  trigger: z.string().nullable(),
+  stage: z.string(),
+  outcome: z.string(),
+  failure_code: z.string().nullable(),
+  fragments_seen: z.number().int().nonnegative(),
+  emitted: z.number().int().nonnegative(),
+  fragments_lost: z.number().int().nonnegative(),
+  ran_at: isoDateTime,
+});
+
+export type StageRunT = z.infer<typeof stageRunSchema>;
+
+/** One ontology folder: how many notes, and who fills it (``VaultFolderResponse``). */
+export const vaultFolderSchema = z.object({
+  path: z.string(),
+  count: z.number().int().nonnegative(),
+  last_written_at: isoDateTime.nullable(),
+  writer: z.string().nullable(),
+  writer_reason: z.enum(VAULT_FOLDER_WRITERLESS_REASONS).nullable(),
+});
+
+export type VaultFolderT = z.infer<typeof vaultFolderSchema>;
+
+/** One stage stamp on one document (``VaultStageResponse``). */
+export const vaultStageSchema = z.object({
+  stage: z.enum(VAULT_DOCUMENT_STAGES),
+  at: isoDateTime,
+  outcome: z.enum(VAULT_STAGE_OUTCOMES),
+});
+
+export type VaultStageT = z.infer<typeof vaultStageSchema>;
+
+/** One of the account's recent uploads, as Creek reports it (``VaultDocumentResponse``). */
+export const vaultDocumentSchema = z.object({
+  filename: z.string(),
+  landed_in: z.string().nullable(),
+  fragment_count: z.number().int().nonnegative(),
+  stages: z.array(vaultStageSchema),
+});
+
+export type VaultDocumentT = z.infer<typeof vaultDocumentSchema>;
+
+/** One of the vault's newest durable pipeline jobs (``VaultJobResponse``). */
+export const vaultJobSchema = z.object({
+  kind: z.enum(VAULT_STATUS_JOB_KINDS),
+  method: z.string(),
+  state: z.enum(VAULT_STATUS_JOB_STATES),
+  failure_code: z.string().nullable(),
+  updated_at: isoDateTime,
+});
+
+export type VaultJobT = z.infer<typeof vaultJobSchema>;
+
+/** Creek's half: folders, recent uploads, the withheld count and jobs. */
+export const vaultSnapshotSchema = z.object({
+  folders: z.array(vaultFolderSchema),
+  documents: z.array(vaultDocumentSchema),
+  documents_withheld: z.number().int().nonnegative(),
+  jobs: z.array(vaultJobSchema),
+});
+
+export type VaultSnapshotT = z.infer<typeof vaultSnapshotSchema>;
+
+/**
+ * The whole dashboard read (``VaultPipelineResponse``). Always a 200: ``vault``
+ * is null exactly when ``vault_status`` is not ``ok``, and ``vault_unreachable``
+ * is the outage case alone.
+ */
+export const vaultPipelineSchema = z.object({
+  recent_uploads: z.array(uploadReceiptSchema),
+  next_before: z.number().int().positive().nullable(),
+  stage_runs: z.array(stageRunSchema),
+  vault: vaultSnapshotSchema.nullable(),
+  vault_status: z.enum(VAULT_STATUS_REACHES),
+  vault_unreachable: z.boolean(),
+});
+
+export type VaultPipelineT = z.infer<typeof vaultPipelineSchema>;
+
 /** Durable, secret-free progress for an explicitly requested Creek allocation. */
 export const vaultActivationResponseSchema = z
   .object({

@@ -23,6 +23,13 @@ import { useUploadQueueStore } from '@/store/useUploadQueueStore';
 
 jest.mock('@/config', () => ({ API_BASE_URL: 'http://test' }));
 
+// The finished run's receipt read (#3776) is SeedCorpusScreenReceipts.test.tsx's
+// to pin; here it is kept off the fetch these tests count imports on.
+jest.mock('@/features/Settings/useVaultPipeline', () => ({
+  refreshVaultPipeline: () => Promise.resolve(false),
+  useVaultPipeline: () => ({ answer: null, failed: false }),
+}));
+
 const mockNavigate = jest.fn();
 const mockDispatch = jest.fn();
 const mockListeners = new Map<string, (_event: unknown) => void>();
