@@ -8,15 +8,21 @@ corpus by timing the responses.
 The two endpoints are verified by deliberately different means, because
 only one of them has arms that a stopwatch can fairly compare.
 
-The **request** path is checked with a paired-sample wall-clock
-comparison whose tolerance is derived at runtime from one real cost-10
-bcrypt on the host (``_consume_dummy_bcrypt``), so it tracks CPU speed
-instead of a hardcoded millisecond budget.  That works because its two
-arms are symmetric: hit and miss each spend exactly one cost-10 bcrypt,
-so contention inflates both by the same factor and the ratio survives.
+Both endpoints are checked by auditing the bcrypt work each arm
+performs rather than how long it takes.  bcrypt is the only term big
+enough to be a usable timing oracle, so a ledger of it measures exactly
+the property the masking dummies exist to provide, and no load on the
+host can perturb it.
 
-The **confirm** path is checked by auditing the bcrypt work each arm
-performs rather than how long it takes.  Its arms are *not* symmetric:
+The **request** path's arms are symmetric: a hit mints and digests a
+reset token (one cost-10 ``hashpw``), and a miss spends one cost-10
+dummy verify (``_consume_dummy_bcrypt``).  It used to be checked with a
+paired-sample stopwatch whose tolerance was half of one cost-10 bcrypt
+measured on the host.  On a busy CI runner the median of eleven pairs
+still drifted past that tolerance, so the test failed with nothing
+wrong in the code; counting the work replaces it.
+
+The **confirm** path's arms are *not* symmetric:
 the reuse arm verifies the reset-token digest (cost-10) and then the
 submitted password (cost-12), while the invalid-token arm spends only
 the cost-12 masking dummy -- the lookup-key pre-filter means a token
@@ -33,9 +39,7 @@ provide, and is immune to load by construction.
 
 from __future__ import annotations
 
-import time
 from datetime import UTC, datetime
-from statistics import median
 from typing import TYPE_CHECKING
 
 import bcrypt
@@ -44,7 +48,7 @@ from sqlmodel import select
 
 from models.password_reset_token import PasswordResetToken
 from models.user import User
-from routers.auth import _consume_dummy_bcrypt, _hash_password
+from routers.auth import _hash_password
 from services.email import RecordingEmailSender
 from tests.helpers.password_reset import extract_reset_token
 
@@ -56,21 +60,13 @@ if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
 
 
-# Samples per arm for the request-path test.  Its tolerance is a fraction
-# of a single cost-10 bcrypt (~tens of ms), so it needs enough samples for
-# the median to shrug off a descheduled process distorting one of them.
-_REQUEST_ITERATIONS = 11
+# bcrypt cost factor of a reset-token digest (``_PASSWORD_RESET_BCRYPT_ROUNDS``),
+# which the request hit path spends and the miss path masks with a dummy.
+_RESET_TOKEN_BCRYPT_COST = 10
 
-# Samples used to estimate the host's single cost-10 bcrypt budget.
-_BUDGET_SAMPLES = 9
-
-# Request-path tolerance as a fraction of one cost-10 bcrypt.  Both the
-# hit and miss paths spend exactly one such bcrypt, so their parity delta
-# is a few ms; deleting the miss-path dummy shifts the delta to a whole
-# budget (~1.0x).  Half a budget sits comfortably above the parity noise
-# and well below the removed-dummy signal, so the test fails on that
-# mutation without flaking on a quiescent-but-busy CI box.
-_REQUEST_TOLERANCE_FRACTION = 0.5
+# How many cost-10 bcrypt operations each request arm must perform: the
+# hit arm's token digest, or the miss arm's ``_consume_dummy_bcrypt``.
+_EXPECTED_RESET_TOKEN_OPERATIONS = 1
 
 # bcrypt cost factor of a stored user password (``_hash_password`` uses
 # ``gensalt(rounds=12)``).  This is the verify the confirm reuse-branch
@@ -117,60 +113,76 @@ async def _seed_user(db_session: AsyncSession, email: str) -> None:
     await db_session.commit()
 
 
-async def _cost10_bcrypt_budget_ms() -> float:
-    """Median wall-time of one cost-10 bcrypt verify on this host.
+def _cost_of(digest_or_salt: bytes) -> int:
+    """Read the cost factor out of a bcrypt salt or modular-crypt digest."""
+    return int(digest_or_salt.split(b"$")[_BCRYPT_COST_FIELD_INDEX].decode())
 
-    Ties the request-path tolerance to the exact operation the miss path
-    spends (``_consume_dummy_bcrypt``), so the threshold scales with the
-    machine rather than assuming a fixed millisecond budget.
+
+def _record_bcrypt_operations(monkeypatch: pytest.MonkeyPatch) -> list[int]:
+    """Patch ``bcrypt.hashpw`` and ``bcrypt.checkpw`` to log each call's cost.
+
+    A digest and a verify at one cost factor run the same key schedule,
+    so they cost the same time; the log is the request path's whole
+    bcrypt bill, whichever of the two each arm spends it on.
     """
-    samples: list[float] = []
-    for _ in range(_BUDGET_SAMPLES):
-        start = time.perf_counter()
-        await _consume_dummy_bcrypt()
-        samples.append((time.perf_counter() - start) * 1_000)
-    return median(samples)
+    real_hashpw = bcrypt.hashpw
+    real_checkpw = bcrypt.checkpw
+    costs: list[int] = []
+
+    def recording_hashpw(password: bytes, salt: bytes) -> bytes:
+        costs.append(_cost_of(salt))
+        return real_hashpw(password, salt)
+
+    def recording_checkpw(password: bytes, hashed_password: bytes) -> bool:
+        costs.append(_cost_of(hashed_password))
+        return real_checkpw(password, hashed_password)
+
+    monkeypatch.setattr(bcrypt, "hashpw", recording_hashpw)
+    monkeypatch.setattr(bcrypt, "checkpw", recording_checkpw)
+    return costs
 
 
-async def _measure(client: AsyncClient, email: str) -> float:
-    start = time.perf_counter()
+async def _request_reset(client: AsyncClient, email: str) -> None:
     response = await client.post("/auth/password-reset/request", json={"email": email})
-    duration_ms = (time.perf_counter() - start) * 1_000
     assert response.status_code == 202, response.text
-    return duration_ms
 
 
 @pytest.mark.asyncio
-async def test_request_timing_parity_hit_vs_miss(
+async def test_request_hit_and_miss_spend_the_same_bcrypt_work(
     async_client: AsyncClient,
     db_session: AsyncSession,
-    disable_rate_limit: None,  # noqa: ARG001 -- need >3 calls per test
+    monkeypatch: pytest.MonkeyPatch,
+    disable_rate_limit: None,  # noqa: ARG001 -- the cap is per IP, shared across tests
 ) -> None:
-    """Hit/miss median latency must differ by less than half a cost-10 bcrypt.
+    """A registered and an unregistered email each cost one cost-10 bcrypt.
 
-    Removing the miss-path ``_consume_dummy_bcrypt`` would shift the delta
-    to roughly a whole bcrypt budget, so the sub-budget tolerance fails on
-    that mutation -- the side channel the SPEC R4 dummy exists to close.
+    Deleting the miss path's ``_consume_dummy_bcrypt`` drops the miss
+    arm's count to zero, which is the side channel SPEC R4 closes: an
+    attacker timing responses could tell a registered email from a
+    stranger's.  Asserting on the ledger instead of a stopwatch keeps
+    that guarantee without failing whenever the host is busy.
     """
     await _seed_user(db_session, "hit@example.com")
+    costs = _record_bcrypt_operations(monkeypatch)
 
-    tolerance_ms = _REQUEST_TOLERANCE_FRACTION * await _cost10_bcrypt_budget_ms()
+    await _request_reset(async_client, "hit@example.com")
+    hit_costs = list(costs)
+    costs.clear()
+    await _request_reset(async_client, "miss@example.com")
+    miss_costs = list(costs)
 
-    # Warm up bcrypt + JIT once so the first sample isn't an outlier.
-    await _measure(async_client, "warmup@example.com")
-
-    hits: list[float] = []
-    misses: list[float] = []
-    for _ in range(_REQUEST_ITERATIONS):
-        hits.append(await _measure(async_client, "hit@example.com"))
-        misses.append(await _measure(async_client, f"miss-{time.time_ns()}@example.com"))
-
-    delta = abs(median(hits) - median(misses))
-    assert delta < tolerance_ms, (
-        f"timing leak: hit median={median(hits):.1f}ms "
-        f"miss median={median(misses):.1f}ms delta={delta:.1f}ms "
-        f"exceeds tolerance={tolerance_ms:.1f}ms "
-        f"(={_REQUEST_TOLERANCE_FRACTION} x one cost-10 bcrypt)"
+    hit_operations = hit_costs.count(_RESET_TOKEN_BCRYPT_COST)
+    miss_operations = miss_costs.count(_RESET_TOKEN_BCRYPT_COST)
+    assert hit_operations == miss_operations == _EXPECTED_RESET_TOKEN_OPERATIONS, (
+        f"request timing leak: the registered-email arm performed "
+        f"{hit_operations} cost-{_RESET_TOKEN_BCRYPT_COST} bcrypt operation(s) "
+        f"and the unregistered arm performed {miss_operations}; both must "
+        f"perform exactly {_EXPECTED_RESET_TOKEN_OPERATIONS} or the response "
+        f"time reveals whether the email is registered "
+        f"(hit costs={hit_costs}, miss costs={miss_costs})"
+    )
+    assert hit_costs == miss_costs, (
+        f"request arms spend different bcrypt work: hit={hit_costs}, miss={miss_costs}"
     )
 
 
