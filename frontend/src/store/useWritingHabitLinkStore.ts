@@ -60,6 +60,9 @@ const INITIAL_STATE = { habitId: null as number | null, hydrated: false };
 /** The hydrate already on the wire, so concurrent mounts share one request. */
 let inFlight: Promise<void> | null = null;
 
+/** Whether a hydrate is on the wire now, which a late caller may wait on. */
+export const isWritingHabitLinkReadInFlight = (): boolean => inFlight !== null;
+
 /** Link changes and resets invalidate work started under an earlier link. */
 let generation = 0;
 

@@ -8,6 +8,7 @@ jest.mock('@/api', () => ({
 import { resetAllStores } from '../registry';
 import {
   getWritingHabitLinkGeneration,
+  isWritingHabitLinkReadInFlight,
   selectKnownUnlinked,
   useWritingHabitLinkStore,
 } from '../useWritingHabitLinkStore';
@@ -80,6 +81,21 @@ describe('useWritingHabitLinkStore.hydrate', () => {
     ]);
 
     expect(mockUiFlags.get).toHaveBeenCalledTimes(1);
+  });
+
+  it('says a read is on the wire only until that read settles, answered or not', async () => {
+    expect(isWritingHabitLinkReadInFlight()).toBe(false);
+    mockUiFlags.get.mockRejectedValueOnce(new Error('offline'));
+    const failed = useWritingHabitLinkStore.getState().hydrate(TOKEN);
+    expect(isWritingHabitLinkReadInFlight()).toBe(true);
+    await failed;
+    expect(isWritingHabitLinkReadInFlight()).toBe(false);
+
+    mockUiFlags.get.mockResolvedValueOnce(flags(SERVER_HABIT_ID));
+    const answered = useWritingHabitLinkStore.getState().hydrate(TOKEN);
+    expect(isWritingHabitLinkReadInFlight()).toBe(true);
+    await answered;
+    expect(isWritingHabitLinkReadInFlight()).toBe(false);
   });
 
   it('once hydrated, a later hydrate asks nothing', async () => {

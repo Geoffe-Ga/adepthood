@@ -469,6 +469,52 @@ test('a committed log whose first reply is lost retries the same operation and a
   expect(loggedUnits(await readHabit(page.request, headers, id))).toBe(20);
 });
 
+test('a session that ends before its habit link is read still adds its minutes once', async ({
+  page,
+}) => {
+  const { token, headers } = await account(page, 'writing-link-late');
+  const id = await seedTimerHabit(page.request, token, 'Late-read writing');
+  expect(
+    (
+      await page.request.patch(`${backendUrl()}/ui-flags`, {
+        headers,
+        data: { writing_session_habit_id: id },
+      })
+    ).ok(),
+  ).toBe(true);
+  await page.reload();
+  // Hold every link read from the entry page until the session has ended, so
+  // the end comes first by construction. Jumping the clock past the session
+  // also fires each held read's own timeout, which is how a slow read and a
+  // lost one look alike to the page.
+  let release!: () => void;
+  const released = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  let heldReads = 0;
+  await page.route('**/ui-flags', async (route) => {
+    if (route.request().method() !== 'GET') return route.continue();
+    heldReads += 1;
+    await released;
+    // A read the page has already abandoned cannot be continued; that is the point.
+    return route.continue().catch(() => undefined);
+  });
+  await page.getByTestId('journal-new-entry').click();
+  await page.getByTestId('journal-body-input').fill(BODY);
+  const logged = page.waitForResponse(isCompletion);
+  await completeTimer(page);
+  expect(heldReads).toBeGreaterThan(0);
+  release();
+  expect((await logged).request().postDataJSON()).toMatchObject({
+    completed_units: 20,
+    via_timer: true,
+  });
+  await expect(page.getByTestId('writing-session-log-notice')).toHaveText(
+    'Logged 20 minutes to Late-read writing',
+  );
+  expect(loggedUnits(await readHabit(page.request, headers, id))).toBe(20);
+});
+
 async function expectPrivacyLabelsFit(page: Page): Promise<void> {
   // Measure the touch targets after the journal sheet's entrance has settled.
   await expect
