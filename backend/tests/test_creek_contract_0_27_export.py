@@ -50,10 +50,10 @@ from domain.vault_export import (
 )
 from services import creek_vault_export_wire as wire
 from services.creek_vault_client import (
-    _CAPABILITY_BY_WIRE_NAME,
     HttpCreekVaultClient,
     LocalFallbackCreekVaultClient,
 )
+from services.creek_vault_handshake_parse import _CAPABILITY_BY_WIRE_NAME
 from services.creek_vault_telemetry import VaultCallTimedOutError
 
 #: The reviewed Creek-Vault commit the snapshot was copied from (a git SHA, not a secret).

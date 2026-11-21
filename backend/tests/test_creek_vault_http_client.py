@@ -74,13 +74,13 @@ from services.creek_vault_client import (
     LocalFallbackCreekVaultClient,
     _build_pinned_vault_client,
     _build_pooled_vault_client,
-    _contract_version_compatible,
     _entry_path_segment,
     _VaultHttpPool,
     build_connected_vault_client,
     build_creek_vault_client,
     close_creek_vault_http_pool,
 )
+from services.creek_vault_handshake_parse import contract_version_compatible
 from services.creek_vault_payload import (
     _MARGINALIA_KIND_BY_CREEK_KIND,
     _MAX_FRAGMENT_ID_LENGTH,
@@ -1328,12 +1328,12 @@ def test_contract_version_compatibility_rule(
     advertised: str, pinned: str, compatible: bool
 ) -> None:
     """Pre-1.0 requires an exact major.minor match; 1.0 and later relaxes to major-match."""
-    assert _contract_version_compatible(advertised, pinned) is compatible
+    assert contract_version_compatible(advertised, pinned) is compatible
 
 
 def test_contract_version_compatible_defaults_to_the_pinned_constant() -> None:
     """The pinned contract version is, trivially, compatible with itself."""
-    assert _contract_version_compatible(CONTRACT_VERSION) is True
+    assert contract_version_compatible(CONTRACT_VERSION) is True
 
 
 @pytest.mark.parametrize("url", ["", None], ids=["empty", "unset"])
