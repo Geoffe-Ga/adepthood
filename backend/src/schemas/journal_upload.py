@@ -340,6 +340,13 @@ UPLOAD_MESSAGES: Mapping[VaultUploadStatus, str] = MappingProxyType(
             "this document yet. Give it a moment, then send the same file again — "
             "it updates in place rather than adding a second copy."
         ),
+        # The vault refused the file's type with ``415 unsupported_source``
+        # (#3771) before writing anything, so "nothing was stored" is a fact.
+        # It offers no resend: the same file is refused the same way.
+        VaultUploadStatus.UNSUPPORTED_SOURCE: (
+            "Your vault doesn't take this kind of file as a document, so nothing was "
+            "stored. The file is still with you."
+        ),
     }
 )
 

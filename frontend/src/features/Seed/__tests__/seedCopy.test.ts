@@ -24,6 +24,7 @@ import {
   seedProgressLine,
   seedRetryLabel,
   seedSummaryLine,
+  seedUnconfirmedLine,
 } from '../seedCopy';
 import type { SeedItemStatus, SeedRunTally } from '../seedRun';
 
@@ -31,15 +32,28 @@ import type { CorpusDestination } from '@/features/Journal/corpusDestination';
 import { ranksOrShames } from '@/features/Map/__tests__/copyIntentRule';
 import { VAULT_ROW_LABEL } from '@/features/Settings/vaultCopy';
 
-/** A run tally with no unconfirmed uploads unless one is named. */
+/**
+ * A run tally from its sendable counts: landed, still to go, failed, and of
+ * those failed how many nobody could confirm. Nothing skipped or stopped
+ * unless named.
+ */
 function tally(
   total: number,
   landed: number,
-  waiting: number,
-  refused: number,
+  remaining: number,
+  failed: number,
   unconfirmed = 0,
+  extra: Partial<Pick<SeedRunTally, 'skipped' | 'stopped'>> = {},
 ): SeedRunTally {
-  return { total, landed, waiting, refused, unconfirmed };
+  return {
+    total,
+    landed,
+    remaining,
+    failed,
+    unconfirmed,
+    skipped: extra.skipped ?? 0,
+    stopped: extra.stopped ?? 0,
+  };
 }
 
 const EVERY_STATUS: readonly SeedItemStatus[] = [
@@ -60,6 +74,12 @@ const EVERY_STATUS: readonly SeedItemStatus[] = [
   'unclassified',
   'vault_required',
   'unsupported_format',
+  'attachments_off',
+  'app_settings',
+  'hidden_file',
+  'unsafe_name',
+  'name_collision',
+  'unsupported_source',
   'too_large',
   'managed_too_large',
   'unreadable',
@@ -238,42 +258,51 @@ describe('the words a person reads beneath a document', () => {
   });
 });
 
-describe('the run summary', () => {
+describe('the run summary (#3771)', () => {
   test('says nothing before anything is picked', () => {
     expect(seedSummaryLine(tally(0, 0, 0, 0))).toBeNull();
   });
 
-  test('counts what is still going', () => {
-    expect(seedSummaryLine(tally(3, 1, 2, 0))).toContain('3');
+  test('names the four counts in order: landed, failed, remaining, skipped', () => {
+    const line = seedSummaryLine(tally(73, 12, 40, 3, 0, { skipped: 18 }));
+
+    expect(line).toBe('12 landed · 3 failed · 40 remaining · 18 skipped (unsupported type)');
   });
 
-  test('names what landed and what did not, without dressing it up', () => {
-    const line = seedSummaryLine(tally(3, 2, 0, 1));
-
-    expect(line).toContain('2');
-    expect(line).toContain('1');
+  test('always shows all four, zeros included, so the shape never moves', () => {
+    expect(seedSummaryLine(tally(3, 3, 0, 0))).toBe(
+      '3 landed · 0 failed · 0 remaining · 0 skipped (unsupported type)',
+    );
+    expect(seedSummaryLine(tally(60, 3, 37, 0, 0, { skipped: 20 }))).toBe(
+      '3 landed · 0 failed · 37 remaining · 20 skipped (unsupported type)',
+    );
   });
 
-  test('counts unconfirmed uploads apart from those that did not go over', () => {
-    // #3239. "Didn't go over" would claim an unconfirmed upload never arrived.
-    const line = String(seedSummaryLine(tally(4, 1, 0, 1, 2)));
-
-    expect(line).toBe("1 of 4 landed. 1 didn't go over. 2 couldn't be confirmed.");
+  test('adds what was stopped only when something was', () => {
+    expect(seedSummaryLine(tally(5, 1, 0, 0, 0, { stopped: 4 }))).toBe(
+      '1 landed · 0 failed · 0 remaining · 0 skipped (unsupported type) · 4 stopped',
+    );
   });
 
-  test('says only what is true when every miss is unconfirmed', () => {
-    const line = String(seedSummaryLine(tally(3, 2, 0, 0, 1)));
+  test('keeps the unconfirmed inside failed, with a sub-line of its own', () => {
+    // #3239. A lost reply may have landed, so the sub-line says so rather than
+    // letting "failed" claim it never arrived.
+    const run = tally(4, 1, 0, 3, 2);
 
-    expect(line).toBe("2 of 3 landed. 1 couldn't be confirmed.");
-    expect(line).not.toContain("didn't go over");
+    expect(seedSummaryLine(run)).toBe(
+      '1 landed · 3 failed · 0 remaining · 0 skipped (unsupported type)',
+    );
+    expect(seedUnconfirmedLine(run)).toBe(
+      "2 of those couldn't be confirmed — they may have arrived. Sending again updates in " +
+        'place rather than making a second copy.',
+    );
+    expect(seedUnconfirmedLine(tally(2, 1, 0, 1, 1))).toMatch(
+      /^1 of those couldn't be confirmed — it may have arrived\./u,
+    );
+    expect(seedUnconfirmedLine(tally(3, 2, 0, 1))).toBeNull();
   });
 
-  test('keeps the plain count when nothing is unconfirmed', () => {
-    expect(seedSummaryLine(tally(3, 2, 0, 1))).toBe("2 of 3 landed. 1 didn't go over.");
-    expect(seedSummaryLine(tally(3, 3, 0, 0))).toBe('All 3 have landed.');
-  });
-
-  test('claims no destination it was not told', () => {
+  test('neither ranks nor shames, and claims no destination it was not told', () => {
     // One pick reaches one destination, but which one is the server's answer
     // per request. A summary naming "your vault" would be the one sentence on
     // this screen that nothing could check.
@@ -281,13 +310,50 @@ describe('the run summary', () => {
       seedSummaryLine(tally(3, 1, 2, 0)),
       seedSummaryLine(tally(3, 3, 0, 0)),
       seedSummaryLine(tally(3, 2, 0, 1)),
-      seedSummaryLine(tally(4, 1, 0, 1, 2)),
+      seedSummaryLine(tally(4, 1, 0, 3, 2)),
+      seedUnconfirmedLine(tally(4, 1, 0, 3, 2)),
     ];
 
     for (const line of lines) {
       expect(String(line).toLowerCase()).not.toContain('vault');
       expect(String(line).toLowerCase()).not.toContain('corpus');
+      expect(ranksOrShames(String(line))).toBe(false);
     }
+  });
+});
+
+describe('a skipped file says why, and that nothing was sent (#3771)', () => {
+  const SKIPPED: readonly SeedItemStatus[] = [
+    'unsupported_format',
+    'attachments_off',
+    'too_large',
+    'app_settings',
+    'hidden_file',
+    'unsafe_name',
+    'name_collision',
+  ];
+
+  test.each(SKIPPED)('%s opens with "Skipped ·" and says it was never sent', (status) => {
+    const line = SEED_STATUS_LINES[status];
+
+    expect(line.startsWith('Skipped · ')).toBe(true);
+    expect(line).toMatch(/never sent|neither was sent|never was/u);
+    expect(ranksOrShames(line)).toBe(false);
+  });
+
+  test('the examples read as the issue gives them', () => {
+    expect(SEED_STATUS_LINES.attachments_off).toMatch(/^Skipped · attachments are off/u);
+    expect(SEED_STATUS_LINES.unsupported_format).toMatch(
+      /^Skipped · your vault doesn't read this type/u,
+    );
+  });
+
+  test('a type the vault turned away says nothing was stored and offers no resend', () => {
+    const line = SEED_STATUS_LINES.unsupported_source;
+
+    expect(line.startsWith('Skipped · ')).toBe(true);
+    expect(line).toContain('nothing was stored');
+    expect(line.toLowerCase()).not.toContain('again');
   });
 });
 
@@ -310,6 +376,11 @@ describe('the line shown while documents are going over', () => {
   test('names the position in the run and how long the run is', () => {
     // Two settled and one in flight of twelve: the third document.
     expect(seedProgressLine(tally(12, 2, 10, 0))).toContain('3 of 12');
+  });
+
+  test('counts only what is being sent, not what was skipped (#3771)', () => {
+    // 40 notes and 20 skipped files: the third note of forty, not of sixty.
+    expect(seedProgressLine(tally(60, 2, 38, 0, 0, { skipped: 20 }))).toBe('Sending 3 of 40…');
   });
 
   test('counts the whole run rather than only the latest pick', () => {
@@ -341,6 +412,11 @@ describe('a queue that carries on while the person moves around the app (#3772)'
   test('the indicator counts what is left, from anywhere', () => {
     expect(uploadQueueIndicatorLine(37)).toBe('Uploading · 37 remaining');
     expect(uploadQueueIndicatorLine(1)).toBe('Uploading · 1 remaining');
+  });
+
+  test('the indicator adds what failed once anything has (#3771)', () => {
+    expect(uploadQueueIndicatorLine(37, 0)).toBe('Uploading · 37 remaining');
+    expect(uploadQueueIndicatorLine(37, 3)).toBe('Uploading · 37 remaining · 3 failed');
   });
 
   test('each batch header says where it stands, named when it is a folder', () => {
@@ -470,7 +546,15 @@ describe('waiting for a busy vault (#3770)', () => {
   });
 
   test('the progress line names the vault, not the pace', () => {
-    const tally = { total: 3, landed: 1, waiting: 2, refused: 0, unconfirmed: 0 };
+    const tally = {
+      total: 3,
+      landed: 1,
+      remaining: 2,
+      failed: 0,
+      skipped: 0,
+      stopped: 0,
+      unconfirmed: 0,
+    };
 
     expect(seedProgressLine(tally, false, true)).toBe(SEED_VAULT_BUSY_PROGRESS_LINE);
     expect(seedProgressLine(tally, true, false)).toBe(SEED_PAUSED_PROGRESS_LINE);

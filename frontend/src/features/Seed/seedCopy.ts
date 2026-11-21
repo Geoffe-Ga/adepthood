@@ -59,6 +59,12 @@ export const SEED_STATUS_LINES: Record<SeedItemStatus, string> = {
   vault_busy:
     'Your vault stayed busy the whole time, so this one is still with you and nothing was ' +
     'stored. Send it again once your vault has settled.',
+  // The vault refused the file's type with a 415 (#3771) before writing
+  // anything. Counted with the skipped files, and offered no resend: the same
+  // file is refused the same way.
+  unsupported_source:
+    "Skipped · your vault doesn't take this kind of file as a document, so nothing was " +
+    'stored. It is still with you.',
   in_corpus: 'Kept with the rest of your writing. It will show up in reflections from here on.',
   // The ordinary first answer rather than an error state: the corpus is off
   // until somebody turns it on. It names the setting rather than the endpoint,
@@ -102,10 +108,28 @@ export const SEED_STATUS_LINES: Record<SeedItemStatus, string> = {
     'Nothing was stored. Documents you bring in are kept with the rest of your writing, and ' +
     `that place isn't ready yet. Open ${VAULT_ROW_LABEL} in Settings to set it up ` +
     'or check on it, then send this again.',
-  // Decided on device, so it names neither destination: this extension is
-  // outside everything either side could read, and it was never sent.
-  unsupported_format: 'Nothing here reads this kind of file, so it was never sent.',
-  too_large: `Larger than ${MAX_SEED_DOCUMENT_LABEL}, which is as much as one document can carry.`,
+  // The skipped files (#3771): decided on device from a file's name, place and
+  // size, before anything was sent. Each opens with "Skipped ·" so a row reads
+  // as the count it belongs to, then says why in a phrase and that nothing left.
+  //
+  // Outside everything the vault reads, or a type it refuses outright.
+  unsupported_format: "Skipped · your vault doesn't read this type, so it was never sent.",
+  // A type the vault reads, left behind because the folder's attachments were
+  // not switched on. Offered, never pressed: it is the person's choice.
+  attachments_off:
+    'Skipped · attachments are off, so this was never sent. Bring the folder in again with ' +
+    'them on if you want it too.',
+  too_large:
+    `Skipped · larger than ${MAX_SEED_DOCUMENT_LABEL}, which is as much as one document can ` +
+    'carry, so it was never sent.',
+  app_settings: "Skipped · an app's own settings rather than your writing, so it was never sent.",
+  hidden_file: 'Skipped · a hidden file, so it was never sent.',
+  unsafe_name:
+    "Skipped · its name or folder can't be sent as it is, so it never was. Renamed, it can " +
+    'come in.',
+  name_collision:
+    'Skipped · another file here has the same path spelled another way, and either would ' +
+    'overwrite the other, so neither was sent. Rename one and both can come in.',
   // The managed vault's request ceiling (#3051), checked on the server before a
   // byte of the document left it, so "nothing was stored" is a fact. The same
   // file can never fit, so this offers a smaller file rather than another go.
@@ -163,32 +187,50 @@ export const SEED_CONSENT_PROMPT =
 /** What the way there is called. */
 export const SEED_CONSENT_LINK_LABEL = 'Open that setting';
 
+/** Between two counts in a line: the same middle dot the batch headers use. */
+const COUNT_SEPARATOR = ' · ';
+
+/** How the skipped count is named: what kind of skip it mostly is. */
+const SKIPPED_LABEL = 'skipped (unsupported type)';
+
 /**
- * The one-line state of the run: how far along it is while documents are still
- * going over, and what landed once they have all settled. Null before the first
- * pick, when there is nothing honest to say.
+ * The run's four counts, always in this order and always all four (#3771):
+ * `12 landed · 3 failed · 40 remaining · 18 skipped (unsupported type)`. A
+ * fifth, `stopped`, follows only when the person stopped something. Null
+ * before the first pick, when there is nothing honest to count.
  *
- * Deliberately says "landed" rather than naming a destination. A single pick
- * can only reach one destination, but which one is the server's answer per
- * request, and a summary that named one would be a claim this line cannot
- * check. The per-document row is where the place is named.
+ * Plain counts, no praise and no pressure: the same line reads the same
+ * whether everything landed or nothing did. Deliberately says "landed" rather
+ * than naming a destination -- which one answered is the server's word per
+ * request, and the per-document row is where the place is named.
  */
 export function seedSummaryLine(tally: SeedRunTally): string | null {
   if (tally.total === 0) {
     return null;
   }
-  if (tally.waiting > 0) {
-    return `${tally.landed} of ${tally.total} have landed so far.`;
-  }
-  if (tally.refused === 0 && tally.unconfirmed === 0) {
-    return `All ${tally.total} have landed.`;
-  }
-  // An unconfirmed upload may have landed, so it is never counted among those
-  // that "didn't go over" (#3239); each clause appears only when it has a count.
-  const clauses = [`${tally.landed} of ${tally.total} landed.`];
-  if (tally.refused > 0) clauses.push(`${tally.refused} didn't go over.`);
-  if (tally.unconfirmed > 0) clauses.push(`${tally.unconfirmed} couldn't be confirmed.`);
-  return clauses.join(' ');
+  const counts = [
+    `${tally.landed} landed`,
+    `${tally.failed} failed`,
+    `${tally.remaining} remaining`,
+    `${tally.skipped} ${SKIPPED_LABEL}`,
+  ];
+  if (tally.stopped > 0) counts.push(`${tally.stopped} stopped`);
+  return counts.join(COUNT_SEPARATOR);
+}
+
+/**
+ * The sub-line beneath the counts when some of the failed may have landed
+ * after all (#3239): their reply was lost, so nobody can say. Null when none.
+ * A sub-line of Failed rather than a fifth count, because "failed" is true of
+ * them as far as anyone can see, and this says what is not known.
+ */
+export function seedUnconfirmedLine(tally: SeedRunTally): string | null {
+  if (tally.unconfirmed === 0) return null;
+  const which =
+    tally.unconfirmed === 1
+      ? "1 of those couldn't be confirmed — it may have arrived"
+      : `${tally.unconfirmed} of those couldn't be confirmed — they may have arrived`;
+  return `${which}. Sending again updates in place rather than making a second copy.`;
 }
 
 /**
@@ -206,7 +248,7 @@ export function seedProgressLine(
   paused = false,
   waitingOnVault = false,
 ): string | null {
-  if (tally.waiting === 0) {
+  if (tally.remaining === 0) {
     return null;
   }
   if (waitingOnVault) {
@@ -215,8 +257,11 @@ export function seedProgressLine(
   if (paused) {
     return SEED_PAUSED_PROGRESS_LINE;
   }
-  const settled = tally.total - tally.waiting;
-  return `Sending ${settled + 1} of ${tally.total}…`;
+  // Skipped files were never going to be sent, so the position counts only
+  // what is sent or was meant to be (#3771).
+  const sendable = tally.total - tally.skipped;
+  const settled = sendable - tally.remaining;
+  return `Sending ${settled + 1} of ${sendable}…`;
 }
 
 /**
@@ -282,9 +327,14 @@ function fileCount(count: number): string {
   return count === 1 ? '1 file' : `${count} files`;
 }
 
-/** The app-wide indicator's line: how much of the queue is still to go. */
-export function uploadQueueIndicatorLine(remaining: number): string {
-  return `Uploading · ${remaining} remaining`;
+/**
+ * The app-wide indicator's line: how much of the queue is still to go, and,
+ * once any has, how much failed (#3771) -- the one count worth a glance from
+ * elsewhere in the app. The full four are on the seeding screen it opens.
+ */
+export function uploadQueueIndicatorLine(remaining: number, failed = 0): string {
+  const line = `Uploading${COUNT_SEPARATOR}${remaining} remaining`;
+  return failed > 0 ? `${line}${COUNT_SEPARATOR}${failed} failed` : line;
 }
 
 /** What a batch header needs to say where the batch stands. */

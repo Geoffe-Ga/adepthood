@@ -287,7 +287,7 @@ def resolve_vault_owner(raw: str | None) -> int | None:
 class VaultErrorCode(enum.StrEnum):
     """The machine-readable failure vocabulary a vault may answer an error with.
 
-    Eight of the eleven codes Creek publishes, and deliberately still closed: these
+    Nine of the eleven codes Creek publishes, and deliberately still closed: these
     are the *only* strings the adapter may ever parse out of a vault response.
     Anything else -- a newer code, a typo, or a hostile string smuggling control
     characters toward a log -- is dropped on the floor rather than stored or
@@ -300,9 +300,15 @@ class VaultErrorCode(enum.StrEnum):
     ``unauthenticated`` and ``internal_error``. Neither adds anything a member
     would be read for: a refused credential already classifies from its status
     class alone, and so does a server fault, so parsing either code would only
-    give two spellings of a decision already made. The third,
-    ``unsupported_source`` (0.8, ``POST /v1/uploads`` only), classifies from its
-    4xx status as a contract error and has never had a member.
+    give two spellings of a decision already made.
+
+    ``UNSUPPORTED_SOURCE`` (0.8, ``POST /v1/uploads`` only) is the #3771
+    addition: a ``415`` saying the file is not something the vault ingests as a
+    document. Before it had a member it classified from its 4xx status as an
+    uncoded contract error, which the upload path answered ``degraded`` -- an
+    invitation to resend a file the vault will refuse every time. It is a
+    contract code like ``invalid_request``, and last so the order of the others
+    does not move.
 
     ``RATE_LIMITED`` is the 0.19 addition, and the only member that is not
     about the request or the vault itself: it is the relayed model-call cap, a
@@ -321,6 +327,7 @@ class VaultErrorCode(enum.StrEnum):
     NOT_FOUND = "not_found"
     UNAVAILABLE = "unavailable"
     RATE_LIMITED = "rate_limited"
+    UNSUPPORTED_SOURCE = "unsupported_source"
 
 
 #: The static message a suspended vault send carries: content-free by design.
@@ -886,6 +893,12 @@ class VaultUploadStatus(enum.StrEnum):
     from ``DEGRADED`` because the advice differs: "try again" after a mishap,
     "wait this long, then send it" for a vault that is merely occupied. Last,
     so the order of the others does not move.
+
+    ``UNSUPPORTED_SOURCE`` (#3771) is the vault refusing the file's type with
+    ``415 unsupported_source``: nothing was stored, and sending the same file
+    again is refused the same way. It is apart from ``DEGRADED`` because that
+    one says "try again", and from ``CAPABILITY_UNSUPPORTED`` because uploads
+    work -- only this file does not go. Last, after ``VAULT_BUSY``.
     """
 
     ACCEPTED = "accepted"
@@ -893,6 +906,7 @@ class VaultUploadStatus(enum.StrEnum):
     CAPABILITY_UNSUPPORTED = "capability_unsupported"
     DEGRADED = "degraded"
     VAULT_BUSY = "vault_busy"
+    UNSUPPORTED_SOURCE = "unsupported_source"
 
 
 @dataclass(frozen=True)

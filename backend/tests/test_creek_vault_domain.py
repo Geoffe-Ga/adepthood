@@ -240,6 +240,7 @@ class TestRatifiedWireVocabularies:
             "not_found",
             "unavailable",
             "rate_limited",
+            "unsupported_source",
         ]
 
     def test_ingest_actions_are_the_three_upsert_outcomes(self) -> None:

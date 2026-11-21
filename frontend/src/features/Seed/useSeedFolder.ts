@@ -23,9 +23,11 @@ import { useCallback, useMemo, useState } from 'react';
 import {
   buildFolderManifest,
   selectFolderEntries,
+  type FolderLeftOutReason,
   type FolderManifest,
   type FolderManifestEntry,
   type FolderSelection,
+  type FolderSkippedFile,
 } from './folderManifest';
 import type { PickedDocument } from './pickSeedDocuments';
 import { browserFolderPickerHost, pickSeedFolder, type FolderPickerHost } from './pickSeedFolder';
@@ -35,6 +37,7 @@ import {
   SEED_FOLDER_PATHLESS_NOTICE,
   SEED_FOLDER_TOO_MANY_NOTICE,
 } from './seedFolderCopy';
+import type { SeedSkipStatus } from './seedRun';
 import { isSafeSourceNamespace, normalizeSourceText } from './seedSourcePath';
 
 /** A chosen folder awaiting the person's decision. */
@@ -85,6 +88,31 @@ function toPickedDocument(entry: FolderManifestEntry<File>, namespace: string): 
     size: entry.size,
     seedable: true,
     source: { namespace, relativePath: entry.relativePath },
+  };
+}
+
+/** The run status each left-out file settles on, one per reason (#3771). */
+const SKIP_STATUS: Readonly<Record<FolderLeftOutReason, SeedSkipStatus>> = {
+  unsupported: 'unsupported_format',
+  attachments_off: 'attachments_off',
+  too_large: 'too_large',
+  configuration: 'app_settings',
+  hidden: 'hidden_file',
+  unsafe_path: 'unsafe_name',
+  collision: 'name_collision',
+};
+
+/**
+ * One left-out file as a picked document that is already skipped: named by its
+ * path, with no handle and no source, so nothing of it can be read or sent.
+ */
+function toSkippedDocument(file: FolderSkippedFile<FolderLeftOutReason>): PickedDocument {
+  return {
+    name: file.path,
+    uri: '',
+    size: null,
+    seedable: false,
+    skipped: SKIP_STATUS[file.reason],
   };
 }
 
@@ -160,7 +188,11 @@ export function useSeedFolder(
   const start = useCallback(async () => {
     if (review === null || review.blocker !== null) return;
     const namespace = normalizeSourceText(review.namespace);
-    const documents = review.selection.entries.map((entry) => toPickedDocument(entry, namespace));
+    // What goes, then what was skipped (#3771): one batch, so its header counts both.
+    const documents = [
+      ...review.selection.entries.map((entry) => toPickedDocument(entry, namespace)),
+      ...review.selection.leftOut.map(toSkippedDocument),
+    ];
     setPending(null);
     await send(documents);
   }, [review, send]);

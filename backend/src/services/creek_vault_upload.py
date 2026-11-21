@@ -270,7 +270,7 @@ class VaultUploadOutcome:
     retry_after_seconds: int | None = None
 
 
-# The three non-accepted outcomes are value-identical every time, so they are
+# The four interned non-accepted outcomes are value-identical every time, so they are
 # interned as module constants rather than rebuilt on each path.
 _UNAVAILABLE_OUTCOME = VaultUploadOutcome(
     status=VaultUploadStatus.VAULT_UNAVAILABLE, vault_ref=None, tags=()
@@ -279,6 +279,9 @@ _UNSUPPORTED_OUTCOME = VaultUploadOutcome(
     status=VaultUploadStatus.CAPABILITY_UNSUPPORTED, vault_ref=None, tags=()
 )
 _DEGRADED_OUTCOME = VaultUploadOutcome(status=VaultUploadStatus.DEGRADED, vault_ref=None, tags=())
+_UNSUPPORTED_SOURCE_OUTCOME = VaultUploadOutcome(
+    status=VaultUploadStatus.UNSUPPORTED_SOURCE, vault_ref=None, tags=()
+)
 
 
 def _framed(text: str) -> bytes:
@@ -430,6 +433,14 @@ def _is_unnegotiable(error: CreekVaultError) -> bool:
     return isinstance(error, CreekVaultContractError) and error.code in _UNNEGOTIABLE_CODES
 
 
+def _is_refused_source(error: CreekVaultError) -> bool:
+    """Return whether ``error`` is the vault refusing this file's type (#3771)."""
+    return (
+        isinstance(error, CreekVaultContractError)
+        and error.code is VaultErrorCode.UNSUPPORTED_SOURCE
+    )
+
+
 def _failed_outcome_for(error: CreekVaultError) -> VaultUploadOutcome:
     """Choose the outcome one failed upload call is answered with.
 
@@ -453,9 +464,16 @@ def _failed_outcome_for(error: CreekVaultError) -> VaultUploadOutcome:
     ``temporarily_unavailable`` or a ``429`` -- is neither broken nor closed,
     and is answered :attr:`VaultUploadStatus.VAULT_BUSY` with the wait it named.
     See :func:`_busy_wait`.
+
+    And one more that is the file rather than the moment (#3771): a ``415
+    unsupported_source`` is the vault saying it does not ingest this file as a
+    document, answered :attr:`VaultUploadStatus.UNSUPPORTED_SOURCE` -- nothing
+    stored, and no retry offered, because the same file is refused the same way.
     """
     if _is_unnegotiable(error):
         return _UNSUPPORTED_OUTCOME
+    if _is_refused_source(error):
+        return _UNSUPPORTED_SOURCE_OUTCOME
     wait = _busy_wait(error)
     if wait is not None:
         return VaultUploadOutcome(

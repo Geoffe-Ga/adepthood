@@ -1,6 +1,6 @@
 /**
  * "Uploading · 37 remaining" -- the upload queue, visible from anywhere in the
- * app (#3772).
+ * app (#3772), with "· 3 failed" once any has (#3771).
  *
  * The queue outlives the Seed screen, so something outside that screen has to
  * say it is still going: otherwise a person who moved on to their journal
@@ -21,7 +21,11 @@ import { useUnloadWarning } from './useUnloadWarning';
 
 import { accent, SPACING, surface, ink, touchTarget } from '@/design/tokens';
 import type { RootStackParamList } from '@/navigation/RootStack';
-import { selectUploadQueueRemaining, useUploadQueueStore } from '@/store/useUploadQueueStore';
+import {
+  selectUploadQueueFailed,
+  selectUploadQueueRemaining,
+  useUploadQueueStore,
+} from '@/store/useUploadQueueStore';
 
 /** What the indicator says to a screen reader it does when pressed. */
 const OPEN_RUN_HINT = "Opens Bring in what you've written, where each document's progress is.";
@@ -30,10 +34,11 @@ const OPEN_RUN_HINT = "Opens Bring in what you've written, where each document's
 export function UploadQueueIndicator(): React.JSX.Element | null {
   const isSending = useUploadQueueStore((state) => state.isSending);
   const remaining = useUploadQueueStore(selectUploadQueueRemaining);
+  const failed = useUploadQueueStore(selectUploadQueueFailed);
   const navigation = useNavigation<NativeStackNavigationProp<RootStackParamList>>();
   useUnloadWarning(isSending);
   if (!isSending || remaining === 0) return null;
-  const line = uploadQueueIndicatorLine(remaining);
+  const line = uploadQueueIndicatorLine(remaining, failed);
   return (
     <TouchableOpacity
       style={styles.indicator}

@@ -52,6 +52,7 @@ import {
   seedProgressLine,
   seedRetryLabel,
   seedSummaryLine,
+  seedUnconfirmedLine,
 } from './seedCopy';
 import { SEED_CHOOSE_FOLDER_LABEL } from './seedFolderCopy';
 import { SeedFolderReview } from './SeedFolderReview';
@@ -261,6 +262,9 @@ const SeedBatchHeaderRow = ({
         remaining: batch.remaining,
       })}
     </Text>
+    <Text style={styles.batchCounts} testID={`seed-batch-counts-${batch.id}`}>
+      {seedSummaryLine(batch.tally)}
+    </Text>
     {batch.remaining > 0 ? (
       <TouchableOpacity
         onPress={() => onStop(batch.id)}
@@ -322,9 +326,30 @@ const SeedVaultFirst = ({ onOpenVault }: { onOpenVault: () => void }): React.JSX
   </>
 );
 
+/**
+ * The whole queue's counts (#3771) -- landed, failed, remaining, skipped -- and,
+ * beneath them, the failed that may have arrived after all.
+ */
+const SeedSummary = ({ run }: { run: SeedRunController }): React.JSX.Element | null => {
+  const summary = seedSummaryLine(run.tally);
+  if (summary === null) return null;
+  const unconfirmed = seedUnconfirmedLine(run.tally);
+  return (
+    <>
+      <Text style={styles.summary} testID="seed-summary">
+        {summary}
+      </Text>
+      {unconfirmed ? (
+        <Text style={styles.summaryDetail} testID="seed-summary-unconfirmed">
+          {unconfirmed}
+        </Text>
+      ) : null}
+    </>
+  );
+};
+
 /** The screen body, given a run to read and drive. */
 const SeedCorpusBody = ({ run, folder, onOpenConsent }: SeedCorpusBodyProps): React.JSX.Element => {
-  const summary = seedSummaryLine(run.tally);
   return (
     <>
       <SeedHeader />
@@ -341,11 +366,7 @@ const SeedCorpusBody = ({ run, folder, onOpenConsent }: SeedCorpusBodyProps): Re
           {run.notice}
         </Text>
       ) : null}
-      {summary ? (
-        <Text style={styles.summary} testID="seed-summary">
-          {summary}
-        </Text>
-      ) : null}
+      <SeedSummary run={run} />
       {run.needsConsent ? (
         <SeedInvitation
           prompt={SEED_CONSENT_PROMPT}
@@ -423,6 +444,10 @@ const styles = StyleSheet.create({
     color: ink.primary,
     fontWeight: '600',
   },
+  batchCounts: {
+    color: ink.soft,
+    marginTop: SPACING.xs,
+  },
   notice: {
     color: ink.soft,
     marginTop: SPACING.md,
@@ -430,6 +455,10 @@ const styles = StyleSheet.create({
   summary: {
     color: ink.primary,
     marginTop: SPACING.md,
+  },
+  summaryDetail: {
+    color: ink.soft,
+    marginTop: SPACING.xs,
   },
   consent: {
     backgroundColor: surface.sunken,

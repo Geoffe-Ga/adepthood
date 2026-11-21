@@ -1,6 +1,9 @@
 /* eslint-env jest */
 /* global describe, test, expect */
-import { SEED_DOCUMENT_EXTENSIONS as PICKER_EXTENSIONS } from '../pickSeedDocuments';
+import {
+  isSeedableFilename,
+  SEED_DOCUMENT_EXTENSIONS as PICKER_EXTENSIONS,
+} from '../pickSeedDocuments';
 import {
   SEED_ATTACHMENT_EXTENSIONS,
   SEED_DOCUMENT_EXTENSIONS,
@@ -48,6 +51,29 @@ const CREEK_ROUTED_EXTENSIONS = [
 ];
 const CREEK_GENERIC_PLAIN_TEXT_EXTENSIONS = ['.txt', '.text', '.log'];
 const CREEK_ARCHIVE_EXTENSIONS = ['.zip'];
+
+/**
+ * The extensions Creek's table refuses with `415 unsupported_source`, each a
+ * `_Refuse` entry in `_EXTENSION_ROUTES` at `creek/ingest/gdrive.py:151-164`
+ * (Creek-Vault@ecf0b750) -- `.zip` excepted, which the upload route forks to
+ * its archive path before the table is read. Restated in Creek's own order so a
+ * diff against that table reads line for line (#3771).
+ */
+const CREEK_415_EXTENSIONS = [
+  '.json',
+  '.jsonl',
+  '.ndjson',
+  '.tar',
+  '.tgz',
+  '.gz',
+  '.bz2',
+  '.xz',
+  '.7z',
+  '.rar',
+  '.doc',
+  '.xls',
+  '.ppt',
+];
 
 /** Extensions Creek's table refuses outright, or that no ingestor reads. */
 const CREEK_REFUSED_EXTENSIONS = [
@@ -104,6 +130,21 @@ describe('the one list of types a seed can carry', () => {
 
   test('counts Markdown and plain text as notes', () => {
     expect([...SEED_NOTE_EXTENSIONS].sort()).toEqual(['.markdown', '.md', '.text', '.txt']);
+  });
+});
+
+describe('a type Creek refuses with a 415 never leaves the device (#3771)', () => {
+  test('is refused by both the picker and a folder', () => {
+    for (const extension of CREEK_415_EXTENSIONS) {
+      expect(seedDocumentKind(`export${extension}`)).toBeNull();
+      expect(isSeedableFilename(`export${extension}`)).toBe(false);
+    }
+  });
+
+  test('is among the refused types this list is held against', () => {
+    for (const extension of CREEK_415_EXTENSIONS) {
+      expect(CREEK_REFUSED_EXTENSIONS).toContain(extension);
+    }
   });
 });
 

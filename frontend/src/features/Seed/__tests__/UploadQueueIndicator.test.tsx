@@ -60,6 +60,27 @@ describe('the upload queue indicator', () => {
     expect(queryByTestId('upload-queue-indicator')).toBeNull();
   });
 
+  test('adds what failed once anything has, and leaves skipped files out of it (#3771)', () => {
+    queueMidRun(2);
+    const { run } = useUploadQueueStore.getState();
+    let next = seedRunReducer(run, {
+      type: 'add',
+      entries: [
+        { id: 'seed-x', name: 'x.md', status: 'failed' },
+        { id: 'seed-y', name: 'export.json', status: 'unsupported_format' },
+      ],
+    });
+    next = seedRunReducer(next, { type: 'settle', id: 'seed-x', status: 'failed' });
+    act(() => {
+      useUploadQueueStore.setState({ run: next });
+    });
+    const { getByTestId } = render(<UploadQueueIndicator />);
+
+    expect(getByTestId('upload-queue-indicator-line').props.children).toBe(
+      'Uploading · 3 remaining · 1 failed',
+    );
+  });
+
   test('counts what is still to go, from anywhere, and follows the queue', () => {
     queueMidRun(36);
     const { getByTestId, queryByTestId } = render(<UploadQueueIndicator />);

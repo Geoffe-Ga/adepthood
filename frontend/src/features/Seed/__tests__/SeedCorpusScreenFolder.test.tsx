@@ -230,6 +230,69 @@ describe('choosing a folder on the seeding screen', () => {
     expect(screen.getByText('Home/Index.md')).toBeTruthy();
   });
 
+  test('counts what was skipped at once, says why on each row, and sends none of it (#3771)', async () => {
+    const screen = render(<SeedCorpusScreen />);
+    await openReview(screen);
+
+    await act(async () => {
+      fireEvent.press(screen.getByText(SEED_FOLDER_START_LABEL));
+    });
+
+    await waitFor(() =>
+      expect(screen.getByTestId('seed-summary').props.children).toBe(
+        '2 landed · 0 failed · 0 remaining · 3 skipped (unsupported type)',
+      ),
+    );
+    expect(screen.getByTestId('seed-batch-counts-batch-0').props.children).toBe(
+      '2 landed · 0 failed · 0 remaining · 3 skipped (unsupported type)',
+    );
+    expect(screen.getByText('assets/diagram.png')).toBeTruthy();
+    expect(screen.getByText('cache/example.bin')).toBeTruthy();
+    expect(screen.getByText('.obsidian/app.json')).toBeTruthy();
+    expect(screen.getAllByText(SEED_STATUS_LINES.attachments_off)).toHaveLength(1);
+    expect(screen.getAllByText(SEED_STATUS_LINES.unsupported_format)).toHaveLength(1);
+    expect(screen.getAllByText(SEED_STATUS_LINES.app_settings)).toHaveLength(1);
+    expect(sentBodies().map((body) => body.source_relative_path)).toEqual([
+      'Home/Index.md',
+      'Work/Index.md',
+    ]);
+    for (const skipped of [VAULT[2], VAULT[3], VAULT[4]]) {
+      expect(skipped?.arrayBuffer).not.toHaveBeenCalled();
+    }
+    expect(screen.queryByTestId('seed-retry-button')).toBeNull();
+  });
+
+  test('shows the skipped before the first document has gone over (#3771)', async () => {
+    let release = (): void => undefined;
+    mockImportFetch.mockReset();
+    mockImportFetch
+      .mockReturnValueOnce(
+        new Promise((resolve) => {
+          release = () => resolve(vaultAccepted());
+        }),
+      )
+      .mockImplementation(vaultAccepted);
+    const screen = render(<SeedCorpusScreen />);
+    await openReview(screen);
+
+    await act(async () => {
+      fireEvent.press(screen.getByText(SEED_FOLDER_START_LABEL));
+    });
+
+    await waitFor(() =>
+      expect(screen.getByTestId('seed-summary').props.children).toBe(
+        '0 landed · 0 failed · 2 remaining · 3 skipped (unsupported type)',
+      ),
+    );
+    expect(screen.getByTestId('seed-progress-line').props.children).toBe('Sending 1 of 2…');
+    await act(async () => {
+      release();
+    });
+    await waitFor(() =>
+      expect(screen.getByTestId('seed-summary').props.children).toMatch(/^2 landed/u),
+    );
+  });
+
   test('sends the attachments too once they are switched on', async () => {
     const screen = render(<SeedCorpusScreen />);
     await openReview(screen);

@@ -1,22 +1,25 @@
 import { writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 
-import { expect, test, type Page, type Route } from '@playwright/test';
+import { expect, test, type Route } from '@playwright/test';
 
 import { backendUrl, bearer, frontendUrl } from './journalHabitsBrowserSupport';
 import {
   base64Of,
   chooseFolder,
+  countsLine,
   DEGRADED_LINE_START,
   digestOf,
   expectLanded,
   expectNoneIn,
+  fileReads,
   importPosts,
   IMPORT_ROUTE,
   lane,
   loginVaultOwner,
   occurrences,
   openSeedScreen,
+  recordFileReads,
   recordRequests,
   reviewedPaths,
   runRow,
@@ -65,6 +68,9 @@ const DEGRADED_EVENT = 'creek vault upload degraded';
 
 const WAITING_LINE = 'Pausing a moment so everything goes over at a steady pace. This one is next.';
 
+/** How a skipped settings file's row opens (#3771). */
+const APP_SETTINGS_LINE = "Skipped · an app's own settings rather than your writing";
+
 /** What `rate_limit_exceeded_response` answers, and how long it asks to wait. */
 const RATE_LIMIT_BODY = JSON.stringify({ detail: 'rate_limit_exceeded' });
 const RETRY_AFTER_SECONDS = 2;
@@ -83,54 +89,6 @@ const OBSIDIAN_CONFIG = '{"lane3557": "must stay local", "promptDelete": false}\
 
 /** Spec-wide scratch space; every folder below lives here and goes with it. */
 const { root: scratch, writeFolder } = registerSeedSpec('adepthood-seed-folder-');
-
-/**
- * Record, in the page, every `File` the app reads, by the path the browser gave
- * it. Installed before the app loads, over every way a script can read a Blob.
- */
-async function recordFileReads(page: Page): Promise<void> {
-  await page.addInitScript(() => {
-    const reads: string[] = [];
-    (window as unknown as { __seedReads: string[] }).__seedReads = reads;
-    const note = (blob: unknown): void => {
-      if (blob instanceof File) reads.push(blob.webkitRelativePath || blob.name);
-    };
-    const blobMethods = ['arrayBuffer', 'text', 'stream', 'slice', 'bytes'] as const;
-    for (const method of blobMethods) {
-      const original = (Blob.prototype as unknown as Record<string, unknown>)[method];
-      if (typeof original !== 'function') continue;
-      Object.defineProperty(Blob.prototype, method, {
-        configurable: true,
-        writable: true,
-        value(this: Blob, ...args: unknown[]) {
-          note(this);
-          return (original as (...rest: unknown[]) => unknown).apply(this, args);
-        },
-      });
-    }
-    const readerMethods = [
-      'readAsArrayBuffer',
-      'readAsText',
-      'readAsDataURL',
-      'readAsBinaryString',
-    ] as const;
-    for (const method of readerMethods) {
-      const original = FileReader.prototype[method] as (...rest: unknown[]) => void;
-      Object.defineProperty(FileReader.prototype, method, {
-        configurable: true,
-        writable: true,
-        value(this: FileReader, blob: Blob, ...args: unknown[]) {
-          note(blob);
-          original.call(this, blob, ...args);
-        },
-      });
-    }
-  });
-}
-
-async function fileReads(page: Page): Promise<string[]> {
-  return page.evaluate(() => [...(window as unknown as { __seedReads: string[] }).__seedReads]);
-}
 
 test('a nested folder is reviewed before anything is sent, and its notes land as distinct fragments', async ({
   page,
@@ -188,7 +146,9 @@ test('a nested folder is reviewed before anything is sent, and its notes land as
     'Work/Index.md',
   ]);
   await startImport(page);
-  await expect(page.getByTestId('seed-summary')).toHaveText('All 3 have landed.');
+  // The settings file is counted as skipped (#3771), never sent.
+  await expect(page.getByTestId('seed-summary')).toHaveText(countsLine({ landed: 3, skipped: 1 }));
+  await expect(runRow(page, '.obsidian/app.json')).toContainText(APP_SETTINGS_LINE);
   for (const path of ['Attachments/diagram.png', 'Home/Index.md', 'Work/Index.md']) {
     await expectLanded(page, path);
   }
@@ -272,7 +232,7 @@ test('importing the same folder again updates its notes in place, and an edit mo
   const start = await vaultLedger(page);
   await chooseFolder(page, folder);
   await startImport(page);
-  await expect(page.getByTestId('seed-summary')).toHaveText('All 2 have landed.');
+  await expect(page.getByTestId('seed-summary')).toHaveText(countsLine({ landed: 2 }));
   const first = uploadsSince(await vaultLedger(page), uploadCount(start));
   expect(first).toHaveLength(2);
   const workId = uploadOf(first, digestOf(work)).externalId;
@@ -284,7 +244,7 @@ test('importing the same folder again updates its notes in place, and an edit mo
   await chooseFolder(page, folder);
   await expect(page.getByTestId('seed-folder-namespace')).toHaveValue(namespace);
   await startImport(page);
-  await expect(page.getByTestId('seed-summary')).toHaveText('All 4 have landed.');
+  await expect(page.getByTestId('seed-summary')).toHaveText(countsLine({ landed: 4 }));
   const afterRepeat = await vaultLedger(page);
   const repeat = uploadsSince(afterRepeat, uploadCount(beforeRepeat));
   expect(repeat).toHaveLength(2);
@@ -301,7 +261,7 @@ test('importing the same folder again updates its notes in place, and an edit mo
   const beforeEdit = await vaultLedger(page);
   await chooseFolder(page, folder);
   await startImport(page);
-  await expect(page.getByTestId('seed-summary')).toHaveText('All 6 have landed.');
+  await expect(page.getByTestId('seed-summary')).toHaveText(countsLine({ landed: 6 }));
   const afterEdit = await vaultLedger(page);
   const edit = uploadsSince(afterEdit, uploadCount(beforeEdit));
   expect(edit).toHaveLength(2);
@@ -344,13 +304,14 @@ test('one document the vault refuses is shown, and trying again sends it under t
   await expect(page.getByTestId('seed-retry-button')).toHaveText('Try that one again');
   await expectLanded(page, 'Kept.md');
   await expect(runRow(page, 'Later/Refused.md')).toContainText(DEGRADED_LINE_START);
-  await expect(page.getByTestId('seed-summary')).toHaveText(
-    "1 of 2 landed. 1 couldn't be confirmed.",
+  await expect(page.getByTestId('seed-summary')).toHaveText(countsLine({ landed: 1, failed: 1 }));
+  await expect(page.getByTestId('seed-summary-unconfirmed')).toContainText(
+    "1 of those couldn't be confirmed",
   );
 
   await page.getByTestId('seed-retry-button').click();
   await expectLanded(page, 'Later/Refused.md');
-  await expect(page.getByTestId('seed-summary')).toHaveText('All 2 have landed.');
+  await expect(page.getByTestId('seed-summary')).toHaveText(countsLine({ landed: 2 }));
   await expect(page.getByTestId('seed-retry-button')).toHaveCount(0);
 
   // The refused attempt and its retry addressed one identity; the kept note
@@ -425,7 +386,7 @@ test('a 429 is waited out for its Retry-After, then the queue resumes without re
   await expect(runRow(page, 'Second.md')).toContainText(WAITING_LINE);
   await expectLanded(page, 'First.md');
   await expectLanded(page, 'Second.md');
-  await expect(page.getByTestId('seed-summary')).toHaveText('All 2 have landed.');
+  await expect(page.getByTestId('seed-summary')).toHaveText(countsLine({ landed: 2 }));
 
   const after = await vaultLedger(page);
   const uploads = uploadsSince(after, uploadCount(before));
@@ -461,9 +422,9 @@ test('a single picked document still lands, and a re-send edits the same fragmen
 
   const before = await vaultLedger(page);
   await pick();
-  await expect(page.getByTestId('seed-summary')).toHaveText('All 1 have landed.');
+  await expect(page.getByTestId('seed-summary')).toHaveText(countsLine({ landed: 1 }));
   await pick();
-  await expect(page.getByTestId('seed-summary')).toHaveText('All 2 have landed.');
+  await expect(page.getByTestId('seed-summary')).toHaveText(countsLine({ landed: 2 }));
 
   const uploads = uploadsSince(await vaultLedger(page), uploadCount(before));
   expect(uploads).toHaveLength(2);

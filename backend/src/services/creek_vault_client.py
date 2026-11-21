@@ -978,6 +978,9 @@ _RETRYABLE_CLIENT_STATUSES: frozenset[int] = frozenset(
 # map to a contract error, and Creek's own ``retry-policy.json`` marks all five
 # terminal: retrying without changing the request cannot help.
 #
+# ``UNSUPPORTED_SOURCE`` (#3771) joins them on the same rule: a ``415`` refusing
+# the file's type is answered the same way however often it is sent.
+#
 # ``NOT_FOUND`` is a *routing* code in Creek's vocabulary -- no such endpoint --
 # and is never emitted for a vault object, so it faults our URL rather than
 # reporting an absent vault. ``PRIVACY_REFUSED`` means we asked for material
@@ -993,6 +996,7 @@ _CONTRACT_ERROR_CODES: frozenset[VaultErrorCode] = frozenset(
         VaultErrorCode.INCOMPATIBLE_VERSION,
         VaultErrorCode.PRIVACY_REFUSED,
         VaultErrorCode.NOT_FOUND,
+        VaultErrorCode.UNSUPPORTED_SOURCE,
     }
 )
 

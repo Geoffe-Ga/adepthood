@@ -233,14 +233,34 @@ const DEPLOYMENT_VAULT_CONNECTION = {
   mcp_address: null,
 } as const;
 
+/** The path of the Settings screen, which reads the vault's connection on load. */
+const SETTINGS_PATH = '/settings';
+
+/**
+ * Whether `request` is Settings' own read of the vault connection: a GET of
+ * `/vault/connection` made by the document loaded at {@link SETTINGS_PATH}.
+ *
+ * The document matters. The screen a login lands on reads the same route, and
+ * its read can still be in flight when `goto` replaces that document; matching
+ * its response then waits on a body the browser discarded with the old page
+ * ("Response body is not available … navigated away", or a read that never
+ * returns). The frame's URL is read when the request is made, so a request from
+ * the document being left is never the one awaited.
+ */
+function isSettingsVaultRead(request: Request): boolean {
+  return (
+    request.method() === 'GET' &&
+    request.url().endsWith('/vault/connection') &&
+    new URL(request.frame().url()).pathname === SETTINGS_PATH
+  );
+}
+
 /** Open "Bring in what you've written" from Settings, as a person would. */
 export async function openSeedScreen(page: Page): Promise<void> {
-  const vaultRead = page.waitForResponse(
-    (response) =>
-      response.url().endsWith('/vault/connection') && response.request().method() === 'GET',
-  );
-  await page.goto(`${frontendUrl()}/settings`);
-  const connection = await vaultRead;
+  const vaultRead = page.waitForRequest(isSettingsVaultRead);
+  await page.goto(`${frontendUrl()}${SETTINGS_PATH}`);
+  const connection = await (await vaultRead).response();
+  if (connection === null) throw new Error('Settings read the vault connection and got no answer');
   // The real server's answer, unaltered: the binding is reported as the
   // deployment source and the operator's vault address is never in it.
   expect(connection.status()).toBe(200);
@@ -281,6 +301,24 @@ export async function startImport(page: Page): Promise<void> {
   await expect(page.getByTestId('seed-folder-review')).toHaveCount(0);
 }
 
+/** The four counts a run reports, each zero unless named (#3771). */
+export interface RunCounts {
+  landed?: number;
+  failed?: number;
+  remaining?: number;
+  skipped?: number;
+}
+
+/** The summary line the screen shows for `counts`: landed · failed · remaining · skipped. */
+export function countsLine({
+  landed = 0,
+  failed = 0,
+  remaining = 0,
+  skipped = 0,
+}: RunCounts): string {
+  return `${landed} landed · ${failed} failed · ${remaining} remaining · ${skipped} skipped (unsupported type)`;
+}
+
 /** The run row naming `relativePath`; rows are named by path, so two Index.md differ. */
 export function runRow(page: Page, relativePath: string): Locator {
   return page
@@ -313,4 +351,52 @@ export function expectNoneIn(haystack: readonly string[], needles: readonly stri
       expect(text.includes(needle), `"${needle}" surfaced in ${text.slice(0, 80)}`).toBe(false);
     }
   }
+}
+
+/**
+ * Record, in the page, every `File` the app reads, by the path the browser gave
+ * it. Installed before the app loads, over every way a script can read a Blob.
+ */
+export async function recordFileReads(page: Page): Promise<void> {
+  await page.addInitScript(() => {
+    const reads: string[] = [];
+    (window as unknown as { __seedReads: string[] }).__seedReads = reads;
+    const note = (blob: unknown): void => {
+      if (blob instanceof File) reads.push(blob.webkitRelativePath || blob.name);
+    };
+    const blobMethods = ['arrayBuffer', 'text', 'stream', 'slice', 'bytes'] as const;
+    for (const method of blobMethods) {
+      const original = (Blob.prototype as unknown as Record<string, unknown>)[method];
+      if (typeof original !== 'function') continue;
+      Object.defineProperty(Blob.prototype, method, {
+        configurable: true,
+        writable: true,
+        value(this: Blob, ...args: unknown[]) {
+          note(this);
+          return (original as (...rest: unknown[]) => unknown).apply(this, args);
+        },
+      });
+    }
+    const readerMethods = [
+      'readAsArrayBuffer',
+      'readAsText',
+      'readAsDataURL',
+      'readAsBinaryString',
+    ] as const;
+    for (const method of readerMethods) {
+      const original = FileReader.prototype[method] as (...rest: unknown[]) => void;
+      Object.defineProperty(FileReader.prototype, method, {
+        configurable: true,
+        writable: true,
+        value(this: FileReader, blob: Blob, ...args: unknown[]) {
+          note(blob);
+          original.call(this, blob, ...args);
+        },
+      });
+    }
+  });
+}
+
+export async function fileReads(page: Page): Promise<string[]> {
+  return page.evaluate(() => [...(window as unknown as { __seedReads: string[] }).__seedReads]);
 }

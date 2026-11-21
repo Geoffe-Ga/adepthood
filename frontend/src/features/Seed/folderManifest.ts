@@ -16,6 +16,11 @@
  * Every file the folder held is counted somewhere: as a note, as an
  * attachment, or under one skip reason. Notes start selected; attachments are
  * one optional group (see `seedDocumentTypes`).
+ *
+ * **A skipped file is kept by name too (#3771).** Each one enters the run as a
+ * settled row saying why it stayed behind, so a folder of mixed files counts
+ * what was skipped rather than letting it vanish. Its name is all that goes:
+ * a skipped file is never read and never sent.
  */
 import { isSafeFilename } from './pickSeedDocuments';
 import { MAX_SEED_DOCUMENT_BYTES } from './readSeedDocument';
@@ -60,6 +65,16 @@ export interface FolderFileLike {
 export type FolderSkipReason =
   'configuration' | 'hidden' | 'unsupported' | 'unsafe_path' | 'too_large' | 'collision';
 
+/** Why a file is not sent: a skip reason, or a supported attachment left switched off. */
+export type FolderLeftOutReason = FolderSkipReason | 'attachments_off';
+
+/** One file that will not be sent, by its place in the folder and the reason. */
+export interface FolderSkippedFile<R extends FolderLeftOutReason = FolderSkipReason> {
+  /** Its path under the chosen folder (NFC), or as the browser gave it if outside it. */
+  path: string;
+  reason: R;
+}
+
 /** One document the import can send, with the handle its bytes are read from later. */
 export interface FolderManifestEntry<F> {
   /** NFC path under the chosen folder, `/`-separated: `Work/Index.md`. */
@@ -81,6 +96,8 @@ export interface FolderManifest<F> {
   attachments: FolderManifestEntry<F>[];
   /** How many files were held back, by reason. */
   skipped: Record<FolderSkipReason, number>;
+  /** The same files by name, in path order (#3771). */
+  skippedFiles: FolderSkippedFile[];
   /** How many files the folder held in all. */
   enumerated: number;
 }
@@ -103,6 +120,8 @@ export interface FolderSelection<F> {
   bytes: number;
   /** False once `bytes` passes {@link MAX_FOLDER_SELECTED_BYTES}. */
   withinBounds: boolean;
+  /** Every file that will not be sent, attachments left off included, in path order (#3771). */
+  leftOut: FolderSkippedFile<FolderLeftOutReason>[];
 }
 
 /** One file, sorted: an entry to offer, or the reason it is held back. */
@@ -119,10 +138,29 @@ function emptySkipCounts(): Record<FolderSkipReason, number> {
   };
 }
 
-/** Order by path, code unit by code unit, so no locale can reorder a manifest. */
+/** Order two paths code unit by code unit, so no locale can reorder a manifest. */
+function comparePaths(left: string, right: string): number {
+  if (left === right) return 0;
+  return left < right ? -1 : 1;
+}
+
+/** Order entries by path. */
 function byPath<F>(left: FolderManifestEntry<F>, right: FolderManifestEntry<F>): number {
-  if (left.relativePath === right.relativePath) return 0;
-  return left.relativePath < right.relativePath ? -1 : 1;
+  return comparePaths(left.relativePath, right.relativePath);
+}
+
+/** Order skipped files by path. */
+function bySkippedPath(left: { path: string }, right: { path: string }): number {
+  return comparePaths(left.path, right.path);
+}
+
+/** Where a skipped file sat: its path under the chosen folder, or as given if outside it. */
+function skippedPathOf(file: FolderFileLike, root: string): string {
+  const prefix = `${root}${SOURCE_PATH_SEPARATOR}`;
+  const path = file.webkitRelativePath.startsWith(prefix)
+    ? file.webkitRelativePath.slice(prefix.length)
+    : file.webkitRelativePath || file.name;
+  return normalizeSourceText(path);
 }
 
 /**
@@ -188,34 +226,45 @@ function sortFile<F extends FolderFileLike>(file: F, root: string): Sorted<F> {
 /** Split entries whose normalized path is unique from those that share one. */
 function withoutCollisions<F>(entries: readonly FolderManifestEntry<F>[]): {
   unique: FolderManifestEntry<F>[];
-  collided: number;
+  collided: FolderManifestEntry<F>[];
 } {
   const counts = new Map<string, number>();
   for (const entry of entries) {
     counts.set(entry.relativePath, (counts.get(entry.relativePath) ?? 0) + 1);
   }
   const unique = entries.filter((entry) => counts.get(entry.relativePath) === 1);
-  return { unique, collided: entries.length - unique.length };
+  const collided = entries.filter((entry) => counts.get(entry.relativePath) !== 1);
+  return { unique, collided };
 }
 
 /** Sort a non-empty, in-bounds file list into a manifest. */
 function sortFolder<F extends FolderFileLike>(files: readonly F[]): FolderManifest<F> {
   const root = rootOf(files);
   const skipped = emptySkipCounts();
+  const skippedFiles: FolderSkippedFile[] = [];
   const entries: FolderManifestEntry<F>[] = [];
   for (const file of files) {
     const sorted = sortFile(file, root);
-    if (typeof sorted === 'string') skipped[sorted] += 1;
-    else entries.push(sorted);
+    if (typeof sorted === 'string') {
+      skipped[sorted] += 1;
+      skippedFiles.push({ path: skippedPathOf(file, root), reason: sorted });
+    } else {
+      entries.push(sorted);
+    }
   }
   const { unique, collided } = withoutCollisions(entries);
-  skipped.collision = collided;
+  skipped.collision = collided.length;
+  for (const entry of collided) {
+    skippedFiles.push({ path: entry.relativePath, reason: 'collision' });
+  }
   unique.sort(byPath);
+  skippedFiles.sort(bySkippedPath);
   return {
     rootName: normalizeSourceText(root),
     notes: unique.filter((entry) => entry.kind === 'note'),
     attachments: unique.filter((entry) => entry.kind === 'attachment'),
     skipped,
+    skippedFiles,
     enumerated: files.length,
   };
 }
@@ -236,7 +285,9 @@ export function buildFolderManifest<F extends FolderFileLike>(
 
 /**
  * The documents a person would send: every note, plus the attachments when
- * they asked for them, in path order and with their summed size.
+ * they asked for them, in path order and with their summed size. Beside them,
+ * every file that will not go (#3771): the manifest's skips, and the
+ * attachments too while they are switched off -- counted, never dropped.
  */
 export function selectFolderEntries<F>(
   manifest: FolderManifest<F>,
@@ -245,6 +296,13 @@ export function selectFolderEntries<F>(
   const entries = includeAttachments
     ? [...manifest.notes, ...manifest.attachments].sort(byPath)
     : [...manifest.notes];
+  const attachmentsOff: FolderSkippedFile<FolderLeftOutReason>[] = includeAttachments
+    ? []
+    : manifest.attachments.map((entry) => ({
+        path: entry.relativePath,
+        reason: 'attachments_off',
+      }));
+  const leftOut = [...manifest.skippedFiles, ...attachmentsOff].sort(bySkippedPath);
   const bytes = entries.reduce((sum, entry) => sum + entry.size, 0);
-  return { entries, bytes, withinBounds: bytes <= MAX_FOLDER_SELECTED_BYTES };
+  return { entries, bytes, withinBounds: bytes <= MAX_FOLDER_SELECTED_BYTES, leftOut };
 }

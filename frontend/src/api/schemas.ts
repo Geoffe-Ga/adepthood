@@ -427,7 +427,7 @@ export type TranscribePageT = z.infer<typeof transcribePageSchema>;
 
 /**
  * What the vault did with one uploaded document — the wire strings of the
- * backend's ``VaultUploadStatus``. All five are distinct outcomes with distinct
+ * backend's ``VaultUploadStatus``. All six are distinct outcomes with distinct
  * remedies, so the enum is pinned rather than left as a bare string: a sixth
  * value the client has no honest sentence for must surface as
  * ``ApiValidationError`` rather than render as a blank row.
@@ -435,6 +435,9 @@ export type TranscribePageT = z.infer<typeof transcribePageSchema>;
  * ``vault_busy`` (#3770) is a wait, not an answer: the vault was busy (a pass
  * holding its lock, or a shed), kept nothing, and named how long to wait in
  * ``retry_after_seconds``.
+ *
+ * ``unsupported_source`` (#3771) is the vault refusing the file's type with a
+ * ``415``: nothing was stored, and the same file is refused the same way.
  */
 export const vaultUploadStatusSchema = z.enum([
   'accepted',
@@ -442,6 +445,7 @@ export const vaultUploadStatusSchema = z.enum([
   'capability_unsupported',
   'degraded',
   'vault_busy',
+  'unsupported_source',
 ]);
 export type VaultUploadStatusT = z.infer<typeof vaultUploadStatusSchema>;
 
