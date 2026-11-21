@@ -90,6 +90,9 @@ DETACHED_ENTRY_POINTS: Mapping[str, Site] = {
     "the boot-time resume of durable pipeline runs": Site(
         "services.creek_vault_pipeline", "resume_vault_pipeline_runs"
     ),
+    "the recovery-loop resume of bulk upload passes": Site(
+        "services.vault_bulk_import_run", "resume_bulk_import_runs"
+    ),
 }
 
 #: A floor under the derivation itself. If the call graph or the route walk ever
@@ -115,6 +118,7 @@ BARRIERED: frozenset[_Route] = frozenset(
         ("POST", "/corpus/import"),
         ("PUT", "/corpus/consent/{source}"),
         ("POST", "/corpus/sweep"),
+        ("POST", "/corpus/import/complete"),
         ("GET", "/invitations"),
     }
 )

@@ -1019,6 +1019,13 @@ function servedFailureCode(declared, code) {
   };
 }
 
+/**
+ * Every linker stage `POST /v1/links` answers synchronously here, echoing its
+ * method: a bulk upload's single pass (#3773) climbs all four after
+ * classification, where a journal save climbs only `temporal`.
+ */
+const LINK_METHODS = ['temporal', 'embeddings', 'eddies', 'threads'];
+
 /** The opt-in pipeline publishes only counts and a bounded inference source. */
 async function pipelineCall(request, response, pathname) {
   if (!pipelineAdvertised) return false;
@@ -1045,12 +1052,13 @@ async function pipelineCall(request, response, pathname) {
     return false;
   }
   const body = await readJson(request);
-  const method = pathname === '/v1/classifications' ? 'llm' : 'temporal';
+  const isLink = pathname === '/v1/links';
+  const method = isLink ? body?.method : 'llm';
   if (
     body === null ||
     typeof body !== 'object' ||
     Object.keys(body).join() !== 'method' ||
-    body.method !== method
+    (isLink ? !LINK_METHODS.includes(method) : body.method !== method)
   ) {
     refuse(response, HTTP_BAD_REQUEST, 'invalid_request');
     return true;
@@ -1061,8 +1069,14 @@ async function pipelineCall(request, response, pathname) {
     refuse(response, HTTP_SERVICE_UNAVAILABLE, 'temporarily_unavailable');
     return true;
   }
-  received.push({ method: 'POST', path: pathname, externalId: null, tier: null });
-  if (method === 'temporal') {
+  received.push({
+    method: 'POST',
+    path: pathname,
+    externalId: null,
+    tier: null,
+    ...(isLink ? { linkMethod: method } : {}),
+  });
+  if (isLink) {
     send(response, HTTP_OK, {
       status: 'ok',
       tier_ceiling: 'personal',

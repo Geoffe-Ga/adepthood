@@ -121,6 +121,128 @@ describe('useLinkedHabitCheckOff', () => {
     });
   });
 
+  describe('a session that ends before the link is known', () => {
+    const held = (): {
+      read: Promise<UiFlags>;
+      answer: (_flags: UiFlags) => void;
+      fail: () => void;
+    } => {
+      let answer!: (_flags: UiFlags) => void;
+      let fail!: () => void;
+      const read = new Promise<UiFlags>((resolve, reject) => {
+        answer = resolve;
+        fail = () => reject(new Error('aborted'));
+      });
+      return { read, answer, fail };
+    };
+
+    it('waits for the read on the wire, then checks the linked habit off once', async () => {
+      const mountRead = held();
+      mockFlagsGet.mockReturnValueOnce(mountRead.read);
+      const { result } = renderHook(() => useLinkedHabitCheckOff(jest.fn()));
+      await flush();
+
+      act(() => result.current(RESULT));
+      expect(mockCheckOff).not.toHaveBeenCalled();
+      await act(async () => {
+        mountRead.answer(flags(LINKED_HABIT_ID));
+        await mountRead.read;
+      });
+      await flush();
+
+      expect(mockFlagsGet).toHaveBeenCalledTimes(1);
+      expect(mockCheckOff).toHaveBeenCalledTimes(1);
+      expect(mockCheckOff.mock.calls[0]?.[0]).toMatchObject({
+        habitId: LINKED_HABIT_ID,
+        result: RESULT,
+      });
+    });
+
+    it('asks again when the read on the wire fails as the session ends', async () => {
+      const mountRead = held();
+      mockFlagsGet.mockReturnValueOnce(mountRead.read).mockResolvedValue(flags(LINKED_HABIT_ID));
+      const { result } = renderHook(() => useLinkedHabitCheckOff(jest.fn()));
+      await flush();
+
+      act(() => result.current(RESULT));
+      await act(async () => {
+        mountRead.fail();
+        await mountRead.read.catch(() => undefined);
+      });
+      await flush();
+      await flush();
+
+      expect(mockFlagsGet).toHaveBeenCalledTimes(2);
+      expect(mockCheckOff).toHaveBeenCalledTimes(1);
+      expect(mockCheckOff.mock.calls[0]?.[0]).toMatchObject({ habitId: LINKED_HABIT_ID });
+    });
+
+    it('asks again when the mount read had already failed', async () => {
+      mockFlagsGet
+        .mockRejectedValueOnce(new Error('offline'))
+        .mockResolvedValue(flags(LINKED_HABIT_ID));
+      const { result } = renderHook(() => useLinkedHabitCheckOff(jest.fn()));
+      await flush();
+      expect(useWritingHabitLinkStore.getState().hydrated).toBe(false);
+
+      act(() => result.current(RESULT));
+      await flush();
+      await flush();
+
+      expect(mockFlagsGet).toHaveBeenCalledTimes(2);
+      expect(mockCheckOff).toHaveBeenCalledTimes(1);
+    });
+
+    it('checks nothing off when the server answers that no habit is linked', async () => {
+      const mountRead = held();
+      mockFlagsGet.mockReturnValueOnce(mountRead.read);
+      const { result } = renderHook(() => useLinkedHabitCheckOff(jest.fn()));
+      await flush();
+
+      act(() => result.current(RESULT));
+      await act(async () => {
+        mountRead.answer(flags(null));
+        await mountRead.read;
+      });
+      await flush();
+
+      expect(mockCheckOff).not.toHaveBeenCalled();
+    });
+
+    it('checks nothing off, and stops asking, when the second read fails too', async () => {
+      mockFlagsGet.mockRejectedValue(new Error('offline'));
+      const { result } = renderHook(() => useLinkedHabitCheckOff(jest.fn()));
+      await flush();
+
+      act(() => result.current(RESULT));
+      await flush();
+      await flush();
+      await flush();
+
+      expect(mockFlagsGet).toHaveBeenCalledTimes(2);
+      expect(mockCheckOff).not.toHaveBeenCalled();
+    });
+
+    it('drops the session when the account changes before the link is known', async () => {
+      const mountRead = held();
+      mockFlagsGet.mockReturnValueOnce(mountRead.read).mockResolvedValue(flags(LINKED_HABIT_ID));
+      const { result } = renderHook(() => useLinkedHabitCheckOff(jest.fn()));
+      await flush();
+
+      act(() => result.current(RESULT));
+      setActiveUser(2);
+      await act(async () => {
+        mountRead.answer(flags(LINKED_HABIT_ID));
+        await mountRead.read;
+      });
+      await flush();
+      await flush();
+
+      expect(mockCheckOff).not.toHaveBeenCalled();
+      setActiveUser(1);
+    });
+  });
+
   it.each([false, true])(
     'keeps logging authority but delivers a held view notice only while mounted (unmount: %s)',
     async (leavePage) => {

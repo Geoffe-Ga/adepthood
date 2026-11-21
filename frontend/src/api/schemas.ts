@@ -1685,6 +1685,41 @@ export const corpusSweepSchema = corpusSweepEstimateSchema.extend({
 
 export type CorpusSweepT = z.infer<typeof corpusSweepSchema>;
 
+/** Where one bulk upload's vault pass is (``BulkImportRunState``, #3773). */
+export const BULK_IMPORT_RUN_STATES = [
+  'queued',
+  'running',
+  'completed',
+  'stopped',
+  'failed',
+] as const;
+
+/** Why a bulk upload's vault pass stopped before handing anything on (``BulkImportStopReason``). */
+export const BULK_IMPORT_STOP_REASONS = ['vault_unavailable', 'pipeline_unsupported'] as const;
+
+/**
+ * One bulk upload's single vault pass (#3773), as ``/corpus/import/complete``
+ * reports it. Keyed by the upload run's own id; a closed vocabulary and
+ * instants, never a document.
+ */
+export const bulkImportRunSchema = z.object({
+  batch_id: z.string(),
+  state: z.enum(BULK_IMPORT_RUN_STATES),
+  stop_reason: z.enum(BULK_IMPORT_STOP_REASONS).nullable(),
+  landed: z.number().int().nonnegative(),
+  started_at: isoDateTime,
+  finished_at: isoDateTime.nullable(),
+});
+
+export type BulkImportRunT = z.infer<typeof bulkImportRunSchema>;
+
+/** The batch's run, or ``null`` for a batch this account never pressed. */
+export const bulkImportCompleteSchema = z.object({
+  run: bulkImportRunSchema.nullable(),
+});
+
+export type BulkImportCompleteT = z.infer<typeof bulkImportCompleteSchema>;
+
 // ---------------------------------------------------------------------------
 // Private vault (whether an account has connected a space of its own)
 // ---------------------------------------------------------------------------

@@ -373,13 +373,16 @@ _ROWS: Final[tuple[Sink, ...]] = (
     _encrypted(SinkId.VAULT_CONNECTION, NO_TIERS),
     # A writer's own provider key, stored for background classification (R1-1).
     _encrypted(SinkId.VAULT_CLASSIFICATION_KEY, NO_TIERS),
-    # The durable pipeline-run rows both detached doors replay. Content-free rows.
+    # The durable pipeline-run rows the detached doors replay -- including a bulk
+    # upload's pass, which the recovery loop resumes into the same ladder (#3773).
+    # Content-free rows.
     _inside(
         SinkId.VAULT_PIPELINE_RUNS,
         SinkKind.QUEUE,
         NO_TIERS,
         SourceRef(Inventory.DETACHED_EGRESS, "the detached ontologization ladder"),
         SourceRef(Inventory.DETACHED_EGRESS, "the boot-time resume of durable pipeline runs"),
+        SourceRef(Inventory.DETACHED_EGRESS, "the recovery-loop resume of bulk upload passes"),
     ),
 )
 

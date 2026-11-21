@@ -74,6 +74,12 @@ _JOB_ID_WIDTH = 36
 _FAILURE_CODE_WIDTH = 32
 _MIN_ATTEMPTS = 1
 
+#: Every occasion a pass may be recorded under, as stored. Mirrors
+#: :class:`services.creek_vault_pipeline.VaultPipelineTrigger`, which a model may
+#: not import; ``tests/test_corpus_import_complete.py`` pins the two together.
+#: ``bulk_import`` is one whole pass after a bulk upload drains (#3773).
+PIPELINE_TRIGGERS: tuple[str, ...] = ("journal_write", "document_import", "bulk_import")
+
 
 class VaultPipelineOutcome(enum.StrEnum):
     """Where one durable rung is in its admission lifecycle.
@@ -169,7 +175,7 @@ def _fragments_lost_check() -> CheckConstraint:
 def _trigger_check() -> CheckConstraint:
     """CHECK the trigger when a new durable run records one."""
     return CheckConstraint(
-        "trigger IS NULL OR trigger IN ('journal_write', 'document_import')",
+        f"trigger IS NULL OR trigger IN ({_quoted(PIPELINE_TRIGGERS)})",
         name="ck_vaultpipelinerun_trigger_valid",
     )
 
@@ -177,7 +183,7 @@ def _trigger_check() -> CheckConstraint:
 def _follow_up_trigger_check() -> CheckConstraint:
     """CHECK the content-free scope requested by a write that joined this run."""
     return CheckConstraint(
-        "follow_up_trigger IS NULL OR follow_up_trigger IN ('journal_write', 'document_import')",
+        f"follow_up_trigger IS NULL OR follow_up_trigger IN ({_quoted(PIPELINE_TRIGGERS)})",
         name="ck_vaultpipelinerun_follow_up_trigger_valid",
     )
 

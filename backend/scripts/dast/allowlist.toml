@@ -20,6 +20,19 @@ reason   = "source names a member of the CorpusSource enum, not a row; the decis
 
 [[route]]
 method   = "GET"
+path     = "/corpus/import/complete/{batch_id}"
+category = "not_object_scoped"
+reason   = "batch_id is the client's own random upload_run id, never a row id: the read is scoped to the caller's account and the id together, so another account's batch reads as never pressed ({run: null}) by design, never as theirs (#3773, tests/security/test_idor.py)"
+
+[[route]]
+method   = "POST"
+path     = "/corpus/import/complete"
+category = "not_object_scoped"
+field    = "batch_id"
+reason   = "batch_id is the client's own random upload_run id, never a row id: a press is recorded against the caller's account and the id together, so naming another account's batch records the caller's own run and leaves the other's untouched (#3773, tests/security/test_idor.py)"
+
+[[route]]
+method   = "GET"
 path     = "/course/site-resources/{slug}/body"
 category = "not_object_scoped"
 reason   = "slug names a published site document, not a per-user row"

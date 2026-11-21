@@ -63,7 +63,7 @@ import logging
 import uuid
 from collections.abc import AsyncGenerator, Awaitable, Callable, Coroutine, Mapping
 from dataclasses import dataclass, field
-from datetime import date
+from datetime import UTC, date, datetime, timedelta
 from functools import partial
 from http import HTTPStatus
 from typing import TYPE_CHECKING, Final
@@ -86,8 +86,9 @@ from models.invitation_signal import InvitationSignal
 from models.journal_entry import JournalEntry
 from models.marginalia import Marginalia, MarginaliaKind
 from models.stage_content import StageContent
+from models.vault_bulk_import_run import BulkImportRunState, VaultBulkImportRun
 from models.vault_pipeline_run import VaultPipelineOutcome, VaultPipelineRun
-from services import corpus_sort_run
+from services import corpus_sort_run, vault_bulk_import_run
 from services import creek_vault_pipeline as pipeline
 from services.content_repository import get_content_repository
 from services.creek_vault_pipeline import VaultPipelineTrigger
@@ -117,6 +118,8 @@ if TYPE_CHECKING:
     from httpx import AsyncClient, Response
     from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+#: Comfortably past the bulk driver's staleness horizon.
+_STALE_BULK_HEARTBEAT: Final = timedelta(days=1)
 _PASSWORD: Final = "secret12345"  # pragma: allowlist secret
 #: A well-formed OpenAI-shaped key a BYOK cell sends. Never valid: no client is
 #: really built for it (:func:`record_provider_constructions`).
@@ -533,6 +536,46 @@ async def _act_resume(h: Harness, _entry_id: int) -> None:
     await pipeline.wait_for_vault_pipeline_tasks()
 
 
+async def _act_bulk_complete(h: Harness, _entry_id: int) -> None:
+    """Press a drained bulk upload's one vault pass, and let its driver finish (#3773).
+
+    The pass hands the vault a content-free classify and link ladder; the sort
+    it may start afterwards is ``POST /corpus/sweep``'s own row.
+    """
+    _ok(
+        await h.client.post(
+            "/corpus/import/complete",
+            json={"batch_id": uuid.uuid4().hex, "landed": 1},
+            headers=h.headers,
+        )
+    )
+    await vault_bulk_import_run.wait_for_bulk_import_tasks()
+    await pipeline.wait_for_vault_pipeline_tasks()
+
+
+async def _act_bulk_resume(h: Harness, _entry_id: int) -> None:
+    """Recover a bulk upload pass whose driver died, as the recovery loop does."""
+    async with h.factory() as session:
+        session.add(
+            VaultBulkImportRun(
+                user_id=h.user_id,
+                batch_id=uuid.uuid4().hex,
+                landed=1,
+                state=BulkImportRunState.RUNNING.value,
+                owner_id=uuid.uuid4().hex,
+                heartbeat_at=datetime.now(UTC) - _STALE_BULK_HEARTBEAT,
+            )
+        )
+        await session.commit()
+
+    async def _client(_session: AsyncSession, _user_id: int) -> RecordingVault:
+        return h.vault
+
+    await vault_bulk_import_run.resume_bulk_import_runs(h.factory, _client)
+    await vault_bulk_import_run.wait_for_bulk_import_tasks()
+    await pipeline.wait_for_vault_pipeline_tasks()
+
+
 # ── The rows ─────────────────────────────────────────────────────────────────
 
 _Door = tuple[str, str] | str
@@ -663,6 +706,18 @@ ROWS: Final[tuple[Row, ...]] = (
             Recorder.PROVIDER: Expect.CARRIES,
         },
         preconsent=False,
+    ),
+    Row(
+        ("POST", "/corpus/import/complete"),
+        "",
+        _act_bulk_complete,
+        {Recorder.VAULT: Expect.FIRES},
+    ),
+    Row(
+        "the recovery-loop resume of bulk upload passes",
+        "",
+        _act_bulk_resume,
+        {Recorder.VAULT: Expect.FIRES},
     ),
     Row(
         "the detached ontologization ladder",

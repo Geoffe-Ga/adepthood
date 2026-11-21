@@ -567,6 +567,13 @@ MANIFEST: Mapping[str, ExportRule] = {
         "business copying into a plaintext file; the account already holds "
         "the key on its own device.",
     ),
+    "vaultbulkimportrun": Omitted(
+        "Scheduling state for one bulk upload's vault pass: whether the "
+        "background run is going, how it ended and why it stopped. It describes "
+        "this app's housekeeping rather than anything the account wrote; the "
+        "documents and the ontology the pass produced live in the vault, whose "
+        "contents GET /users/me/export/vault exports.",
+    ),
     "vaultpipelinefollowup": Omitted(
         "Content-free scheduling state saying a newer vault write needs one "
         "post-snapshot classification pass. It is application housekeeping, "

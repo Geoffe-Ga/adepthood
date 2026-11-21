@@ -82,7 +82,7 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from typing import Annotated
 
-from fastapi import Depends, Request, status
+from fastapi import Depends, Path, Request, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from database import get_session
@@ -100,6 +100,11 @@ from error_responses import build_router
 from errors import payload_too_large
 from models.corpus_fragment import CorpusSource
 from models.corpus_sort_run import CorpusSortRun, SortLane, SortRunState, SortStopReason
+from models.vault_bulk_import_run import (
+    BulkImportRunState,
+    BulkImportStopReason,
+    VaultBulkImportRun,
+)
 from rate_limit import limiter
 from rate_limit_keys import per_user_rate_limit_key
 from routers.auth import get_current_user
@@ -115,7 +120,19 @@ from schemas.corpus import (
     CorpusSweepResponse,
 )
 from schemas.corpus_import import CORPUS_IMPORT_MESSAGES, DocumentImportResponse
-from schemas.journal_upload import UPLOAD_MESSAGES, UPLOAD_RATE_LIMIT, UploadDocumentRequest
+from schemas.corpus_import_complete import (
+    BulkImportCompleteRequest,
+    BulkImportCompleteResponse,
+    BulkImportRunResponse,
+)
+from schemas.journal_upload import (
+    MAX_UPLOAD_RUN_LENGTH,
+    MIN_UPLOAD_RUN_LENGTH,
+    UPLOAD_MESSAGES,
+    UPLOAD_RATE_LIMIT,
+    UPLOAD_RUN_PATTERN,
+    UploadDocumentRequest,
+)
 from schemas.voice_readiness import VOICE_READINESS_MESSAGES, VoiceReadinessResponse
 from services.account_egress_barrier import ensure_account_live, hold_account
 from services.corpus_backfill import backfill_after_consent
@@ -136,6 +153,8 @@ from services.creek_vault_pipeline import VaultPipelineTrigger, drive_vault_pipe
 from services.creek_vault_relay import forwarding_provider_key
 from services.creek_vault_upload import FolderSource, UploadedDocument
 from services.creek_vault_upload_limits import ManagedUploadTooLargeError
+from services.vault_bulk_import_run import find_run as find_bulk_import_run
+from services.vault_bulk_import_run import start_or_join as start_or_join_bulk_import
 from services.voice_readiness import VoiceReadiness, load_voice_readiness
 
 router = build_router(
@@ -484,6 +503,15 @@ def _folder_source(payload: UploadDocumentRequest) -> FolderSource | None:
     )
 
 
+def _drives_inline(payload: UploadDocumentRequest, result: DocumentImportResult) -> bool:
+    """Whether this import drives the vault pass itself, inside its own request.
+
+    Only a stored document sent on its own: a document of an upload run leaves
+    the pass to the run's one press of ``/import/complete`` (#3773).
+    """
+    return payload.upload_run is None and isinstance(result, VaultImportResult) and result.stored
+
+
 @router.post(
     "/import",
     response_model=DocumentImportResponse,
@@ -530,6 +558,11 @@ async def import_corpus_document(
     The optional ``X-LLM-API-Key`` is relayed to the vault only for that pass's
     classification call, and only when the vault advertised the key's vendor
     (#3437); the upload itself never carries it.
+
+    A document sent as part of an upload run (``upload_run`` set) drives no pass
+    here at all (#3773): it costs one handshake for the run and one upload, and
+    the run's single pass is pressed once the run drains, at
+    ``POST /import/complete``.
     """
     guard_document_payload(payload.content_base64)
     async with hold_account(session, user_id):
@@ -550,7 +583,7 @@ async def import_corpus_document(
         except ManagedUploadTooLargeError:
             raise payload_too_large("managed_document_too_large") from None
         await session.commit()
-        if isinstance(result, VaultImportResult) and result.stored:
+        if _drives_inline(payload, result):
             with forwarding_provider_key(vault.relay_key):
                 await drive_vault_pipeline(
                     session,
@@ -559,3 +592,86 @@ async def import_corpus_document(
                     trigger=VaultPipelineTrigger.DOCUMENT_IMPORT,
                 )
     return _to_import_response(result)
+
+
+def _bulk_run_response(run: VaultBulkImportRun | None) -> BulkImportRunResponse | None:
+    """Project a bulk run row onto its DTO: the batch, the closed vocabulary, instants."""
+    if run is None:
+        return None
+    return BulkImportRunResponse(
+        batch_id=run.batch_id,
+        state=BulkImportRunState(run.state),
+        stop_reason=None if run.stop_reason is None else BulkImportStopReason(run.stop_reason),
+        landed=run.landed,
+        started_at=ensure_aware(run.started_at),
+        finished_at=None if run.finished_at is None else ensure_aware(run.finished_at),
+    )
+
+
+@router.post(
+    "/import/complete",
+    response_model=BulkImportCompleteResponse,
+    status_code=status.HTTP_202_ACCEPTED,
+)
+@limiter.limit(CONSENT_RATE_LIMIT, key_func=per_user_rate_limit_key)
+async def complete_corpus_import(
+    request: Request,  # noqa: ARG001 — consumed by @limiter.limit decorator
+    payload: BulkImportCompleteRequest,
+    user_id: Annotated[int, Depends(get_current_user)],
+    session: Annotated[AsyncSession, Depends(get_session)],
+    vault_client: Annotated[CreekVaultPipelineClient, Depends(get_creek_vault_client)],
+) -> BulkImportCompleteResponse:
+    """Weave a drained bulk upload into the vault's ontology, once, in the background.
+
+    The client presses this when its upload queue drains with at least one
+    document landed, naming the run's ``upload_run`` id as ``batch_id``. The run
+    is recorded and the request returns a 202 with it; a background driver
+    (:mod:`services.vault_bulk_import_run`) hands one full ``bulk_import`` pass
+    to the durable pipeline -- classification (with Creek's Praxis pages), then
+    temporal, embeddings, eddies and threads, past every stage's window -- and
+    then starts or joins the corpus sweep.
+
+    Pressing again joins the batch's run, so the press is idempotent; a
+    different batch pressed while one runs is queued behind it, so at most one
+    runs per account, across workers. ``batch_id`` names no row: the lookup is
+    scoped to the caller's own account, so there is no other account's run to
+    reach. A vault that cannot be reached is a ``stopped`` run, not an error.
+
+    Keyless: a relayed provider key never rides into the background (#3437), so
+    this route reads none. Rate-limited per account at
+    :data:`schemas.corpus.CONSENT_RATE_LIMIT`, because each press may cost a
+    whole clustering pass.
+    """
+    run = await start_or_join_bulk_import(
+        session,
+        user_id=user_id,
+        batch_id=payload.batch_id,
+        landed=payload.landed,
+        client=vault_client,
+    )
+    return BulkImportCompleteResponse(run=_bulk_run_response(run))
+
+
+@router.get("/import/complete/{batch_id}", response_model=BulkImportCompleteResponse)
+async def get_corpus_import_completion(
+    batch_id: Annotated[
+        str,
+        Path(
+            min_length=MIN_UPLOAD_RUN_LENGTH,
+            max_length=MAX_UPLOAD_RUN_LENGTH,
+            pattern=UPLOAD_RUN_PATTERN,
+        ),
+    ],
+    user_id: Annotated[int, Depends(get_current_user)],
+    session: Annotated[AsyncSession, Depends(get_session)],
+) -> BulkImportCompleteResponse:
+    """Report one batch's vault pass, as the client polls it while it settles.
+
+    Never a 404: a batch this account never pressed -- including one another
+    account minted -- answers ``run: null``, the most common answer before the
+    press lands rather than a missing resource. One indexed read, no commit, no
+    provider call, so unrated like ``GET /sweep``.
+    """
+    run = await find_bulk_import_run(session, user_id, batch_id)
+    await session.commit()
+    return BulkImportCompleteResponse(run=_bulk_run_response(run))

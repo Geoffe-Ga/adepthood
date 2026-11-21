@@ -10,13 +10,23 @@
  *
  * Mounted once, beside the offline banner, so it is also where the page warns
  * before a tab close takes the queue with it.
+ *
+ * Once the queue drains it says, quietly and in the same place, how the one
+ * vault pass over what landed is going (#3773): settling, settled, or deferred
+ * when the vault was out of reach. That line is not a button -- there is
+ * nothing to open and nothing to do.
  */
 import { useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import React from 'react';
-import { ActivityIndicator, StyleSheet, Text, TouchableOpacity } from 'react-native';
+import { ActivityIndicator, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 
-import { uploadQueueIndicatorLine } from './seedCopy';
+import {
+  SETTLE_DEFERRED_LINE,
+  SETTLED_LINE,
+  SETTLING_LINE,
+  uploadQueueIndicatorLine,
+} from './seedCopy';
 import { useUnloadWarning } from './useUnloadWarning';
 
 import { accent, SPACING, surface, ink, touchTarget } from '@/design/tokens';
@@ -26,18 +36,40 @@ import {
   selectUploadQueueRemaining,
   useUploadQueueStore,
 } from '@/store/useUploadQueueStore';
+import { useVaultSettleStore, type VaultSettlePhase } from '@/store/useVaultSettleStore';
 
 /** What the indicator says to a screen reader it does when pressed. */
 const OPEN_RUN_HINT = "Opens Bring in what you've written, where each document's progress is.";
 
-/** The app-wide indicator of a running upload queue; nothing while idle. */
+/** What the line says for each phase of the pass after a drain. */
+const SETTLE_LINES: Record<Exclude<VaultSettlePhase, 'idle'>, string> = {
+  settling: SETTLING_LINE,
+  settled: SETTLED_LINE,
+  deferred: SETTLE_DEFERRED_LINE,
+};
+
+/** The quiet line about the vault pass after a drain; nothing while there is none. */
+function VaultSettleLine(): React.JSX.Element | null {
+  const phase = useVaultSettleStore((state) => state.phase);
+  if (phase === 'idle') return null;
+  return (
+    <View style={styles.indicator} accessibilityLiveRegion="polite" testID="vault-settle">
+      {phase === 'settling' ? <ActivityIndicator color={accent.primary} size="small" /> : null}
+      <Text style={styles.quiet} testID="vault-settle-line">
+        {SETTLE_LINES[phase]}
+      </Text>
+    </View>
+  );
+}
+
+/** The app-wide indicator of a running upload queue, then of its vault pass; nothing while idle. */
 export function UploadQueueIndicator(): React.JSX.Element | null {
   const isSending = useUploadQueueStore((state) => state.isSending);
   const remaining = useUploadQueueStore(selectUploadQueueRemaining);
   const failed = useUploadQueueStore(selectUploadQueueFailed);
   const navigation = useNavigation<NativeStackNavigationProp<RootStackParamList>>();
   useUnloadWarning(isSending);
-  if (!isSending || remaining === 0) return null;
+  if (!isSending || remaining === 0) return <VaultSettleLine />;
   const line = uploadQueueIndicatorLine(remaining, failed);
   return (
     <TouchableOpacity
@@ -72,5 +104,8 @@ const styles = StyleSheet.create({
   text: {
     color: ink.primary,
     fontWeight: '600',
+  },
+  quiet: {
+    color: ink.soft,
   },
 });

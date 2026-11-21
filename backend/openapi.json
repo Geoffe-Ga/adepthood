@@ -622,6 +622,122 @@
         "title": "BalanceResponse",
         "type": "object"
       },
+      "BulkImportCompleteRequest": {
+        "description": "One drained upload run: its id, and how many of its documents landed.",
+        "properties": {
+          "batch_id": {
+            "description": "The upload_run id every document of the drained run was sent with.",
+            "maxLength": 64,
+            "minLength": 16,
+            "pattern": "^[A-Za-z0-9_-]+$",
+            "title": "Batch Id",
+            "type": "string"
+          },
+          "landed": {
+            "description": "How many of the run's documents landed in the vault.",
+            "maximum": 100000.0,
+            "minimum": 1.0,
+            "title": "Landed",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "batch_id",
+          "landed"
+        ],
+        "title": "BulkImportCompleteRequest",
+        "type": "object"
+      },
+      "BulkImportCompleteResponse": {
+        "description": "The batch's run, or ``null`` for a batch this account never pressed.",
+        "properties": {
+          "run": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/BulkImportRunResponse"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "title": "BulkImportCompleteResponse",
+        "type": "object"
+      },
+      "BulkImportRunResponse": {
+        "description": "One batch's vault pass, as the client follows it (``models.vault_bulk_import_run``).\n\n``stop_reason`` is set only on a ``stopped`` run, and ``finished_at`` on\nevery run that is neither ``queued`` nor ``running``. Per-stage outcomes\nlive on the pipeline's own rows, which the vault dashboard reads.",
+        "properties": {
+          "batch_id": {
+            "title": "Batch Id",
+            "type": "string"
+          },
+          "finished_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Finished At"
+          },
+          "landed": {
+            "minimum": 0.0,
+            "title": "Landed",
+            "type": "integer"
+          },
+          "started_at": {
+            "format": "date-time",
+            "title": "Started At",
+            "type": "string"
+          },
+          "state": {
+            "$ref": "#/components/schemas/BulkImportRunState"
+          },
+          "stop_reason": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/BulkImportStopReason"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "batch_id",
+          "state",
+          "landed",
+          "started_at"
+        ],
+        "title": "BulkImportRunResponse",
+        "type": "object"
+      },
+      "BulkImportRunState": {
+        "description": "Where a run is. ``queued`` and ``running`` may change; the other three are final.",
+        "enum": [
+          "queued",
+          "running",
+          "completed",
+          "stopped",
+          "failed"
+        ],
+        "title": "BulkImportRunState",
+        "type": "string"
+      },
+      "BulkImportStopReason": {
+        "description": "Why a run ended without handing a pass on, in words safe to show and log.",
+        "enum": [
+          "vault_unavailable",
+          "pipeline_unsupported"
+        ],
+        "title": "BulkImportStopReason",
+        "type": "string"
+      },
       "CardMeditationCard": {
         "additionalProperties": false,
         "description": "One card in a card-meditation deck — bundled or user-curated.\n\n``image_asset_key`` is an opaque handle the frontend resolves against\na bundled deck manifest (e.g. ``\"rws/major/00_fool\"``); the server\nnever dereferences it. ``image_uri`` is a client-local URI (the most\ncommon case is a phone-photo ``file:///...`` path for a custom deck)\nthat the server likewise never fetches. The two are mutually\nexclusive — a card either points at a curated asset *or* at a local\nfile, never both — and both being unset is also valid for a text-only\ncard whose meaning rides entirely on ``name`` and ``symbolism``.",
@@ -16186,7 +16302,7 @@
     },
     "/corpus/import": {
       "post": {
-        "description": "Take one document to this account's vault, or answer that it needs one.\n\n202 for every outcome, including the ones that stored nothing: adepthood\naccepted the request and acted on it, and what became of the document is in\nthe body where a client can render a specific sentence rather than infer one\nfrom a status code. A vault that is missing, unreachable or unable to take\nfiles is a normal condition of an optional integration. An account with no\nvault at all is answered ``vault_required`` (#3015): a corpus lives in a\nvault, so there is nowhere to keep the document.\n\nThe payload guard runs first, for every caller, so an oversized or\nundecodable document is refused as such whether or not the account has a\nvault. It is the only thing done with the document on the no-vault answer.\nA managed upload whose encoded request exceeds the replay body limit is\nrefused with 413 and managed_document_too_large before transmission --\nthe one non-202 answer the vault branch gives -- unless the operator has\nsuspended vault sends, in which case the suspension wins and the document\ndegrades like any other unsent upload (#3618).\n\nThe commit is here rather than in the service because the service commits\nnothing and the caller owns the transaction. The vault ontologization pass\nis driven from here, after that commit, for the same reason: the service\nwould have to break that promise to schedule anything. The router is also\nthe layer that can tell the two answers apart without asking anything twice:\nthe import's result *type* already says whether a vault was reached, so a\n``vault_required`` answer never consults a vault the account does not have.\nBounded and synchronous, like everything else on this route: the pass stands\ndown inside its own per-stage intervals, starts no stage it cannot afford,\nand never raises.\n\nThe optional ``X-LLM-API-Key`` is relayed to the vault only for that pass's\nclassification call, and only when the vault advertised the key's vendor\n(#3437); the upload itself never carries it.",
+        "description": "Take one document to this account's vault, or answer that it needs one.\n\n202 for every outcome, including the ones that stored nothing: adepthood\naccepted the request and acted on it, and what became of the document is in\nthe body where a client can render a specific sentence rather than infer one\nfrom a status code. A vault that is missing, unreachable or unable to take\nfiles is a normal condition of an optional integration. An account with no\nvault at all is answered ``vault_required`` (#3015): a corpus lives in a\nvault, so there is nowhere to keep the document.\n\nThe payload guard runs first, for every caller, so an oversized or\nundecodable document is refused as such whether or not the account has a\nvault. It is the only thing done with the document on the no-vault answer.\nA managed upload whose encoded request exceeds the replay body limit is\nrefused with 413 and managed_document_too_large before transmission --\nthe one non-202 answer the vault branch gives -- unless the operator has\nsuspended vault sends, in which case the suspension wins and the document\ndegrades like any other unsent upload (#3618).\n\nThe commit is here rather than in the service because the service commits\nnothing and the caller owns the transaction. The vault ontologization pass\nis driven from here, after that commit, for the same reason: the service\nwould have to break that promise to schedule anything. The router is also\nthe layer that can tell the two answers apart without asking anything twice:\nthe import's result *type* already says whether a vault was reached, so a\n``vault_required`` answer never consults a vault the account does not have.\nBounded and synchronous, like everything else on this route: the pass stands\ndown inside its own per-stage intervals, starts no stage it cannot afford,\nand never raises.\n\nThe optional ``X-LLM-API-Key`` is relayed to the vault only for that pass's\nclassification call, and only when the vault advertised the key's vendor\n(#3437); the upload itself never carries it.\n\nA document sent as part of an upload run (``upload_run`` set) drives no pass\nhere at all (#3773): it costs one handshake for the run and one upload, and\nthe run's single pass is pressed once the run drains, at\n``POST /import/complete``.",
         "operationId": "import_corpus_document_corpus_import_post",
         "parameters": [
           {
@@ -16325,6 +16441,268 @@
           }
         },
         "summary": "Import Corpus Document",
+        "tags": [
+          "corpus"
+        ]
+      }
+    },
+    "/corpus/import/complete": {
+      "post": {
+        "description": "Weave a drained bulk upload into the vault's ontology, once, in the background.\n\nThe client presses this when its upload queue drains with at least one\ndocument landed, naming the run's ``upload_run`` id as ``batch_id``. The run\nis recorded and the request returns a 202 with it; a background driver\n(:mod:`services.vault_bulk_import_run`) hands one full ``bulk_import`` pass\nto the durable pipeline -- classification (with Creek's Praxis pages), then\ntemporal, embeddings, eddies and threads, past every stage's window -- and\nthen starts or joins the corpus sweep.\n\nPressing again joins the batch's run, so the press is idempotent; a\ndifferent batch pressed while one runs is queued behind it, so at most one\nruns per account, across workers. ``batch_id`` names no row: the lookup is\nscoped to the caller's own account, so there is no other account's run to\nreach. A vault that cannot be reached is a ``stopped`` run, not an error.\n\nKeyless: a relayed provider key never rides into the background (#3437), so\nthis route reads none. Rate-limited per account at\n:data:`schemas.corpus.CONSENT_RATE_LIMIT`, because each press may cost a\nwhole clustering pass.",
+        "operationId": "complete_corpus_import_corpus_import_complete_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BulkImportCompleteRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BulkImportCompleteResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "The request body could not be parsed, or a value it carried was refused."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "No usable credential was presented."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "The caller is authenticated but does not own the resource."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "No such resource -- or none this caller is allowed to see."
+          },
+          "413": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "The request body is past a declared ceiling."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ValidationErrorResponse"
+                }
+              }
+            },
+            "description": "The request failed validation -- an array of rejected fields -- or a check applied after the schema refused it, as one snake_case code."
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "The caller went past a rate limit."
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "A required dependency is temporarily unusable."
+          }
+        },
+        "summary": "Complete Corpus Import",
+        "tags": [
+          "corpus"
+        ]
+      }
+    },
+    "/corpus/import/complete/{batch_id}": {
+      "get": {
+        "description": "Report one batch's vault pass, as the client polls it while it settles.\n\nNever a 404: a batch this account never pressed -- including one another\naccount minted -- answers ``run: null``, the most common answer before the\npress lands rather than a missing resource. One indexed read, no commit, no\nprovider call, so unrated like ``GET /sweep``.",
+        "operationId": "get_corpus_import_completion_corpus_import_complete__batch_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "batch_id",
+            "required": true,
+            "schema": {
+              "maxLength": 64,
+              "minLength": 16,
+              "pattern": "^[A-Za-z0-9_-]+$",
+              "title": "Batch Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BulkImportCompleteResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "The request body could not be parsed, or a value it carried was refused."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "No usable credential was presented."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "The caller is authenticated but does not own the resource."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "No such resource -- or none this caller is allowed to see."
+          },
+          "413": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "The request body is past a declared ceiling."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ValidationErrorResponse"
+                }
+              }
+            },
+            "description": "The request failed validation -- an array of rejected fields -- or a check applied after the schema refused it, as one snake_case code."
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "The caller went past a rate limit."
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "A required dependency is temporarily unusable."
+          }
+        },
+        "summary": "Get Corpus Import Completion",
         "tags": [
           "corpus"
         ]

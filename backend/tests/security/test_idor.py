@@ -84,8 +84,9 @@ from models.user_practice import UserPractice
 from models.user_ui_flags import UserUiFlags
 from models.user_vault_config import UserVaultConfig
 from models.vault_activation import VaultActivation, VaultActivationState
+from models.vault_bulk_import_run import VaultBulkImportRun
 from security.idempotency import hash_idem_key
-from services import corpus_sort_run
+from services import corpus_sort_run, vault_bulk_import_run
 from services import frequency_classification as fc
 from services.content_repository import (
     ContentRepository,
@@ -3591,3 +3592,51 @@ async def test_idor_vault_export_reads_only_the_callers_own_vault(
         await db_session.execute(select(func.count()).select_from(UserVaultConfig))
     ).scalar_one()
     assert configs_after == configs_before
+
+
+@pytest.mark.asyncio
+async def test_idor_a_bulk_import_batch_id_reaches_only_the_callers_own_run(
+    async_client: AsyncClient,
+    db_session: AsyncSession,
+) -> None:
+    """Alice's batch id names no run of Bob's, and pressing it touches nothing of hers (#3773).
+
+    ``batch_id`` is the client's own random ``upload_run`` id, never a row id:
+    every read and write is scoped by the bearer's account *and* the id. So Bob
+    reading Alice's batch is told no run exists, and Bob pressing it records a
+    run of his own -- Alice's row is neither joined, nor rewritten, nor
+    duplicated under her account.
+    """
+    batch_id = "c3" * 16
+    alice_headers, alice_id = await _signup(async_client, "alice_bulk_import")
+    bob_headers, bob_id = await _signup(async_client, "bob_bulk_import")
+    pressed = await async_client.post(
+        "/corpus/import/complete",
+        json={"batch_id": batch_id, "landed": 2},
+        headers=alice_headers,
+    )
+    assert pressed.status_code == HTTPStatus.ACCEPTED
+    await vault_bulk_import_run.wait_for_bulk_import_tasks()
+
+    read = await async_client.get(f"/corpus/import/complete/{batch_id}", headers=bob_headers)
+    bob_press = await async_client.post(
+        "/corpus/import/complete",
+        json={"batch_id": batch_id, "landed": 7},
+        headers=bob_headers,
+    )
+    await vault_bulk_import_run.wait_for_bulk_import_tasks()
+
+    assert read.status_code == HTTPStatus.OK
+    assert read.json() == {"run": None}
+    assert bob_press.status_code == HTTPStatus.ACCEPTED
+    assert bob_press.json()["run"]["landed"] == 7
+    assert "user_id" not in bob_press.text
+    rows = (
+        (await db_session.execute(select(VaultBulkImportRun).order_by(col(VaultBulkImportRun.id))))
+        .scalars()
+        .all()
+    )
+    assert [(row.user_id, row.batch_id, row.landed) for row in rows] == [
+        (alice_id, batch_id, 2),
+        (bob_id, batch_id, 7),
+    ]

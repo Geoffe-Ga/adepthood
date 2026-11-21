@@ -4,10 +4,12 @@ import { act, fireEvent, render } from '@testing-library/react-native';
 import React from 'react';
 import { Platform } from 'react-native';
 
+import { SETTLE_DEFERRED_LINE, SETTLED_LINE, SETTLING_LINE } from '../seedCopy';
 import { seedRunReducer, EMPTY_SEED_RUN, type SeedEntry } from '../seedRun';
 import { UploadQueueIndicator } from '../UploadQueueIndicator';
 
 import { useUploadQueueStore } from '@/store/useUploadQueueStore';
+import { useVaultSettleStore } from '@/store/useVaultSettleStore';
 
 /**
  * #3772: the queue outlives the Seed screen, so a small indicator shows it from
@@ -115,5 +117,46 @@ describe('the upload queue indicator', () => {
     expect(view.addEventListener).toHaveBeenCalledWith('beforeunload', expect.any(Function));
     unmount();
     expect(view.removeEventListener).toHaveBeenCalledWith('beforeunload', expect.any(Function));
+  });
+});
+
+describe('after the queue drains (#3773)', () => {
+  beforeEach(() => {
+    useVaultSettleStore.getState().reset();
+  });
+
+  test('says quietly that what was sent is settling, and opens nothing', () => {
+    useVaultSettleStore.setState({ batchId: 'ab'.repeat(16), phase: 'settling' });
+
+    const { getByTestId, queryByTestId } = render(<UploadQueueIndicator />);
+
+    expect(getByTestId('vault-settle-line').props.children).toBe(SETTLING_LINE);
+    expect(queryByTestId('upload-queue-indicator')).toBeNull();
+  });
+
+  test('says when it has settled', () => {
+    useVaultSettleStore.setState({ batchId: 'ab'.repeat(16), phase: 'settled' });
+
+    const { getByTestId } = render(<UploadQueueIndicator />);
+
+    expect(getByTestId('vault-settle-line').props.children).toBe(SETTLED_LINE);
+  });
+
+  test('says a vault out of reach without alarm', () => {
+    useVaultSettleStore.setState({ batchId: 'ab'.repeat(16), phase: 'deferred' });
+
+    const { getByTestId } = render(<UploadQueueIndicator />);
+
+    expect(getByTestId('vault-settle-line').props.children).toBe(SETTLE_DEFERRED_LINE);
+  });
+
+  test('gives way to the queue line while documents are still going over', () => {
+    useVaultSettleStore.setState({ batchId: 'ab'.repeat(16), phase: 'settling' });
+    queueMidRun(2);
+
+    const { getByTestId, queryByTestId } = render(<UploadQueueIndicator />);
+
+    expect(getByTestId('upload-queue-indicator')).toBeTruthy();
+    expect(queryByTestId('vault-settle-line')).toBeNull();
   });
 });

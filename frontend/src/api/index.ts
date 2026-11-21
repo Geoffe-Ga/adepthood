@@ -15,6 +15,7 @@ import {
   corpusConsentListSchema,
   corpusConsentSchema,
   corpusInvitationSchema,
+  bulkImportCompleteSchema,
   corpusSweepEstimateSchema,
   corpusSweepSchema,
   acceptSuggestionResultSchema,
@@ -85,6 +86,7 @@ import {
   type CorpusConsentListT,
   type CorpusConsentT,
   type CorpusInvitationT,
+  type BulkImportCompleteT,
   type CorpusSortRunT,
   type CorpusSweepEstimateT,
   type CorpusSweepT,
@@ -2359,6 +2361,10 @@ export type CorpusSortRun = CorpusSortRunT;
 const corpusSweepEstimateResponseSchema =
   corpusSweepEstimateSchema as unknown as z.ZodType<CorpusSweepEstimate>;
 const corpusSweepResponseSchema = corpusSweepSchema as unknown as z.ZodType<CorpusSweepResult>;
+/** One bulk upload's vault pass, or none yet (``/corpus/import/complete``, #3773). */
+export type BulkImportCompletion = BulkImportCompleteT;
+const bulkImportCompletionSchema =
+  bulkImportCompleteSchema as unknown as z.ZodType<BulkImportCompletion>;
 
 export const corpus = {
   /**
@@ -2461,6 +2467,35 @@ export const corpus = {
       token,
       schema: corpusSweepResponseSchema,
       retry: false,
+    });
+  },
+
+  /**
+   * Ask for the one vault pass a drained bulk upload is owed (#3773).
+   *
+   * ``batchId`` is the upload run's own id -- the ``upload_run`` every document
+   * of the run was sent with -- and ``landed`` how many of them landed. Answers
+   * ``202`` with the run as soon as it is recorded; the pass itself goes on in
+   * the server's background whether or not this app stays open. Pressing again
+   * joins the same run, so a lost response is safe to repeat.
+   */
+  completeImport(
+    { batchId, landed }: { batchId: string; landed: number },
+    token?: string,
+  ): Promise<BulkImportCompletion> {
+    return request<BulkImportCompletion>('/corpus/import/complete', {
+      method: 'POST',
+      body: { batch_id: batchId, landed },
+      token,
+      schema: bulkImportCompletionSchema,
+    });
+  },
+
+  /** How one bulk upload's vault pass stands, polled while it settles. */
+  importCompletion(batchId: string, token?: string): Promise<BulkImportCompletion> {
+    return request<BulkImportCompletion>(`/corpus/import/complete/${encodeURIComponent(batchId)}`, {
+      token,
+      schema: bulkImportCompletionSchema,
     });
   },
 };

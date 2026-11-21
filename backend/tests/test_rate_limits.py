@@ -831,6 +831,8 @@ _DECLARED_ROUTE_LIMITS: dict[str, tuple[str, ...]] = {
     "routers.corpus.put_corpus_consent": ("5 per 1 minute",),
     # The resume a repeated consent grant used to be, keyed per account (#3498).
     "routers.corpus.run_corpus_sweep": ("5 per 1 minute",),
+    # One whole-ladder vault pass per drained bulk upload, keyed per account (#3773).
+    "routers.corpus.complete_corpus_import": ("5 per 1 minute",),
     "routers.course.get_content_body": ("30 per 1 minute",),
     "routers.course.get_site_resource_body": ("30 per 1 minute",),
     "routers.course.get_stage_intro_body": ("30 per 1 minute",),
