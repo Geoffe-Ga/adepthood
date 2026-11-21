@@ -92,12 +92,12 @@ import asyncio
 import enum
 import logging
 import os
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass, replace
 from functools import partial
 from http import HTTPStatus
-from types import MappingProxyType, TracebackType
-from typing import Final, NoReturn, cast
+from types import TracebackType
+from typing import Final, NoReturn
 from urllib.parse import quote
 
 import httpx
@@ -149,8 +149,8 @@ from domain.reading_recommendations import (
 )
 from domain.vault_export import VAULT_EXPORT_SINCE_MINOR, VaultExportPage
 from domain.vault_job_failure import BUSY_FAILURE_CODE_SINCE_MINOR
+from domain.vault_pipeline_status import PIPELINE_STATUS_SINCE_MINOR, VaultPipelineStatus
 from services.creek_vault_activity_wire import read_agent_activity
-from services.creek_vault_agent_discovery import parse_agent_mcp
 from services.creek_vault_call_errors import HTTP_CALL_FAILED_ERRORS as _HTTP_CALL_FAILED_ERRORS
 from services.creek_vault_call_errors import (
     HTTP_CALL_TIMED_OUT_ERRORS as _HTTP_CALL_TIMED_OUT_ERRORS,
@@ -160,6 +160,7 @@ from services.creek_vault_export_wire import (
     export_offered,
     read_export_page,
 )
+from services.creek_vault_handshake_parse import IncompatibleContractVersionError, parse_handshake
 from services.creek_vault_key_rejected import key_rejected_or, keyed_generation_minor
 from services.creek_vault_payload import (
     _CALL_FAILED,
@@ -192,8 +193,12 @@ from services.creek_vault_payload import (
     _wheel_balance_from,
 )
 from services.creek_vault_pinned_transport import build_pinned_destination_transport
+from services.creek_vault_pipeline_status_wire import (
+    pipeline_status_offered,
+    read_pipeline_status,
+)
 from services.creek_vault_readings import recommend_from_vault
-from services.creek_vault_relay import parse_request_key_providers, relay_headers
+from services.creek_vault_relay import relay_headers
 from services.creek_vault_retry_after import read_retry_after_seconds
 from services.creek_vault_telemetry import (
     VaultCallTimedOutError,
@@ -253,16 +258,6 @@ _VAULT_DEADLINE_PHASE_BUDGETS = 3
 # worker -- and the journal write path handshakes on every write.
 _VAULT_TOTAL_DEADLINE_SECONDS = _VAULT_TIMEOUT_SECONDS * _VAULT_DEADLINE_PHASE_BUDGETS
 
-# How a "MAJOR.MINOR.PATCH" version string decomposes, and how many of its
-# leading components must match for two contract versions to interoperate. ADR
-# 0004 Decision 4: while the contract is pre-1.0 a minor bump *is* the breaking
-# change, so client and server must match on exact major.minor; from 1.0 onward
-# minors are forward-compatible and only the major must match.
-_VERSION_MAJOR_INDEX = 0
-_PRE_1_0_MAJOR = "0"
-_PRE_1_0_MATCHED_COMPONENTS = 2
-_POST_1_0_MATCHED_COMPONENTS = 1
-
 # Creek requires an ``X-Creek-Contract-Version: <major.minor>`` header on every
 # ``/v1`` *capability* call and refuses a missing or mismatched one with
 # ``409 incompatible_version`` before any vault read. ``GET /v1/capabilities`` is
@@ -315,18 +310,6 @@ def carries_content(method: str, json_body: Mapping[str, object] | None) -> bool
     which only ever reduce what the vault holds.
     """
     return json_body is not None or method.upper() in _CONTENT_BEARING_METHODS
-
-
-class _IncompatibleContractVersionError(Exception):
-    """A vault advertised a contract version this client will not interoperate with.
-
-    Module-private and control-flow only: it exists so a version mismatch stays
-    *distinguishable* from an unreachable or malformed vault while still
-    degrading to the same caller-visible unavailable result (ADR 0004
-    Decision 4). It carries no payload, so it can never echo a vault response.
-    Deliberately not a :class:`~domain.creek_vault.CreekVaultError`: it never
-    escapes this module.
-    """
 
 
 # Where the vault lives. Public, and the only one of this seam's variable names
@@ -566,205 +549,6 @@ def _stored_destination_fields(finding: UserVaultUrlFinding) -> Mapping[str, str
         "url_defect": finding.defect.value,
         "url_detail": finding.detail,
     }
-
-
-def _require_str(payload: Mapping[str, object], key: str) -> str:
-    """Return ``payload[key]`` as a ``str`` or raise so parsing fails closed.
-
-    Raises ``KeyError`` when absent and ``TypeError`` when present but not a
-    string; both are caught upstream and degrade the handshake to unavailable.
-    """
-    value = payload[key]
-    if not isinstance(value, str):
-        raise TypeError(f"handshake field {key!r} must be a string")
-    return value
-
-
-# Creek advertises its capabilities under these published names.
-# :class:`CreekCapability` spells the same ideas as ``creek.*`` values, which are
-# deliberately *adepthood's* vocabulary and telemetry keys rather than a claim
-# about the wire (see that enum's docstring). The translation therefore lives
-# here, at the parse boundary, and nowhere else.
-#
-# Seven of the nine members have a published name. SAVE and CLASSIFY are
-# adepthood-side concepts Creek does not advertise, so :meth:`supports` is
-# ``False`` for them and every capability-gated path degrades. That is the
-# contract reporting a capability that does not exist, not a hole in this table
-# -- do not invent wire names for them.
-#
-# ``upload`` was the fifth, published at contract 0.8.0, and it is the reason
-# this list must be read as a fact about a *negotiated* handshake rather than
-# about Creek in general. Every minor through 0.7 answered the same four names
-# to every caller; 0.8.0 keys the advertisement on the caller's declared minor,
-# so a vault's answer here now depends on what adepthood pinned. Recognising the
-# name is all this table does: whether the client can *call* the route is a
-# separate question, answered at that capability's own method.
-#
-# ``drive-connector`` (0.9.0) and ``pipeline`` (0.10.0) are the sixth and
-# seventh, and they are the clearest case of that separation: adepthood has no
-# route, no method and no caller for either. They are listed anyway because
-# :func:`_coerce_capability` drops what it cannot name, so leaving them out
-# would make a vault that advertises them indistinguishable from one that does
-# not -- and "the vault offers it, we have not wired it" is a fact worth being
-# able to read off a handshake.
-_CAPABILITY_BY_WIRE_NAME: Mapping[str, CreekCapability] = MappingProxyType(
-    {
-        "capabilities": CreekCapability.HANDSHAKE,
-        "reading-recommendations": CreekCapability.READING_RECOMMENDATIONS,
-        "journal-upsert": CreekCapability.JOURNAL,
-        "journal-withdraw": CreekCapability.JOURNAL_WITHDRAW,
-        "reflections": CreekCapability.REFLECT,
-        "wheel": CreekCapability.WHEEL,
-        "upload": CreekCapability.UPLOAD,
-        "drive-connector": CreekCapability.DRIVE_CONNECTOR,
-        "pipeline": CreekCapability.PIPELINE,
-        "voice-drafts": CreekCapability.VOICE_DRAFTS,
-        "letters": CreekCapability.LETTERS,
-        "agent-activity": CreekCapability.AGENT_ACTIVITY,
-        "export": CreekCapability.EXPORT,
-    }
-)
-
-
-def _coerce_capability(item: object) -> CreekCapability | None:
-    """Map one advertised wire name to a capability, or ``None`` if unknown.
-
-    Unknown/forward-compatible capability strings are dropped rather than
-    erroring, so a vault can advertise new capabilities without breaking an
-    older client.
-    """
-    if not isinstance(item, str):
-        return None
-    return _CAPABILITY_BY_WIRE_NAME.get(item)
-
-
-def _parse_capabilities(raw: object) -> frozenset[CreekCapability]:
-    """Narrow an advertised capability list to the known-capability set.
-
-    Raises ``TypeError`` when ``raw`` is not a list (a malformed payload), which
-    upstream degrades to unavailable. Unknown member strings are ignored.
-    """
-    if not isinstance(raw, list):
-        raise TypeError("handshake capabilities must be a list")
-    return frozenset(
-        capability for item in raw if (capability := _coerce_capability(item)) is not None
-    )
-
-
-def _parse_attestation(raw: object) -> Mapping[str, object] | None:
-    """Return the attestation mapping unchanged, or ``None`` when absent.
-
-    Raises ``TypeError`` for a present-but-wrong-typed value so a malformed
-    payload degrades to unavailable.
-    """
-    if raw is None:
-        return None
-    if isinstance(raw, Mapping):
-        return raw
-    raise TypeError("handshake attestation must be a mapping or null")
-
-
-def _contract_version_compatible(advertised: str, pinned: str = CONTRACT_VERSION) -> bool:
-    """Return whether a vault's ``advertised`` contract version is safe to call.
-
-    Implements ADR 0004 Decision 4. While ``pinned`` is pre-1.0 the comparison is
-    on exact ``major.minor``: with the major stuck at ``0`` a major-only check is
-    a no-op, and a pre-1.0 minor bump is precisely the breaking change worth
-    catching (``0.3.0`` against a ``0.2.x`` pin is rejected; ``0.2.7`` against
-    ``0.2.1`` is accepted -- patch is free to vary). From 1.0 onward the rule
-    relaxes to a major match, since minors are then forward-compatible.
-
-    ``pinned`` is a parameter rather than a closed-over constant so the post-1.0
-    branch is exercisable while the shipped pin is still pre-1.0.
-    """
-    pinned_components = pinned.split(".")
-    matched = (
-        _PRE_1_0_MATCHED_COMPONENTS
-        if pinned_components[_VERSION_MAJOR_INDEX] == _PRE_1_0_MAJOR
-        else _POST_1_0_MATCHED_COMPONENTS
-    )
-    return advertised.split(".")[:matched] == pinned_components[:matched]
-
-
-def _require_str_sequence(payload: Mapping[str, object], key: str) -> Sequence[str]:
-    """Return ``payload[key]`` as a sequence of strings or raise so parsing fails closed.
-
-    Raises ``KeyError`` when absent and ``TypeError`` when present but not an
-    array of strings; both are caught upstream and degrade the handshake to
-    unavailable. A bare ``str`` is rejected rather than accepted as a
-    one-element sequence, because iterating one would compare single characters
-    and quietly find no match.
-    """
-    value = payload[key]
-    if isinstance(value, str) or not isinstance(value, Sequence):
-        raise TypeError(f"handshake field {key!r} must be an array of strings")
-    if not all(isinstance(item, str) for item in value):
-        raise TypeError(f"handshake field {key!r} must contain only strings")
-    return cast("Sequence[str]", value)
-
-
-def _contract_minor_supported(supported: Sequence[str], pinned: str = CONTRACT_VERSION) -> bool:
-    """Return whether the vault still serves the contract minor adepthood speaks.
-
-    The refinement of ADR 0004 Decision 4 recorded in that ADR's 2026-08-09
-    amendment. The original rule compared adepthood's pin against the single
-    version a server advertises as its own, which is strictly more brittle than
-    the contract requires: Creek publishes ``supported_contract_minors``
-    precisely so a server can widen its window without cutting clients off, and
-    it did exactly that on moving to 0.3.0 while continuing to serve 0.2. Under
-    the old rule adepthood refused that server while it was actively advertising
-    that it would answer.
-
-    Per entry the comparison is unchanged -- :func:`_contract_version_compatible`
-    still decides what compatible means, including the post-1.0 relaxation to a
-    major match -- so this widens *what* is compared against, not *how*.
-    """
-    return any(_contract_version_compatible(minor, pinned) for minor in supported)
-
-
-def _parse_handshake(payload: Mapping[str, object]) -> HandshakeResult:
-    """Parse a well-formed handshake payload into a populated result.
-
-    Reads and version-checks the contract before anything else: an incompatible
-    version raises :class:`_IncompatibleContractVersionError` (we will not call a
-    surface we do not understand), which every caller degrades to unavailable.
-    Then honors the vault's own availability, fail-closed: a reachable server is
-    not necessarily an available vault, so anything other than a literal ``True``
-    -- a missing ``vault`` object, a missing or wrong-typed ``available`` inside
-    it -- degrades to unavailable. Creek publishes that flag *nested* under
-    ``vault``; reading a top-level ``available`` (which its documents do not
-    carry) is what made every handshake against a conformant vault report
-    unavailable. Any missing key or wrong-typed field raises out of the helpers
-    and is caught by :meth:`HttpCreekVaultClient._probe`.
-    """
-    contract_version = _require_str(payload, "contract_version")
-    supported = _require_str_sequence(payload, "supported_contract_minors")
-    if not _contract_minor_supported(supported):
-        raise _IncompatibleContractVersionError
-    vault = payload.get("vault")
-    if not isinstance(vault, Mapping) or vault.get("available") is not True:
-        return HandshakeResult.unavailable()
-    return HandshakeResult(
-        available=True,
-        contract_version=contract_version,
-        ontology_version=_require_str(payload, "ontology_version"),
-        capabilities=_parse_capabilities(payload["capabilities"]),
-        attestation=_parse_attestation(payload.get("attestation")),
-        request_key_providers=parse_request_key_providers(payload.get("request_key_providers")),
-        keyless_inference=_parse_keyless_inference(payload.get("keyless_inference")),
-        agent_mcp=parse_agent_mcp(payload.get("agent_mcp"), minor=payload.get("contract_minor")),
-        supported_contract_minors=frozenset(supported),
-    )
-
-
-def _parse_keyless_inference(raw: object) -> bool | None:
-    """Read Creek 0.20's ``keyless_inference`` leniently: a literal boolean, else ``None``.
-
-    ``None`` means "the vault did not say", which changes nothing about a pass, so
-    a vault that omits the field, or sends something other than a boolean, is
-    treated exactly as an older vault is.
-    """
-    return raw if isinstance(raw, bool) else None
 
 
 def _unsupported_message(capability: CreekCapability) -> str:
@@ -1129,6 +913,8 @@ _READING_CALL = _CallDepartures(contract_minor="0.25", deadline=30.0)
 _EXPORT_CALL = _CallDepartures(
     contract_minor=VAULT_EXPORT_SINCE_MINOR, deadline=EXPORT_DEADLINE_SECONDS
 )
+
+_PIPELINE_STATUS_CALL = _CallDepartures(contract_minor=PIPELINE_STATUS_SINCE_MINOR)
 
 # The job-status poll against a vault that serves contract 0.26, which is the
 # minor whose failed job says *why* it failed (Creek-Vault#1877). Only this read
@@ -1972,8 +1758,8 @@ class HttpCreekVaultClient:
         build a request for.
         """
         try:
-            return _parse_handshake(await self._fetch_capabilities())
-        except _IncompatibleContractVersionError:
+            return parse_handshake(await self._fetch_capabilities())
+        except IncompatibleContractVersionError:
             return HandshakeDegradeReason.INCOMPATIBLE_VERSION
         except _HTTP_CALL_TIMED_OUT_ERRORS:
             return HandshakeDegradeReason.TIMED_OUT
@@ -2809,6 +2595,18 @@ class HttpCreekVaultClient:
                 send, self._url, cursor, supported=supported, read_failure=_read_failure
             )
 
+    async def pipeline_status(self, limit: int, /) -> VaultPipelineStatus:
+        """Read the vault's folders, uploads and jobs (0.34); see the status wire module."""
+        send = partial(self._authorized_request, departures=_PIPELINE_STATUS_CALL)
+        with _CountingOutcome(CreekCapability.PIPELINE):
+            return await read_pipeline_status(
+                send,
+                self._url,
+                limit,
+                supported=pipeline_status_offered(self._last_handshake),
+                read_failure=_read_failure,
+            )
+
 
 class LocalFallbackCreekVaultClient:
     """The no-vault :class:`CreekVaultClient`: local pipeline stays authoritative.
@@ -2926,6 +2724,11 @@ class LocalFallbackCreekVaultClient:
         """Raise: there is no vault whose content could be exported."""
         record_vault_outcome(self._outcome, CreekCapability.EXPORT)
         raise CreekCapabilityUnsupportedError(_unsupported_message(CreekCapability.EXPORT))
+
+    async def pipeline_status(self, _limit: int, /) -> VaultPipelineStatus:
+        """Raise: there is no vault whose folders and uploads could be read."""
+        record_vault_outcome(self._outcome, CreekCapability.PIPELINE)
+        raise CreekCapabilityUnsupportedError(_unsupported_message(CreekCapability.PIPELINE))
 
     async def classify_corpus(self) -> VaultClassificationPass | VaultPipelineJob:
         """Raise: there is no vault whose corpus could be classified.

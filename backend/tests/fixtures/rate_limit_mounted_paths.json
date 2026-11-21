@@ -163,5 +163,6 @@
   "/vault/agents/{agent_id}",
   "/vault/connection",
   "/vault/connection/check",
+  "/vault/pipeline",
   "/webhooks/gumroad/ping"
 ]

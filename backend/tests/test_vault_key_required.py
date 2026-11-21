@@ -33,7 +33,7 @@ from domain.creek_vault import (
 from main import app
 from models.user import User
 from models.wallet_audit import WalletAudit
-from services.creek_vault_client import _parse_handshake
+from services.creek_vault_handshake_parse import parse_handshake
 from services.generation_access import VAULT_KEY_REQUIRED
 from services.reflection_boundary import ReflectionBoundary
 from services.usage import get_monthly_cap
@@ -93,7 +93,7 @@ def test_keyless_inference_is_read_leniently(raw: object, expected: bool | None)
     """Only a literal boolean is believed; anything else is "not told" and changes nothing."""
     overrides = {} if raw is None else {"keyless_inference": raw}
 
-    assert _parse_handshake(_document(**overrides)).keyless_inference is expected
+    assert parse_handshake(_document(**overrides)).keyless_inference is expected
 
 
 @pytest.mark.parametrize(

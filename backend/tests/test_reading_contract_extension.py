@@ -16,7 +16,8 @@ import pytest
 
 from domain.creek_vault import CONTRACT_VERSION, CreekCapability
 from domain.reading_recommendations import ReadingCandidate, ReadingRequest, ReadingSource
-from services.creek_vault_client import _CAPABILITY_BY_WIRE_NAME, HttpCreekVaultClient
+from services.creek_vault_client import HttpCreekVaultClient
+from services.creek_vault_handshake_parse import _CAPABILITY_BY_WIRE_NAME
 
 _ROOT = Path(__file__).parent / "fixtures" / "creek_readings_v025"
 

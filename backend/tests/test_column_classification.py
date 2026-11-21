@@ -59,6 +59,9 @@ _PLAINTEXT_COLUMNS: dict[str, frozenset[str]] = {
             "journalentry.idem_key",
             "journalentry.vault_destination",
             "journalentry.vault_ref",
+            "uploadreceipt.batch",
+            "uploadreceipt.external_id",
+            "uploadreceipt.vault_ref",
             "licensebinding.gumroad_sale_id",
             "licensebinding.product_id",
             "llmusagelog.generation_id",
@@ -167,6 +170,8 @@ _PLAINTEXT_COLUMNS: dict[str, frozenset[str]] = {
             # The vendor of a writer's stored provider key (R1-1); the key itself
             # is ciphertext.
             "vaultclassificationkey.provider",
+            "uploadreceipt.destination",
+            "uploadreceipt.vault_status",
             "vaultpipelinerun.failure_code",
             "vaultpipelinerun.follow_up_trigger",
             "vaultpipelinerun.outcome",
@@ -308,6 +313,8 @@ _PLAINTEXT_COLUMNS: dict[str, frozenset[str]] = {
             "goalgroup.name",
             "habit.icon",
             "habit.name",
+            # The name a writer gave a file they sent to their vault (#3775).
+            "uploadreceipt.filename",
             "user.display_name",
             "userpractice.custom_name",
         }

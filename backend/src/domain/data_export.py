@@ -69,6 +69,7 @@ from models.prompt_dismissal import PromptDismissal
 from models.prompt_response import PromptResponse
 from models.resource_completion import ResourceCompletion
 from models.stage_progress import StageProgress
+from models.upload_receipt import UploadReceipt
 from models.user import User
 from models.user_depth_preferences import UserDepthPreferences
 from models.user_practice import UserPractice
@@ -504,6 +505,14 @@ MANIFEST: Mapping[str, ExportRule] = {
         StageProgress,
         "Where the account had reached in the 36 weeks, how many times round it had "
         "been, and how far its Course reading is held open (its lifetime high-water mark).",
+    ),
+    "uploadreceipt": _include(
+        "upload_receipts",
+        UploadReceipt,
+        "A receipt for each document the account sent to its vault: the name "
+        "it gave the file, the batch it came in, and how the vault answered. "
+        "The account's own record of what it handed over; the documents "
+        "themselves come back through GET /users/me/export/vault.",
     ),
     "user": Included(
         key="account",

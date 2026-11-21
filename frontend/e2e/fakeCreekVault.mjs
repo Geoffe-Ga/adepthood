@@ -109,6 +109,15 @@ import { fileURLToPath } from 'node:url';
  * those same two pages, so it can prove the saved file is exactly what the
  * vault held without reading backend files.
  *
+ * `GET /v1/pipeline/status` (contract 0.34, Creek-Vault#2124, #3775) is opt-in
+ * the same way, because the deployed vaults predate it: by default 0.34 is not
+ * listed and adepthood's dashboard reports the vault needs an update.
+ * `POST /__lane/advertise-pipeline-status` lists 0.34 and serves Creek's
+ * published success cell (read verbatim from the vendored 0.34 slice), with its
+ * one document re-addressed to every upload this vault holds so a receipt can
+ * be matched to the folder it landed in; `POST /__lane/withdraw-pipeline-status`
+ * restores the default. A read declaring anything but 0.34 is a 409.
+ *
  * `POST /__lane/refuse-journal-ingest` makes every journal PUT answer `503
  * temporarily_unavailable` and store nothing (the ledger records it with action
  * `refused`) until `POST /__lane/accept-journal-ingest`; the vault-bound sort
@@ -175,6 +184,10 @@ const EXPORT_CONTROLS = new Map([
   ['/__lane/advertise-export-unserved', 'unserved'],
   ['/__lane/withdraw-export', 'absent'],
 ]);
+/** The minor of Creek's pipeline status read (contract 0.34, Creek-Vault#2124, #3775). */
+const PIPELINE_STATUS_MINOR = '0.34';
+/** Whether this vault lists 0.34 and answers `GET /v1/pipeline/status`. */
+let pipelineStatusServed = false;
 const CONTRACT_HEADER = 'x-creek-contract-version';
 const CEILING_HEADER = 'x-creek-tier-ceiling';
 
@@ -262,6 +275,22 @@ const EXPORT_SUCCESS = JSON.parse(
     fileURLToPath(
       new URL(
         '../../backend/tests/fixtures/creek_export_v027/examples/export/success.json',
+        import.meta.url,
+      ),
+    ),
+    'utf8',
+  ),
+);
+
+/**
+ * Creek's published pipeline-status success cell, verbatim from the vendored
+ * 0.34 slice. Its folders, job and document shape are what the read answers.
+ */
+const PIPELINE_STATUS_SUCCESS = JSON.parse(
+  readFileSync(
+    fileURLToPath(
+      new URL(
+        '../../backend/tests/fixtures/creek_pipeline_status_v034/pipeline-status/success.json',
         import.meta.url,
       ),
     ),
@@ -527,7 +556,8 @@ function capabilities(response) {
   const minors = [CONTRACT_MINOR]
     .concat(readingsAdvertised ? [READING_MINOR] : [])
     .concat(requestKeysRejected ? [FAILURE_CODE_MINOR] : [])
-    .concat(exportMinors());
+    .concat(exportMinors())
+    .concat(pipelineStatusServed ? [PIPELINE_STATUS_MINOR] : []);
   send(response, HTTP_OK, {
     capabilities: ADVERTISED_CAPABILITIES.filter((name) => !lettersHeld || name !== 'letters')
       .concat(pipelineAdvertised ? ['pipeline'] : [])
@@ -1204,6 +1234,35 @@ function exportRead(request, response, url) {
   send(response, HTTP_OK, page);
 }
 
+/**
+ * `GET /v1/pipeline/status` (0.34): the published success cell, its one document
+ * repeated once per upload this vault holds under that upload's external id.
+ *
+ * Only a call declaring 0.34 to a vault that lists it is answered; anything
+ * else is the `409 incompatible_version` Creek gives an earlier minor.
+ */
+function pipelineStatusRead(request, response) {
+  request.resume();
+  const declared = request.headers[CONTRACT_HEADER] ?? null;
+  received.push({
+    method: 'GET',
+    path: '/v1/pipeline/status',
+    externalId: null,
+    tier: null,
+    declared,
+    ceiling: request.headers[CEILING_HEADER] ?? null,
+  });
+  if (!pipelineStatusServed || declared !== PIPELINE_STATUS_MINOR) {
+    refuse(response, HTTP_INCOMPATIBLE_VERSION, 'incompatible_version');
+    return;
+  }
+  const [published] = PIPELINE_STATUS_SUCCESS.documents;
+  const documents = [...fragments.values()]
+    .filter((fragment) => fragment.kind === 'upload')
+    .map((fragment) => ({ ...published, external_id: fragment.externalId }));
+  send(response, HTTP_OK, { ...PIPELINE_STATUS_SUCCESS, documents });
+}
+
 /** Serve one authorised `/v1` call, or say this vault has no such route. */
 async function capability(request, response, pathname) {
   if (request.method === 'POST' && pathname === '/v1/reading-recommendations') {
@@ -1218,6 +1277,10 @@ async function capability(request, response, pathname) {
   }
   if (request.method === 'GET' && pathname === '/v1/export' && exportMode !== 'absent') {
     exportRead(request, response, new URL(request.url ?? '/', 'http://localhost'));
+    return;
+  }
+  if (request.method === 'GET' && pathname === '/v1/pipeline/status') {
+    pipelineStatusRead(request, response);
     return;
   }
   if (request.method === 'GET' && pathname === '/v1/agent-activity') {
@@ -1338,6 +1401,15 @@ const server = createServer((request, response) => {
     if (request.method === 'POST' && exportControl !== undefined) {
       request.resume();
       exportMode = exportControl;
+      send(response, HTTP_OK, { status: 'ok' });
+      return;
+    }
+    if (
+      request.method === 'POST' &&
+      ['/__lane/advertise-pipeline-status', '/__lane/withdraw-pipeline-status'].includes(pathname)
+    ) {
+      request.resume();
+      pipelineStatusServed = pathname === '/__lane/advertise-pipeline-status';
       send(response, HTTP_OK, { status: 'ok' });
       return;
     }

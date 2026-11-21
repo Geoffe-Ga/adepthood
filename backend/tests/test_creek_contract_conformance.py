@@ -97,10 +97,10 @@ from domain.creek_vault import (
 )
 from scripts.creek_contract_drift import BUNDLE_ROOT, EXIT_DRIFT, verify_local
 from services.creek_vault_client import (
-    _CAPABILITY_BY_WIRE_NAME,
     HandshakeDegradeReason,
     HttpCreekVaultClient,
 )
+from services.creek_vault_handshake_parse import _CAPABILITY_BY_WIRE_NAME
 from tests.creek_bundle_facts import (
     BUNDLE_NAME,
     CAPABILITY_COUNT,

@@ -18,7 +18,7 @@ from domain.creek_vault import (
 )
 from scripts.creek_contract_drift import BUNDLE_ROOT
 from services import creek_vault_pipeline as pipeline
-from services.creek_vault_client import _parse_handshake
+from services.creek_vault_handshake_parse import parse_handshake
 from services.creek_vault_pipeline import _Continuation as Continuation
 from services.creek_vault_pipeline import _schedule_continuation as schedule_continuation
 from services.creek_vault_relay import (
@@ -120,7 +120,7 @@ def test_request_key_providers_are_read_leniently(raw: object, expected: set[str
 def test_a_conformant_handshake_carries_its_key_vendors() -> None:
     """A Creek 0.18+ capability document is parsed through to ``accepts_key``."""
     minor = ".".join(CONTRACT_VERSION.split(".")[:2])
-    parsed = _parse_handshake(
+    parsed = parse_handshake(
         {
             "contract_version": CONTRACT_VERSION,
             "supported_contract_minors": [minor],
@@ -146,7 +146,7 @@ def test_creeks_published_capability_example_is_read_through_to_accepts_key() ->
         (BUNDLE_ROOT / "examples" / "capabilities" / "success.json").read_text(encoding="utf-8")
     )
 
-    parsed = _parse_handshake(example)
+    parsed = parse_handshake(example)
 
     assert parsed.request_key_providers == frozenset(VaultKeyProvider)
     assert all(parsed.accepts_key(vendor) for vendor in VaultKeyProvider)

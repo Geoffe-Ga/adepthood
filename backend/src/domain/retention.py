@@ -617,6 +617,10 @@ RETENTION: Mapping[str, RetentionRule] = {
     "stageprogress": until_account_deletion(
         "Where the account had reached, and the Course high-water mark."
     ),
+    "uploadreceipt": until_account_deletion(
+        "Names and refs of documents the account sent to its vault; exported, "
+        "and erased with the account (#3775).",
+    ),
     "user": until_account_deletion(
         "The account row itself. Account deletion hard-deletes it; its soft-delete "
         "column is never written.",
