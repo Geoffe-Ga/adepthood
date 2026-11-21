@@ -118,6 +118,20 @@ import { fileURLToPath } from 'node:url';
  * be matched to the folder it landed in; `POST /__lane/withdraw-pipeline-status`
  * restores the default. A read declaring anything but 0.34 is a 409.
  *
+ * The owner's own voice and the related threads (contracts 0.35/0.36,
+ * Creek-Vault#2126/#2127, #3778) are opt-in the same way, because the deployed
+ * vaults predate them: by default 0.36 is not listed and reflections and
+ * letters answer as before. `POST /__lane/advertise-own-voice` lists 0.36;
+ * a reflection or letter that then declares 0.36 is answered with `voice:
+ * "owner"`, a letter with the `related_praxis`, `related_eddies` and
+ * `related_threads` of Creek's vendored 0.36 `letters` success cell, and an
+ * armed reflection (`relate-next-reflection`) adds the `related_threads` of the
+ * 0.36 `reflections` cell beside its praxis and eddies. Unarmed, a 0.36
+ * reflection omits every related key, as Creek does when nothing qualifies.
+ * `GET /__lane/own-voice-pages` hands a journey those pages;
+ * `POST /__lane/withdraw-own-voice` restores the default. A call declaring 0.36
+ * to a vault not listing it is a 409.
+ *
  * `POST /__lane/refuse-journal-ingest` makes every journal PUT answer `503
  * temporarily_unavailable` and store nothing (the ledger records it with action
  * `refused`) until `POST /__lane/accept-journal-ingest`; the vault-bound sort
@@ -188,6 +202,10 @@ const EXPORT_CONTROLS = new Map([
 const PIPELINE_STATUS_MINOR = '0.34';
 /** Whether this vault lists 0.34 and answers `GET /v1/pipeline/status`. */
 let pipelineStatusServed = false;
+/** The minor of Creek's owner voice and related threads (contracts 0.35/0.36, #3778). */
+const OWN_VOICE_MINOR = '0.36';
+/** Whether this vault lists 0.36 and answers its reflections and letters in the owner's voice. */
+let ownVoiceServed = false;
 const CONTRACT_HEADER = 'x-creek-contract-version';
 const CEILING_HEADER = 'x-creek-tier-ceiling';
 
@@ -262,6 +280,33 @@ const RELATED_PAGES = {
   related_eddies: REFLECTION_SUCCESS.related_eddies,
   related_praxis: REFLECTION_SUCCESS.related_praxis,
 };
+/** Read one cell of Creek's vendored 0.36 slice (#3778), verbatim. */
+function ownVoiceCell(name) {
+  return JSON.parse(
+    readFileSync(
+      fileURLToPath(
+        new URL(
+          `../../backend/tests/fixtures/creek_related_voice_v036/examples/${name}/success.json`,
+          import.meta.url,
+        ),
+      ),
+      'utf8',
+    ),
+  );
+}
+const OWN_VOICE_LETTER = ownVoiceCell('letters');
+const OWN_VOICE_REFLECTION = ownVoiceCell('reflections');
+/** What a 0.36 letter publishes beside itself: one praxis, one eddy, one thread. */
+const LETTER_PAGES = {
+  related_eddies: OWN_VOICE_LETTER.related_eddies,
+  related_praxis: OWN_VOICE_LETTER.related_praxis,
+  related_threads: OWN_VOICE_LETTER.related_threads,
+};
+/** The voice Creek's 0.36 cells name: the owner's own. */
+const OWNER_VOICE = OWN_VOICE_LETTER.voice;
+if (OWNER_VOICE !== 'owner' || OWN_VOICE_REFLECTION.voice !== 'owner') {
+  throw new Error('the vendored 0.36 cells no longer name the owner voice');
+}
 /** What a reflection that recognised no compiled page publishes beside its notes. */
 const NO_RELATED_PAGES = { related_eddies: [], related_praxis: [] };
 /** One reflection a journey armed to carry {@link RELATED_PAGES}. */
@@ -557,7 +602,8 @@ function capabilities(response) {
     .concat(readingsAdvertised ? [READING_MINOR] : [])
     .concat(requestKeysRejected ? [FAILURE_CODE_MINOR] : [])
     .concat(exportMinors())
-    .concat(pipelineStatusServed ? [PIPELINE_STATUS_MINOR] : []);
+    .concat(pipelineStatusServed ? [PIPELINE_STATUS_MINOR] : [])
+    .concat(ownVoiceServed ? [OWN_VOICE_MINOR] : []);
   send(response, HTTP_OK, {
     capabilities: ADVERTISED_CAPABILITIES.filter((name) => !lettersHeld || name !== 'letters')
       .concat(pipelineAdvertised ? ['pipeline'] : [])
@@ -689,6 +735,19 @@ function hasContract(request, response) {
   request.resume();
   refuse(response, HTTP_INCOMPATIBLE_VERSION, 'incompatible_version');
   return false;
+}
+
+/**
+ * The minor a reflection or letter declared, when this vault serves it: the
+ * pin, or 0.36 while {@link ownVoiceServed}. Anything else is refused 409.
+ */
+function generationMinor(request, response) {
+  const declared = request.headers[CONTRACT_HEADER];
+  if (declared === CONTRACT_MINOR) return declared;
+  if (ownVoiceServed && declared === OWN_VOICE_MINOR) return declared;
+  request.resume();
+  refuse(response, HTTP_INCOMPATIBLE_VERSION, 'incompatible_version');
+  return null;
 }
 
 /** Store the journal body addressed by Adepthood's stable local entry id. */
@@ -844,7 +903,9 @@ function malformedNote(note) {
  * its prose.
  */
 async function writeLetter(request, response, externalId) {
-  if (!hasContract(request, response)) return;
+  const declared = generationMinor(request, response);
+  if (declared === null) return;
+  const ownVoice = declared === OWN_VOICE_MINOR;
   const body = await readJson(request);
   const ceiling = request.headers[CEILING_HEADER] ?? null;
   if (
@@ -884,9 +945,11 @@ async function writeLetter(request, response, externalId) {
     ceiling,
     digest: createHash('sha256').update(body.content, 'utf8').digest('hex'),
     action,
+    declared,
   });
   send(response, HTTP_OK, {
     action,
+    ...(ownVoice ? { ...LETTER_PAGES, voice: OWNER_VOICE } : {}),
     attribution: { author: 'ai', author_slug: 'ai-as-user', voice_weight: 0 },
     external_id: externalId,
     fragment_id: fragment.fragmentId,
@@ -928,7 +991,9 @@ function firstSentence(content) {
 
 /** Answer a reflection with one note quoting the writer, recording only a digest. */
 async function reflect(request, response) {
-  if (!hasContract(request, response)) return;
+  const declared = generationMinor(request, response);
+  if (declared === null) return;
+  const ownVoice = declared === OWN_VOICE_MINOR;
   const body = await readJson(request);
   const keys = body !== null && typeof body === 'object' ? Object.keys(body).sort() : [];
   const ceiling = request.headers[CEILING_HEADER] ?? null;
@@ -953,17 +1018,31 @@ async function reflect(request, response) {
     ceiling,
     digest: createHash('sha256').update(body.content, 'utf8').digest('hex'),
     related,
+    declared,
   });
   send(response, HTTP_OK, {
     essay: null,
     essay_grounded: false,
     inference_source: answeringRoute(request),
     notes: [{ kind: 'pattern', note: LANE_REFLECTION_NOTE, quote: firstSentence(body.content) }],
-    ...(related ? RELATED_PAGES : NO_RELATED_PAGES),
+    ...reflectionPages(related, ownVoice),
     routed_tier: ceiling,
     status: 'ok',
     tier_ceiling: ceiling,
   });
+}
+
+/**
+ * What a reflection publishes beside its notes. At the pin: the armed pages,
+ * or empty arrays. At 0.36: the owner's voice, and -- only when armed -- the
+ * pages with the 0.36 cell's thread; unarmed, every related key is omitted.
+ */
+function reflectionPages(related, ownVoice) {
+  if (!ownVoice) return related ? RELATED_PAGES : NO_RELATED_PAGES;
+  const pages = related
+    ? { ...RELATED_PAGES, related_threads: OWN_VOICE_REFLECTION.related_threads }
+    : {};
+  return { ...pages, voice: OWNER_VOICE };
 }
 
 /** `limit` from a query admitting nothing else, or `null` when Creek would refuse it. */
@@ -1444,6 +1523,26 @@ const server = createServer((request, response) => {
     if (request.method === 'GET' && pathname === '/__lane/related-pages') {
       request.resume();
       send(response, HTTP_OK, RELATED_PAGES);
+      return;
+    }
+    if (
+      request.method === 'POST' &&
+      ['/__lane/advertise-own-voice', '/__lane/withdraw-own-voice'].includes(pathname)
+    ) {
+      request.resume();
+      ownVoiceServed = pathname === '/__lane/advertise-own-voice';
+      send(response, HTTP_OK, { status: 'ok' });
+      return;
+    }
+    if (request.method === 'GET' && pathname === '/__lane/own-voice-pages') {
+      request.resume();
+      send(response, HTTP_OK, {
+        letter: LETTER_PAGES,
+        reflection: {
+          ...RELATED_PAGES,
+          related_threads: OWN_VOICE_REFLECTION.related_threads,
+        },
+      });
       return;
     }
     if (request.method === 'POST' && pathname === '/__lane/relate-next-reflection') {

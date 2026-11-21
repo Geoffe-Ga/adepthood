@@ -152,6 +152,7 @@ class SinkId(enum.StrEnum):
     JOURNAL_VAULT_TAGS = "db.journalentry.vault_tags"
     MARGINALIA_ANCHOR = "db.marginalia.anchor_text"
     MARGINALIA_ESSAY = "db.marginalia.essay"
+    MARGINALIA_ESSAY_RELATED = "db.marginalia.essay_related"
     MARGINALIA_NOTE = "db.marginalia.note"
     PRACTICE_SESSION_INSIGHT = "db.practicesession.insight"
     PRACTICE_SESSION_REFLECTION = "db.practicesession.reflection"
@@ -365,6 +366,8 @@ _ROWS: Final[tuple[Sink, ...]] = (
     _encrypted(SinkId.JOURNAL_VAULT_TAGS, EGRESS_TIERS),
     _encrypted(SinkId.MARGINALIA_ANCHOR, EGRESS_TIERS),
     _encrypted(SinkId.MARGINALIA_ESSAY, EGRESS_TIERS),
+    # A vault letter's related pages (#3778): only an entry a vault may see.
+    _encrypted(SinkId.MARGINALIA_ESSAY_RELATED, EGRESS_TIERS),
     _encrypted(SinkId.MARGINALIA_NOTE, EGRESS_TIERS),
     _encrypted(SinkId.PRACTICE_SESSION_INSIGHT, ALL_TIERS),
     _encrypted(SinkId.PRACTICE_SESSION_REFLECTION, ALL_TIERS),

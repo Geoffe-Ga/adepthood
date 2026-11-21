@@ -47,6 +47,7 @@ from uuid import UUID
 
 from domain.vault_export import VaultExportPage
 from domain.vault_pipeline_status import VaultPipelineStatus
+from domain.vault_related import VaultRelatedThread, VaultReplyVoice
 
 # Semantic contract version adepthood presents at handshake and compares against
 # what a vault advertises. A major-version mismatch degrades to unavailable
@@ -101,10 +102,14 @@ from domain.vault_pipeline_status import VaultPipelineStatus
 #    temporarily_unavailable` -- only to a vault listing 0.28
 #    (`domain.vault_key_rejection`). Creek gates nothing else on those two
 #    routes above 0.21, so the declaration changes no answer they rely on;
-#    `tests/test_creek_contract_0_28.py` pins it. The pipeline status read
-#    (`GET /v1/pipeline/status`, Creek-Vault#2124, #3775) declares 0.34 only to
-#    a vault listing 0.34 (`PIPELINE_STATUS_SINCE_MINOR`); an older vault is
-#    asked nothing and the dashboard says it needs an update.
+#    `tests/test_creek_contract_0_28.py` pins it. They declare 0.36 instead --
+#    the owner's own voice (0.35) and the related praxis, eddies and threads
+#    (0.36, `domain.vault_related`, #3778) -- to a vault listing 0.36; a vault
+#    listing neither keeps the Higher Self's voice.
+#    `tests/test_creek_contract_0_36_related_voice.py` pins it. The pipeline
+#    status read (`GET /v1/pipeline/status`, Creek-Vault#2124, #3775) declares
+#    0.34 only to a vault listing 0.34 (`PIPELINE_STATUS_SINCE_MINOR`); an older
+#    vault is asked nothing and the dashboard says it needs an update.
 #    `tests/test_creek_contract_0_34_pipeline_status.py` pins it.
 CONTRACT_VERSION = "0.22.0"
 
@@ -1048,6 +1053,12 @@ class VaultLetter:
     #: The route the vault says wrote it (contract 0.19), or ``None`` when it
     #: named none -- including an ``unchanged`` letter re-read without a model call.
     inference_source: str | None = None
+    #: Which voice wrote it (0.35), or ``None`` when the vault made no claim.
+    voice: VaultReplyVoice | None = None
+    #: The writer's own pages its entry touches (0.36); empty when none qualify.
+    related_praxis: tuple[VaultRelatedPraxis, ...] = ()
+    related_eddies: tuple[VaultRelatedEddy, ...] = ()
+    related_threads: tuple[VaultRelatedThread, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -1184,9 +1195,9 @@ class VaultReflection:
     verified against the ceiling the caller was willing to accept before this
     value is ever built.
 
-    ``related_praxis`` and ``related_eddies`` are the writer's own compiled
-    pages the entry touched. Both are optional on the wire and default to empty
-    here, so a vault that publishes neither -- an older bundle, an entry that
+    ``related_praxis``, ``related_eddies`` and ``related_threads`` (0.36) are
+    the writer's own compiled pages the entry touched. All are optional on the
+    wire and default to empty here, so a vault that publishes none -- an older bundle, an entry that
     touched nothing -- is an ordinary answer rather than a fault, and no consumer
     has to distinguish "absent" from "none".
     """
@@ -1198,6 +1209,7 @@ class VaultReflection:
     routed_tier: VaultTierCeiling
     related_praxis: tuple[VaultRelatedPraxis, ...] = ()
     related_eddies: tuple[VaultRelatedEddy, ...] = ()
+    related_threads: tuple[VaultRelatedThread, ...] = ()
     #: The route the vault says answered (contract 0.19), or ``None`` when it
     #: named none or named one outside the published vocabulary.
     inference_source: str | None = None

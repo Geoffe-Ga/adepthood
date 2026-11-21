@@ -6,7 +6,7 @@ import { Dimensions, StyleSheet } from 'react-native';
 
 import FromYourCreekPanel from '../FromYourCreekPanel';
 
-import type { RelatedEddy, RelatedPraxis } from '@/api';
+import type { RelatedEddy, RelatedPraxis, RelatedThread } from '@/api';
 import { INTERACTIVE_TEXT_MIN, ink, surface } from '@/design/tokens';
 
 const PRAXIS: RelatedPraxis = {
@@ -22,6 +22,14 @@ const EDDY: RelatedEddy = {
   fragment_count: 12,
   formed: '2026-03-04',
 };
+
+const THREAD: RelatedThread = {
+  id: 'thread-0000000001',
+  title: 'Leaving the firm',
+  status: 'dormant',
+};
+
+const THREADS_HEADING = 'Threads — the currents your writing is part of';
 
 describe('FromYourCreekPanel', () => {
   it('renders nothing for empty results, preserving the journal layout', () => {
@@ -89,6 +97,58 @@ describe('FromYourCreekPanel', () => {
     expect(view.queryByText("Praxis — what you're putting into practice")).toBeNull();
     expect(view.getByText('Eddies — where your writing keeps circling')).toBeTruthy();
     expect(view.getByText('1 piece of your writing since March')).toBeTruthy();
+  });
+
+  it('names the threads an entry belongs to in a third section, counted with the rest', () => {
+    const view = render(
+      <FromYourCreekPanel praxis={[PRAXIS]} eddies={[EDDY]} threads={[THREAD]} />,
+    );
+
+    expect(view.getByTestId('from-your-creek-toggle')).toHaveTextContent(/3 pages/u);
+    expect(view.queryByText(THREAD.title)).toBeNull();
+    fireEvent.press(view.getByTestId('from-your-creek-toggle'));
+
+    expect(view.getByTestId('from-your-creek-threads')).toBeTruthy();
+    expect(view.getByText(THREADS_HEADING)).toBeTruthy();
+    expect(view.getByText(THREAD.title)).toBeTruthy();
+    expect(view.getByText('quiet for now')).toBeTruthy();
+    expect(view.getByLabelText('Leaving the firm. A thread, quiet for now.')).toBeTruthy();
+  });
+
+  it('shows a threads-only answer, and says each lifecycle plainly', () => {
+    const view = render(
+      <FromYourCreekPanel
+        praxis={[]}
+        eddies={[]}
+        threads={[
+          { ...THREAD, id: 't-1', title: 'Running', status: 'active' },
+          { ...THREAD, id: 't-2', title: 'Run its course', status: 'resolved' },
+        ]}
+      />,
+    );
+
+    fireEvent.press(view.getByTestId('from-your-creek-toggle'));
+
+    expect(view.queryByText("Praxis — what you're putting into practice")).toBeNull();
+    expect(view.queryByText('Eddies — where your writing keeps circling')).toBeNull();
+    expect(view.getByText('still running')).toBeTruthy();
+    expect(view.getByText('has run its course')).toBeTruthy();
+  });
+
+  it('renders nothing when all three lists are empty', () => {
+    const { toJSON } = render(<FromYourCreekPanel praxis={[]} eddies={[]} threads={[]} />);
+
+    expect(toJSON()).toBeNull();
+  });
+
+  it('sits flush inside a letter rather than on the journal desk', () => {
+    const desk = render(<FromYourCreekPanel praxis={[PRAXIS]} eddies={[]} />);
+    const letter = render(<FromYourCreekPanel praxis={[PRAXIS]} eddies={[]} placement="letter" />);
+    const deskBand = StyleSheet.flatten(desk.getByTestId('from-your-creek-band').props.style);
+    const letterBand = StyleSheet.flatten(letter.getByTestId('from-your-creek-band').props.style);
+
+    expect(deskBand.paddingHorizontal).toBeGreaterThan(0);
+    expect(letterBand.paddingHorizontal).toBe(0);
   });
 
   it('uses accessible token colours and the interactive type floor on its trigger', () => {

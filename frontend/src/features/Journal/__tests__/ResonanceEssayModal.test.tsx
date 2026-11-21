@@ -2,11 +2,12 @@
 import { jest, describe, it, expect, beforeEach } from '@jest/globals';
 import { act, fireEvent, render, waitFor } from '@testing-library/react-native';
 import React from 'react';
-import { Text, TouchableOpacity, View } from 'react-native';
+import { StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 
 import type { Marginalia } from '@/api';
 import { ApiError } from '@/api';
 import type { BotmasonUsageT as UsageResponse } from '@/api/schemas';
+import { colors } from '@/design/tokens';
 import { setActiveUser } from '@/storage/userScope';
 
 const mockEssay = jest.fn() as jest.MockedFunction<
@@ -882,6 +883,111 @@ describe('ResonanceEssayModal letter source (#3062)', () => {
     );
 
     expect((await findByTestId('essay-source')).props.children).toBe('Source not recorded');
+  });
+});
+
+const LETTER_RELATED = {
+  praxis: [
+    {
+      title: 'Rest before the collapse',
+      praxis_type: 'practice' as const,
+      status: 'active' as const,
+      excerpt: 'Lie down at the first sign.',
+    },
+  ],
+  eddies: [],
+  threads: [{ id: 'thread-1', title: 'Leaving the firm', status: 'active' as const }],
+};
+
+describe('a letter in the writer’s own voice, with their own pages beside it (#3778)', () => {
+  it('says quietly that a cached own-voice letter is in their voice, under the letter', async () => {
+    const { findByTestId, getByTestId } = render(
+      <ResonanceEssayModal
+        note={note({ essay: 'Your letter.', essay_source: 'creek_vault', essay_voice: 'owner' })}
+        onClose={jest.fn()}
+        hasOwnKey
+        onOpenSettings={jest.fn()}
+      />,
+    );
+
+    const line = await findByTestId('essay-voice');
+    expect(line.props.children).toBe('In your own voice');
+    expect(line.props.accessibilityLabel).toBe(
+      'This letter is written in your own voice, drawn from your own writing.',
+    );
+    expect(StyleSheet.flatten(line.props.style).color).toBe(colors.paper.inkSoft);
+    expect(getByTestId('essay-text')).toBeTruthy();
+  });
+
+  it.each([
+    ['higher_self', 'higher_self' as const],
+    ['unrecorded', null],
+  ])('claims nothing for a %s letter', async (_label, voice) => {
+    const { findByTestId, queryByTestId } = render(
+      <ResonanceEssayModal
+        note={note({ essay: 'A letter.', essay_voice: voice })}
+        onClose={jest.fn()}
+        hasOwnKey
+        onOpenSettings={jest.fn()}
+      />,
+    );
+
+    await findByTestId('essay-text');
+    expect(queryByTestId('essay-voice')).toBeNull();
+  });
+
+  it('shows the collapsed related panel under a letter that names pages', async () => {
+    const { findByTestId, getByText, queryByText } = render(
+      <ResonanceEssayModal
+        note={note({ essay: 'Your letter.', essay_related: LETTER_RELATED })}
+        onClose={jest.fn()}
+        hasOwnKey
+        onOpenSettings={jest.fn()}
+      />,
+    );
+
+    const toggle = await findByTestId('from-your-creek-toggle');
+    expect(queryByText('Leaving the firm')).toBeNull();
+    fireEvent.press(toggle);
+    expect(getByText('Rest before the collapse')).toBeTruthy();
+    expect(getByText('Leaving the firm')).toBeTruthy();
+  });
+
+  it('shows no panel for a letter that names none', async () => {
+    const { findByTestId, queryByTestId } = render(
+      <ResonanceEssayModal
+        note={note({ essay: 'A letter.', essay_related: { praxis: [], eddies: [], threads: [] } })}
+        onClose={jest.fn()}
+        hasOwnKey
+        onOpenSettings={jest.fn()}
+      />,
+    );
+
+    await findByTestId('essay-text');
+    expect(queryByTestId('from-your-creek')).toBeNull();
+  });
+
+  it('carries the voice and pages of a letter that just arrived', async () => {
+    mockEssay.mockResolvedValue(
+      note({
+        essay: 'Fresh letter.',
+        essay_source: 'creek_vault',
+        essay_voice: 'owner',
+        essay_related: LETTER_RELATED,
+      }),
+    );
+    const { findByTestId } = render(
+      <ResonanceEssayModal
+        note={note()}
+        onClose={jest.fn()}
+        hasOwnKey
+        onOpenSettings={jest.fn()}
+      />,
+    );
+    await askForTheLetter(findByTestId);
+
+    expect((await findByTestId('essay-voice')).props.children).toBe('In your own voice');
+    expect(await findByTestId('from-your-creek')).toBeTruthy();
   });
 });
 

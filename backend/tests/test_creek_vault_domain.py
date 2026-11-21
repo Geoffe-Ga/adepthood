@@ -60,6 +60,7 @@ _REFLECTION_FIELDS = (
     "routed_tier",
     "related_praxis",
     "related_eddies",
+    "related_threads",
     "inference_source",
 )
 

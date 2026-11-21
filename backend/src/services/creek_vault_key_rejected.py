@@ -23,6 +23,7 @@ from domain.vault_key_rejection import (
     REQUEST_KEY_REJECTED_SINCE_MINOR,
     CreekVaultRequestKeyRejectedError,
 )
+from domain.vault_related import RELATED_SURFACES_SINCE_MINOR
 from services.creek_vault_payload import _capability_message
 
 #: The wire code Creek 0.28 answers a refused writer key with.
@@ -46,16 +47,26 @@ def key_rejected_error(capability: CreekCapability) -> CreekVaultRequestKeyRejec
     return CreekVaultRequestKeyRejectedError(_capability_message(_KEY_REJECTED, capability))
 
 
-def keyed_generation_minor(handshake: HandshakeResult, pinned: str) -> str:
-    """The minor a reflection or letter declares: 0.28 to a vault listing it, else ``pinned``.
+#: The optional minors the two keyed generation calls may declare, highest first:
+#: 0.36's owner voice and related pages (#3778), then 0.28's refused key.
+_GENERATION_MINORS: Final = (RELATED_SURFACES_SINCE_MINOR, REQUEST_KEY_REJECTED_SINCE_MINOR)
 
-    Only the minor moves. The call keeps its own deadline and key relay, so a
-    reflection or letter against a 0.28 vault waits and pays exactly as it does
-    against an older one. Creek gates nothing else on these two routes above
-    0.21, so the higher declaration changes no other answer they rely on.
+
+def keyed_generation_minor(handshake: HandshakeResult, pinned: str) -> str:
+    """The minor a reflection or letter declares: the highest of 0.36 and 0.28 the vault lists.
+
+    ``pinned`` when it lists neither. Only the minor moves. The call keeps its
+    own deadline and key relay, so a reflection or letter against a newer vault
+    waits and pays exactly as it does against an older one. What the higher
+    declaration changes on these two routes is what it is for: 0.28's refused
+    key (``424``), 0.31's ``Retry-After`` on a busy answer, 0.35's owner voice
+    and 0.36's related pages -- a vault that lists 0.36 serves 0.28 too, so the
+    refusal is still read. A vault listing neither keeps hearing the pin, and
+    keeps writing in the Higher Self's voice.
     """
-    if handshake.serves_minor(REQUEST_KEY_REJECTED_SINCE_MINOR):
-        return REQUEST_KEY_REJECTED_SINCE_MINOR
+    for minor in _GENERATION_MINORS:
+        if handshake.serves_minor(minor):
+            return minor
     return pinned
 
 

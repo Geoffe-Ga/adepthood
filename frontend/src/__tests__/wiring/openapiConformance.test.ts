@@ -145,6 +145,11 @@ const SCHEMA_VERDICTS: Readonly<Record<string, SchemaVerdict>> = {
     reason:
       'Named for the vault rather than the field for the same reason the kind is, and mapped so a lifecycle Creek adds or retires cannot pass unnoticed while a released page still renders as active.',
   },
+  relatedThreadStatusSchema: {
+    component: 'VaultThreadStatus',
+    reason:
+      "The wire names Creek's thread lifecycle VaultThreadStatus and the client names it for the field that carries it; mapping it pins the three lifecycles to the published set (#3778).",
+  },
 
   // --- No counterpart on the wire -----------------------------------------
   careKindSchema: {

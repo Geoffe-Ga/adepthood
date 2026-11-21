@@ -511,6 +511,25 @@ capability is still used for the others it supports:
   CHECK, widened by migration `166523efc36e`.
   `backend/tests/test_creek_contract_0_29_busy.py` pins the negotiation
   against the vendored `creek_jobs_v029` snapshot.
+- **The owner's voice and related threads on REFLECT and LETTERS (0.35 and
+  0.36 extensions; content pin stays 0.22).** Creek 0.35 (Creek-Vault#2126)
+  writes a reflection or letter in the owner's own style — from their own
+  writing, never adepthood's earlier output — for a caller declaring 0.35 or
+  later, and reports `voice` (`owner` or `higher_self`); an earlier caller
+  keeps the unchanged Higher Self prompt. Creek 0.36 (Creek-Vault#2127) adds
+  `related_threads` (at most two) to reflections and `related_praxis`,
+  `related_eddies` and `related_threads` (three, two, two) to letters, each
+  omitted when nothing qualifies. The two calls declare `0.36` to a vault
+  whose handshake lists it (`RELATED_SURFACES_SINCE_MINOR`), else `0.28`,
+  else `0.22` (`keyed_generation_minor`); every other call is unchanged.
+  Threads reach `ResonanceResponse.related_threads`. A letter's voice and
+  pages are cached on the margin note (`essay_voice` under a CHECK, and
+  `essay_related` as encrypted JSON; migration `d94d894e18f8`) and served on
+  `MarginaliaResponse`, so a reopened letter still says "In your own voice"
+  and still shows its pages; an app-provider letter carries neither (#3778).
+  `backend/tests/test_creek_contract_0_36_related_voice.py` pins the
+  negotiation and projection against the vendored `creek_related_voice_v036`
+  snapshot.
 - **WHEEL** — if absent, or if the vault does not advertise it,
   `fetch_vault_wheel` returns `None` before any call is made
   (`backend/src/services/creek_vault_wheel.py:128-147`). A malformed or

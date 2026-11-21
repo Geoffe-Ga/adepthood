@@ -154,6 +154,7 @@ _ENCRYPTED_COLUMNS = frozenset(
         "journalentry.vault_tags",
         "marginalia.anchor_text",
         "marginalia.essay",
+        "marginalia.essay_related",
         "marginalia.note",
         "practicesession.insight",
         "practicesession.reflection",

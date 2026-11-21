@@ -154,6 +154,8 @@ _PLAINTEXT_COLUMNS: dict[str, frozenset[str]] = {
             "journalentry.sender",
             "journalentry.status",
             "marginalia.essay_source",
+            # Which voice a vault letter says wrote it: CHECK-constrained (#3778).
+            "marginalia.essay_voice",
             "marginalia.kind",
             "marginalia.source",
             "marginalia.source_provider",

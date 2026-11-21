@@ -78,7 +78,7 @@ Measured on branch `w34/B12` (main plus wave 34d), 2026-10-07:
 
   Both are built to fail when B13 phase (c) moves a journal column to
   client-held ciphertext.
-- **That covers 21 columns across 11 tables.** The count comes from
+- **That covers 22 columns across 11 tables.** The count comes from
   `services/encryption_inventory.py::encrypted_columns()`. The comment in
   `models/_prose_repr.py`, "13 across 8 tables", is stale. B02's raw canary
   `test_every_encrypted_column_stores_ciphertext` proves that the env keys
@@ -90,7 +90,8 @@ Measured on branch `w34/B12` (main plus wave 34d), 2026-10-07:
   `feedbackreport.actual`, `feedbackreport.expected`, `feedbackreport.intent`,
   `feedbackreport.summary`, `journalentry.message`, `journalentry.title`,
   `journalentry.vault_tags`, `marginalia.anchor_text`, `marginalia.essay`,
-  `marginalia.note`, `practicesession.insight`, `practicesession.reflection`,
+  `marginalia.essay_related`, `marginalia.note`, `practicesession.insight`,
+  `practicesession.reflection`,
   `promotedquote.anchor_text`, `promptresponse.response`,
   `uservaultconfig.api_key`, `vaultclassificationkey.api_key`.
 - **Content-derived plaintext sits beside them.** The `DERIVED_FROM_PROSE`
@@ -637,7 +638,7 @@ history and future content stand or fall together.
 - **Inference location:** Pre-phase-(a) baseline: server-side cloud calls paid by the app's own LLM_API_KEY unless the person supplies a key; Creek reflection when a vault is bound. Phase (a)'s first slice (#3067) removed the app-key payer. (`repo:backend/src/services/botmason.py::resolve_chat_api_key`)
 - **Supported platforms:** Web only ships; native is configured but unshipped. (`repo:DEPLOYMENT.md`)
 - **Client delivery and update trust:** Operator-served web bundle with an enforced CSP and SRI; a modified bundle is undetectable to the person, because both are served by us. (`repo:frontend/nginx.conf`)
-- **Primary-copy and derivative removal:** Nothing removed: 21 EncryptedString columns across 11 tables, DERIVED_FROM_PROSE plaintext, backups, Creek copies and vendor copies all persist under operator control. (`repo:backend/src/services/encryption_inventory.py::encrypted_columns`)
+- **Primary-copy and derivative removal:** Nothing removed: 22 EncryptedString columns across 11 tables, DERIVED_FROM_PROSE plaintext, backups, Creek copies and vendor copies all persist under operator control. (`repo:backend/src/services/encryption_inventory.py::encrypted_columns`)
 - **Threat actors:** Defends a database or backup thief only while the env keys stay separate; nothing against operator, host, compelled update, subpoena or support pressure. (`repo:backend/tests/test_journal_text_at_rest.py::test_every_encrypted_column_stores_ciphertext`)
 - **Budget (USD per active account-month):** **unknown; owner input required.**
 - **Staffing:** **unknown; owner input required.**
@@ -739,7 +740,7 @@ history and future content stand or fall together.
 - **Inference location:** Device first; then the person's vault-local model, a managed no-retention runtime we run, or a vendor-attested runtime verified under Creek-Vault ADR-0016 Decision 3 (all paid by credits and labelled on each use; the first two are not operator-blind while they run, and the third is held to the operator-blind target, which is not met until B24 certifies it); cloud only with the person's own key, called from the device straight to the vendor. Today BYOK is server-proxied, a known gap until phase (a). (`owner:2026-10-07#B12-cloud-byok`)
 - **Supported platforms:** Web first, native later. Native apps carry the strongest guarantee; on web the guarantee rests on trusting the code we serve. Web accounts may not enrol until enforced CSP plus SRI is live; signed builds come later. (`owner:2026-10-07#B12-web`)
 - **Client delivery and update trust:** Native: store-signed builds (later). Web: enforced CSP plus SRI now (live since phase (b)'s first slice), signed builds later; CSP plus SRI cannot stop us serving a different bundle. (`repo:frontend/nginx.conf`)
-- **Primary-copy and derivative removal:** The 14 in-scope EncryptedString columns of journal_scope_proposal (of the 21; feedback and the two vault credentials stay out), DERIVED_FROM_PROSE plaintext, completion detection output, Creek copies, vendor copies and backups are re-encrypted client-side, withdrawn or expired before an account is labelled protected. (`repo:backend/src/services/encryption_inventory.py::encrypted_columns`)
+- **Primary-copy and derivative removal:** The 15 in-scope EncryptedString columns of journal_scope_proposal (of the 22; feedback and the two vault credentials stay out), DERIVED_FROM_PROSE plaintext, completion detection output, Creek copies, vendor copies and backups are re-encrypted client-side, withdrawn or expired before an account is labelled protected. (`repo:backend/src/services/encryption_inventory.py::encrypted_columns`)
 - **Threat actors:** Defeats DB thief, backup holder, host-storage access and stored-data subpoena. Defeats the privileged operator only on native while the signed build is honest; on web the operator can capture the key through a served bundle and read all stored history until signed builds ship. A compromised device remains; inference in a managed runtime we run is not operator-blind while it runs (labelled on each use); a vendor-attested runtime verified under Creek-Vault ADR-0016 Decision 3 excludes the host and the operator from its enclave by hardware, on the vendor's attestation chain, but only while Decision 3.3 condition (f) holds, which the owner waived on 2026-10-21 and which is therefore vendor-asserted rather than verified, and the vendor keeps request metadata under condition (g); until phase (a) our server relays BYOK calls and sees their plaintext; with a managed vault it relays the key and the writing to the vault per request (amendment 2026-10-16, #3437), and neither is operator-blind while that request runs. (`repo:backend/src/services/botmason.py::resolve_chat_api_key`)
 - **Budget (USD per active account-month):** **unknown; owner input required.**
 - **Staffing:** **unknown; owner input required.**
@@ -801,10 +802,10 @@ certifies that claim for that platform.
 Every server-readable store that must reach "ciphertext under a user-held
 key, withdrawn, or expired" before an account may be labelled protected:
 
-1. **The 21 `EncryptedString` columns.** These are held by B02's inventory
+1. **The 22 `EncryptedString` columns.** These are held by B02's inventory
    (`encrypted_columns()`) and pinned by
    `test_every_encrypted_column_stores_ciphertext`. The default proposal,
-   per the owner's scope split (Decision item 9), puts 14 in scope:
+   per the owner's scope split (Decision item 9), puts 15 in scope:
    - **Journal content, in scope:** `journalentry.*`, `marginalia.*`,
      `promotedquote.anchor_text`, `corpusfragment.content`,
      `corpusfragment.embedding`, `completionsuggestion.*`,

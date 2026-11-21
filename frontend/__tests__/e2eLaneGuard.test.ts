@@ -124,6 +124,7 @@ const EXPECTED_BROWSER_JOURNEYS = [
   'journal-morning-pages-never-offer.browser.e2e.test.ts',
   'journal-notification-center.browser.e2e.test.ts',
   'journal-only.browser.e2e.test.ts',
+  'journal-own-voice-letter.browser.e2e.test.ts',
   'journal-promote-explainer.browser.e2e.test.ts',
   'journal-promote-opener-keeps-scroll.browser.e2e.test.ts',
   'journal-promote-quote-long-entry.browser.e2e.test.ts',
@@ -753,7 +754,21 @@ describe('the external Creek Vault boundary stays protocol-shaped and narrowly a
     // One-shot: consumed by the reflection it was armed for, so it cannot leak
     // into another journey's pass on the shared owner.
     expect(fake).toContain('relatedPagesArmed = false;\n  received.push(');
-    expect(fake).toContain('...(related ? RELATED_PAGES : NO_RELATED_PAGES)');
+    expect(fake).toContain('...reflectionPages(related, ownVoice)');
+    expect(fake).toContain('if (!ownVoice) return related ? RELATED_PAGES : NO_RELATED_PAGES;');
+  });
+
+  it("speaks in the owner's voice only from Creek's 0.36 cells, and only once it lists 0.36", () => {
+    const fake = read(FAKE_VAULT, 'The own-voice letter journey needs a vault that lists 0.36.');
+
+    // Creek's published pages and voice, never ones written here (#3778).
+    expect(fake).toContain('creek_related_voice_v036/examples/${name}/success.json');
+    expect(fake).toContain('related_threads: OWN_VOICE_LETTER.related_threads');
+    expect(fake).toContain('const OWNER_VOICE = OWN_VOICE_LETTER.voice;');
+    // Off by default, as a pre-0.35 vault: 0.36 is listed and answered only once advertised.
+    expect(fake).toContain('let ownVoiceServed = false;');
+    expect(fake).toContain('.concat(ownVoiceServed ? [OWN_VOICE_MINOR] : [])');
+    expect(fake).toContain('if (ownVoiceServed && declared === OWN_VOICE_MINOR) return declared;');
   });
 
   it('writes letters on the published request shape and holds no writer prose', () => {
