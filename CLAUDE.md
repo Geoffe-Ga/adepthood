@@ -112,6 +112,9 @@ cd frontend && npx tsc --noEmit     # Type check
 
 ### Things I Must Never Do
 - Comment out tests to make the suite pass
+- Retry, quarantine or skip a flaky test to get green — a flaky test is worse
+  than no test: fix its root cause, decouple what it tests, or delete it with a
+  stated reason
 - Add `# noqa`, `# type: ignore`, `// @ts-ignore`, `// eslint-disable` for real errors
 - Use `any` types to dodge proper typing
 - Reduce coverage thresholds or weaken test config
