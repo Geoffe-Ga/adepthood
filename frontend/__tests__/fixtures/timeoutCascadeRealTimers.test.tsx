@@ -44,14 +44,18 @@ function First(): React.JSX.Element {
   return <Text>first</Text>;
 }
 
-it('is abandoned mid-await on a real-timer act, as a load-starved test is', async () => {
-  render(<First />);
-  await act(async () => {
-    // Never settles: no timer, no mock, nothing — the test times out here.
-    await new Promise<never>(() => undefined);
-  });
-  resumed = true;
-}, ABANDONED_TEST_TIMEOUT_MS);
+it(
+  'is abandoned mid-await on a real-timer act, as a load-starved test is',
+  async () => {
+    render(<First />);
+    await act(async () => {
+      // Never settles: no timer, no mock, nothing — the test times out here.
+      await new Promise<never>(() => undefined);
+    });
+    resumed = true;
+  },
+  ABANDONED_TEST_TIMEOUT_MS,
+);
 
 it('neighbour one renders normally, after the abandoned tree was unmounted', () => {
   expect(firstUnmounted).toBe(true);

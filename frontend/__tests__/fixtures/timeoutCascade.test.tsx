@@ -20,21 +20,25 @@ import { ABANDONED_TEST_TIMEOUT_MS } from './abandonedTestTimeout';
  * So: exactly one failure is the correct outcome. Four is the bug.
  */
 
-it('is abandoned mid-await under fake timers, as a timed-out test is', async () => {
-  jest.useFakeTimers();
-  try {
-    render(<Text>first</Text>);
-    await act(async () => {
-      // Never settles: nothing advances the fake clock, so the test times out
-      // here and its `finally` below is never reached.
-      await new Promise((resolve) => {
-        setTimeout(resolve, 10_000);
+it(
+  'is abandoned mid-await under fake timers, as a timed-out test is',
+  async () => {
+    jest.useFakeTimers();
+    try {
+      render(<Text>first</Text>);
+      await act(async () => {
+        // Never settles: nothing advances the fake clock, so the test times out
+        // here and its `finally` below is never reached.
+        await new Promise((resolve) => {
+          setTimeout(resolve, 10_000);
+        });
       });
-    });
-  } finally {
-    jest.useRealTimers();
-  }
-}, ABANDONED_TEST_TIMEOUT_MS);
+    } finally {
+      jest.useRealTimers();
+    }
+  },
+  ABANDONED_TEST_TIMEOUT_MS,
+);
 
 it('neighbour one renders normally', () => {
   render(<Text>second</Text>);

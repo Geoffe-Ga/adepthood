@@ -31,15 +31,19 @@ const macrotask = (): Promise<void> =>
     realSetImmediate(resolve);
   });
 
-it('is abandoned while looping act() across real macrotasks, as RNTL waitFor does', async () => {
-  render(<Text>first</Text>);
-  for (;;) {
-    await act(async () => {
+it(
+  'is abandoned while looping act() across real macrotasks, as RNTL waitFor does',
+  async () => {
+    render(<Text>first</Text>);
+    for (;;) {
+      await act(async () => {
+        await macrotask();
+      });
       await macrotask();
-    });
-    await macrotask();
-  }
-}, ABANDONED_TEST_TIMEOUT_MS);
+    }
+  },
+  ABANDONED_TEST_TIMEOUT_MS,
+);
 
 it('neighbour one renders normally', () => {
   render(<Text>second</Text>);
