@@ -7,7 +7,12 @@ import {
   VAULT_STAGE_OUTCOMES,
 } from '@/api/schemas';
 import {
+  areaNote,
+  areaSummary,
   batchCountsLine,
+  childLabel,
+  childNote,
+  indexedLine,
   documentStageLabel,
   documentStageMark,
   folderLabel,
@@ -18,6 +23,8 @@ import {
   withheldLine,
   WRITERLESS_LINE,
 } from '@/features/Settings/vaultDashboardCopy';
+import { groupFolderAreas } from '@/features/Settings/vaultDashboardModel';
+import { SHAPE_FOLDERS } from '@/testing/vaultPipelineFixtures';
 
 /**
  * The words of the "Your vault" dashboard (#3776). Every closed vocabulary the
@@ -173,6 +180,67 @@ describe('receipts', () => {
     );
     expect(withheldLine(2)).toBe(
       '2 more are above the privacy level shared here, so they are not named.',
+    );
+  });
+});
+
+describe('area words', () => {
+  const areas = groupFolderAreas(SHAPE_FOLDERS);
+  const childAt = (of: ReturnType<typeof area>, index: number) => {
+    const child = of.children[index];
+    if (child === undefined) throw new Error(`no child ${String(index)} in ${of.path}`);
+    return child;
+  };
+  const area = (path: string) => {
+    const found = areas.find((a) => a.path === path);
+    if (found === undefined) throw new Error(`no area ${path}`);
+    return found;
+  };
+
+  test('a child is named within its area, without repeating the area', () => {
+    expect(childLabel('01-Fragments/Writing/Substack', '01-Fragments')).toBe('Writing · Substack');
+    expect(childLabel('11-Other-Authors/ai-as-user', '11-Other-Authors')).toBe('AI as user');
+  });
+
+  test('an area that holds something sums up its filled children on one line', () => {
+    expect(areaSummary(area('01-Fragments'))).toBe('Writing · Substack 212');
+    expect(areaSummary(area('03-Eddies'))).toBeNull();
+    expect(areaNote(area('01-Fragments'))).toBeNull();
+  });
+
+  test('an empty area with a writer says once what fills it', () => {
+    expect(areaNote(area('04-Praxis'))).toBe(
+      'Nothing here yet — fills as practices surface in your writing.',
+    );
+    expect(areaNote(area('10-Liminal'))).toBe(
+      'Nothing here yet — fills as Creek works through your writing.',
+    );
+    expect(areaSummary(area('04-Praxis'))).toBeNull();
+  });
+
+  test('an empty area nothing writes to says Creek does not fill it, without a reason', () => {
+    expect(areaNote(area('09-Reference'))).toBe(`${WRITERLESS_LINE}.`);
+  });
+
+  test('folders kept together at their area are said once', () => {
+    expect(indexedLine(2)).toBe('Notes for all 2 of its folders are kept together here.');
+    expect(indexedLine(1)).toBe('Notes for its one folder are kept together here.');
+  });
+
+  test('an open area’s rows explain only what the area line did not', () => {
+    const praxis = area('04-Praxis');
+    const liminal = area('10-Liminal');
+    const authors = area('11-Other-Authors');
+
+    expect(childNote(childAt(praxis, 0), praxis)).toBeNull();
+    expect(childNote(childAt(liminal, 1), liminal)).toBe(
+      'Nothing here yet — fills as tensions in your writing come to light.',
+    );
+    expect(childNote(childAt(area('09-Reference'), 0), area('09-Reference'))).toBe(
+      `${WRITERLESS_LINE} — it's yours to fill.`,
+    );
+    expect(childNote(childAt(authors, 0), authors)).toBe(
+      `${WRITERLESS_LINE} — it is an example that came with your vault.`,
     );
   });
 });

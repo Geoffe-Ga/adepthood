@@ -10,6 +10,8 @@
  * stage is a tick, and nothing here is a score, a streak or a percentage. An
  * empty folder is not a gap to fill; it says what would fill it, if anything.
  */
+import type { VaultArea } from './vaultDashboardModel';
+
 import type { StageRun, UploadReceipt, VaultFolder, VaultDocument } from '@/api';
 
 type FolderReason = NonNullable<VaultFolder['writer_reason']>;
@@ -105,7 +107,58 @@ export function folderNote(folder: VaultFolder): string | null {
     return reason ? `${WRITERLESS_LINE} — ${reason}.` : `${WRITERLESS_LINE}.`;
   }
   if (folder.count > 0) return null;
-  return `${NOTHING_YET}${WRITER_FILLS[folder.writer] ?? WRITER_FILLS_FALLBACK}.`;
+  return `${NOTHING_YET}${fillsWith(folder.writer)}.`;
+}
+
+/** A folder named within its area: ``01-Fragments/Writing/Substack`` -> "Writing · Substack". */
+export function childLabel(path: string, areaPath: string): string {
+  return folderLabel(path.slice(areaPath.length + 1));
+}
+
+/** What fills a folder, by its writer, as the rest of a "Nothing here yet — …" line. */
+function fillsWith(writer: string | null): string {
+  return (writer === null ? undefined : WRITER_FILLS[writer]) ?? WRITER_FILLS_FALLBACK;
+}
+
+/**
+ * The area's one quiet line when it holds nothing: what fills it, once, or that
+ * Creek does not fill it. Null when the area holds something -- its count and
+ * summary say enough.
+ */
+export function areaNote(area: VaultArea): string | null {
+  if (area.total > 0) return null;
+  return area.hasWriter ? `${NOTHING_YET}${fillsWith(area.writer)}.` : `${WRITERLESS_LINE}.`;
+}
+
+/** "Writing · Substack 212, Journal 4": the filled folders of an area, on one line. */
+export function areaSummary(area: VaultArea): string | null {
+  const filled = area.children
+    .filter((child) => child.count > 0)
+    .map((child) => `${childLabel(child.path, area.path)} ${String(child.count)}`);
+  return filled.length > 0 ? filled.join(', ') : null;
+}
+
+/** Folders whose notes are kept at the area's own level, said once for all of them. */
+export function indexedLine(count: number): string {
+  return count === 1
+    ? 'Notes for its one folder are kept together here.'
+    : `Notes for all ${String(count)} of its folders are kept together here.`;
+}
+
+/**
+ * The line under one folder of an open area, only where it adds to the area's:
+ * why Creek leaves it to you, or -- when it is filled differently from the
+ * rest of its area -- what fills it.
+ */
+export function childNote(child: VaultFolder, area: VaultArea): string | null {
+  if (child.writer === null) return folderNote(child);
+  if (child.count > 0 || child.writer === area.writer) return null;
+  return `${NOTHING_YET}${fillsWith(child.writer)}.`;
+}
+
+/** The area header's spoken name: its label and its count. */
+export function areaAccessibilityLabel(label: string, total: number): string {
+  return total > 0 ? `${label}, ${String(total)}` : `${label}, nothing yet`;
 }
 
 const DOCUMENT_STAGE_LABELS: Readonly<Record<DocumentStage, string>> = {

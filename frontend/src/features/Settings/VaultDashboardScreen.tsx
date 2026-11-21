@@ -16,8 +16,16 @@
  * here starts or changes anything.
  */
 import { useFocusEffect, useIsFocused } from '@react-navigation/native';
+import { ChevronDown, ChevronRight } from 'lucide-react-native';
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { ActivityIndicator, StyleSheet, Text, useWindowDimensions, View } from 'react-native';
+import {
+  ActivityIndicator,
+  StyleSheet,
+  Text,
+  TouchableOpacity,
+  useWindowDimensions,
+  View,
+} from 'react-native';
 
 import { CORPUS_GROUP_TITLE } from './corpusConsentCopy';
 import { ManagedVaultReachability } from './ManagedVaultReachability';
@@ -28,8 +36,13 @@ import {
   batchHeading,
   documentStageLabel,
   documentStageMark,
+  areaAccessibilityLabel,
+  areaNote,
+  areaSummary,
+  childLabel,
+  childNote,
   folderLabel,
-  folderNote,
+  indexedLine,
   landedInLine,
   lastPassLine,
   passLine,
@@ -50,14 +63,18 @@ import {
   withheldLine,
 } from './vaultDashboardCopy';
 import {
+  groupFolderAreas,
   groupReceipts,
   isPipelineBusy,
   passSummary,
   type ReceiptGroup,
+  type VaultArea,
 } from './vaultDashboardModel';
 
 import type { VaultDocument, VaultFolder, VaultPipeline } from '@/api';
+import { decorativeHidden } from '@/components/a11yHidden';
 import { Button } from '@/components/Button';
+import { NAV_ICON_SIZE } from '@/components/drawer/navIcon';
 import { EditorialSection } from '@/components/layout/EditorialSection';
 import { ScreenHeader } from '@/components/layout/ScreenHeader';
 import { ScreenScaffold } from '@/components/layout/ScreenScaffold';
@@ -68,6 +85,7 @@ import {
   rhythm,
   SPACING,
   surface,
+  touchTarget,
   type as typeRamp,
 } from '@/design/tokens';
 import type { RootStackParamList } from '@/navigation/RootStack';
@@ -312,47 +330,136 @@ const CreekSection = ({ answer }: { answer: VaultPipeline }): React.JSX.Element 
   );
 };
 
-/** One folder: its name and count on one line, and what fills it beneath. */
+/** A count in tabular numerals, or a quiet dash for none. */
+const CountText = ({ count, testID }: { count: number; testID: string }): React.JSX.Element => {
+  const { width } = useWindowDimensions();
+  const t = typeRamp(width);
+  return (
+    <Text style={[t.body, styles.count, styles.numerals]} testID={testID}>
+      {count > 0 ? String(count) : '—'}
+    </Text>
+  );
+};
+
+/** One folder inside an open area: its name and count, and a line only where it adds one. */
 const FolderRow = ({
   folder,
-  first,
+  area,
 }: {
   folder: VaultFolder;
-  first: boolean;
+  area: VaultArea;
 }): React.JSX.Element => {
   const { width } = useWindowDimensions();
   const t = typeRamp(width);
-  const note = folderNote(folder);
-  const topLevel = !folder.path.includes('/');
+  const note = childNote(folder, area);
   return (
-    <View
-      style={[styles.line, first ? styles.firstLine : null]}
-      testID={`vault-folder-${folder.path}`}
-    >
+    <View style={styles.line} testID={`vault-folder-${folder.path}`}>
       <View style={styles.folderHead}>
-        <Text style={[t.body, topLevel ? styles.name : styles.folderName, styles.folderLabel]}>
-          {folderLabel(folder.path)}
+        <Text style={[t.body, styles.folderName, styles.folderLabel]}>
+          {childLabel(folder.path, area.path)}
         </Text>
-        <Text
-          style={[t.body, styles.count, styles.numerals]}
-          testID={`vault-folder-count-${folder.path}`}
-        >
-          {folder.count > 0 ? String(folder.count) : '—'}
-        </Text>
+        <CountText count={folder.count} testID={`vault-folder-count-${folder.path}`} />
+        <View style={styles.chevronRoom} />
       </View>
       {note ? <Text style={[t.caption, styles.soft]}>{note}</Text> : null}
     </View>
   );
 };
 
-/** The vault's shape: one row per ontology folder, in Creek's own order. */
+/** The area's name and total; a button that opens it when it has folders to show. */
+const AreaHeader = ({
+  area,
+  open,
+  onToggle,
+}: {
+  area: VaultArea;
+  open: boolean;
+  onToggle: () => void;
+}): React.JSX.Element => {
+  const { width } = useWindowDimensions();
+  const t = typeRamp(width);
+  const label = folderLabel(area.path);
+  const row = (
+    <>
+      <Text style={[t.body, styles.name, styles.folderLabel]}>{label}</Text>
+      <CountText count={area.total} testID={`vault-area-count-${area.path}`} />
+    </>
+  );
+  // The chevron trails the count, so every label and line in an area shares the
+  // card's left edge; an area with nothing to open keeps the chevron's room, so
+  // its count lines up with the rest.
+  if (area.children.length === 0) {
+    return (
+      <View style={styles.areaHead}>
+        {row}
+        <View style={styles.chevronRoom} />
+      </View>
+    );
+  }
+  const Chevron = open ? ChevronDown : ChevronRight;
+  return (
+    <TouchableOpacity
+      onPress={onToggle}
+      accessibilityRole="button"
+      accessibilityLabel={areaAccessibilityLabel(label, area.total)}
+      accessibilityState={{ expanded: open }}
+      // React Native Web drops ``accessibilityState.expanded``; the ARIA prop
+      // is what a browser's screen reader hears.
+      aria-expanded={open}
+      style={styles.areaHead}
+      testID={`vault-area-toggle-${area.path}`}
+    >
+      {row}
+      <Chevron color={accent.primary} size={NAV_ICON_SIZE} {...decorativeHidden()} />
+    </TouchableOpacity>
+  );
+};
+
+/**
+ * One top-level area: a header with its total, then -- folded -- one line that
+ * says what it holds or what would fill it. Opened, its folders follow.
+ */
+const AreaCard = ({ area }: { area: VaultArea }): React.JSX.Element => {
+  const { width } = useWindowDimensions();
+  const t = typeRamp(width);
+  const [open, setOpen] = useState(false);
+  const toggle = useCallback(() => setOpen((was) => !was), []);
+  const summary = areaSummary(area);
+  const note = areaNote(area);
+  return (
+    <View style={styles.card} testID={`vault-area-${area.path}`}>
+      <AreaHeader area={area} open={open} onToggle={toggle} />
+      {summary ? (
+        <Text
+          style={[t.caption, styles.soft, styles.numerals]}
+          testID={`vault-area-summary-${area.path}`}
+        >
+          {summary}
+        </Text>
+      ) : null}
+      {note ? (
+        <Text style={[t.caption, styles.soft]} testID={`vault-area-note-${area.path}`}>
+          {note}
+        </Text>
+      ) : null}
+      {area.indexedCount > 0 ? (
+        <Text style={[t.caption, styles.soft]} testID={`vault-area-indexed-${area.path}`}>
+          {indexedLine(area.indexedCount)}
+        </Text>
+      ) : null}
+      {open
+        ? area.children.map((child) => <FolderRow key={child.path} folder={child} area={area} />)
+        : null}
+    </View>
+  );
+};
+
+/** The vault's shape: one card per top-level area, in Creek's own order, folded. */
 const ShapeSection = ({ folders }: { folders: readonly VaultFolder[] }): React.JSX.Element => (
   <EditorialSection title={VAULT_SHAPE_HEADING} testID="vault-dashboard-shape">
-    <View style={styles.card}>
-      {folders.map((folder, index) => (
-        <FolderRow key={folder.path} folder={folder} first={index === 0} />
-      ))}
-    </View>
+    {groupFolderAreas(folders).map((area) => (
+      <AreaCard key={area.path} area={area} />
+    ))}
   </EditorialSection>
 );
 
@@ -513,9 +620,19 @@ const styles = StyleSheet.create({
     alignItems: 'baseline',
     flexDirection: 'row',
     justifyContent: 'space-between',
-    columnGap: SPACING.md,
+    columnGap: SPACING.sm,
+  },
+  chevronRoom: {
+    width: NAV_ICON_SIZE,
+  },
+  areaHead: {
+    alignItems: 'center',
+    columnGap: SPACING.sm,
+    flexDirection: 'row',
+    minHeight: touchTarget.minimum,
   },
   folderLabel: {
+    flex: 1,
     flexShrink: 1,
   },
   folderName: {

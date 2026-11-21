@@ -1,4 +1,4 @@
-import type { StageRun, UploadReceipt, VaultPipeline } from '@/api';
+import type { StageRun, UploadReceipt, VaultFolder, VaultPipeline } from '@/api';
 
 const FILENAME = 'on-attention.html';
 const SUBSTACK = '01-Fragments/Writing/Substack';
@@ -38,44 +38,52 @@ export function stageRun(overrides: Partial<StageRun> = {}): StageRun {
   };
 }
 
+/** One folder of Creek's listing, empty unless told otherwise. */
+export function folder(
+  path: string,
+  writer: string | null,
+  overrides: Partial<VaultFolder> = {},
+): VaultFolder {
+  return {
+    path,
+    count: 0,
+    last_written_at: null,
+    writer,
+    writer_reason: writer === null ? 'container' : null,
+    ...overrides,
+  };
+}
+
+/**
+ * A trimmed copy of Creek's 0.34 folder listing: enough areas to hold every
+ * shape the dashboard groups -- a container with a filled child, a filled
+ * area with no children, an empty area with one writer, an area whose folders
+ * are indexed at its own level, an owner-curated area, and an area whose
+ * children each have their own writer.
+ */
+export const SHAPE_FOLDERS: VaultFolder[] = [
+  folder('01-Fragments', null),
+  folder('01-Fragments/Notes', 'ingest'),
+  folder('01-Fragments/Writing', 'ingest'),
+  folder(SUBSTACK, 'ingest', { count: 212, last_written_at: LANDED_AT }),
+  folder('03-Eddies', 'link.eddies', { count: 9, last_written_at: LANDED_AT }),
+  folder('04-Praxis', null),
+  folder('04-Praxis/Daily', 'classify.praxis'),
+  folder('04-Praxis/Seasonal', 'classify.praxis'),
+  folder('06-Frequencies', 'compile'),
+  folder('06-Frequencies/F1-Agency', null, { writer_reason: 'indexed_at_parent' }),
+  folder('06-Frequencies/F2-Receptivity', null, { writer_reason: 'indexed_at_parent' }),
+  folder('09-Reference', null),
+  folder('09-Reference/External-Sources', null, { writer_reason: 'owner_curated' }),
+  folder('10-Liminal', null),
+  folder('10-Liminal/Compost', 'generate.compost'),
+  folder('10-Liminal/Paradoxes', 'generate.paradox'),
+  folder('11-Other-Authors', 'authors'),
+  folder('11-Other-Authors/example-author', null, { writer_reason: 'template_example' }),
+];
+
 export const VAULT_SNAPSHOT: NonNullable<VaultPipeline['vault']> = {
-  folders: [
-    {
-      path: '01-Fragments',
-      count: 0,
-      last_written_at: null,
-      writer: null,
-      writer_reason: 'container',
-    },
-    {
-      path: SUBSTACK,
-      count: 212,
-      last_written_at: LANDED_AT,
-      writer: 'ingest',
-      writer_reason: null,
-    },
-    {
-      path: '03-Eddies',
-      count: 9,
-      last_written_at: LANDED_AT,
-      writer: 'link.eddies',
-      writer_reason: null,
-    },
-    {
-      path: '04-Praxis/Daily',
-      count: 0,
-      last_written_at: null,
-      writer: 'classify.praxis',
-      writer_reason: null,
-    },
-    {
-      path: '09-Reference/External-Sources',
-      count: 0,
-      last_written_at: null,
-      writer: null,
-      writer_reason: 'owner_curated',
-    },
-  ],
+  folders: SHAPE_FOLDERS,
   documents: [
     {
       filename: FILENAME,

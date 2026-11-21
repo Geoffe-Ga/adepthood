@@ -35,6 +35,7 @@ import {
 import VaultDashboardScreen, { VAULT_DASHBOARD_POLL_INTERVAL_MS } from '../VaultDashboardScreen';
 
 import type { VaultPipeline } from '@/api';
+import { touchTarget } from '@/design/tokens';
 import { setActiveUser } from '@/storage/userScope';
 import { resetAllStores } from '@/store/registry';
 import { expectNavigationOwnsTitle } from '@/testing/navigationOwnsTitle';
@@ -124,14 +125,14 @@ describe('VaultDashboardScreen', () => {
     );
     expect(screen.getByTestId('vault-documents-withheld')).toBeTruthy();
 
-    const substack = screen.getByTestId('vault-folder-01-Fragments/Writing/Substack');
-    expect(substack).toHaveTextContent(/Fragments · Writing · Substack/u);
-    expect(substack).toHaveTextContent(/212/u);
-    const curated = screen.getByTestId('vault-folder-09-Reference/External-Sources');
-    expect(curated).toHaveTextContent(/Reference · External Sources/u);
-    expect(curated).toHaveTextContent(`${WRITERLESS_LINE} — it's yours to fill.`, { exact: false });
-    expect(screen.getByTestId('vault-folder-04-Praxis/Daily')).toHaveTextContent(
-      /Nothing here yet — fills as practices surface in your writing\./u,
+    const fragments = screen.getByTestId('vault-area-01-Fragments');
+    expect(fragments).toHaveTextContent(/Fragments/u);
+    expect(screen.getByTestId('vault-area-count-01-Fragments')).toHaveTextContent('212');
+    expect(screen.getByTestId('vault-area-summary-01-Fragments')).toHaveTextContent(
+      'Writing · Substack 212',
+    );
+    expect(screen.getByTestId('vault-area-note-04-Praxis')).toHaveTextContent(
+      'Nothing here yet — fills as practices surface in your writing.',
     );
 
     const text = textOf(screen);
@@ -172,8 +173,87 @@ describe('VaultDashboardScreen', () => {
     mockPipeline.mockResolvedValue(pipelineAnswer());
     const screen = await renderScreen();
 
-    const count = await screen.findByTestId('vault-folder-count-03-Eddies');
+    const count = await screen.findByTestId('vault-area-count-03-Eddies');
     expect(count).toHaveStyle({ fontVariant: ['tabular-nums'] });
+  });
+
+  test('the shape leads with areas, folded, and opens one to show its folders', async () => {
+    mockPipeline.mockResolvedValue(pipelineAnswer());
+    const screen = await renderScreen();
+    await screen.findByTestId('vault-dashboard-shape');
+
+    // Folded by default: no folder row is rendered for any area.
+    expect(screen.queryByTestId('vault-folder-01-Fragments/Writing/Substack')).toBeNull();
+    expect(screen.queryByTestId('vault-folder-04-Praxis/Daily')).toBeNull();
+
+    const toggle = screen.getByTestId('vault-area-toggle-01-Fragments');
+    expect(toggle.props.accessibilityRole).toBe('button');
+    expect(toggle.props.accessibilityState).toEqual({ expanded: false });
+    expect(toggle).toHaveStyle({ minHeight: touchTarget.minimum });
+
+    fireEvent.press(toggle);
+
+    expect(screen.getByTestId('vault-area-toggle-01-Fragments').props.accessibilityState).toEqual({
+      expanded: true,
+    });
+    const substack = screen.getByTestId('vault-folder-01-Fragments/Writing/Substack');
+    expect(substack).toHaveTextContent(/Writing · Substack/u);
+    expect(
+      screen.getByTestId('vault-folder-count-01-Fragments/Writing/Substack'),
+    ).toHaveTextContent('212');
+    expect(screen.queryByTestId('vault-folder-01-Fragments')).toBeNull();
+
+    fireEvent.press(screen.getByTestId('vault-area-toggle-01-Fragments'));
+    expect(screen.queryByTestId('vault-folder-01-Fragments/Writing/Substack')).toBeNull();
+  });
+
+  test('a container is only ever a header, and says nothing about holding folders', async () => {
+    mockPipeline.mockResolvedValue(pipelineAnswer());
+    const screen = await renderScreen();
+    await screen.findByTestId('vault-dashboard-shape');
+    for (const area of ['01-Fragments', '04-Praxis', '09-Reference', '10-Liminal']) {
+      fireEvent.press(screen.getByTestId(`vault-area-toggle-${area}`));
+    }
+
+    expect(textOf(screen).join(' ')).not.toMatch(/holds the folders beneath it/u);
+    expect(screen.queryByTestId('vault-folder-04-Praxis')).toBeNull();
+  });
+
+  test('folders kept together at their area are said once, never listed', async () => {
+    mockPipeline.mockResolvedValue(pipelineAnswer());
+    const screen = await renderScreen();
+    await screen.findByTestId('vault-dashboard-shape');
+
+    expect(screen.getByTestId('vault-area-indexed-06-Frequencies')).toHaveTextContent(
+      'Notes for all 2 of its folders are kept together here.',
+    );
+    expect(screen.queryByTestId('vault-area-toggle-06-Frequencies')).toBeNull();
+    expect(screen.queryByTestId('vault-folder-06-Frequencies/F1-Agency')).toBeNull();
+    expect(screen.getAllByText(/kept together here/u)).toHaveLength(1);
+  });
+
+  test('an empty area says what fills it once; a folder’s own reason shows only when open', async () => {
+    mockPipeline.mockResolvedValue(pipelineAnswer());
+    const screen = await renderScreen();
+    await screen.findByTestId('vault-dashboard-shape');
+
+    expect(screen.getAllByText(/fills as practices surface/u)).toHaveLength(1);
+    expect(screen.getByTestId('vault-area-note-09-Reference')).toHaveTextContent(
+      `${WRITERLESS_LINE}.`,
+    );
+    expect(screen.queryByText(/yours to fill/u)).toBeNull();
+    expect(screen.queryByText(/example that came with your vault/u)).toBeNull();
+
+    fireEvent.press(screen.getByTestId('vault-area-toggle-09-Reference'));
+    fireEvent.press(screen.getByTestId('vault-area-toggle-11-Other-Authors'));
+    fireEvent.press(screen.getByTestId('vault-area-toggle-04-Praxis'));
+
+    expect(screen.getByTestId('vault-folder-09-Reference/External-Sources')).toHaveTextContent(
+      `${WRITERLESS_LINE} — it's yours to fill.`,
+      { exact: false },
+    );
+    expect(screen.getByText(/example that came with your vault/u)).toBeTruthy();
+    expect(screen.getAllByText(/fills as practices surface/u)).toHaveLength(1);
   });
 
   test('a vault that needs an update says so, and still shows what came in', async () => {

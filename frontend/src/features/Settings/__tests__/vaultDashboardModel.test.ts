@@ -2,11 +2,13 @@
 /* global describe, test, expect */
 import type { StageRun, UploadReceipt, VaultPipeline } from '@/api';
 import {
+  groupFolderAreas,
   groupReceipts,
   isPipelineBusy,
   landedFolderFor,
   passSummary,
 } from '@/features/Settings/vaultDashboardModel';
+import { folder, SHAPE_FOLDERS } from '@/testing/vaultPipelineFixtures';
 
 /**
  * The pure half of the "Your vault" dashboard (#3776): how receipts group into
@@ -211,5 +213,59 @@ describe('landedFolderFor', () => {
     const receipts = [receipt({ id: 1 }), receipt({ id: 2 })];
 
     expect(landedFolderFor(receipts, 'on-attention.html')).toBe('01-Fragments/Writing/Substack');
+  });
+});
+
+describe('groupFolderAreas', () => {
+  const areas = groupFolderAreas(SHAPE_FOLDERS);
+  const area = (path: string) => areas.find((a) => a.path === path);
+
+  test('one area per top-level folder, in Creek’s order, the container as its header', () => {
+    expect(areas.map((a) => a.path)).toEqual([
+      '01-Fragments',
+      '03-Eddies',
+      '04-Praxis',
+      '06-Frequencies',
+      '09-Reference',
+      '10-Liminal',
+      '11-Other-Authors',
+    ]);
+    expect(area('01-Fragments')?.header?.writer_reason).toBe('container');
+    expect(area('01-Fragments')?.children.map((c) => c.path)).toEqual([
+      '01-Fragments/Notes',
+      '01-Fragments/Writing',
+      '01-Fragments/Writing/Substack',
+    ]);
+  });
+
+  test('an area’s total is its own notes and every child’s, indexed ones included', () => {
+    expect(area('01-Fragments')?.total).toBe(212);
+    expect(area('03-Eddies')?.total).toBe(9);
+    const counted = groupFolderAreas([
+      folder('06-Frequencies', 'compile', { count: 2 }),
+      folder('06-Frequencies/F1-Agency', null, { writer_reason: 'indexed_at_parent', count: 3 }),
+    ]);
+    expect(counted[0]?.total).toBe(5);
+  });
+
+  test('folders indexed at their parent are counted, never listed', () => {
+    expect(area('06-Frequencies')?.children).toEqual([]);
+    expect(area('06-Frequencies')?.indexedCount).toBe(2);
+  });
+
+  test('names the writer that fills an area: its own, or the one its children share', () => {
+    expect(area('06-Frequencies')?.writer).toBe('compile');
+    expect(area('04-Praxis')?.writer).toBe('classify.praxis');
+    expect(area('10-Liminal')?.writer).toBeNull();
+    expect(area('10-Liminal')?.hasWriter).toBe(true);
+    expect(area('09-Reference')?.hasWriter).toBe(false);
+  });
+
+  test('an area Creek lists no header for still gathers its children', () => {
+    const headless = groupFolderAreas([folder('05-Wavelength/Observations', 'save')]);
+
+    expect(headless).toEqual([
+      expect.objectContaining({ path: '05-Wavelength', header: null, writer: 'save' }),
+    ]);
   });
 });

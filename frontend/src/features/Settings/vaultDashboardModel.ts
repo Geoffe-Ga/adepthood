@@ -7,7 +7,7 @@
 import type { PassState, PassSummary } from './vaultDashboardCopy';
 import { receiptLanded } from './vaultDashboardCopy';
 
-import type { StageRun, UploadReceipt, VaultPipeline } from '@/api';
+import type { StageRun, UploadReceipt, VaultFolder, VaultPipeline } from '@/api';
 import { dayKeyInTZ } from '@/utils/dateUtils';
 
 type VaultJob = NonNullable<VaultPipeline['vault']>['jobs'][number];
@@ -150,4 +150,77 @@ export function landedFolderFor(
     if (receipt.landed_in !== null) folders.add(receipt.landed_in);
   }
   return folders.size === 1 ? ([...folders][0] ?? null) : null;
+}
+
+/**
+ * One top-level area of the vault (Fragments, Threads, Praxis, …), as "Your
+ * vault's shape" shows it: a header that is the area's own folder, and the
+ * folders inside it.
+ */
+export interface VaultArea {
+  /** The top-level folder's path, e.g. ``04-Praxis``. */
+  path: string;
+  /** The area's own folder, when Creek lists it. A container is only ever this. */
+  header: VaultFolder | null;
+  /** The folders inside, in Creek's order -- never one indexed at the area itself. */
+  children: VaultFolder[];
+  /** How many folders inside keep their notes at the area's level instead. */
+  indexedCount: number;
+  /** The area's notes: its own folder's and every folder inside it. */
+  total: number;
+  /** What fills the area: its own writer, or the one writer its folders share. */
+  writer: string | null;
+  /** Whether anything in the area has a writer at all. */
+  hasWriter: boolean;
+}
+
+const INDEXED_AT_PARENT = 'indexed_at_parent';
+
+function topLevel(path: string): string {
+  return path.split('/')[0] ?? path;
+}
+
+/** The one writer ``folders`` share, or null when they have none or several. */
+function sharedWriter(folders: readonly VaultFolder[]): string | null {
+  const writers = new Set(folders.map((folder) => folder.writer).filter((w) => w !== null));
+  return writers.size === 1 ? ([...writers][0] ?? null) : null;
+}
+
+/** Fold one folder into the area it belongs to. */
+function addToArea(area: VaultArea, folder: VaultFolder): void {
+  area.total += folder.count;
+  if (folder.writer !== null) area.hasWriter = true;
+  if (folder.path === area.path) area.header = folder;
+  else if (folder.writer_reason === INDEXED_AT_PARENT) area.indexedCount += 1;
+  else area.children.push(folder);
+}
+
+/**
+ * Creek's folder listing grouped into its top-level areas, in Creek's order.
+ * The answer to "which parts of my vault are still empty, and why" is per
+ * area, so the dashboard leads with these and keeps each area's folders folded.
+ */
+export function groupFolderAreas(folders: readonly VaultFolder[]): VaultArea[] {
+  const areas = new Map<string, VaultArea>();
+  for (const folder of folders) {
+    const path = topLevel(folder.path);
+    let area = areas.get(path);
+    if (area === undefined) {
+      area = {
+        path,
+        header: null,
+        children: [],
+        indexedCount: 0,
+        total: 0,
+        writer: null,
+        hasWriter: false,
+      };
+      areas.set(path, area);
+    }
+    addToArea(area, folder);
+  }
+  for (const area of areas.values()) {
+    area.writer = area.header?.writer ?? sharedWriter(area.children);
+  }
+  return [...areas.values()];
 }

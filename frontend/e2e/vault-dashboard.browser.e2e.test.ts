@@ -8,7 +8,6 @@ import {
   expectLanded,
   lane,
   loginVaultOwner,
-  openSeedScreen,
   registerSeedSpec,
   runRow,
 } from './seedBrowserSupport';
@@ -64,7 +63,11 @@ test('a seeded file says where it landed, and "Your vault" shows its folder and 
   writeFileSync(path, 'dashboard sentinel 3776: where did this land?\n');
   await loginVaultOwner(page);
   await setPipelineStatus(page, 'advertise-pipeline-status');
-  await openSeedScreen(page);
+  // Opened directly rather than through `openSeedScreen`, whose read of the
+  // Settings vault body can race the page it replaced (fixed on #3771's branch).
+  await page.goto(`${frontendUrl()}/settings`);
+  await page.getByTestId('settings-row-seed-corpus').click();
+  await expect(page.getByTestId('seed-choose-button')).toBeEnabled();
 
   // The finished run reads the receipts, and the row names the folder Creek
   // reported for this upload -- matched by the server, not by the screen.
@@ -99,11 +102,28 @@ test('a seeded file says where it landed, and "Your vault" shows its folder and 
   // What Creek has done: the stages it stamped on the upload, in words.
   await expect(page.getByTestId('vault-document-0')).toContainText(STAGE_TRAIL);
 
-  // The vault's shape: the folder with its count, and a writerless folder that
-  // says, in words, why it stays as it is.
-  const folder = page.getByTestId(`vault-folder-${SUBSTACK_FOLDER}`);
-  await expect(folder).toContainText('Fragments · Writing · Substack');
+  // The vault's shape, by area and folded: Fragments carries the upload's
+  // folder in its one-line summary; an empty area says once what fills it; the
+  // frequency folders are said once rather than listed.
+  await expect(page.getByTestId('vault-area-count-01-Fragments')).toHaveText('212');
+  await expect(page.getByTestId('vault-area-summary-01-Fragments')).toHaveText(
+    'Writing · Substack 212',
+  );
+  await expect(page.getByTestId('vault-area-note-04-Praxis')).toHaveText(
+    'Nothing here yet — fills as practices surface in your writing.',
+  );
+  await expect(page.getByTestId('vault-area-indexed-06-Frequencies')).toHaveText(
+    'Notes for all 10 of its folders are kept together here.',
+  );
+  await expect(page.getByTestId(`vault-folder-${SUBSTACK_FOLDER}`)).toHaveCount(0);
+
+  // Opening an area shows its folders, and a folder Creek leaves to you says why.
+  const fragments = page.getByTestId('vault-area-toggle-01-Fragments');
+  await expect(fragments).toHaveAttribute('aria-expanded', 'false');
+  await fragments.click();
+  await expect(fragments).toHaveAttribute('aria-expanded', 'true');
   await expect(page.getByTestId(`vault-folder-count-${SUBSTACK_FOLDER}`)).toHaveText('212');
+  await page.getByTestId('vault-area-toggle-09-Reference').click();
   await expect(page.getByTestId('vault-folder-09-Reference/External-Sources')).toContainText(
     "Creek doesn't fill this one on its own — it's yours to fill.",
   );
@@ -111,6 +131,7 @@ test('a seeded file says where it landed, and "Your vault" shows its folder and 
   for (const token of ['owner_curated', 'container', 'link.eddies', 'linked:eddies']) {
     expect(shape).not.toContain(token);
   }
+  expect(shape).not.toContain('holds the folders beneath it');
 });
 
 test('a vault that predates the status read says it needs an update', async ({ page }) => {
