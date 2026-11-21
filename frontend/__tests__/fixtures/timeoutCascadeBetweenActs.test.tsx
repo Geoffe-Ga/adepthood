@@ -4,6 +4,8 @@ import { expect, it } from '@jest/globals';
 import { act, render, screen } from '@testing-library/react-native';
 import { Text } from 'react-native';
 
+import { ABANDONED_TEST_TIMEOUT_MS } from './abandonedTestTimeout';
+
 /**
  * A deliberately failing suite, run as a subprocess by
  * `__tests__/timeoutCascade.test.ts`. It is NOT part of the normal suite:
@@ -37,7 +39,7 @@ it('is abandoned while looping act() across real macrotasks, as RNTL waitFor doe
     });
     await macrotask();
   }
-});
+}, ABANDONED_TEST_TIMEOUT_MS);
 
 it('neighbour one renders normally', () => {
   render(<Text>second</Text>);

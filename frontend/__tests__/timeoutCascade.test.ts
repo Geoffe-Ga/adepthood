@@ -3,6 +3,8 @@ import { join, resolve } from 'node:path';
 
 import { describe, expect, it } from '@jest/globals';
 
+import { ABANDONED_TEST_TIMEOUT_MS } from './fixtures/abandonedTestTimeout';
+
 /**
  * Guards the test-timeout containment installed by `jest.setup.js`.
  *
@@ -30,8 +32,6 @@ const REAL_TIMER_FIXTURE = join(FIXTURES, 'timeoutCascadeRealTimers.test.tsx');
 /** A test abandoned while looping act() across real macrotasks. */
 const BETWEEN_ACTS_FIXTURE = join(FIXTURES, 'timeoutCascadeBetweenActs.test.tsx');
 
-/** Short enough that the fixture's first test is abandoned mid-`act`. */
-const FIXTURE_TIMEOUT_MS = 40;
 /** Generous ceiling for the child process; it normally finishes in ~2s. */
 const CHILD_BUDGET_MS = 120_000;
 
@@ -47,7 +47,9 @@ function runFixture(fixture: string): string {
   const args = [
     '--runTestsByPath',
     fixture,
-    `--testTimeout=${FIXTURE_TIMEOUT_MS}`,
+    // No `--testTimeout`: only the fixture test built to time out has a short
+    // budget, its own. A run-wide 40 ms one also timed out a neighbour whenever
+    // the machine was busy, and this meta-test then failed with 2 failures.
     // The fixtures directory is excluded from the normal suite; re-include it
     // by replacing the ignore list with Jest's default.
     '--testPathIgnorePatterns',
@@ -77,7 +79,7 @@ describe('test-timeout cascade containment', () => {
     // Non-emptiness first: a mistyped path collects zero tests and every
     // assertion below would then pass against a run that proved nothing.
     expect(output).toContain('Tests:');
-    expect(output).toContain(`Exceeded timeout of ${FIXTURE_TIMEOUT_MS} ms`);
+    expect(output).toContain(`Exceeded timeout of ${ABANDONED_TEST_TIMEOUT_MS} ms`);
 
     expect(output).toContain('Tests:       1 failed, 3 passed, 4 total');
     expect(output).not.toContain(PHANTOM_FAILURE);

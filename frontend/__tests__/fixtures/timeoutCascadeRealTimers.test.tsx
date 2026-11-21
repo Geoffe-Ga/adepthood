@@ -3,6 +3,8 @@ import { act, render, screen } from '@testing-library/react-native';
 import React, { useEffect } from 'react';
 import { Text } from 'react-native';
 
+import { ABANDONED_TEST_TIMEOUT_MS } from './abandonedTestTimeout';
+
 /**
  * A deliberately failing suite, run as a subprocess by
  * `__tests__/timeoutCascade.test.ts`. It is NOT part of the normal suite:
@@ -49,7 +51,7 @@ it('is abandoned mid-await on a real-timer act, as a load-starved test is', asyn
     await new Promise<never>(() => undefined);
   });
   resumed = true;
-});
+}, ABANDONED_TEST_TIMEOUT_MS);
 
 it('neighbour one renders normally, after the abandoned tree was unmounted', () => {
   expect(firstUnmounted).toBe(true);
