@@ -9,11 +9,12 @@
  * the review forgets the folder, and nothing was sent.
  *
  * **The handles stay here.** The browser's `File` handles live in this hook's
- * component state for the length of the review, and in the run's local loop
- * once sent. They never enter the run reducer, app storage or a log, and
- * unmounting the screen drops them.
+ * component state for the length of the review, and in the upload queue's
+ * runtime once started (#3772). They never enter the run reducer, app storage
+ * or a log; unmounting the screen drops an unstarted review, and signing out
+ * drops what the queue holds.
  *
- * Sending reuses the run's own sequential sender, at the tier chosen on the
+ * Sending reuses the queue's own sequential sender, at the tier chosen on the
  * screen, so a folder document is read, encoded and sent exactly as a picked
  * one is, one at a time.
  */

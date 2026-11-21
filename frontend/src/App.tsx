@@ -33,6 +33,7 @@ import { ReauthSheet } from './features/Auth/ReauthSheet';
 import ResetPasswordScreen from './features/Auth/ResetPasswordScreen';
 import SignupScreen from './features/Auth/SignupScreen';
 import { useProgramAnchorSync } from './features/Program/useProgramAnchorSync';
+import { UploadQueueIndicator } from './features/Seed/UploadQueueIndicator';
 import { WelcomeScreen } from './features/Welcome/WelcomeScreen';
 import { useLockPortraitUp } from './hooks/useLockPortraitUp';
 import { linking } from './navigation/linking';
@@ -181,6 +182,8 @@ function AppShell(): React.JSX.Element {
       <SafeAreaView style={styles.safeArea}>
         <ThemedStatusBar />
         <OfflineBanner />
+        {/* The upload queue outlives the Seed screen (#3772), so it shows here. */}
+        <UploadQueueIndicator />
         <RootNavigator />
       </SafeAreaView>
     </NavigationContainer>

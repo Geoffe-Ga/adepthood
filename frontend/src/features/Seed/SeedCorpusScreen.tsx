@@ -18,13 +18,18 @@
  * says plainly where it got to — including the vault that cannot take files
  * yet and the corpus that is waiting on a permission, neither of which is a
  * failure of theirs.
+ *
+ * **The run is the app's, not this screen's (#3772).** Documents go through the
+ * app-level upload queue, so leaving carries on and coming back shows the same
+ * rows; the pickers stay open while a batch is going over, and each new pick or
+ * folder is queued behind it under its own header. Closing the tab or the app
+ * does stop it, and the screen says so while anything is going over.
  */
 import { useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import React, { useCallback } from 'react';
 import {
   ActivityIndicator,
-  Modal,
   StyleSheet,
   Text,
   TouchableOpacity,
@@ -33,17 +38,17 @@ import {
 } from 'react-native';
 
 import {
+  SEED_BACKGROUND_NOTE,
   SEED_CHOOSE_LABEL,
   SEED_CONSENT_LINK_LABEL,
   SEED_CONSENT_PROMPT,
   SEED_EMPTY_INVITATION,
-  SEED_LEAVE_CONFIRM_LABEL,
-  SEED_LEAVE_STAY_LABEL,
-  SEED_LEAVE_TITLE,
-  SEED_LEAVE_WARNING,
   SEED_STATUS_LINES,
+  SEED_STOP_ALL_LABEL,
+  SEED_STOP_BATCH_LABEL,
   SEED_VAULT_INVITATION,
   SEED_VAULT_INVITATION_LINK_LABEL,
+  seedBatchHeaderLine,
   seedProgressLine,
   seedRetryLabel,
   seedSummaryLine,
@@ -52,22 +57,12 @@ import { SEED_CHOOSE_FOLDER_LABEL } from './seedFolderCopy';
 import { SeedFolderReview } from './SeedFolderReview';
 import type { SeedItem } from './seedRun';
 import { useSeedFolder, type SeedFolderController } from './useSeedFolder';
-import { useSeedLeaveGuard } from './useSeedLeaveGuard';
-import { useSeedRun, type SeedRunController } from './useSeedRun';
+import { useSeedRun, type SeedBatchView, type SeedRunController } from './useSeedRun';
 
 import { EditorialSection } from '@/components/layout/EditorialSection';
 import { ScreenHeader } from '@/components/layout/ScreenHeader';
 import { ScreenScaffold } from '@/components/layout/ScreenScaffold';
-import {
-  accent,
-  BORDER_RADIUS,
-  colors,
-  ink,
-  rhythm,
-  SPACING,
-  surface,
-  touchTarget,
-} from '@/design/tokens';
+import { accent, BORDER_RADIUS, ink, rhythm, SPACING, surface, touchTarget } from '@/design/tokens';
 import PrivacyTierControl from '@/features/Journal/PrivacyTierControl';
 import { useVaultConnectionState } from '@/features/Settings/useVaultConnectionState';
 import { vaultComesFirst } from '@/features/Settings/vaultConnectionState';
@@ -91,7 +86,7 @@ const SeedItemRow = ({ item }: { item: SeedItem }): React.JSX.Element => {
   );
 };
 
-/** A picker button, inert while a batch is still going over. */
+/** A picker or action button; pickers stay open while a batch goes over (#3772). */
 const ChooseButton = ({
   onPress,
   disabled,
@@ -123,17 +118,15 @@ const ChooseButton = ({
  */
 const SeedFolderSection = ({
   folder,
-  isSending,
 }: {
   folder: SeedFolderController;
-  isSending: boolean;
 }): React.JSX.Element | null => {
   if (!folder.supported) return null;
   return (
     <>
       <ChooseButton
         onPress={() => void folder.chooseFolder()}
-        disabled={isSending || folder.review !== null}
+        disabled={folder.review !== null}
         label={SEED_CHOOSE_FOLDER_LABEL}
         testID="seed-choose-folder-button"
       />
@@ -142,9 +135,7 @@ const SeedFolderSection = ({
           {folder.notice}
         </Text>
       ) : null}
-      {folder.review ? (
-        <SeedFolderReview folder={folder} review={folder.review} isSending={isSending} />
-      ) : null}
+      {folder.review ? <SeedFolderReview folder={folder} review={folder.review} /> : null}
     </>
   );
 };
@@ -177,46 +168,26 @@ const SeedProgress = ({ line }: { line: string | null }): React.JSX.Element | nu
   );
 };
 
-interface SeedLeavePromptProps {
-  onLeave: () => void;
-  onStay: () => void;
-}
-
 /**
- * The question asked before an active run is left, with both answers spelled
- * out. Staying is offered first: it is the one that changes nothing.
- *
- * A modal rather than a banner in the scroll, because the exit it is answering
- * has already been held: somebody scrolled down a long run would otherwise
- * find their tap on Back had simply done nothing, with the reason off screen.
- * The hardware back gesture answers "stay" — the safe half of the choice.
+ * While anything is going over: that it carries on around the app, that closing
+ * the tab or the app stops it, and the way to stop it here.
  */
-const SeedLeavePrompt = ({ onLeave, onStay }: SeedLeavePromptProps): React.JSX.Element => (
-  <Modal visible transparent animationType="fade" onRequestClose={onStay}>
-    <View style={styles.leaveScrim} accessibilityViewIsModal>
-      <View style={styles.leavePrompt} testID="seed-leave-prompt" accessibilityRole="alert">
-        <Text style={styles.leaveTitle}>{SEED_LEAVE_TITLE}</Text>
-        <Text style={styles.leaveWarning}>{SEED_LEAVE_WARNING}</Text>
-        <TouchableOpacity
-          onPress={onStay}
-          accessibilityRole="button"
-          accessibilityLabel={SEED_LEAVE_STAY_LABEL}
-          testID="seed-leave-stay"
-        >
-          <Text style={styles.leaveStay}>{SEED_LEAVE_STAY_LABEL}</Text>
-        </TouchableOpacity>
-        <TouchableOpacity
-          onPress={onLeave}
-          accessibilityRole="button"
-          accessibilityLabel={SEED_LEAVE_CONFIRM_LABEL}
-          testID="seed-leave-confirm"
-        >
-          <Text style={styles.leaveConfirm}>{SEED_LEAVE_CONFIRM_LABEL}</Text>
-        </TouchableOpacity>
-      </View>
+const SeedQueueControls = ({ run }: { run: SeedRunController }): React.JSX.Element | null => {
+  if (!run.isSending) return null;
+  return (
+    <View testID="seed-background-note">
+      <Text style={styles.notice}>{SEED_BACKGROUND_NOTE}</Text>
+      <TouchableOpacity
+        onPress={run.cancel}
+        accessibilityRole="button"
+        accessibilityLabel={SEED_STOP_ALL_LABEL}
+        testID="seed-stop-all"
+      >
+        <Text style={styles.stop}>{SEED_STOP_ALL_LABEL}</Text>
+      </TouchableOpacity>
     </View>
-  </Modal>
-);
+  );
+};
 
 interface SeedInvitationProps {
   prompt: string;
@@ -273,15 +244,50 @@ const RetryButton = ({ run }: { run: SeedRunController }): React.JSX.Element | n
   );
 };
 
-/** The chosen documents and how far each one got. */
-const SeedRunList = ({ items }: { items: readonly SeedItem[] }): React.JSX.Element | null => {
-  if (items.length === 0) {
+/** One batch's header row: where it stands, and the way to stop it while it has more to send. */
+const SeedBatchHeaderRow = ({
+  batch,
+  onStop,
+}: {
+  batch: SeedBatchView;
+  onStop: (_batchId: string) => void;
+}): React.JSX.Element => (
+  <View style={styles.batchHeader}>
+    <Text style={styles.batchHeaderText} testID={`seed-batch-header-${batch.id}`}>
+      {seedBatchHeaderLine({
+        name: batch.name,
+        state: batch.state,
+        total: batch.items.length,
+        remaining: batch.remaining,
+      })}
+    </Text>
+    {batch.remaining > 0 ? (
+      <TouchableOpacity
+        onPress={() => onStop(batch.id)}
+        accessibilityRole="button"
+        accessibilityLabel={SEED_STOP_BATCH_LABEL}
+        testID={`seed-batch-stop-${batch.id}`}
+      >
+        <Text style={styles.stop}>{SEED_STOP_BATCH_LABEL}</Text>
+      </TouchableOpacity>
+    ) : null}
+  </View>
+);
+
+/** The chosen documents, batch by batch, and how far each one got. */
+const SeedRunList = ({ run }: { run: SeedRunController }): React.JSX.Element | null => {
+  if (run.batches.length === 0) {
     return null;
   }
   return (
     <EditorialSection title="What you've brought" testID="seed-run-list">
-      {items.map((item) => (
-        <SeedItemRow key={item.id} item={item} />
+      {run.batches.map((batch) => (
+        <View key={batch.id} testID={`seed-batch-${batch.id}`}>
+          <SeedBatchHeaderRow batch={batch} onStop={run.cancelBatch} />
+          {batch.items.map((item) => (
+            <SeedItemRow key={item.id} item={item} />
+          ))}
+        </View>
       ))}
     </EditorialSection>
   );
@@ -326,9 +332,10 @@ const SeedCorpusBody = ({ run, folder, onOpenConsent }: SeedCorpusBodyProps): Re
         <Text style={styles.tierPrompt}>{TIER_PROMPT}</Text>
         <PrivacyTierControl value={run.classification} onChange={run.chooseClassification} />
       </EditorialSection>
-      <ChooseButton onPress={run.choose} disabled={run.isSending} />
-      <SeedFolderSection folder={folder} isSending={run.isSending} />
+      <ChooseButton onPress={() => void run.choose()} disabled={false} />
+      <SeedFolderSection folder={folder} />
       <SeedProgress line={seedProgressLine(run.tally, run.isPaused, run.isWaitingOnVault)} />
+      <SeedQueueControls run={run} />
       {run.notice ? (
         <Text style={styles.notice} testID="seed-notice">
           {run.notice}
@@ -349,7 +356,7 @@ const SeedCorpusBody = ({ run, folder, onOpenConsent }: SeedCorpusBodyProps): Re
         />
       ) : null}
       <RetryButton run={run} />
-      <SeedRunList items={run.items} />
+      <SeedRunList run={run} />
     </>
   );
 };
@@ -361,13 +368,9 @@ function SeedCorpusScreen(): React.JSX.Element {
   const navigation = useNavigation<NativeStackNavigationProp<RootStackParamList>>();
   const openConsent = useCallback(() => navigation.navigate('CorpusConsent'), [navigation]);
   const openVault = useCallback(() => navigation.navigate('VaultSettings'), [navigation]);
-  const leaveGuard = useSeedLeaveGuard(run.isSending, run.cancel);
   const { state: vault } = useVaultConnectionState();
   return (
     <ScreenScaffold scroll testID="seed-corpus-screen">
-      {leaveGuard.isPrompting ? (
-        <SeedLeavePrompt onLeave={leaveGuard.confirmLeave} onStay={leaveGuard.stay} />
-      ) : null}
       {vaultComesFirst(vault) ? (
         <SeedVaultFirst onOpenVault={openVault} />
       ) : (
@@ -407,39 +410,18 @@ const styles = StyleSheet.create({
   progressText: {
     color: ink.soft,
   },
-  leaveScrim: {
-    backgroundColor: colors.mystical.overlay,
-    flex: 1,
-    justifyContent: 'center',
-    padding: SPACING.lg,
-  },
-  leavePrompt: {
-    backgroundColor: surface.raised,
-    borderColor: surface.hairline,
-    borderRadius: BORDER_RADIUS.md,
-    borderWidth: StyleSheet.hairlineWidth,
-    padding: SPACING.md,
-  },
-  leaveTitle: {
-    color: ink.primary,
-    fontWeight: '600',
-  },
-  leaveWarning: {
-    color: ink.soft,
-    lineHeight: 20,
-    marginTop: SPACING.sm,
-  },
-  leaveStay: {
+  stop: {
     color: accent.primary,
     fontWeight: '600',
     minHeight: touchTarget.minimum,
     paddingTop: SPACING.md,
   },
-  leaveConfirm: {
-    color: ink.soft,
+  batchHeader: {
+    marginTop: SPACING.md,
+  },
+  batchHeaderText: {
+    color: ink.primary,
     fontWeight: '600',
-    minHeight: touchTarget.minimum,
-    paddingTop: SPACING.md,
   },
   notice: {
     color: ink.soft,

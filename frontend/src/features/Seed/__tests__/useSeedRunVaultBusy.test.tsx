@@ -11,6 +11,8 @@ import {
 } from '../seedUploadPacing';
 import { useSeedRun } from '../useSeedRun';
 
+import { useUploadQueueStore } from '@/store/useUploadQueueStore';
+
 /**
  * #3770: a vault busy with a classify or link pass answers `vault_busy` and a
  * wait. The run waits it out and sends the same document again, the wait is
@@ -91,6 +93,7 @@ async function advance(ms = 0): Promise<void> {
 
 beforeEach(() => {
   jest.useFakeTimers();
+  useUploadQueueStore.getState().reset();
   mockFetch.mockReset();
   mocked.__fileBase64.mockReset();
   mocked.__fileSize.mockReset();
@@ -201,7 +204,9 @@ describe('a busy vault', () => {
 });
 
 describe('the run id that lets a run share one handshake', () => {
-  test('is the same on every document of a run and its retry, and new for the next screen', async () => {
+  test('is the same on every document of a queue run and its retry, and new for the next run', async () => {
+    // Since #3772 a run is the queue's, not a screen's: it begins when the
+    // queue starts from idle, and "Try again" sends its documents under its id.
     mockFetch.mockReturnValueOnce(answered({ stored: false, vault_status: 'degraded' }));
     mockFetch.mockImplementation(accepted);
     const first = renderHook(() => useSeedRun());
@@ -212,6 +217,7 @@ describe('the run id that lets a run share one handshake', () => {
     await act(async () => {
       await first.result.current.retryFailed();
     });
+    first.unmount();
     const second = renderHook(() => useSeedRun());
     await act(async () => {
       await second.result.current.sendDocuments([note('c.md')]);
@@ -219,9 +225,8 @@ describe('the run id that lets a run share one handshake', () => {
 
     const ids = sentBodies().map((body) => body.upload_run);
     expect(ids).toHaveLength(4);
-    expect(ids[0]).toMatch(/^[A-Za-z0-9_-]{16,64}$/u);
+    for (const id of ids) expect(id).toMatch(/^[A-Za-z0-9_-]{16,64}$/u);
     expect(ids.slice(0, 3)).toEqual([ids[0], ids[0], ids[0]]);
-    expect(ids[3]).toMatch(/^[A-Za-z0-9_-]{16,64}$/u);
     expect(ids[3]).not.toBe(ids[0]);
   });
 });

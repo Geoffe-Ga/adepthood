@@ -2321,6 +2321,12 @@ export interface ImportDocumentInput {
    * nothing about the document.
    */
   runId?: string;
+  /**
+   * Aborts the request mid-flight (#3772). Only signing out uses it: the upload
+   * queue outlives the screen, so the account that started it ending is the one
+   * thing that must take back a request already on its way.
+   */
+  signal?: AbortSignal;
 }
 
 /** The request's optional folder pair, sent together or not at all. */
@@ -2369,7 +2375,7 @@ export const corpus = {
    * error message or a log line.
    */
   async importDocument(
-    { filename, contentBase64, classification, source, runId }: ImportDocumentInput,
+    { filename, contentBase64, classification, source, runId, signal }: ImportDocumentInput,
     token?: string,
   ): Promise<DocumentImportT> {
     const scope = captureAuthScope();
@@ -2394,6 +2400,7 @@ export const corpus = {
         headers,
         token,
         timeoutMs: UPLOAD_DOCUMENT_TIMEOUT_MS,
+        ...(signal === undefined ? {} : { signal }),
         schema: documentImportSchema as unknown as z.ZodType<DocumentImportT>,
       });
     } catch (err: unknown) {

@@ -12,6 +12,8 @@ import {
 } from '../seedUploadPacing';
 import { MAX_SEED_RETRIES_PER_DOCUMENT, useSeedRun } from '../useSeedRun';
 
+import { useUploadQueueStore } from '@/store/useUploadQueueStore';
+
 /**
  * #3556: a folder import paced under the upload limit, a 429 waited out rather
  * than settled as a failure, and the ones that did not go over offered again.
@@ -93,6 +95,7 @@ async function advance(ms = 0): Promise<void> {
 
 beforeEach(() => {
   jest.useFakeTimers();
+  useUploadQueueStore.getState().reset();
   mockFetch.mockReset();
   mocked.__fileBase64.mockReset();
   mocked.__fileSize.mockReset();
@@ -172,7 +175,27 @@ describe('a folder larger than the upload limit', () => {
     expect(jest.getTimerCount()).toBe(0);
   });
 
-  test('leaving the screen during a pace sends nothing more', async () => {
+  test('the pace is shared across remounts: a new screen cannot open a fresh window (#3772)', async () => {
+    mockFetch.mockImplementation(accepted);
+    const first = renderHook(() => useSeedRun());
+
+    await act(async () => {
+      await first.result.current.sendDocuments(notes(SEED_UPLOAD_LIMIT));
+    });
+    first.unmount();
+    const second = renderHook(() => useSeedRun());
+    act(() => {
+      void second.result.current.sendDocuments([note('Late/one.md')]);
+    });
+    await advance();
+
+    expect(mockFetch).toHaveBeenCalledTimes(SEED_UPLOAD_LIMIT);
+    expect(second.result.current.items[SEED_UPLOAD_LIMIT]?.status).toBe('waiting');
+    await advance(SEED_UPLOAD_WINDOW_MS + SEED_UPLOAD_PACING_MARGIN_MS);
+    expect(mockFetch).toHaveBeenCalledTimes(SEED_UPLOAD_LIMIT + 1);
+  });
+
+  test('leaving the screen during a pace keeps the queue going (#3772)', async () => {
     mockFetch.mockImplementation(accepted);
     const { result, unmount } = renderHook(() => useSeedRun());
 
@@ -183,7 +206,7 @@ describe('a folder larger than the upload limit', () => {
     unmount();
     await advance(SEED_UPLOAD_WINDOW_MS * 2);
 
-    expect(mockFetch).toHaveBeenCalledTimes(SEED_UPLOAD_LIMIT);
+    expect(mockFetch).toHaveBeenCalledTimes(SEED_UPLOAD_LIMIT + 3);
   });
 });
 

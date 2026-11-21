@@ -15,6 +15,8 @@ import {
 } from '../seedFolderCopy';
 import { SEED_FOLDER_PREVIEW_LIMIT } from '../SeedFolderReview';
 
+import { useUploadQueueStore } from '@/store/useUploadQueueStore';
+
 jest.mock('@/config', () => ({ API_BASE_URL: 'http://test' }));
 
 jest.mock('@react-navigation/native', () => ({
@@ -135,9 +137,10 @@ async function openReview(screen: ReturnType<typeof render>) {
 }
 
 beforeEach(() => {
+  useUploadQueueStore.getState().reset();
   setPlatform('web');
   globalRef.document = fakeDocument;
-  // The leave guard warns before a reload while a run is going over.
+  // The page warns before a reload while the queue is going over.
   globalRef.window = { addEventListener: jest.fn(), removeEventListener: jest.fn() };
   nextFolder = VAULT;
   inputsBuilt = 0;
@@ -260,7 +263,7 @@ describe('choosing a folder on the seeding screen', () => {
     expect(mockImportFetch).not.toHaveBeenCalled();
   });
 
-  test('holds a reviewed folder while files picked meanwhile are still going over', async () => {
+  test('starts a reviewed folder while files picked meanwhile are going over, queued behind them (#3772)', async () => {
     let release = (): void => undefined;
     mockImportFetch.mockImplementationOnce(
       () =>
@@ -281,19 +284,18 @@ describe('choosing a folder on the seeding screen', () => {
     });
     await waitFor(() => expect(mockImportFetch).toHaveBeenCalledTimes(1));
 
-    // One batch at a time: the folder waits rather than opening a second loop.
-    expect(screen.getByTestId('seed-folder-start').props.accessibilityState.disabled).toBe(true);
+    // Queued behind the files, never alongside them: one request at a time.
+    expect(screen.getByTestId('seed-folder-start').props.accessibilityState.disabled).toBe(false);
     await act(async () => {
       fireEvent.press(screen.getByTestId('seed-folder-start'));
     });
     expect(mockImportFetch).toHaveBeenCalledTimes(1);
+    expect(screen.getByTestId('seed-batch-header-batch-1')).toBeTruthy();
 
     await act(async () => {
       release();
     });
-    await waitFor(() =>
-      expect(screen.getByTestId('seed-folder-start').props.accessibilityState.disabled).toBe(false),
-    );
+    await waitFor(() => expect(mockImportFetch.mock.calls.length).toBeGreaterThan(1));
   });
 
   test('a dismissed folder dialog opens no review and sends nothing', async () => {

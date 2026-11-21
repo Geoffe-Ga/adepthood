@@ -5,11 +5,12 @@ import {
   CORPUS_CTA_BY_DESTINATION,
   SEED_CONSENT_LINK_LABEL,
   SEED_CONSENT_PROMPT,
+  SEED_BACKGROUND_NOTE,
   SEED_LEAVE_BROWSER_WARNING,
-  SEED_LEAVE_CONFIRM_LABEL,
-  SEED_LEAVE_STAY_LABEL,
-  SEED_LEAVE_TITLE,
-  SEED_LEAVE_WARNING,
+  SEED_STOP_ALL_LABEL,
+  SEED_STOP_BATCH_LABEL,
+  seedBatchHeaderLine,
+  uploadQueueIndicatorLine,
   SEED_ROW_DESCRIPTION,
   SEED_ROW_LABEL,
   SEED_ROW_VAULT_FIRST_DESCRIPTION,
@@ -229,7 +230,7 @@ describe('the words a person reads beneath a document', () => {
   test.each([
     SEED_CONSENT_PROMPT,
     SEED_CONSENT_LINK_LABEL,
-    SEED_LEAVE_WARNING,
+    SEED_BACKGROUND_NOTE,
     SEED_LEAVE_BROWSER_WARNING,
     ...VAULT_GATE_COPY,
   ])('talks about writing, not plumbing: %s', (line) => {
@@ -325,28 +326,48 @@ describe('the line shown while documents are going over', () => {
   });
 });
 
-describe('the warning before leaving a run in flight', () => {
-  test('names what is happening and what becomes of each half of the run', () => {
-    expect(SEED_LEAVE_TITLE.toLowerCase()).toContain('still going over');
-    expect(SEED_LEAVE_WARNING.toLowerCase()).toContain('finish');
-    expect(SEED_LEAVE_WARNING.toLowerCase()).toContain('never sent');
+describe('a queue that carries on while the person moves around the app (#3772)', () => {
+  test('says plainly that leaving Seed carries on, and closing the tab stops it', () => {
+    expect(SEED_BACKGROUND_NOTE.toLowerCase()).toContain('carry on');
+    expect(SEED_BACKGROUND_NOTE.toLowerCase()).toContain('closing');
+    expect(SEED_BACKGROUND_NOTE.toLowerCase()).toContain('stops');
   });
 
-  test('offers both ways out, each labelled with what it does', () => {
-    expect(SEED_LEAVE_CONFIRM_LABEL.toLowerCase()).toContain('leave');
-    expect(SEED_LEAVE_STAY_LABEL.toLowerCase()).toContain('stay');
-    expect(SEED_LEAVE_CONFIRM_LABEL).not.toBe(SEED_LEAVE_STAY_LABEL);
-  });
-
-  test('the browser-level warning says the same thing in one line', () => {
+  test('the browser-level warning names what a tab close costs', () => {
     expect(SEED_LEAVE_BROWSER_WARNING.toLowerCase()).toContain('still going over');
     expect(SEED_LEAVE_BROWSER_WARNING.toLowerCase()).toContain('never sent');
   });
 
-  test('nothing sold: leaving is a choice, not a lapse', () => {
-    expect(ranksOrShames(SEED_LEAVE_WARNING)).toBe(false);
+  test('the indicator counts what is left, from anywhere', () => {
+    expect(uploadQueueIndicatorLine(37)).toBe('Uploading · 37 remaining');
+    expect(uploadQueueIndicatorLine(1)).toBe('Uploading · 1 remaining');
+  });
+
+  test('each batch header says where it stands, named when it is a folder', () => {
+    expect(seedBatchHeaderLine({ name: null, state: 'queued', total: 120, remaining: 120 })).toBe(
+      'Queued · 120 files',
+    );
+    expect(seedBatchHeaderLine({ name: 'Notes', state: 'queued', total: 1, remaining: 1 })).toBe(
+      'Notes · Queued · 1 file',
+    );
+    expect(seedBatchHeaderLine({ name: 'Notes', state: 'sending', total: 40, remaining: 33 })).toBe(
+      'Notes · Uploading · 33 remaining',
+    );
+    expect(seedBatchHeaderLine({ name: null, state: 'settled', total: 40, remaining: 0 })).toBe(
+      'Done · 40 files',
+    );
+  });
+
+  test('both ways to stop say what they stop', () => {
+    expect(SEED_STOP_ALL_LABEL.toLowerCase()).toContain('stop');
+    expect(SEED_STOP_BATCH_LABEL.toLowerCase()).toContain('stop');
+    expect(SEED_STOP_ALL_LABEL).not.toBe(SEED_STOP_BATCH_LABEL);
+  });
+
+  test('nothing sold: stopping is a choice, not a lapse', () => {
+    expect(ranksOrShames(SEED_BACKGROUND_NOTE)).toBe(false);
     expect(ranksOrShames(SEED_LEAVE_BROWSER_WARNING)).toBe(false);
-    expect(ranksOrShames(SEED_LEAVE_CONFIRM_LABEL)).toBe(false);
+    expect(ranksOrShames(SEED_STOP_ALL_LABEL)).toBe(false);
   });
 });
 

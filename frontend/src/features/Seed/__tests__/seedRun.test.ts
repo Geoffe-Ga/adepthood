@@ -212,6 +212,16 @@ describe('cancelling a run that is still going', () => {
     expect(selectNextQueued(state)).toBeNull();
   });
 
+  test('stopping one batch settles only its own documents (#3772)', () => {
+    let state = seedRunReducer(withThreeQueued(), { type: 'start', id: 'a' });
+    state = seedRunReducer(state, { type: 'wait', id: 'a', cause: 'vault' });
+    state = seedRunReducer(state, { type: 'cancel', ids: ['a', 'b'] });
+
+    expect(state.items.a?.status).toBe('cancelled');
+    expect(state.items.b?.status).toBe('cancelled');
+    expect(state.items.c?.status).toBe('queued');
+  });
+
   test('counts a cancelled document among what did not go over', () => {
     const cancelled = seedRunReducer(withThreeQueued(), { type: 'cancel' });
 
