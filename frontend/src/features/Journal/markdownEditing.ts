@@ -15,8 +15,9 @@
  */
 import { codePointToUtf16 } from './codePoints';
 import { classifyLine, sourceLines } from './journalMarkdownLines';
-import type { JournalMarkdownLine } from './journalMarkdownTypes';
+import type { JournalMarkdownLine, LineKind } from './journalMarkdownTypes';
 import { inferIndentUnit, isListLine, outdentIndent, shiftListLines } from './markdownIndent';
+import { followingOrdinal, orderedMarker, renumberOrderedLists } from './markdownOrderedList';
 
 /** The key name a field reports for a forward delete. */
 const FORWARD_DELETE_KEY = 'Delete';
@@ -79,28 +80,86 @@ function isSeparated(line: JournalMarkdownLine): boolean {
   return line.markerFollowedBy === 'space' || line.markerFollowedBy === 'tab';
 }
 
+/** The kinds whose hidden prefix the classifier measures as ``contentStart``. */
+const BLOCK_PREFIX_KINDS: ReadonlySet<LineKind> = new Set<LineKind>(['ordered', 'task', 'heading']);
+
+/** The box a continued or stepped-out task item opens with: always unchecked. */
+const UNCHECKED_BOX = '[ ]';
+
+/** The line feeds before a UTF-16 offset: the zero-based index of its line. */
+function lineIndexAt(text: string, offset: number): number {
+  return text.slice(0, offset).split('\n').length - 1;
+}
+
+/**
+ * Where the prefix Return works from ends, or null when the line has none: a
+ * numbered item's ``1. ``, a task's ``- [ ] ``, a heading's ``## ``, or a
+ * separated ``-`` / ``>`` marker. Read from the classifier's own offsets, so a
+ * rule (never a separated marker) and prose have nothing to carry or exit.
+ */
+function returnPrefixEnd(line: JournalMarkdownLine): number | null {
+  if (BLOCK_PREFIX_KINDS.has(line.kind)) return line.contentStart;
+  return line.marker != null && isSeparated(line) ? line.markerEnd : null;
+}
+
+/**
+ * The marker (with its trailing space) an item hands to a line that follows
+ * it or replaces it: a numbered item's punctuation with ``ordinal``, a task's
+ * bullet with an unchecked box, or the bullet / quote marker as typed.
+ */
+function itemMarker(line: JournalMarkdownLine, chars: string[], ordinal: number): string {
+  if (line.kind === 'ordered') return orderedMarker(chars, line, ordinal);
+  const marker = line.marker ?? '';
+  return line.kind === 'task' ? `${marker} ${UNCHECKED_BOX} ` : `${marker} `;
+}
+
+/** One Return on a marked line: the texts either side of it and where the line sits. */
+interface ReturnPress {
+  previous: string;
+  next: string;
+  lineStart: number;
+  newlineIndex: number;
+  /** The line Return was pressed on, classified over ``chars`` alone. */
+  line: JournalMarkdownLine;
+  chars: string[];
+}
+
 /**
  * Return on an empty item: a nested LIST item steps out one level (keeping its
- * marker), and anything else -- a level-0 item, a quote -- leaves the block.
- * ``line`` is classified over the item's own characters, so its offsets are
- * line-relative.
+ * marker, a numbered one renumbered for the level it lands on), and anything
+ * else -- a level-0 item, a quote, a heading -- leaves the block.
  */
-function exitEmptyItem(
-  previous: string,
-  next: string,
-  lineStart: number,
-  newlineIndex: number,
-  line: JournalMarkdownLine,
-  chars: string[],
-): MarkdownEdit {
+function exitEmptyItem(press: ReturnPress): MarkdownEdit {
+  const { previous, next, lineStart, newlineIndex, line, chars } = press;
   const indent = chars.slice(0, line.indentEnd).join('');
   const outdented = isListLine(line) ? outdentIndent(indent, inferIndentUnit(previous)) : null;
-  const prefix = outdented == null ? '' : `${outdented}${line.marker} `;
+  const prefix =
+    outdented == null ? '' : `${outdented}${itemMarker(line, chars, line.ordinal ?? 0)}`;
   const caret = lineStart + prefix.length;
-  return {
+  const edit = {
     text: `${next.slice(0, lineStart)}${prefix}${next.slice(newlineIndex + 1)}`,
     selection: { start: caret, end: caret },
   };
+  if (outdented == null) return edit;
+  return renumberOrderedLists(edit, [
+    { line: lineIndexAt(previous, lineStart), movedFrom: line.indentWidth },
+  ]);
+}
+
+/** Return on an item with content: the next line opens with the item's marker. */
+function continueItem(press: ReturnPress): MarkdownEdit {
+  const { previous, next, lineStart, newlineIndex, line, chars } = press;
+  const marker = itemMarker(line, chars, followingOrdinal(line.ordinal ?? 0));
+  const prefix = `${chars.slice(0, line.indentEnd).join('')}${marker}`;
+  const caret = newlineIndex + 1 + prefix.length;
+  const edit = {
+    text: `${next.slice(0, newlineIndex + 1)}${prefix}${next.slice(newlineIndex + 1)}`,
+    selection: { start: caret, end: caret },
+  };
+  if (line.kind !== 'ordered') return edit;
+  return renumberOrderedLists(edit, [
+    { line: lineIndexAt(previous, lineStart) + 1, movedFrom: null },
+  ]);
 }
 
 /**
@@ -109,8 +168,12 @@ function exitEmptyItem(
  * React Native's TextInput remains the source of truth so selection, dictation,
  * undo, and autosave all keep working. This adds the one editor convenience a
  * plain multiline field does not provide: Return after a list item or quote
- * carries its marker forward, Return on an empty nested list item steps it out
- * one level, and Return on any other empty marker exits the block.
+ * carries its marker forward -- a numbered item the next number, with the items
+ * below it counted on, and a task an unchecked box -- Return on an empty nested
+ * list item steps it out one level, and Return on any other empty marker exits
+ * the block. A heading with text and a rule never continue.
+ *
+ * Every block is read from ``classifyLine``; nothing here matches line text.
  */
 export function continueMarkdownEdit(
   previous: string,
@@ -123,18 +186,12 @@ export function continueMarkdownEdit(
   const lineStart = previous.lastIndexOf('\n', newlineIndex - 1) + 1;
   const chars = Array.from(previous.slice(lineStart, newlineIndex));
   const line = classifyLine(chars, { start: 0, end: chars.length });
-  if (line.marker == null || !isSeparated(line)) return { text: next };
+  const prefixEnd = returnPrefixEnd(line);
+  if (prefixEnd == null) return { text: next };
 
-  const content = chars.slice(line.markerEnd).join('');
-  if (content.length === 0)
-    return exitEmptyItem(previous, next, lineStart, newlineIndex, line, chars);
-
-  const prefix = `${chars.slice(0, line.indentEnd).join('')}${line.marker} `;
-  const caret = newlineIndex + 1 + prefix.length;
-  return {
-    text: `${next.slice(0, newlineIndex + 1)}${prefix}${next.slice(newlineIndex + 1)}`,
-    selection: { start: caret, end: caret },
-  };
+  const press = { previous, next, lineStart, newlineIndex, line, chars };
+  if (prefixEnd === chars.length) return exitEmptyItem(press);
+  return line.kind === 'heading' ? { text: next } : continueItem(press);
 }
 
 /** String-only compatibility helper for callers that do not control a caret. */
@@ -157,8 +214,9 @@ function markedLineAtCaret(body: string, caret: number): JournalMarkdownLine | n
  * Backspace at the start of a marked line's content; null everywhere else so
  * the field handles ordinary deletion itself.
  *
- * A nested LIST item steps out one level, keeping its marker and the caret at
- * its content. Any other marked line -- a level-0 item, a quote -- loses its
+ * A nested LIST item -- bulleted, numbered or task -- steps out one level,
+ * keeping its marker and the caret at its content. Any other marked line -- a
+ * level-0 item, a quote, a heading -- loses its
  * whole hidden prefix in one step: the prefix renders as nothing, so deleting
  * it one invisible character at a time would look like a stuck key.
  */
@@ -192,7 +250,8 @@ function isBackspaceAt(previous: string, next: string, selection: MarkdownSelect
  *
  * A Backspace at a marked line's content start becomes ``deleteBackwardEdit``
  * (outdent a nested item, drop a level-0 prefix); an inserted line feed
- * becomes ``continueMarkdownEdit``; anything else -- typing, paste, dictation,
+ * becomes ``continueMarkdownEdit``. Those two are the only changes that ever
+ * renumber a list. Anything else -- typing, paste, dictation,
  * a forward Delete -- is kept exactly as the field reported it. ``lastKey`` is
  * the key the field last reported, when it reports keys: a forward ``Delete``
  * can produce the same text as Backspace (``-  x``), and is never rewritten.

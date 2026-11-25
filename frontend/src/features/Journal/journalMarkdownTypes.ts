@@ -40,10 +40,10 @@ export interface JournalMarkdownLine {
   kind: LineKind;
   /**
    * The opening marker exactly as typed -- ``>`` or one of ``BULLET_MARKERS`` --
-   * or null when the line opens with neither. These are the markers the editor
-   * carries forward on Return; a heading's ``#`` run and an ordered item's
-   * digits are deliberately NOT reported here (so Return keeps its shipped
-   * behaviour) and are read from ``contentStart`` and the fields below instead.
+   * or null when the line opens with neither. A heading's ``#`` run and an
+   * ordered item's digits are NOT reported here: they are read from
+   * ``contentStart`` and the fields below, which is how the editor continues a
+   * numbered item on Return.
    * A task line reports its bullet marker.
    */
   marker: string | null;

@@ -335,3 +335,185 @@ describe('reconcileBodyChange', () => {
     expect(serializeJournalMarkdown(parseJournalMarkdown(edit.text))).toBe(pasted);
   });
 });
+
+/** Press Return with the caret just after ``before`` in ``body``. */
+function pressReturn(body: string, before: string) {
+  const caret = body.indexOf(before) + before.length;
+  const next = `${body.slice(0, caret)}\n${body.slice(caret)}`;
+  return continueMarkdownEdit(body, next, { start: caret, end: caret });
+}
+
+describe('continueMarkdownEdit -- numbered lists', () => {
+  it('gives the next number and renumbers the items below', () => {
+    expect(pressReturn('1. walked\n2. wrote\n3. slept', 'wrote')).toEqual({
+      text: '1. walked\n2. wrote\n3. \n4. slept',
+      selection: { start: 22, end: 22 },
+    });
+  });
+
+  it.each([
+    ['1. a', '1. a\n2. '],
+    ['1) a', '1) a\n2) '],
+    ['  3. a', '  3. a\n  4. '],
+    ['\t9. a', '\t9. a\n\t10. '],
+    ['1.\ta', '1.\ta\n2. '],
+    ['007. a', '007. a\n8. '],
+  ])('continues %j', (body, expected) => {
+    const edit = pressReturn(body, 'a');
+    expect(edit.text).toBe(expected);
+    expect(edit.selection).toEqual({ start: expected.length, end: expected.length });
+  });
+
+  it('splits an item at the caret and numbers the second half', () => {
+    expect(pressReturn('1. walked\n2. slept', 'wal').text).toBe('1. wal\n2. ked\n3. slept');
+  });
+
+  it('renumbers only the same level of the same run', () => {
+    expect(pressReturn('1. a\n   note\n  - child\n2. b\n\n2. c', 'a').text).toBe(
+      '1. a\n2. \n   note\n  - child\n3. b\n\n2. c',
+    );
+    expect(pressReturn('1. a\n2. b\n- c\n3. d', 'a').text).toBe('1. a\n2. \n3. b\n- c\n3. d');
+    expect(pressReturn('- p\n  1. a\n  2. b\n- q', 'a').text).toBe(
+      '- p\n  1. a\n  2. \n  3. b\n- q',
+    );
+  });
+
+  it('keeps each following item its own punctuation and never touches the items above', () => {
+    expect(pressReturn('5. a\n5. b\n5) c', 'b').text).toBe('5. a\n5. b\n6. \n7) c');
+  });
+
+  it('never writes a number too long to be read back as one', () => {
+    expect(pressReturn('999999999. a', 'a').text).toBe('999999999. a\n999999999. ');
+  });
+
+  it('exits an empty level-0 item, leaving the items below as typed', () => {
+    expect(pressReturn('1. a\n2. \n3. b', '2. ')).toEqual({
+      text: '1. a\n\n3. b',
+      selection: { start: 5, end: 5 },
+    });
+  });
+
+  it('steps an empty nested item out into the run above and renumbers what follows', () => {
+    expect(pressReturn('1. a\n  1. x\n  2. \n2. b', '  2. ')).toEqual({
+      text: '1. a\n  1. x\n2. \n3. b',
+      selection: { start: 15, end: 15 },
+    });
+  });
+
+  it('starts at 1. when it steps out to a level with no numbered item above', () => {
+    expect(pressReturn('- a\n  4. ', '  4. ')).toEqual({
+      text: '- a\n1. ',
+      selection: { start: 7, end: 7 },
+    });
+  });
+
+  it('leaves a number with no separator, which is prose, alone', () => {
+    expect(pressReturn('1.a', '1.a')).toEqual({ text: '1.a\n' });
+    expect(pressReturn('1.', '1.')).toEqual({ text: '1.\n' });
+  });
+});
+
+describe('continueMarkdownEdit -- task items', () => {
+  it.each([
+    ['- [x] called Sam', '- [x] called Sam\n- [ ] '],
+    ['- [ ] called Sam', '- [ ] called Sam\n- [ ] '],
+    ['* [X] called Sam', '* [X] called Sam\n* [ ] '],
+    ['  + [ ] called Sam', '  + [ ] called Sam\n  + [ ] '],
+  ])('continues %j with an unchecked box', (body, expected) => {
+    expect(pressReturn(body, 'Sam')).toEqual({
+      text: expected,
+      selection: { start: expected.length, end: expected.length },
+    });
+  });
+
+  it.each(['- [ ] ', '- [x] ', '- [ ]'])('exits an empty level-0 task %j', (body) => {
+    expect(pressReturn(`${body}\nafter`, body)).toEqual({
+      text: '\nafter',
+      selection: { start: 0, end: 0 },
+    });
+  });
+
+  it('steps an empty nested task out one level, keeping a box', () => {
+    expect(pressReturn('- [x] a\n  - [ ] ', '  - [ ] ')).toEqual({
+      text: '- [x] a\n- [ ] ',
+      selection: { start: 14, end: 14 },
+    });
+  });
+});
+
+describe('continueMarkdownEdit -- headings and rules', () => {
+  it.each(['# Title', '### Deep', '---', '***', '___'])('does not continue %j', (body) => {
+    expect(pressReturn(body, body)).toEqual({ text: `${body}\n` });
+  });
+
+  it('exits an empty heading', () => {
+    expect(pressReturn('a\n## \nb', '## ')).toEqual({
+      text: 'a\n\nb',
+      selection: { start: 2, end: 2 },
+    });
+  });
+});
+
+describe('deleteBackwardEdit -- numbered and task items', () => {
+  it('drops a level-0 numbered prefix in one step, leaving the items below as typed', () => {
+    expect(deleteBackwardEdit('1. a\n2. b\n3. c', { start: 8, end: 8 })).toEqual({
+      text: '1. a\nb\n3. c',
+      selection: { start: 5, end: 5 },
+    });
+  });
+
+  it('steps a nested numbered item out one level and renumbers', () => {
+    expect(deleteBackwardEdit('1. a\n  1. b\n2. c', { start: 10, end: 10 })).toEqual({
+      text: '1. a\n2. b\n3. c',
+      selection: { start: 8, end: 8 },
+    });
+  });
+
+  it('steps a nested task out, then drops its whole prefix at level 0', () => {
+    const first = deleteBackwardEdit('- [ ] a\n  - [x] b', { start: 16, end: 16 });
+    expect(first).toEqual({ text: '- [ ] a\n- [x] b', selection: { start: 14, end: 14 } });
+    expect(deleteBackwardEdit(first!.text, first!.selection!)).toEqual({
+      text: '- [ ] a\nb',
+      selection: { start: 8, end: 8 },
+    });
+  });
+});
+
+describe('reconcileBodyChange -- numbers are only rewritten by Return and indent', () => {
+  it.each([
+    ['', '1. a\n1. b\n7. c', { start: 0, end: 0 }, undefined],
+    ['1. a\n3. c', '1. a\n3. cd', { start: 9, end: 9 }, undefined],
+    ['1. a\n2. b\n3. c', '1. a\n3. c', { start: 5, end: 10 }, undefined],
+    ['1. a\n\n3. c', '1. a\n3. c', { start: 4, end: 4 }, 'Delete'],
+    ['1. a\n\n3. c', '1. a\n3. c', { start: 5, end: 5 }, undefined],
+  ])('keeps %j -> %j as the field reported it', (previous, next, selection, key) => {
+    expect(reconcileBodyChange(previous, next, selection, key)).toEqual({ text: next });
+  });
+
+  it('continues a numbered list on Return', () => {
+    expect(reconcileBodyChange('1. a\n2. b', '1. a\n\n2. b', { start: 4, end: 4 })).toEqual({
+      text: '1. a\n2. \n3. b',
+      selection: { start: 8, end: 8 },
+    });
+  });
+});
+
+describe('a renumbering Return is one contiguous edit', () => {
+  it('keeps an anchor below a renumbered 10. on its own words', () => {
+    const items = Array.from({ length: 10 }, (_, index) => `${String(index + 1)}. item`);
+    const before = `${items.join('\n')}\nThe willow leans.`;
+    const { text: after } = pressReturn(before, '3. item');
+    expect(after).toContain('\n4. \n5. item');
+    expect(after).toContain('\n11. item\nThe willow leans.');
+
+    // The server re-anchors by ONE edit window (``reanchor_one``): an anchor
+    // wholly after it moves by the net change in length.
+    const window = minimalReplacement(before, after);
+    const anchorText = 'willow';
+    const anchorStart = before.indexOf(anchorText);
+    expect(anchorStart).toBeGreaterThanOrEqual(window.end);
+    const shifted = anchorStart + window.text.length - (window.end - window.start);
+    expect(after.slice(shifted, shifted + anchorText.length)).toBe(anchorText);
+    expect(`${before.slice(0, window.start)}${window.text}${before.slice(window.end)}`).toBe(after);
+  });
+});
