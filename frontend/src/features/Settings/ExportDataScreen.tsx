@@ -51,7 +51,7 @@ const GENERIC_FAILURE =
  */
 const VAULT_FAILURES: Readonly<Record<string, string>> = {
   vault_not_connected:
-    'You have no Creek Vault connected, so there is nothing more to export. Everything you wrote here is in the two files above.',
+    'You have no Corpus connected, so there is nothing more to export. Everything you wrote here is in the two files above.',
   vault_unavailable:
     'Your vault is asleep or unreachable right now, so its content could not be exported. Nothing was saved. Try again in a minute.',
   vault_export_needs_update:
@@ -198,7 +198,7 @@ export default function ExportDataScreen(): React.JSX.Element {
       />
       <ExportButton
         label="What my vault holds (JSON)"
-        description="If you use a Creek Vault: every document you imported, as its original file, and every fragment the vault made of your writing, Intimate included."
+        description="If you have a Corpus connected: every document you imported, as its original file, and every fragment the vault made of your writing, Intimate included."
         busy={state.running === 'vault'}
         disabled={busy}
         onPress={exportVault}

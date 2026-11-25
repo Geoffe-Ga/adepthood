@@ -35,8 +35,8 @@ function groundingLimit(): number {
 describe('higherSelfCopy — the gain, verbatim', () => {
   it('HIGHER_SELF_GAIN frames the gain as the sorting decision and bounds it', () => {
     expect(HIGHER_SELF_GAIN).toBe(
-      'With sorting on, a reflection from your Higher Self can reach beyond your last few ' +
-        'entries into what you have already written. When it draws from sorted writing, it uses ' +
+      'With sorting on, a reflection from your Simulated Higher Self Voice can reach beyond your ' +
+        'last few entries into what you have already written. When it draws from sorted writing, it uses ' +
         'a few passages at a time and can lean toward where you stand in the course, never using ' +
         'an Intimate one. Everything else you write here is sorted by Aspect.',
     );
@@ -49,7 +49,7 @@ describe('higherSelfCopy — the gain, verbatim', () => {
 
 describe('higherSelfCopy — says what it gives', () => {
   it('names the Higher Self and the Aspects, and contrasts with recent entries', () => {
-    expect(HIGHER_SELF_GAIN).toMatch(/Higher Self/u);
+    expect(HIGHER_SELF_GAIN).toMatch(/your Simulated Higher Self Voice/u);
     expect(HIGHER_SELF_GAIN).toMatch(/by Aspect/u);
     expect(HIGHER_SELF_GAIN).toMatch(/beyond your last few entries/u);
   });

@@ -229,6 +229,44 @@ a pixel, no button leaves the viewport's width, and buttons side by side have
 tops within 2px. Rules (a) to (e) themselves need judgement: they are the
 reviewer's pass over those screenshots, screen by screen.
 
+## Naming (epic #3802)
+
+The app has its own names for things, and a person using it meets only those.
+"Creek" and "Creek Vault" are internal names for the software behind a
+person's body of writing; nobody using the app was told them, so no screen,
+error message, placeholder or accessibility label says them.
+
+| Internal                                                              | In the app                       |
+| --------------------------------------------------------------------- | -------------------------------- |
+| Creek, Creek Vault, your Creek vault                                  | your Corpus                      |
+| vault, your vault (the writer's body of writing and where it is kept) | your Corpus                      |
+| the Higher Self, when naming what writes reflections and letters      | your Simulated Higher Self Voice |
+| Code identifiers, route names, test IDs, API fields, logs             | unchanged                        |
+
+- **Corpus** is a proper noun and takes a capital; "your" stays lowercase
+  mid-sentence. Another Corpus than the one connected now is "a Corpus you
+  connected earlier", "the Corpus you disconnected".
+- **Simulated Higher Self Voice** is said in full the first time a screen
+  names what writes reflections and letters, and may shorten to "your Higher
+  Self Voice" after that. "Higher Self" never stands alone as its name.
+- Phrases that describe the writing rather than name the writer stay as they
+  are: "in your own voice", "drafts in your voice".
+- A sentence is rewritten to read naturally, not word-swapped. Where the
+  internal name was only the doer of a verb, the doer is often better left
+  out: "What Creek has done" is "What has been done with your Corpus", and
+  "Creek doesn't fill this one on its own" is "This one doesn't fill on its
+  own".
+- Where a privacy disclosure named Creek as a party who can read something,
+  the party is still named, in plain words: "the people who make the software
+  behind the vault".
+
+`src/__tests__/wiring/userFacingNaming.test.ts` holds the first and third rows
+against every string and JSX text under `src`. Its `NAMING_RULES` table takes
+a forbidden word, the directories it is forbidden in, and an allowlist with a
+reason per entry. The second row lands directory by directory (#3804
+Settings, #3805 everything else): each sweep adds a row scoped to what it has
+finished.
+
 ## Constraints (carried from the epic)
 
 - **No proprietary fonts** — both serif and sans are free/system stacks

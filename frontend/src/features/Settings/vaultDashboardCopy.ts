@@ -20,15 +20,15 @@ type DocumentOutcome = VaultDocument['stages'][number]['outcome'];
 
 export const VAULT_DASHBOARD_TITLE = 'Your vault';
 export const VAULT_DASHBOARD_LEAD =
-  'What has come in, what Creek has done with it, and which rooms of your vault are still quiet.';
+  'What has come in, what has been done with it, and which rooms of your vault are still quiet.';
 
 export const VAULT_UPLOADS_HEADING = 'What came in';
-export const VAULT_CREEK_HEADING = 'What Creek has done';
+export const VAULT_CREEK_HEADING = 'What has been done with your Corpus';
 export const VAULT_DOCUMENTS_HEADING = 'Each file, step by step';
 export const VAULT_SHAPE_HEADING = "Your vault's shape";
 
 export const VAULT_UPDATE_NEEDED =
-  'Your vault needs an update to show this. What it holds, and what Creek has done with each file, will show here once it has one.';
+  'Your vault needs an update to show this. What it holds, and what has been done with each file, will show here once it has one.';
 export const VAULT_DASHBOARD_NOT_CONNECTED =
   'There is no vault connected to this account, so there is nothing here to show yet. Where your writing lives is set up in Settings.';
 export const VAULT_DASHBOARD_OPEN_SETTINGS = 'Where your writing lives';
@@ -43,7 +43,7 @@ export const VAULT_DASHBOARD_RETRY = 'Try again';
 export const VAULT_DASHBOARD_OPEN_LABEL = 'See what is in your vault';
 export const SEED_SEE_WHERE_LABEL = 'See where everything went';
 
-export const WRITERLESS_LINE = "Creek doesn't fill this one on its own";
+export const WRITERLESS_LINE = "This one doesn't fill on its own";
 
 const NOTHING_YET = 'Nothing here yet — ';
 
@@ -53,11 +53,11 @@ const WRITER_FILLS: Readonly<Record<string, string>> = {
   'link.eddies': 'fills as your writing gathers around a theme',
   'link.threads': 'fills as a theme carries on through your writing over time',
   'classify.praxis': 'fills as practices surface in your writing',
-  'generate.wavelength': 'fills as Creek maps the phases your writing moves through',
+  'generate.wavelength': 'fills as the phases your writing moves through are mapped',
   save: 'fills when you keep something here',
   compile: 'fills as your writing is gathered by frequency',
-  'generate.voice': 'fills as Creek learns how you write',
-  'generate.lexicon': 'fills as Creek learns the words you return to',
+  'generate.voice': 'fills as your Corpus learns how you write',
+  'generate.lexicon': 'fills as your Corpus learns the words you return to',
   draft: 'fills when you draft in your own voice',
   'generate.decisions': 'fills as decisions surface in your writing',
   'generate.compost': "fills with what's been set aside to break down",
@@ -67,7 +67,7 @@ const WRITER_FILLS: Readonly<Record<string, string>> = {
   authors: 'fills as you bring in the writing of others',
   'voice-drafts': 'fills as drafts in your voice are kept',
 };
-const WRITER_FILLS_FALLBACK = 'fills as Creek works through your writing';
+const WRITER_FILLS_FALLBACK = 'fills as your writing is worked through';
 
 /** Why a writerless folder stays as it is. */
 const WRITERLESS_REASONS: Readonly<Record<FolderReason, string>> = {
@@ -209,7 +209,7 @@ const FAILURE_REASONS: Readonly<Record<string, string>> = {
   request_key_rejected: 'your own provider key was refused',
   busy: 'your vault was busy, so it will try again',
 };
-const FAILURE_REASON_FALLBACK = 'Creek will try again on its next pass';
+const FAILURE_REASON_FALLBACK = 'your Corpus will try again on its next pass';
 
 /** "Eddies ✓ (9)", "Linked in time — running", "Classified — didn't finish: …". */
 export function passLine(pass: PassSummary): string {
@@ -228,7 +228,7 @@ export function passLine(pass: PassSummary): string {
       return `${label} — didn't finish: ${reason}.`;
     }
     case 'unconfirmed':
-      return `${label} — may have finished; Creek didn't say`;
+      return `${label} — may have finished; your Corpus didn't say`;
   }
 }
 

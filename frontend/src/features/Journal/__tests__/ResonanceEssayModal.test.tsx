@@ -868,7 +868,7 @@ describe('ResonanceEssayModal letter source (#3062)', () => {
         onOpenSettings={jest.fn()}
       />,
     );
-    expect((await findByTestId('essay-source')).props.children).toBe('From your Creek vault');
+    expect((await findByTestId('essay-source')).props.children).toBe('From your Corpus');
     expect(queryByText('Reported model: note-only-model')).toBeNull();
   });
 

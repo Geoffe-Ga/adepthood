@@ -94,7 +94,7 @@ describe('MarginNote source label (#3062)', () => {
     const { getByTestId } = render(
       <MarginNote note={note({ id: 9, source: 'creek_vault' })} onOpen={jest.fn()} />,
     );
-    expect(getByTestId('margin-note-source-9').props.children).toBe('From your Creek vault');
+    expect(getByTestId('margin-note-source-9').props.children).toBe('From your Corpus');
   });
 });
 
@@ -123,7 +123,7 @@ describe('persisted note receipts (#3206)', () => {
         onOpen={jest.fn()}
       />,
     );
-    expect(getByTestId('margin-note-source-3').props.children).toBe('From your Creek vault');
+    expect(getByTestId('margin-note-source-3').props.children).toBe('From your Corpus');
     expect(queryByTestId('margin-note-identity-3')).toBeNull();
     expect(queryByText(/Reported provider/)).toBeNull();
     expect(queryByText(/not recorded/)).toBeNull();

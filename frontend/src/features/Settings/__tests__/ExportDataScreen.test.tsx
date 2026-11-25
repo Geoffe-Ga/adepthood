@@ -177,7 +177,7 @@ describe('ExportDataScreen — what your vault holds (#3579)', () => {
   test.each([
     ['vault_unavailable', 503, 'asleep or unreachable'],
     ['vault_export_needs_update', 409, 'needs an update before its content can be exported'],
-    ['vault_not_connected', 404, 'no Creek Vault'],
+    ['vault_not_connected', 404, 'no Corpus connected'],
     ['vault_export_failed', 502, 'could not finish the export'],
   ])(
     'a vault answering %s says so rather than saving an empty file',

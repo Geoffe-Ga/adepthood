@@ -28,8 +28,8 @@ const SANGHA_LEAD =
   'alone in the room you are actually in. Adepthood works without it, and the door is ' +
   'one tap either way.';
 const HIGHER_SELF_GAIN =
-  'With sorting on, a reflection from your Higher Self can reach beyond your last few ' +
-  'entries into what you have already written. When it draws from sorted writing, it uses ' +
+  'With sorting on, a reflection from your Simulated Higher Self Voice can reach beyond your ' +
+  'last few entries into what you have already written. When it draws from sorted writing, it uses ' +
   'a few passages at a time and can lean toward where you stand in the course, never using ' +
   'an Intimate one. Everything else you write here is sorted by Aspect.';
 

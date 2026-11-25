@@ -28,6 +28,9 @@ import {
   sentNotLandedLine,
   stageLeftLine,
   withheldLine,
+  VAULT_CREEK_HEADING,
+  VAULT_DASHBOARD_LEAD,
+  VAULT_UPDATE_NEEDED,
   WRITERLESS_LINE,
 } from '@/features/Settings/vaultDashboardCopy';
 import { groupFolderAreas } from '@/features/Settings/vaultDashboardModel';
@@ -91,7 +94,7 @@ describe('folderNote', () => {
   });
 
   test.each(VAULT_FOLDER_WRITERLESS_REASONS)(
-    'a writerless folder (%s) says Creek does not fill it, and why, in words',
+    'a writerless folder (%s) says it does not fill on its own, and why, in words',
     (reason) => {
       const note = folderNote(folder({ writer: null, writer_reason: reason }));
 
@@ -100,7 +103,7 @@ describe('folderNote', () => {
     },
   );
 
-  test('a writerless folder with no reason given still says Creek does not fill it', () => {
+  test('a writerless folder with no reason given still says it does not fill on its own', () => {
     expect(folderNote(folder({ writer: null, writer_reason: null }))).toBe(`${WRITERLESS_LINE}.`);
   });
 });
@@ -220,7 +223,7 @@ describe('area words', () => {
       'Nothing here yet — fills as practices surface in your writing.',
     );
     expect(areaNote(area('10-Liminal'))).toBe(
-      'Nothing here yet — fills as Creek works through your writing.',
+      'Nothing here yet — fills as your writing is worked through.',
     );
     expect(areaSummary(area('04-Praxis'))).toBeNull();
   });
@@ -303,5 +306,49 @@ describe('whole-corpus totals (#3796)', () => {
     }
     expect(CORPUS_TOTALS_NOTHING_SENT).toContain('your Corpus');
     expect(CORPUS_TOTALS_NONE_WORKED).toContain('Your Corpus');
+  });
+});
+
+/**
+ * The dashboard never names the software behind it (#3803, epic #3802). Where
+ * that name was only the doer of a verb the sentence drops the doer; where a
+ * doer is needed, it is "your Corpus".
+ */
+describe('the dashboard speaks of your Corpus', () => {
+  test('the lead, the heading and the update notice say what was done, not who did it', () => {
+    expect(VAULT_DASHBOARD_LEAD).toBe(
+      'What has come in, what has been done with it, and which rooms of your vault are still quiet.',
+    );
+    expect(VAULT_CREEK_HEADING).toBe('What has been done with your Corpus');
+    expect(VAULT_UPDATE_NEEDED).toBe(
+      'Your vault needs an update to show this. What it holds, and what has been done with each file, will show here once it has one.',
+    );
+  });
+
+  test('a folder left to its owner reads as one sentence', () => {
+    expect(folderNote(folder({ writer: null, writer_reason: 'owner_curated' }))).toBe(
+      "This one doesn't fill on its own — it's yours to fill.",
+    );
+    expect(folderNote(folder({ writer: null, writer_reason: 'container' }))).toBe(
+      "This one doesn't fill on its own — it holds the folders beneath it.",
+    );
+  });
+
+  test.each([
+    ['generate.voice', 'fills as your Corpus learns how you write'],
+    ['generate.lexicon', 'fills as your Corpus learns the words you return to'],
+    ['generate.wavelength', 'fills as the phases your writing moves through are mapped'],
+    ['generate.something-new', 'fills as your writing is worked through'],
+  ])('an empty %s folder says what fills it', (writer, fills) => {
+    expect(folderNote(folder({ writer }))).toBe(`Nothing here yet — ${fills}.`);
+  });
+
+  test('a pass that did not finish, or did not say, names your Corpus', () => {
+    expect(passLine({ stage: 'threads', state: 'unfinished', emitted: 0, failureCode: null })).toBe(
+      "Threads — didn't finish: your Corpus will try again on its next pass.",
+    );
+    expect(passLine({ stage: 'eddies', state: 'unconfirmed', emitted: 0, failureCode: null })).toBe(
+      "Eddies — may have finished; your Corpus didn't say",
+    );
   });
 });

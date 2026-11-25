@@ -69,10 +69,11 @@ VOICE_READINESS_MESSAGES: Mapping[VoiceReadinessState, str | None] = MappingProx
     {
         VoiceReadinessState.NOT_CONSENTED: (
             "Sorting your journal is a separate decision, yours to make whenever you like. "
-            "With sorting on, a reflection from your Higher Self can reach beyond your last few "
-            "entries into what you have already written. When it draws from sorted writing, it "
-            "uses a few passages at a time and can lean toward where you stand in the course, "
-            "never using an Intimate one. Everything else you write here is sorted by Aspect. "
+            "With sorting on, a reflection from your Simulated Higher Self Voice can reach beyond "
+            "your last few entries into what you have already written. When it draws from sorted "
+            "writing, it uses a few passages at a time and can lean toward where you stand in the "
+            "course, never using an Intimate one. Everything else you write here is sorted by "
+            "Aspect. "
             "Perfectly fine to leave as it is."
         ),
         VoiceReadinessState.GATHERING: (
