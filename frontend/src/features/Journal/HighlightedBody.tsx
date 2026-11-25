@@ -16,6 +16,7 @@ import {
   type ResolvedFocusSpan,
 } from './highlightSegments';
 import entryStyles from './JournalEntry.styles';
+import { isListBlock, renderListRows, type TaskPress } from './JournalListBlock';
 import {
   markdownRuns,
   parseJournalMarkdown,
@@ -28,9 +29,7 @@ import {
   JOURNAL_RULE_STYLE,
   headingProps,
   headingStyle,
-  renderDecoratedLine,
   renderMarkdownRun,
-  type TaskPress,
   webRole,
 } from './ReadOnlyMarkdownText';
 import { lineSlice } from './renderedSpans';
@@ -287,30 +286,27 @@ function renderLine(
   return rendered;
 }
 
-/** Render every line in a block, restoring only the line feeds between them. */
+/**
+ * Render every line in a block. A list block is one hanging-indent row per
+ * line (the marker in its own column, see ``JournalListBlock``); any other
+ * block is the content of one ``<Text>``, line feeds restored between lines.
+ */
 function renderBlockLines(
   block: JournalMarkdownBlock,
   segments: AnchoredSegment[],
   render: RenderContext,
 ): React.ReactNode[] {
+  if (isListBlock(block)) {
+    const { document, onTaskPress } = render;
+    return renderListRows({ document, block, textStyle: styles.body, onTaskPress }, (line) =>
+      renderLine(line, segments, render),
+    );
+  }
   return block.lines.flatMap((line, index) => [
     ...(index === 0 ? [] : [`\n`]),
-    ...renderDecoratedLine(
-      render.document,
-      block,
-      line,
-      renderLine(line, segments, render),
-      render.onTaskPress,
-    ),
+    ...renderLine(line, segments, render),
   ]);
 }
-
-/** Kinds drawn as a list container: one indented item per line. */
-const LIST_BLOCK_KINDS: ReadonlySet<JournalMarkdownBlock['kind']> = new Set([
-  'bullet',
-  'ordered',
-  'task',
-]);
 
 /**
  * A rule's hairline. Its characters are hidden, so it normally draws nothing
@@ -340,14 +336,14 @@ function wrapBlock(block: JournalMarkdownBlock, content: React.ReactNode[]): Rea
       </View>
     );
   }
-  if (LIST_BLOCK_KINDS.has(block.kind)) {
+  if (isListBlock(block)) {
     return (
       <View
         accessibilityLabel="List"
         style={styles.bulletBlock}
         testID={`journal-markdown-${block.kind}-${block.start}`}
       >
-        <Text style={styles.body}>{content}</Text>
+        {content}
       </View>
     );
   }

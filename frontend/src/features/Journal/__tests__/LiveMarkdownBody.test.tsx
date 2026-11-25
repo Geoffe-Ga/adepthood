@@ -179,14 +179,15 @@ describe('LiveMarkdownBody on web', () => {
     ['spaces', '- one\n  - two\n    - three', [0, 2, 4]],
     ['tabs', '- one\n\t- two\n\t\t- three', [0, 4, 8]],
   ])('indents three nesting levels (%s) exactly as read mode does', (_label, body, columns) => {
+    const lineStarts = [0, ...Array.from(body.matchAll(/\n/gu), (match) => match.index + 1)];
+    // Read mode draws each list line as its own row (#3252): indent, marker, text.
     const read = render(<HighlightedBody body={body} notes={[]} onOpen={jest.fn()} />);
-    const readColumns = renderedText(read.getByTestId('journal-markdown-bullet-0'))
-      .split('\n')
-      .map((line) => line.indexOf('\u2022'));
+    const readColumns = lineStarts.map((start) =>
+      renderedText(read.getByTestId(`journal-markdown-item-${start}`)).indexOf('\u2022'),
+    );
     read.unmount();
 
     const edit = render(<Harness initial={body} />);
-    const lineStarts = [0, ...Array.from(body.matchAll(/\n/gu), (match) => match.index + 1)];
     const mirrorColumns = lineStarts.map((start) => {
       const indent = edit.queryByTestId(`journal-live-indent-${start}`);
       const text = indent == null ? '' : renderedText(indent);
