@@ -224,3 +224,46 @@ export function groupFolderAreas(folders: readonly VaultFolder[]): VaultArea[] {
   }
   return [...areas.values()];
 }
+
+/** Every file the account sent, over all its receipts, by how it settled (#3796). */
+export interface SentSummary {
+  /** Every receipt there is: one per file sent, landed or not. */
+  total: number;
+  /** Files the Corpus took. */
+  landed: number;
+  /** Files refused for their type before anything was written; not a failure. */
+  turnedAway: number;
+  /** Files that were not sent on, or settled in a way this app has no name for. */
+  notLanded: number;
+  /** Files sent whose answer never came back, so they may or may not be held. */
+  unconfirmed: number;
+}
+
+const SENT_LANDED = 'accepted';
+const SENT_TURNED_AWAY = 'unsupported_source';
+const SENT_UNCONFIRMED = 'degraded';
+
+/**
+ * ``totals.sent`` sorted into what the dashboard says about it. The server maps
+ * each receipt outcome to a count; an outcome this app does not know still
+ * counts toward the total, as a file that did not land, so the sum is always
+ * every file sent.
+ */
+export function sentSummary(sent: Readonly<Record<string, number>>): SentSummary {
+  const total = Object.values(sent).reduce((sum, count) => sum + count, 0);
+  const landed = sent[SENT_LANDED] ?? 0;
+  const turnedAway = sent[SENT_TURNED_AWAY] ?? 0;
+  const unconfirmed = sent[SENT_UNCONFIRMED] ?? 0;
+  return {
+    total,
+    landed,
+    turnedAway,
+    notLanded: total - landed - turnedAway - unconfirmed,
+    unconfirmed,
+  };
+}
+
+/** Whether a stage has covered every file there is; a corpus of none finishes nothing. */
+export function stageFinished(covered: number, documents: number): boolean {
+  return documents > 0 && covered === documents;
+}
