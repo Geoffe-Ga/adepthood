@@ -104,6 +104,8 @@ export type LocalSeedStatus =
  *  - `hidden_file`        — hidden, or inside a hidden folder.
  *  - `unsafe_name`        — a name or path the server would refuse.
  *  - `name_collision`     — one of two spellings of the same path.
+ *  - `subscriber_data`    — a Substack export's list of who received or opened
+ *                           a post, or of its subscribers (#3798).
  */
 export type SeedSkipStatus =
   | 'unsupported_format'
@@ -112,7 +114,8 @@ export type SeedSkipStatus =
   | 'app_settings'
   | 'hidden_file'
   | 'unsafe_name'
-  | 'name_collision';
+  | 'name_collision'
+  | 'subscriber_data';
 
 /**
  * A settled document's outcome: what its destination said, or what the device
@@ -216,6 +219,7 @@ const SKIPPED_STATUSES: readonly SeedItemStatus[] = [
   'hidden_file',
   'unsafe_name',
   'name_collision',
+  'subscriber_data',
   'unsupported_source',
 ];
 

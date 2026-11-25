@@ -21,6 +21,10 @@
  * settled row saying why it stayed behind, so a folder of mixed files counts
  * what was skipped rather than letting it vanish. Its name is all that goes:
  * a skipped file is never read and never sent.
+ *
+ * **A Substack export's reader lists are never offered (#3798).** Its per-post
+ * stat CSVs and subscriber roster are held back by name under their own
+ * reason, with the attachments on or off: they list other people, not writing.
  */
 import { isSafeFilename } from './pickSeedDocuments';
 import { MAX_SEED_DOCUMENT_BYTES } from './readSeedDocument';
@@ -30,6 +34,7 @@ import {
   normalizeSourceText,
   SOURCE_PATH_SEPARATOR,
 } from './seedSourcePath';
+import { isSubstackSubscriberCsv } from './substackSubscriberCsv';
 
 /** Most files a chosen folder may hold before the import is refused outright. */
 export const MAX_FOLDER_ENUMERATED_FILES = 10_000;
@@ -63,7 +68,13 @@ export interface FolderFileLike {
 
 /** Why a file in the folder is not offered for import. */
 export type FolderSkipReason =
-  'configuration' | 'hidden' | 'unsupported' | 'unsafe_path' | 'too_large' | 'collision';
+  | 'configuration'
+  | 'hidden'
+  | 'unsupported'
+  | 'unsafe_path'
+  | 'too_large'
+  | 'collision'
+  | 'subscriber_data';
 
 /** Why a file is not sent: a skip reason, or a supported attachment left switched off. */
 export type FolderLeftOutReason = FolderSkipReason | 'attachments_off';
@@ -135,6 +146,7 @@ function emptySkipCounts(): Record<FolderSkipReason, number> {
     unsafe_path: 0,
     too_large: 0,
     collision: 0,
+    subscriber_data: 0,
   };
 }
 
@@ -216,6 +228,8 @@ function sortFile<F extends FolderFileLike>(file: F, root: string): Sorted<F> {
   const name = components[components.length - 1] ?? '';
   const excluded = pathExclusion(components);
   if (excluded !== null) return excluded;
+  // Before its type and size: whatever else is true of it, this is why it stays.
+  if (isSubstackSubscriberCsv(name)) return 'subscriber_data';
   const kind = seedDocumentKind(name);
   if (kind === null) return 'unsupported';
   if (!isAcceptablePath(relativePath, name)) return 'unsafe_path';

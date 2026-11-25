@@ -145,6 +145,56 @@ describe('useSeedFolder', () => {
     for (const fake of VAULT) expect(fake.arrayBuffer).not.toHaveBeenCalled();
   });
 
+  test.each([true, false])(
+    "leaves a Substack export's stat CSVs on the device, attachments on: %s (#3798)",
+    async (includeAttachments) => {
+      const stats = [
+        file('My Vault/posts/141234.my-post.delivers.csv'),
+        file('My Vault/posts/141234.my-post.opens.csv'),
+        file('My Vault/email_list.csv'),
+      ];
+      const kept = [file('My Vault/posts.csv'), file('My Vault/budget.csv')];
+      const { send, hook } = await reviewing([...VAULT, ...stats, ...kept]);
+      expect(hook.result.current.review?.manifest.skipped.subscriber_data).toBe(3);
+      act(() => hook.result.current.setIncludeAttachments(includeAttachments));
+      await act(async () => {
+        await hook.result.current.start();
+      });
+      const documents: { name: string; browserFile?: unknown; skipped?: string }[] =
+        send.mock.calls[0][0];
+      expect(documents.filter((document) => document.skipped === 'subscriber_data')).toEqual([
+        {
+          name: 'email_list.csv',
+          uri: '',
+          size: null,
+          seedable: false,
+          skipped: 'subscriber_data',
+        },
+        {
+          name: 'posts/141234.my-post.delivers.csv',
+          uri: '',
+          size: null,
+          seedable: false,
+          skipped: 'subscriber_data',
+        },
+        {
+          name: 'posts/141234.my-post.opens.csv',
+          uri: '',
+          size: null,
+          seedable: false,
+          skipped: 'subscriber_data',
+        },
+      ]);
+      const handles = documents.map((document) => document.browserFile);
+      for (const stat of stats) {
+        expect(handles).not.toContain(stat);
+        expect(stat.arrayBuffer).not.toHaveBeenCalled();
+      }
+      // The manifest and an ordinary spreadsheet go exactly when attachments do.
+      for (const keep of kept) expect(handles.includes(keep)).toBe(includeAttachments);
+    },
+  );
+
   test('sends the attachments too once they are asked for', async () => {
     const { send, hook } = await reviewing(VAULT);
     act(() => hook.result.current.setIncludeAttachments(true));

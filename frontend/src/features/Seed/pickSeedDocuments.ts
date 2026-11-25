@@ -16,6 +16,7 @@ import * as DocumentPicker from 'expo-document-picker';
 
 import { SEED_DOCUMENT_EXTENSIONS } from './seedDocumentTypes';
 import type { SeedSkipStatus } from './seedRun';
+import { isSubstackSubscriberCsv } from './substackSubscriberCsv';
 
 import type { ImportDocumentSource } from '@/api';
 
@@ -47,9 +48,12 @@ export function isSafeFilename(name: string): boolean {
   return name === name.trim();
 }
 
-/** Whether this document is one the vault can both accept and read. */
+/**
+ * Whether this document is one the vault can both accept and read. A Substack
+ * export's stat or subscriber CSV is neither, whatever its extension (#3798).
+ */
 export function isSeedableFilename(name: string): boolean {
-  if (!isSafeFilename(name)) {
+  if (!isSafeFilename(name) || isSubstackSubscriberCsv(name)) {
     return false;
   }
   const lower = name.toLowerCase();
@@ -91,18 +95,36 @@ export interface PickedDocument {
 export type SeedPickResult =
   { kind: 'cancelled' } | { kind: 'failed' } | { kind: 'picked'; documents: PickedDocument[] };
 
+/**
+ * A picked stat or subscriber CSV (#3798), kept by its name alone and already
+ * skipped. The asset's uri and browser File are left behind here, so nothing
+ * later in the run holds anything it could open.
+ */
+function toSubscriberDataDocument(name: string): PickedDocument {
+  return { name, uri: '', size: null, seedable: false, skipped: 'subscriber_data' };
+}
+
+/** One picked asset as a document the run can read later. */
+function toPickedDocument(asset: DocumentPicker.DocumentPickerAsset): PickedDocument {
+  return {
+    name: asset.name,
+    uri: asset.uri,
+    size: asset.size ?? null,
+    seedable: isSeedableFilename(asset.name),
+    ...(asset.file ? { browserFile: asset.file } : {}),
+  };
+}
+
 /** Keep only assets carrying a file uri, mapping each in selection order. */
 function toPickedDocuments(assets: readonly DocumentPicker.DocumentPickerAsset[]) {
   const documents: PickedDocument[] = [];
   for (const asset of assets) {
     if (asset.uri) {
-      documents.push({
-        name: asset.name,
-        uri: asset.uri,
-        size: asset.size ?? null,
-        seedable: isSeedableFilename(asset.name),
-        ...(asset.file ? { browserFile: asset.file } : {}),
-      });
+      documents.push(
+        isSubstackSubscriberCsv(asset.name)
+          ? toSubscriberDataDocument(asset.name)
+          : toPickedDocument(asset),
+      );
     }
   }
   return documents;

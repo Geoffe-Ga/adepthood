@@ -84,12 +84,14 @@ const SKIP_PHRASES: Record<FolderSkipReason, string> = {
   unsafe_path: 'with a name that can’t be sent',
   too_large: `larger than ${MAX_SEED_DOCUMENT_LABEL}`,
   collision: 'spelled two ways that would overwrite each other',
+  subscriber_data: 'listing who received or opened a post',
 };
 
 /** In the order the manifest decides them. */
 const SKIP_ORDER: readonly FolderSkipReason[] = [
   'configuration',
   'hidden',
+  'subscriber_data',
   'unsupported',
   'unsafe_path',
   'too_large',

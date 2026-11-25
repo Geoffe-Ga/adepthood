@@ -183,6 +183,11 @@ export async function attemptSeedDocument(
   runId?: string,
   signal?: AbortSignal,
 ): Promise<SeedAttempt> {
+  // A document the device already skipped keeps its own reason, and is
+  // refused here before the read step could open it (#3798).
+  if (document.skipped !== undefined) {
+    return decidedOnDevice(document.skipped);
+  }
   if (!document.seedable) {
     return decidedOnDevice('unsupported_format');
   }

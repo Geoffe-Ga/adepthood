@@ -191,6 +191,38 @@ describe('choosing a folder on the seeding screen', () => {
     for (const handle of VAULT) expect(handle.arrayBuffer).not.toHaveBeenCalled();
   });
 
+  test("counts a Substack export's stat CSVs in the review, then leaves them here (#3798)", async () => {
+    const stats = [
+      file('My Vault/posts/141234.my-post.delivers.csv', 'a@example.com'),
+      file('My Vault/posts/141234.my-post.opens.csv', 'a@example.com'),
+      file('My Vault/email_list.csv', 'a@example.com'),
+    ];
+    nextFolder = [file('My Vault/essay.md'), file('My Vault/posts.csv'), ...stats];
+    const screen = render(<SeedCorpusScreen />);
+    await openReview(screen);
+
+    expect(screen.getByTestId('seed-folder-skipped')).toHaveTextContent(
+      'Left out 3 files: 3 listing who received or opened a post.',
+    );
+    fireEvent(screen.getByTestId('seed-folder-attachments'), 'valueChange', true);
+    await act(async () => {
+      fireEvent.press(screen.getByText(SEED_FOLDER_START_LABEL));
+    });
+
+    await waitFor(() =>
+      expect(screen.getByTestId('seed-summary').props.children).toBe(
+        '2 landed · 0 failed · 0 remaining · 3 skipped (unsupported type)',
+      ),
+    );
+    expect(sentBodies().map((body) => body.source_relative_path)).toEqual([
+      'essay.md',
+      'posts.csv',
+    ]);
+    expect(screen.getAllByText(SEED_STATUS_LINES.subscriber_data)).toHaveLength(3);
+    expect(screen.getByText('posts/141234.my-post.opens.csv')).toBeTruthy();
+    for (const stat of stats) expect(stat.arrayBuffer).not.toHaveBeenCalled();
+  });
+
   test('lists the first paths of a large folder and sums up the rest', async () => {
     nextFolder = Array.from({ length: SEED_FOLDER_PREVIEW_LIMIT + 3 }, (_value, index) =>
       file(`My Vault/notes/${String(index).padStart(3, '0')}.md`),

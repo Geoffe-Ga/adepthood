@@ -65,6 +65,7 @@ describe('buildFolderManifest', () => {
       unsafe_path: 0,
       too_large: 0,
       collision: 0,
+      subscriber_data: 0,
     });
   });
 
@@ -260,5 +261,59 @@ describe('selectFolderEntries', () => {
     const selection = selectFolderEntries(manifest, false);
     expect(selection.entries).toEqual([]);
     expect(selection.withinBounds).toBe(true);
+  });
+});
+
+describe("a Substack export's stat and subscriber CSVs (#3798)", () => {
+  const EXPORT = [
+    file('export/posts.csv', 40),
+    file('export/email_list.my-publication.csv', 900),
+    file('export/posts/141234.my-post.html', 500),
+    file('export/posts/141234.my-post.delivers.csv', 700),
+    file('export/posts/141234.my-post.OPENS.CSV', 800),
+    file('export/notes/budget.csv', 30),
+    file('export/notes/essay.md', 20),
+  ];
+  const SUBSCRIBER_FILES = [
+    { path: 'email_list.my-publication.csv', reason: 'subscriber_data' },
+    { path: 'posts/141234.my-post.OPENS.CSV', reason: 'subscriber_data' },
+    { path: 'posts/141234.my-post.delivers.csv', reason: 'subscriber_data' },
+  ];
+
+  test('are held back under their own reason, counted and kept by path', () => {
+    const manifest = manifestOf(EXPORT);
+    expect(manifest.skipped.subscriber_data).toBe(3);
+    expect(manifest.skipped.unsupported).toBe(0);
+    expect(manifest.skippedFiles).toEqual(SUBSCRIBER_FILES);
+  });
+
+  test('are never offered as attachments; posts.csv and an ordinary .csv still are', () => {
+    const manifest = manifestOf(EXPORT);
+    expect(manifest.attachments.map((entry) => entry.relativePath)).toEqual([
+      'notes/budget.csv',
+      'posts.csv',
+      'posts/141234.my-post.html',
+    ]);
+  });
+
+  test.each([true, false])('stay behind with attachments on: %s', (includeAttachments) => {
+    const selection = selectFolderEntries(manifestOf(EXPORT), includeAttachments);
+    const sent = selection.entries.map((entry) => entry.relativePath);
+    for (const { path } of SUBSCRIBER_FILES) expect(sent).not.toContain(path);
+    expect(selection.leftOut.filter((left) => left.reason === 'subscriber_data')).toEqual(
+      SUBSCRIBER_FILES,
+    );
+    // Their bytes are no part of what the selection would send.
+    expect(selection.bytes).toBe(includeAttachments ? 590 : 20);
+  });
+
+  test('an oversize stat file is still named for what it is, not for its size', () => {
+    const manifest = manifestOf([
+      file('export/posts/1.a.opens.csv', MAX_SEED_DOCUMENT_BYTES + 1),
+      file('export/a.md'),
+    ]);
+    expect(manifest.skippedFiles).toEqual([
+      { path: 'posts/1.a.opens.csv', reason: 'subscriber_data' },
+    ]);
   });
 });

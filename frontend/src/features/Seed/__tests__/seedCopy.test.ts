@@ -79,6 +79,7 @@ const EVERY_STATUS: readonly SeedItemStatus[] = [
   'hidden_file',
   'unsafe_name',
   'name_collision',
+  'subscriber_data',
   'unsupported_source',
   'too_large',
   'managed_too_large',
@@ -331,6 +332,7 @@ describe('a skipped file says why, and that nothing was sent (#3771)', () => {
     'hidden_file',
     'unsafe_name',
     'name_collision',
+    'subscriber_data',
   ];
 
   test.each(SKIPPED)('%s opens with "Skipped ·" and says it was never sent', (status) => {
@@ -339,6 +341,16 @@ describe('a skipped file says why, and that nothing was sent (#3771)', () => {
     expect(line.startsWith('Skipped · ')).toBe(true);
     expect(line).toMatch(/never sent|neither was sent|never was/u);
     expect(ranksOrShames(line)).toBe(false);
+  });
+
+  test('a stat or subscriber file says what it lists and that it stays here (#3798)', () => {
+    const line = SEED_STATUS_LINES.subscriber_data;
+
+    expect(line).toBe(
+      'Skipped · a list of who received or opened a post, so it stays on this device and ' +
+        'was never sent.',
+    );
+    expect(line).not.toMatch(/creek|vault/iu);
   });
 
   test('the examples read as the issue gives them', () => {

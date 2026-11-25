@@ -24,6 +24,7 @@ const NO_SKIPS = {
   unsafe_path: 0,
   too_large: 0,
   collision: 0,
+  subscriber_data: 0,
 };
 
 describe('folder review copy', () => {
@@ -62,6 +63,18 @@ describe('folder review copy', () => {
         '1 with a name that can’t be sent, 1 larger than 10 MB, ' +
         '2 spelled two ways that would overwrite each other.',
     );
+  });
+
+  test('counts the files listing who received or opened a post (#3798)', () => {
+    expect(folderSkippedLine({ ...NO_SKIPS, subscriber_data: 1 })).toBe(
+      'Left out 1 file: 1 listing who received or opened a post.',
+    );
+    const line = folderSkippedLine({ ...NO_SKIPS, hidden: 1, subscriber_data: 4, unsupported: 2 });
+    expect(line).toBe(
+      'Left out 7 files: 1 hidden, 4 listing who received or opened a post, ' +
+        '2 of a kind nothing here reads.',
+    );
+    expect(line).not.toMatch(/creek|vault/iu);
   });
 
   test('sizes a selection in KB below a megabyte and MB above it', () => {
