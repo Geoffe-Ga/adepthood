@@ -126,7 +126,7 @@ describe('useSeedFolder', () => {
   });
 
   test('sends what was left out too, as skipped documents with no handle (#3771)', async () => {
-    const { send, hook } = await reviewing([...VAULT, file('My Vault/export.json')]);
+    const { send, hook } = await reviewing([...VAULT, file('My Vault/export.jsonl')]);
     await act(async () => {
       await hook.result.current.start();
     });
@@ -140,7 +140,13 @@ describe('useSeedFolder', () => {
         seedable: false,
         skipped: 'attachments_off',
       },
-      { name: 'export.json', uri: '', size: null, seedable: false, skipped: 'unsupported_format' },
+      {
+        name: 'export.jsonl',
+        uri: '',
+        size: null,
+        seedable: false,
+        skipped: 'unsupported_format',
+      },
     ]);
     for (const fake of VAULT) expect(fake.arrayBuffer).not.toHaveBeenCalled();
   });

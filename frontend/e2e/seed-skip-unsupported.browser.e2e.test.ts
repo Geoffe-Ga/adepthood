@@ -61,12 +61,14 @@ test('unsupported files are skipped before anything is sent, counted, and never 
     'c.md': 'mixed sentinel 3771: the third note.\n',
   };
   const csv = 'date,words\n2024-01-01,mixed sentinel 3771 csv\n';
+  // `.jsonl`, not `.json`: since #3797 a `.json` is sent for the vault to
+  // decide, and stays behind here only as an attachment left switched off.
   const json = '{"mixed": "sentinel 3771 json"}\n';
   const folder = writeFolder(namespace, {
     ...notes,
     'data/2024.csv': csv,
     'data/2025.csv': csv.replace('2024', '2025'),
-    'export.json': json,
+    'export.jsonl': json,
     '.obsidian/app.json': OBSIDIAN_CONFIG,
   });
   const sent = recordRequests(page);
@@ -106,7 +108,7 @@ test('unsupported files are skipped before anything is sent, counted, and never 
   );
   await expect(runRow(page, 'data/2024.csv')).toContainText(ATTACHMENTS_OFF_LINE);
   await expect(runRow(page, 'data/2025.csv')).toContainText(ATTACHMENTS_OFF_LINE);
-  await expect(runRow(page, 'export.json')).toContainText(UNSUPPORTED_LINE);
+  await expect(runRow(page, 'export.jsonl')).toContainText(UNSUPPORTED_LINE);
   await expect(runRow(page, '.obsidian/app.json')).toContainText(APP_SETTINGS_LINE);
   expect(importPosts(sent)).toHaveLength(1);
   releaseFirst();

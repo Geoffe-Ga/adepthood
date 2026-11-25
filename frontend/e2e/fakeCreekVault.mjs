@@ -65,6 +65,16 @@ import { fileURLToPath } from 'node:url';
  * vault breaking the content-free promise would. Neither is ever recorded in
  * the ledger: they are reads of the audit, not traffic adepthood sent.
  *
+ * **A lone `.json` is decided by what it holds** (Creek-Vault#2148, #3797), as
+ * Creek's upload route decides it above its extension table: a ChatGPT
+ * `conversations.json` (a list whose first entry carries `mapping`), a Claude
+ * export (an object with `conversations`, or with `messages` and an id) or a
+ * Discord channel's `messages.json` (a list whose first entry carries a whole
+ * message signature) is stored like any other upload and answered with the
+ * export's `source_type`. Any other `.json`, and one of those shapes with
+ * nothing in it, is answered `415 unsupported_source`, stores nothing, and is
+ * recorded with `action: 'refused'`. Nothing has to be armed: the bytes decide.
+ *
  * `POST /__lane/fail-upload` arms one refusal for the upload whose content
  * digest it names: that `POST /v1/uploads` is answered `503 unavailable` -- a
  * real outage, not the retryable `temporarily_unavailable` a busy vault answers
@@ -165,6 +175,7 @@ const HTTP_BAD_REQUEST = 400;
 const HTTP_UNAUTHORIZED = 401;
 const HTTP_NOT_FOUND = 404;
 const HTTP_INCOMPATIBLE_VERSION = 409;
+const HTTP_UNSUPPORTED_MEDIA_TYPE = 415;
 const HTTP_SERVICE_UNAVAILABLE = 503;
 /** The production client makes one call plus two bounded idempotent retries. */
 const ADEPTHOOD_DELETE_ATTEMPTS = 3;
@@ -664,6 +675,68 @@ function store(kind, externalId, digest) {
   return { fragment: held, action: 'updated' };
 }
 
+/** The extension of a loose conversation export (Creek's `LOOSE_JSON_SUFFIX`). */
+const LOOSE_JSON_SUFFIX = '.json';
+
+/**
+ * The keys one Discord message carries, in each schema Creek's ingestor reads
+ * (`_DISCORD_MESSAGE_SIGNATURES`, creek/ingest/archive.py).
+ */
+const DISCORD_MESSAGE_SIGNATURES = [
+  ['ID', 'Timestamp', 'Contents'],
+  ['id', 'timestamp', 'content'],
+];
+
+function isRecord(value) {
+  return value !== null && typeof value === 'object' && !Array.isArray(value);
+}
+
+/**
+ * Which export one parsed JSON document is, or null: Creek's
+ * `detect_document_export_type` (creek/ingest/archive.py), restated. The three
+ * shapes are disjoint, so the order decides nothing.
+ */
+function looseExportType(document) {
+  if (Array.isArray(document)) {
+    const first = document[0];
+    if (!isRecord(first)) return null;
+    if ('mapping' in first) return 'chatgpt';
+    return DISCORD_MESSAGE_SIGNATURES.some((keys) => keys.every((key) => key in first))
+      ? 'discord'
+      : null;
+  }
+  if (!isRecord(document)) return null;
+  if ('conversations' in document) return 'claude';
+  return 'messages' in document && ('conversation_id' in document || 'uuid' in document)
+    ? 'claude'
+    : null;
+}
+
+/** Whether a recognised export holds nothing Creek could make a fragment from. */
+function isEmptyExport(document) {
+  if (Array.isArray(document)) return false;
+  const held = document.conversations ?? document.messages;
+  return Array.isArray(held) && held.length === 0;
+}
+
+/**
+ * What this vault does with an upload named `filename`: `{ sourceType }` when it
+ * ingests it, or null when it answers `415 unsupported_source`. Only a `.json`
+ * is ever refused here; every other name is ingested as before.
+ */
+function uploadRouting(filename, contentBase64) {
+  if (!String(filename).toLowerCase().endsWith(LOOSE_JSON_SUFFIX))
+    return { sourceType: 'markdown' };
+  let document;
+  try {
+    document = JSON.parse(Buffer.from(contentBase64, 'base64').toString('utf8'));
+  } catch {
+    return null;
+  }
+  const sourceType = looseExportType(document);
+  return sourceType === null || isEmptyExport(document) ? null : { sourceType };
+}
+
 async function uploads(request, response) {
   if (request.headers[CONTRACT_HEADER] !== CONTRACT_MINOR) {
     refuse(response, HTTP_INCOMPATIBLE_VERSION, 'incompatible_version');
@@ -714,6 +787,21 @@ async function uploads(request, response) {
     refuse(response, HTTP_SERVICE_UNAVAILABLE, 'unavailable');
     return;
   }
+  const routing = uploadRouting(body.filename, body.content_base64);
+  if (routing === null) {
+    // Refused for what it holds, above any write: nothing is stored.
+    received.push({
+      method: 'POST',
+      path: '/v1/uploads',
+      externalId: body.external_id,
+      tier: body.tier,
+      ceiling: request.headers[CEILING_HEADER] ?? null,
+      digest,
+      action: 'refused',
+    });
+    refuse(response, HTTP_UNSUPPORTED_MEDIA_TYPE, 'unsupported_source');
+    return;
+  }
   const { fragment, action } = store('upload', body.external_id, digest);
   // Committed above, before the reply is chosen: the order a real vault has
   // no way to undo once its answer is lost on the way back.
@@ -738,7 +826,7 @@ async function uploads(request, response) {
     affected_fragment_ids: [fragment.fragmentId],
     external_id: body.external_id,
     fragment_id: fragment.fragmentId,
-    source_type: 'markdown',
+    source_type: routing.sourceType,
     status: 'ok',
     tier_ceiling: body.tier,
   });
