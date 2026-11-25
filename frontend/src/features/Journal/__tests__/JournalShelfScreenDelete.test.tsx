@@ -163,7 +163,7 @@ describe('deleting one journal entry from the shelf', () => {
     expect(body).toMatch(/no way back to it from inside the app/i);
     // The withdrawal from the ontologized corpus is a promise about where the writing goes.
     expect(body).toMatch(/reflections draw on/i);
-    expect(body).toMatch(/removal.*Creek vault copies.*requested/i);
+    expect(body).toMatch(/removal of earlier copies in your Corpus is requested/i);
     expect(body).toMatch(/may remain until the vault confirms/i);
     expect(body).toMatch(/pending.*stays on your shelf.*cannot be edited/i);
     expect(body).toMatch(/automatically retries.*recorded vault.*reachable/i);
@@ -223,7 +223,7 @@ describe('deleting one journal entry from the shelf', () => {
     const notice = (await findByTestId('journal-delete-error')).props.children as string;
     expect(notice).toMatch(/set to be deleted/i);
     expect(notice).toMatch(/cannot be edited/i);
-    expect(notice).toMatch(/removal.*your Creek vault.*not been confirmed/i);
+    expect(notice).toMatch(/removal.*your Corpus.*not been confirmed/i);
     expect(notice).toMatch(/Adepthood retries while that vault is reachable/i);
     expect(notice).not.toMatch(/could not delete|delete this page again|still on your shelf/i);
     expect(getByTestId('journal-shelf-card-2')).toBeTruthy();
@@ -260,7 +260,7 @@ describe('a page whose vault copy cannot be confirmed gone (#3094)', () => {
 
     const notice = getByTestId('journal-delete-error').props.children as string;
     expect(notice).toMatch(/set to be deleted/i);
-    expect(notice).toMatch(/not been confirmed.*previous Creek vault/i);
+    expect(notice).toMatch(/not been confirmed.*previous Corpus/i);
     expect(notice).toMatch(/reconnect that vault in Settings to allow retry/i);
     expect(notice).toMatch(/cannot be edited/i);
     expect(notice).not.toMatch(/finishes once you reconnect/i);
@@ -278,7 +278,7 @@ describe('a page whose vault copy cannot be confirmed gone (#3094)', () => {
     const { getByTestId } = await refusedWith('vault_withdrawal_disconnected_vault');
 
     const notice = getByTestId('journal-delete-error').props.children as string;
-    expect(notice).toMatch(/vault you disconnected/i);
+    expect(notice).toMatch(/the Corpus you disconnected/i);
   });
 
   it('tells the person a pre-binding copy may remain in an earlier vault (#3095)', async () => {
@@ -325,7 +325,7 @@ describe('a page whose vault copy cannot be confirmed gone (#3094)', () => {
     expect(mockEraseLocally).toHaveBeenCalledWith(2);
     const receipt = (await findByTestId('journal-erasure-receipt')).props.children as string;
     expect(receipt).toMatch(/deleted from adepthood/i);
-    expect(receipt).toMatch(/copy may still be in the Creek vault you were connected to before/i);
+    expect(receipt).toMatch(/copy may still be in the Corpus you were connected to before/i);
     expect(receipt).toMatch(/delete it there/i);
     expect(receipt).not.toMatch(/withdrawn|removed from your vault|is gone/i);
     await waitFor(() => expect(queryByTestId('journal-shelf-card-2')).toBeNull());
@@ -404,7 +404,7 @@ describe('the receipt names where a copy may remain (#3094)', () => {
       remote_copy: 'unconfirmed',
       copy_location: 'connected_vault',
     });
-    expect(notice).toMatch(/copy may still be in your Creek vault/);
+    expect(notice).toMatch(/copy may still be in your Corpus/);
     expect(notice).not.toMatch(/withdrawn|is gone too/);
   });
 
@@ -415,8 +415,8 @@ describe('the receipt names where a copy may remain (#3094)', () => {
       copy_location: 'unrecorded_vault',
     });
     expect(notice).toMatch(/deleted from adepthood/i);
-    expect(notice).toMatch(/copied to a Creek vault before October 7, 2026/);
-    expect(notice).toMatch(/may still be in a Creek vault you connected earlier/i);
+    expect(notice).toMatch(/copied to a Corpus before October 7, 2026/);
+    expect(notice).toMatch(/may still be in a Corpus you connected earlier/i);
     expect(notice).not.toMatch(/withdrawn|is gone too/);
   });
 
@@ -426,6 +426,6 @@ describe('the receipt names where a copy may remain (#3094)', () => {
       remote_copy: 'unconfirmed',
       copy_location: null,
     });
-    expect(notice).toMatch(/copy may still be in your Creek vault/);
+    expect(notice).toMatch(/copy may still be in your Corpus/);
   });
 });

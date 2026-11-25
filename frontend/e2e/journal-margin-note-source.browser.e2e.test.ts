@@ -193,7 +193,7 @@ test('bound Creek source and unrecorded model survive a real backend reload', as
     model: null,
     receipt_version: 1,
   });
-  await expect(page.getByTestId('resonance-notes-source')).toHaveText('From your Creek vault');
+  await expect(page.getByTestId('resonance-notes-source')).toHaveText('From your Corpus');
   await expect(
     page.getByTestId('resonance-pass-receipt').getByText('Model not recorded'),
   ).toBeVisible();
@@ -201,7 +201,7 @@ test('bound Creek source and unrecorded model survive a real backend reload', as
   await page.reload();
   await openEntry(page, entryId);
   await expect(page.locator('[data-testid^="margin-note-source-"]').first()).toHaveText(
-    'From your Creek vault',
+    'From your Corpus',
   );
   await expect(page.getByTestId('resonance-pass-receipt')).toHaveCount(0);
   // With the pass receipt gone, the notes are all that is left: one caption per vault
@@ -302,8 +302,8 @@ const CASES: ControlledCase[] = [
       notes: { source: 'creek_vault', provider: 'creek', model: null, receipt_version: 1 },
       paid_by: 'free',
     },
-    noteSource: 'From your Creek vault',
-    passSource: 'From your Creek vault',
+    noteSource: 'From your Corpus',
+    passSource: 'From your Corpus',
     payer: 'No Adepthood wallet charge',
     completion: 'No AI completion check was sent.',
   },

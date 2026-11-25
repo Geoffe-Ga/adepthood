@@ -845,9 +845,10 @@ const ManagedActivationOffer = ({
       {continuing ? 'Continue managed vault setup' : 'Let Adepthood create one'}
     </Text>
     <Text style={settingsFormStyles.body}>
-      Ask Adepthood to set up an optional vault for you, kept on Fly's servers. Fly and the people
-      who run Adepthood and Creek can read what is stored there; anything you mark Intimate never
-      goes there. Your journal stays open the whole time it is being set up.
+      Ask Adepthood to set up an optional vault for you, kept on Fly's servers. Fly, the people who
+      run Adepthood and the people who make the software behind the vault can read what is stored
+      there; anything you mark Intimate never goes there. Your journal stays open the whole time it
+      is being set up.
     </Text>
     <Button
       label={continuing ? 'Continue setup' : 'Create a managed vault'}

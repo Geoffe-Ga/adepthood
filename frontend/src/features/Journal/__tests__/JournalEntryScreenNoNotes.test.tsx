@@ -206,9 +206,7 @@ describe('JournalEntryScreen — the pass names its source (#3062)', () => {
       payload({ no_notes_message: NO_NOTES, provenance: provenance('creek_vault') }),
     );
 
-    expect((await findByTestId('resonance-pass-source')).props.children).toBe(
-      'From your Creek vault',
-    );
+    expect((await findByTestId('resonance-pass-source')).props.children).toBe('From your Corpus');
     expect((await findByTestId('journal-resonance-no-notes')).props.children).toBe(NO_NOTES);
   });
 

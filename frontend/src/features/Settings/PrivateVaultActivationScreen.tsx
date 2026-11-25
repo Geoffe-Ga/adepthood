@@ -58,8 +58,9 @@ const CustodyNotice = (): React.JSX.Element => (
     <Text style={styles.noticeTitle}>Who can read a managed vault</Text>
     <Text style={styles.body}>
       A managed vault lives on servers run by a hosting company called Fly. It is encrypted, but Fly
-      holds the keys, so Fly, and anyone with enough access at Adepthood or at Creek (the software
-      behind the vault), could read what is stored there. It is not hidden from them.
+      holds the keys, so Fly, and anyone with enough access at Adepthood or among the people who
+      make the software behind the vault, could read what is stored there. It is not hidden from
+      them.
     </Text>
     <Text style={styles.body}>
       Entries you mark Intimate stay in Adepthood and are never sent to a managed vault or to any
@@ -158,7 +159,7 @@ const Progress = ({ state }: { state: VaultActivation['state'] }): React.JSX.Ele
 
 function readyCustodyCopy(custodyMode: VaultActivation['custody_mode']): string {
   if (custodyMode === 'provider_managed') {
-    return 'Your vault is locked with keys the hosting company (Fly) holds. Fly, and people with enough access at Adepthood or Creek, can read what is stored there.';
+    return 'Your vault is locked with keys the hosting company (Fly) holds. Fly, and people with enough access at Adepthood or among the makers of the software behind it, can read what is stored there.';
   }
   if (custodyMode === 'wrapped_artifact_only') {
     return 'This vault was set up under an older arrangement. Any key from that time never actually locked its storage, so there is no key of yours to recover.';

@@ -18,7 +18,7 @@ export const DELETE_ENTRY_TITLE = 'Delete this page?';
  * quietly — deleting a page stops that writing being retrieved as context.
  */
 export const DELETE_ENTRY_BODY =
-  'Deletion is requested here and for the copy your reflections draw on. Removal of earlier Creek vault copies is requested too; they may remain until the vault confirms. ' +
+  'Deletion is requested here and for the copy your reflections draw on. Removal of earlier copies in your Corpus is requested too; they may remain until the vault confirms. ' +
   'While that removal is pending, the page stays on your shelf and cannot be edited. Adepthood automatically retries when the recorded vault is reachable. ' +
   'There is no way back to it from inside the app.';
 
@@ -67,10 +67,10 @@ export const UNREACHABLE_ERASE_EXPLAINER =
 
 /** Where a copy may remain, in terms the person already knows. */
 const PLACE: Readonly<Record<CopyLocation, string>> = {
-  connected_vault: 'your Creek vault',
-  previous_vault: 'the Creek vault you were connected to before',
-  disconnected_vault: 'the Creek vault you disconnected',
-  unrecorded_vault: 'a Creek vault you connected earlier',
+  connected_vault: 'your Corpus',
+  previous_vault: 'the Corpus you were connected to before',
+  disconnected_vault: 'the Corpus you disconnected',
+  unrecorded_vault: 'a Corpus you connected earlier',
 };
 
 /**
@@ -88,10 +88,10 @@ export const ALREADY_DELETED_NOTICE = 'This page was already deleted.';
 /** The receipt after deleting here only: plain, and never "withdrawn" unless confirmed. */
 export function erasureReceiptNotice(receipt: JournalErasureReceipt): string {
   if (receipt.remote_copy === 'confirmed_absent') {
-    return 'Deleted. Your Creek vault confirmed its copy is gone too.';
+    return 'Deleted. Your Corpus confirmed its copy is gone too.';
   }
   if (receipt.copy_location === 'unrecorded_vault') {
-    return `Deleted from Adepthood. This page was copied to a Creek vault before ${VAULT_BINDING_BEGAN}, before we recorded which vault received it, so a copy may still be in ${PLACE.unrecorded_vault}. We can't confirm it's gone, so please delete it there.`;
+    return `Deleted from Adepthood. This page was copied to a Corpus before ${VAULT_BINDING_BEGAN}, before we recorded which vault received it, so a copy may still be in ${PLACE.unrecorded_vault}. We can't confirm it's gone, so please delete it there.`;
   }
   const place = PLACE[receipt.copy_location ?? 'connected_vault'];
   return `Deleted from Adepthood. A copy may still be in ${place}. We couldn't confirm it's gone, so please delete it there.`;

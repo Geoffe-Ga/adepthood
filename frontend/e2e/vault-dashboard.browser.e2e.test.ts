@@ -244,7 +244,7 @@ test('a seeded file says where it landed, and "Your vault" shows its folder and 
   await expect(page.getByTestId(`vault-folder-count-${SUBSTACK_FOLDER}`)).toHaveText('212');
   await page.getByTestId('vault-area-toggle-09-Reference').click();
   await expect(page.getByTestId('vault-folder-09-Reference/External-Sources')).toContainText(
-    "Creek doesn't fill this one on its own — it's yours to fill.",
+    "This one doesn't fill on its own — it's yours to fill.",
   );
   const shape = await page.getByTestId('vault-dashboard-shape').innerText();
   for (const token of ['owner_curated', 'container', 'link.eddies', 'linked:eddies']) {

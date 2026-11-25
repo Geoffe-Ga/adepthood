@@ -203,7 +203,7 @@ const VAULT_WITHDRAWAL_PENDING_HINT =
 // DRAFT copy (#3094 review), pending owner review. The copy is in a vault this
 // account is no longer connected to, so choosing Intimate again cannot reach it.
 const VAULT_WITHDRAWAL_RECONNECT_HINT =
-  'Intimate here. A copy of this page is in a Creek vault you’re no longer connected to — reconnect that vault in Settings so it can remove the copy.';
+  'Intimate here. A copy of this page is in a Corpus you’re no longer connected to — reconnect that vault in Settings so it can remove the copy.';
 const VAULT_WITHDRAWAL_UNRECORDED_HINT =
   'Intimate here. Adepthood cannot identify the vault that received this older copy, so removal cannot be confirmed. It may remain in a vault you connected earlier.';
 // A recorded DELETE locks edits. Its 409 omits the destination, so no known

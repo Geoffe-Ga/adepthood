@@ -640,7 +640,7 @@ describe('JournalShelfScreen', () => {
     expect(await findByText('Your journal is empty')).toBeTruthy();
     expect(
       await findByText(
-        'Start your first page. With corpus sorting enabled, every eligible page not marked Intimate joins your private corpus, whether new or already written. Higher Self may draw a few passages from it for a reflection.',
+        'Start your first page. With corpus sorting enabled, every eligible page not marked Intimate joins your private corpus, whether new or already written. Your Simulated Higher Self Voice may draw a few passages from it for a reflection.',
       ),
     ).toBeTruthy();
     expect(await findByTestId('journal-empty-cta')).toBeTruthy();

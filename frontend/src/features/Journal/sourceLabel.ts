@@ -22,7 +22,7 @@
  */
 export const SOURCE_LABEL_COPY = {
   demo: 'Demo — not a real reflection',
-  creekVault: 'From your Creek vault',
+  creekVault: 'From your Corpus',
   appProvider: "From the app's AI provider",
   notRun: 'No check was run',
   notRecorded: 'Source not recorded',
@@ -54,7 +54,7 @@ type InferenceProvider = 'openai' | 'anthropic' | 'creek' | 'stub';
 export const INFERENCE_PROVIDER_NAMES: Record<InferenceProvider, string> = {
   openai: 'OpenAI',
   anthropic: 'Anthropic',
-  creek: 'Creek',
+  creek: 'Your Corpus',
   stub: 'Demo',
 };
 
@@ -69,7 +69,7 @@ const PROVIDER_IMPLIED_BY_SOURCE: Partial<Record<string, InferenceProvider>> = {
  * provider and model, or ``null`` when there is nothing the label has not said.
  *
  * A card repeats on every note, so it carries only what adds information. A
- * provider the source already implies ("From your Creek vault" / Creek) is
+ * provider the source already implies ("From your Corpus" / Your Corpus) is
  * dropped, and an identity that was not recorded is left unsaid rather than
  * announced -- the pass receipt still spells out every absence. "Reported"
  * keeps the hedge: the identity is the server's disclosure, not attestation.

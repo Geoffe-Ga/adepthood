@@ -407,7 +407,7 @@ for (const width of [390, 1280]) {
         await erase.click();
       }
       await expect(page.getByTestId('journal-erasure-receipt')).toContainText(
-        'a copy may still be in a Creek vault you connected earlier',
+        'a copy may still be in a Corpus you connected earlier',
       );
       expect(copyOrigin('show', id)).toMatchObject({
         deleted_here: true,
