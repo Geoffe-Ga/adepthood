@@ -10,7 +10,14 @@
  * ``useJournalDrawerEntries`` hook, which lives above the ``ScreenDrawer`` panel
  * so its cache survives close/reopen (mirrors ``useCourseDrawerContent``).
  */
-import { Camera, Library, Quote, ScrollText, SquarePen } from 'lucide-react-native';
+import {
+  Camera,
+  LayoutDashboard,
+  Library,
+  Quote,
+  ScrollText,
+  SquarePen,
+} from 'lucide-react-native';
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
@@ -42,6 +49,7 @@ import {
 } from '@/components/drawer';
 import { accent, ink, radius, SPACING, surface, touchTarget, type } from '@/design/tokens';
 import { fetchVaultConnectionState } from '@/features/Settings/useVaultConnectionState';
+import { VAULT_DASHBOARD_TITLE } from '@/features/Settings/vaultDashboardCopy';
 
 /** Row that starts a fresh, blank entry. */
 const NEW_ENTRY_LABEL = 'New entry';
@@ -382,6 +390,8 @@ export interface JournalDrawerProps {
   onPhotograph?: () => void;
   /** Open the consent decision or corpus import surface, as readiness requires. */
   onOpenCorpus: () => void;
+  /** Open the dashboard. Carries no count — see ``VOICE_DRAFTS_LABEL``. */
+  onOpenVaultDashboard: () => void;
   /** Open the Voice Drafts shelf. Carries no count — see ``VOICE_DRAFTS_LABEL``. */
   onOpenVoiceDrafts: () => void;
   /** Open the Promoted quotes screen. Carries no count — see ``PROMOTED_QUOTES_LABEL``. */
@@ -429,6 +439,7 @@ function DrawerActions({
   onNewEntry,
   onPhotograph,
   onOpenCorpus,
+  onOpenVaultDashboard,
   onOpenVoiceDrafts,
   onOpenPromotedQuotes,
   corpusOpenState,
@@ -436,6 +447,7 @@ function DrawerActions({
   onNewEntry: () => void;
   onPhotograph?: () => void;
   onOpenCorpus: () => void;
+  onOpenVaultDashboard: () => void;
   onOpenVoiceDrafts: () => void;
   onOpenPromotedQuotes: () => void;
   corpusOpenState: CorpusOpenState;
@@ -457,6 +469,7 @@ function DrawerActions({
         />
       ) : null}
       <CorpusDrawerAction state={corpusOpenState} onPress={onOpenCorpus} />
+      <VaultDashboardDoor onPress={onOpenVaultDashboard} />
       <DrawerItem
         testID="journal-drawer-voice-drafts"
         label={VOICE_DRAFTS_LABEL}
@@ -465,6 +478,24 @@ function DrawerActions({
       />
       <DrawerDoors onOpenPromotedQuotes={onOpenPromotedQuotes} />
     </>
+  );
+}
+
+/**
+ * The count-free door to the dashboard, named by the screen it opens so the two
+ * cannot drift. Shown to every account: the dashboard says for itself when
+ * nothing is connected, so this door needs no lookup of its own (#3794).
+ */
+function VaultDashboardDoor({ onPress }: { onPress: () => void }): React.JSX.Element {
+  return (
+    <DrawerItem
+      testID="journal-drawer-vault-dashboard"
+      label={VAULT_DASHBOARD_TITLE}
+      icon={
+        <LayoutDashboard color={ink.muted} size={NAV_ICON_SIZE} strokeWidth={NAV_ICON_STROKE} />
+      }
+      onPress={onPress}
+    />
   );
 }
 
@@ -534,6 +565,7 @@ export default function JournalDrawer(props: JournalDrawerProps): React.JSX.Elem
         onNewEntry={props.onNewEntry}
         onPhotograph={props.onPhotograph}
         onOpenCorpus={props.onOpenCorpus}
+        onOpenVaultDashboard={props.onOpenVaultDashboard}
         onOpenVoiceDrafts={props.onOpenVoiceDrafts}
         onOpenPromotedQuotes={props.onOpenPromotedQuotes}
         corpusOpenState={props.corpusOpenState}
@@ -584,6 +616,8 @@ export interface JournalScreenDrawerProps {
   onPhotograph?: () => void;
   /** Navigate through the corpus door once the shared readiness rule resolves it. */
   onOpenCorpus: (_destination: CorpusDestination) => void;
+  /** Open the vault dashboard, closing the drawer behind it. */
+  onOpenVaultDashboard: () => void;
   /** Open the Voice Drafts shelf, closing the drawer behind it. */
   onOpenVoiceDrafts: () => void;
   /** Open the Promoted quotes screen, closing the drawer behind it. */
@@ -652,6 +686,7 @@ export function JournalScreenDrawer({
   onNewEntry,
   onPhotograph,
   onOpenCorpus,
+  onOpenVaultDashboard,
   onOpenVoiceDrafts,
   onOpenPromotedQuotes,
 }: JournalScreenDrawerProps): React.JSX.Element {
@@ -678,6 +713,7 @@ export function JournalScreenDrawer({
         onNewEntry={onNewEntry}
         onPhotograph={onPhotograph}
         onOpenCorpus={corpusAction.open}
+        onOpenVaultDashboard={onOpenVaultDashboard}
         onOpenVoiceDrafts={onOpenVoiceDrafts}
         onOpenPromotedQuotes={onOpenPromotedQuotes}
         corpusOpenState={corpusAction.state}

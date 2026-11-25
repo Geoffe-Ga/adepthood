@@ -288,6 +288,23 @@ describe('Journal header drawer from JournalShelfScreen', () => {
     expect(queryByTestId('screen-drawer')).toBeNull();
   });
 
+  it('opens the vault dashboard from the drawer and closes the drawer behind it', async () => {
+    const { getByTestId, getByLabelText, queryByTestId } = render(<ShelfScreenWithHeader />);
+    await waitFor(() => expect(getByTestId('journal-shelf-card-1')).toBeTruthy());
+
+    fireEvent.press(getByLabelText('Open Journal menu'));
+    await waitFor(() => expect(getByTestId('journal-drawer-vault-dashboard')).toBeTruthy());
+
+    await act(async () => {
+      fireEvent.press(getByTestId('journal-drawer-vault-dashboard'));
+    });
+
+    // A plain door for every account (#3794): no vault lookup stands in front
+    // of it, because the dashboard says for itself when nothing is connected.
+    expect(mockNavigate).toHaveBeenCalledWith('VaultDashboard');
+    expect(queryByTestId('screen-drawer')).toBeNull();
+  });
+
   it('opens Write a review from the drawer and closes the drawer behind it', async () => {
     const { getByTestId, getByLabelText, queryByTestId } = render(<ShelfScreenWithHeader />);
     await waitFor(() => expect(getByTestId('journal-shelf-card-1')).toBeTruthy());

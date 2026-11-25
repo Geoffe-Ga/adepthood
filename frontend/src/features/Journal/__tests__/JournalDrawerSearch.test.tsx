@@ -87,6 +87,7 @@ function renderDrawer(props: Partial<DrawerHarnessProps> = {}) {
       onRowPress={jest.fn()}
       onNewEntry={jest.fn()}
       onOpenCorpus={jest.fn()}
+      onOpenVaultDashboard={jest.fn()}
       onOpenVoiceDrafts={jest.fn()}
       corpusOpenState="idle"
       onLoadMore={jest.fn()}
@@ -263,6 +264,7 @@ function Harness(): React.JSX.Element {
           onRowPress={() => undefined}
           onNewEntry={() => undefined}
           onOpenCorpus={() => undefined}
+          onOpenVaultDashboard={() => undefined}
           onOpenVoiceDrafts={() => undefined}
           corpusOpenState="idle"
           onLoadMore={loadMore}
@@ -507,6 +509,7 @@ describe('JournalDrawer sweep status precedence', () => {
         onRowPress={jest.fn()}
         onNewEntry={jest.fn()}
         onOpenCorpus={jest.fn()}
+        onOpenVaultDashboard={jest.fn()}
         onOpenVoiceDrafts={jest.fn()}
         corpusOpenState="idle"
         onLoadMore={jest.fn()}
@@ -539,6 +542,7 @@ describe('JournalDrawer sweep status precedence', () => {
           onRowPress={jest.fn()}
           onNewEntry={jest.fn()}
           onOpenCorpus={jest.fn()}
+          onOpenVaultDashboard={jest.fn()}
           onOpenVoiceDrafts={jest.fn()}
           corpusOpenState="idle"
           onLoadMore={jest.fn()}

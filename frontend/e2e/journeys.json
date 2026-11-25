@@ -1664,6 +1664,18 @@
     "coveredBy": "frontend/e2e/vault-dashboard.browser.e2e.test.ts"
   },
   {
+    "id": "journal.drawer-opens-the-dashboard",
+    "description": "A writer opens the dashboard from the Journal's side drawer instead of going through Settings (#3794). The row sits directly under Corpus upload with an icon like its neighbours, carries no count, and is named by the dashboard's own title constant, so the spec reads the row's label and finds the same words as the screen's heading rather than spelling either. It is shown to every account and asks nothing first: the spec drives a fresh account with no vault, from the Journal shelf and again from an open entry, and each time the drawer closes and the dashboard's own answer to the live GET /vault/pipeline (vault_status not_connected) says nothing is connected. What the dashboard shows for an account with a vault is vault.dashboard-shows-where-uploads-landed; the row's place, icon and in-place navigation from both drawer hosts are also pinned in JournalDrawer.test.tsx, JournalShelfScreenDrawer.test.tsx and JournalEntryScreenDrawer.test.tsx.",
+    "crosses": {
+      "screen": "frontend/src/features/Journal/JournalDrawer.tsx",
+      "client": ["auth", "vault"],
+      "routes": ["POST /auth/signup", "GET /vault/pipeline"],
+      "tables": ["user"]
+    },
+    "status": "covered",
+    "coveredBy": "frontend/e2e/journal-vault-dashboard-door.browser.e2e.test.ts"
+  },
+  {
     "id": "corpus.import-without-a-vault",
     "description": "Someone the server finds no vault for brings in a document they wrote elsewhere. A corpus lives in a vault (owner ruling on #3015), so since #3016 the answer is vault_required and nothing else happens: the document is not read, consent is not consulted, no provider is called and nothing is stored -- destination corpus, stored false, fragment_id null, vault fields null. The spec proves the document was never looked at by sending each thing the retired local import used to answer differently -- a .md with no consent, a .pdf, the same .md after turning the switch for documents on, an Intimate document, and a neighbour who agreed to nothing -- and getting the same answer every time. It still crosses PUT /corpus/consent/{source} on purpose: flipping the switch is how it proves the switch now lets nothing in.",
     "crosses": {
