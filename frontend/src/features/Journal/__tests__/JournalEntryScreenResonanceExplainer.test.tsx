@@ -1053,8 +1053,11 @@ describe('JournalEntryScreen — an essay 402 opens the same refill remedy', () 
     expect(await view.findByTestId('essay-offer')).toBeTruthy();
     expect(mockEssay).not.toHaveBeenCalled();
 
+    // The proceed button exists only once the usage read has settled the cost
+    // (`cost.canContinue`), which can land after the offer card itself.
+    const ask = await view.findByTestId('essay-ask');
     await act(async () => {
-      fireEvent.press(view.getByTestId('essay-ask'));
+      fireEvent.press(ask);
     });
 
     expect(mockEssay).toHaveBeenCalledWith(ESSAY_NOTE.id, {

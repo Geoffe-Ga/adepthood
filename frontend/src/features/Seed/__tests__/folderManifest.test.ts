@@ -165,14 +165,14 @@ describe('the files a folder holds that will not be sent (#3771)', () => {
       ...VAULT,
       file('My Vault/.hidden.md'),
       file('My Vault/big.md', MAX_SEED_DOCUMENT_BYTES + 1),
-      file('My Vault/export.json'),
+      file('My Vault/export.jsonl'),
     ]);
     expect(manifest.skippedFiles).toEqual([
       { path: '.hidden.md', reason: 'hidden' },
       { path: '.obsidian/app.json', reason: 'configuration' },
       { path: 'big.md', reason: 'too_large' },
       { path: 'cache/example.bin', reason: 'unsupported' },
-      { path: 'export.json', reason: 'unsupported' },
+      { path: 'export.jsonl', reason: 'unsupported' },
     ]);
   });
 
@@ -187,9 +187,8 @@ describe('the files a folder holds that will not be sent (#3771)', () => {
     ]);
   });
 
-  test('every extension Creek refuses with a 415 is skipped as unsupported', () => {
+  test('every extension Creek refuses whatever the file holds is skipped as unsupported', () => {
     const refused = [
-      '.json',
       '.jsonl',
       '.ndjson',
       '.tar',
@@ -207,6 +206,27 @@ describe('the files a folder holds that will not be sent (#3771)', () => {
     expect(manifest.notes).toEqual([]);
     expect(manifest.attachments).toEqual([]);
     expect(manifest.skipped.unsupported).toBe(refused.length);
+  });
+
+  test('a .json is an attachment, for the vault to decide what it is (#3797)', () => {
+    const manifest = manifestOf([file('My Vault/a.md'), file('My Vault/chat/conversations.json')]);
+    expect(manifest.skipped.unsupported).toBe(0);
+    expect(manifest.attachments.map((entry) => entry.relativePath)).toEqual([
+      'chat/conversations.json',
+    ]);
+    expect(selectFolderEntries(manifest, false).leftOut).toEqual([
+      { path: 'chat/conversations.json', reason: 'attachments_off' },
+    ]);
+    expect(selectFolderEntries(manifest, true).entries.map((entry) => entry.name)).toEqual([
+      'a.md',
+      'conversations.json',
+    ]);
+  });
+
+  test('a .json past the one-document cap is held back as too large, unread (#3797)', () => {
+    const manifest = manifestOf([file('My Vault/conversations.json', MAX_SEED_DOCUMENT_BYTES + 1)]);
+    expect(manifest.attachments).toEqual([]);
+    expect(manifest.skippedFiles).toEqual([{ path: 'conversations.json', reason: 'too_large' }]);
   });
 
   test('a selection with attachments off leaves them out by name, as attachments_off', () => {

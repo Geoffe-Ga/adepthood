@@ -18,6 +18,7 @@ import {
   SEED_VAULT_INVITATION_LINK_LABEL,
 } from '../seedCopy';
 import SeedCorpusScreen from '../SeedCorpusScreen';
+import { SEED_JSON_EXPORT_NOTE, SEED_JSON_STATUS_LINES } from '../seedJsonExport';
 
 import { useUploadQueueStore } from '@/store/useUploadQueueStore';
 
@@ -266,6 +267,64 @@ describe('per-document status', () => {
     });
     expect(SEED_STATUS_LINES.too_large).toContain(MAX_SEED_DOCUMENT_LABEL);
     expect(mockFetch).not.toHaveBeenCalled();
+  });
+
+  test('names conversation exports in .json among what can be brought in (#3797)', () => {
+    const { getByTestId } = render(<SeedCorpusScreen />);
+
+    expect(getByTestId('seed-json-export-note').props.children).toBe(SEED_JSON_EXPORT_NOTE);
+  });
+
+  test('a picked .json is sent, and lands when the vault reads it as an export (#3797)', async () => {
+    getDocumentAsync.mockResolvedValue({ canceled: false, assets: [asset('conversations.json')] });
+    mockFetch.mockReturnValue(vaultReply('accepted'));
+    const { getByTestId, getByText } = render(<SeedCorpusScreen />);
+
+    await chooseFiles(getByTestId);
+
+    await waitFor(() => {
+      expect(getByText(SEED_STATUS_LINES.ingested)).toBeTruthy();
+    });
+    expect(mockFetch).toHaveBeenCalledTimes(1);
+    const body = JSON.parse(String(mockFetch.mock.calls[0][1].body)) as { filename: string };
+    expect(body.filename).toBe('conversations.json');
+    expect(getByTestId('seed-summary').props.children).toBe(
+      '1 landed · 0 failed · 0 remaining · 0 skipped (unsupported type)',
+    );
+  });
+
+  test('a .json the vault turns away is skipped, not failed, and offered no resend (#3797)', async () => {
+    getDocumentAsync.mockResolvedValue({ canceled: false, assets: [asset('package.json')] });
+    mockFetch.mockReturnValue(vaultReply('unsupported_source'));
+    const { getByTestId, getByText, queryByTestId, queryByText } = render(<SeedCorpusScreen />);
+
+    await chooseFiles(getByTestId);
+
+    await waitFor(() => {
+      expect(getByText(String(SEED_JSON_STATUS_LINES.unsupported_source))).toBeTruthy();
+    });
+    expect(queryByText(SEED_STATUS_LINES.unsupported_source)).toBeNull();
+    expect(getByTestId('seed-summary').props.children).toBe(
+      '0 landed · 0 failed · 0 remaining · 1 skipped (unsupported type)',
+    );
+    expect(queryByTestId('seed-retry-button')).toBeNull();
+  });
+
+  test('an oversize .json is never sent, and its row offers the .zip instead (#3797)', async () => {
+    getDocumentAsync.mockResolvedValue({
+      canceled: false,
+      assets: [asset('conversations.json', OVERSIZE_BYTES)],
+    });
+    const { getByTestId, getByText, queryByText } = render(<SeedCorpusScreen />);
+
+    await chooseFiles(getByTestId);
+
+    await waitFor(() => {
+      expect(getByText(String(SEED_JSON_STATUS_LINES.too_large))).toBeTruthy();
+    });
+    expect(queryByText(SEED_STATUS_LINES.too_large)).toBeNull();
+    expect(mockFetch).not.toHaveBeenCalled();
+    expect(mocked.__fileBase64).not.toHaveBeenCalled();
   });
 
   test('one failure mid-list leaves the others landed', async () => {

@@ -43,7 +43,6 @@ import {
   SEED_CONSENT_LINK_LABEL,
   SEED_CONSENT_PROMPT,
   SEED_EMPTY_INVITATION,
-  SEED_STATUS_LINES,
   SEED_STOP_ALL_LABEL,
   SEED_STOP_BATCH_LABEL,
   SEED_VAULT_INVITATION,
@@ -56,6 +55,7 @@ import {
 } from './seedCopy';
 import { SEED_CHOOSE_FOLDER_LABEL } from './seedFolderCopy';
 import { SeedFolderReview } from './SeedFolderReview';
+import { SEED_JSON_EXPORT_NOTE, seedStatusLine } from './seedJsonExport';
 import type { SeedItem } from './seedRun';
 import { SeedRowLanding, SeedVaultReceiptsLink } from './SeedVaultReceipts';
 import { useSeedFolder, type SeedFolderController } from './useSeedFolder';
@@ -82,7 +82,7 @@ const SeedItemRow = ({ item }: { item: SeedItem }): React.JSX.Element => {
         {item.name}
       </Text>
       <Text style={styles.rowStatus} testID={`seed-item-status-${item.id}`}>
-        {SEED_STATUS_LINES[item.status]}
+        {seedStatusLine(item)}
       </Text>
       <SeedRowLanding item={item} />
     </View>
@@ -359,6 +359,9 @@ const SeedCorpusBody = ({ run, folder, onOpenConsent }: SeedCorpusBodyProps): Re
         <Text style={styles.tierPrompt}>{TIER_PROMPT}</Text>
         <PrivacyTierControl value={run.classification} onChange={run.chooseClassification} />
       </EditorialSection>
+      <Text style={styles.notice} testID="seed-json-export-note">
+        {SEED_JSON_EXPORT_NOTE}
+      </Text>
       <ChooseButton onPress={() => void run.choose()} disabled={false} />
       <SeedFolderSection folder={folder} />
       <SeedProgress line={seedProgressLine(run.tally, run.isPaused, run.isWaitingOnVault)} />
