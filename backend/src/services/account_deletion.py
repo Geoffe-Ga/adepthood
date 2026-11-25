@@ -76,11 +76,11 @@ VAULT_GUIDANCE_CONFIGURED = (
 )
 VAULT_GUIDANCE_TEARDOWN_PENDING = (
     "Deletion of your managed Corpus has been requested. Adepthood will keep "
-    "reconciling the content-free cleanup receipt until the service that hosts it "
+    "reconciling the content-free cleanup receipt until the service that set it up "
     "confirms that no billable resource remains."
 )
 VAULT_GUIDANCE_TEARDOWN_COMPLETE = (
-    "The service that hosted your managed Corpus confirmed that its provisioned "
+    "The service that set up your managed Corpus confirmed that its provisioned "
     "allocation was deleted."
 )
 VAULT_GUIDANCE_DETACHED_NOTES = (
