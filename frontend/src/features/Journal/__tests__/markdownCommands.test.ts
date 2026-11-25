@@ -43,7 +43,42 @@ describe('keyCommand -- formatting shortcuts', () => {
     expect(keyCommand(event, 'meta')).toBeNull();
   });
 
+  it.each<[string, MarkdownKeyEvent]>([
+    ['the physical 9 key (US Shift+9 reports "(")', { key: '(', code: 'Digit9' }],
+    ['the physical 9 key on a layout that reports ")"', { key: ')', code: 'Digit9' }],
+    ['a bare "9" with no code', { key: '9' }],
+    ['a bare "(" with no code', { key: '(' }],
+  ])('maps the primary modifier plus Shift and %s to the checklist', (_label, keys) => {
+    expect(keyCommand({ ...keys, metaKey: true, shiftKey: true }, 'meta')).toBe('task');
+    expect(keyCommand({ ...keys, ctrlKey: true, shiftKey: true }, 'ctrl')).toBe('task');
+  });
+
+  it.each<[string, MarkdownKeyEvent]>([
+    ['without Shift', { key: '9', code: 'Digit9', metaKey: true }],
+    ['without the primary modifier', { key: '(', code: 'Digit9', shiftKey: true }],
+    ['with Alt', { key: '(', code: 'Digit9', metaKey: true, shiftKey: true, altKey: true }],
+    [
+      'with both modifiers',
+      { key: '(', code: 'Digit9', metaKey: true, ctrlKey: true, shiftKey: true },
+    ],
+    [
+      'on another physical key that reports "("',
+      { key: '(', code: 'Digit8', metaKey: true, shiftKey: true },
+    ],
+    ['on Shift+8', { key: '*', code: 'Digit8', metaKey: true, shiftKey: true }],
+    ['on Shift+I', { key: 'I', code: 'KeyI', metaKey: true, shiftKey: true }],
+    ['on Shift+U by physical key', { key: 'г', code: 'KeyU', metaKey: true, shiftKey: true }],
+  ])('leaves the checklist chord alone %s', (_label, event) => {
+    expect(keyCommand(event, 'meta')).toBeNull();
+  });
+
   it('ignores every key while an IME composition is active', () => {
+    expect(
+      keyCommand(
+        { key: '(', code: 'Digit9', metaKey: true, shiftKey: true, isComposing: true },
+        'meta',
+      ),
+    ).toBeNull();
     expect(keyCommand({ key: 'b', metaKey: true, isComposing: true }, 'meta')).toBeNull();
     expect(
       keyCommand({ key: 'b', metaKey: true, keyCode: IME_COMPOSITION_KEYCODE }, 'meta'),
@@ -73,6 +108,7 @@ describe('applyMarkdownCommand -- line styles', () => {
   it.each<[MarkdownCommand, string]>([
     ['bullet', '- note'],
     ['ordered', '1. note'],
+    ['task', '- [ ] note'],
     ['quote', '> note'],
     ['heading', '# note'],
   ])('turns the caret line into a %s', (command, text) => {
@@ -91,7 +127,13 @@ describe('applyMarkdownCommand -- line styles', () => {
       quote: true,
       bullet: false,
       ordered: false,
+      task: false,
       heading: false,
+    });
+    expect(markdownCommandState('  - [x] said', { start: 9, end: 9 })).toMatchObject({
+      task: true,
+      bullet: false,
+      listLevel: 1,
     });
   });
 });

@@ -7,6 +7,7 @@ import {
   toggleBlockStyle,
   type BlockStyle,
 } from '../markdownBlockToggle';
+import { minimalReplacement } from '../markdownEditing';
 
 /** A caret (or range) written into the text as ``|`` markers. */
 function at(marked: string): { body: string; selection: { start: number; end: number } } {
@@ -35,6 +36,7 @@ describe('toggleBlockStyle -- turning a line into a block', () => {
   it.each<[BlockStyle, string]>([
     ['bullet', '- wor|d'],
     ['ordered', '1. wor|d'],
+    ['task', '- [ ] wor|d'],
     ['quote', '> wor|d'],
     ['heading', '# wor|d'],
   ])('makes the caret line a %s, keeping the caret on its word', (style, expected) => {
@@ -92,8 +94,9 @@ describe('toggleBlockStyle -- turning a block back into prose', () => {
     expect(toggle('- a\n  - |b', 'bullet')).toBe('- a\n|b');
   });
 
-  it('treats a task item as a bullet and clears its box too', () => {
-    expect(toggle('- [x] do|ne', 'bullet')).toBe('do|ne');
+  it('turns a task item into a plain bullet, dropping only its box', () => {
+    expect(toggle('- [x] do|ne', 'bullet')).toBe('- do|ne');
+    expect(toggle('  * [ ] do|ne', 'bullet')).toBe('  * do|ne');
   });
 
   it('applies to a mixed range rather than removing', () => {
@@ -102,6 +105,67 @@ describe('toggleBlockStyle -- turning a block back into prose', () => {
 
   it('puts a caret inside a removed marker at the content start', () => {
     expect(toggle('-| a', 'bullet')).toBe('|a');
+  });
+});
+
+describe('toggleBlockStyle -- checklists', () => {
+  it.each([
+    ['buy oa|ts', '- [ ] buy oa|ts'],
+    ['- buy oa|ts', '- [ ] buy oa|ts'],
+    ['2. buy oa|ts', '- [ ] buy oa|ts'],
+    ['- [x] buy oa|ts', 'buy oa|ts'],
+    ['- [ ] buy oa|ts', 'buy oa|ts'],
+    ['> buy oa|ts', '- [ ] buy oa|ts'],
+  ])('turns %j into %j', (marked, expected) => {
+    expect(toggle(marked, 'task')).toBe(expected);
+  });
+
+  it('starts an unchecked box on an empty line with the caret after it', () => {
+    expect(toggle('a\n|', 'task')).toBe('a\n- [ ] |');
+  });
+
+  it('keeps a list item at its depth, and a bullet on its own marker', () => {
+    expect(toggle('- a\n  - |b', 'task')).toBe('- a\n  - [ ] |b');
+    expect(toggle('1. a\n   1. |b', 'task')).toBe('1. a\n   - [ ] |b');
+    expect(toggle('* |b', 'task')).toBe('* [ ] |b');
+  });
+
+  it('leaves no stray ordinals when a numbered run becomes tasks', () => {
+    expect(toggle('|1. a\n2. b\n10. c|', 'task')).toBe('|- [ ] a\n- [ ] b\n- [ ] c|');
+  });
+
+  it('numbers tasks from 1. when they become a numbered list', () => {
+    expect(toggle('|- [ ] a\n- [x] b\n- [ ] c|', 'ordered')).toBe('|1. a\n2. b\n3. c|');
+  });
+
+  it('clears a range of tasks, checked or not, without touching their words', () => {
+    expect(toggle('|- [x] a\n  - [ ] b|', 'task')).toBe('|a\nb|');
+  });
+
+  it('leaves a checked item checked when a mixed range becomes a checklist', () => {
+    expect(toggle('|- [x] a\nb\n- c|', 'task')).toBe('|- [x] a\n- [ ] b\n- [ ] c|');
+  });
+
+  it('puts a caret inside a replaced marker at the content start', () => {
+    expect(toggle('1|. a', 'task')).toBe('- [ ] |a');
+    expect(toggle('- [|x] a', 'task')).toBe('|a');
+  });
+
+  it('is one contiguous edit that an anchor below rides out on its own words', () => {
+    const before = 'Morning\n1. buy oats\nThe willow leans.';
+    const edit = toggleBlockStyle(before, { start: 14, end: 14 }, 'task');
+    const after = edit!.text;
+    expect(after).toBe('Morning\n- [ ] buy oats\nThe willow leans.');
+
+    // Everything but the prefix is byte-identical, so the server's one-window
+    // re-anchor moves an anchor after the line by the net change in length.
+    const window = minimalReplacement(before, after);
+    expect(before.slice(window.start, window.end)).toBe('1.');
+    expect(window.text).toBe('- [ ]');
+    const anchorStart = before.indexOf('willow');
+    expect(anchorStart).toBeGreaterThanOrEqual(window.end);
+    const shifted = anchorStart + window.text.length - (window.end - window.start);
+    expect(after.slice(shifted, shifted + 'willow'.length)).toBe('willow');
   });
 });
 
@@ -131,17 +195,30 @@ describe('blockStyleState', () => {
   }
 
   it('is all off on prose', () => {
-    expect(state('wo|rd')).toEqual({ bullet: false, ordered: false, quote: false, heading: false });
+    expect(state('wo|rd')).toEqual({
+      bullet: false,
+      ordered: false,
+      task: false,
+      quote: false,
+      heading: false,
+    });
   });
 
   it.each<[string, BlockStyle]>([
     ['- a|', 'bullet'],
-    ['- [ ] a|', 'bullet'],
+    ['- [ ] a|', 'task'],
+    ['* [x] a|', 'task'],
     ['3) a|', 'ordered'],
     ['> a|', 'quote'],
     ['### a|', 'heading'],
   ])('reads %j as %s', (marked, style) => {
     expect(state(marked)[style]).toBe(true);
+  });
+
+  it('never reads a task as a bullet, or a bullet as a task', () => {
+    expect(state('- [ ] a|')).toMatchObject({ bullet: false, task: true });
+    expect(state('- a|')).toMatchObject({ bullet: true, task: false });
+    expect(state('|- [ ] a\n- b|')).toMatchObject({ bullet: false, task: false });
   });
 
   it('is on for a range only when every non-blank touched line has the style', () => {

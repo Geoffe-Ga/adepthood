@@ -1,6 +1,6 @@
 /**
  * Line-level formatting for the journal editor: bulleted and numbered lists,
- * quotes, and headings, toggled on the lines a selection touches.
+ * checklists, quotes, and headings, toggled on the lines a selection touches.
  *
  * Reads lines with the SAME classifier the renderer uses
  * (``journalMarkdownLines.ts``), so a line the toolbar calls a quote is exactly
@@ -11,6 +11,11 @@
  *   {@link HEADING_CYCLE_DEPTH}, and then back to prose).
  * - Otherwise each touched line takes the style, replacing whatever block
  *   marker it had -- a bullet becomes a number rather than ``1. - item``.
+ *
+ * A checklist item is a bullet with a box, and the two controls keep to their
+ * own half of it: Checklist adds an unchecked box to a bullet (on the bullet's
+ * own marker) and never unchecks an item that is already a task, while
+ * Bulleted list takes the box off a task and leaves the bullet.
  *
  * Blank lines inside a range are skipped (a list should not sprout empty
  * items), but a caret alone on a blank line starts a block there. Rules are
@@ -23,7 +28,7 @@ import type { JournalMarkdownLine, LineKind } from './journalMarkdownTypes';
 import type { MarkdownEdit, MarkdownSelection } from './markdownEditing';
 
 /** The line-level styles the toolbar offers. */
-export type BlockStyle = 'bullet' | 'ordered' | 'quote' | 'heading';
+export type BlockStyle = 'bullet' | 'ordered' | 'task' | 'quote' | 'heading';
 
 /** Whether each line-level style is in force across the selection. */
 export type BlockStyleState = Record<BlockStyle, boolean>;
@@ -40,16 +45,29 @@ const STYLED_KINDS: ReadonlySet<LineKind> = new Set<LineKind>([
   'heading',
 ]);
 
-/** The kinds that read as each style. A task is a bullet with a box. */
+/** The kinds that read as each style: one each, so no two controls are pressed at once. */
 const STYLE_KINDS: Readonly<Record<BlockStyle, readonly LineKind[]>> = Object.freeze({
-  bullet: ['bullet', 'task'],
+  bullet: ['bullet'],
   ordered: ['ordered'],
+  task: ['task'],
   quote: ['quote'],
   heading: ['heading'],
 });
 
 /** The kinds that nest, and so keep their indent when changing list kind. */
 const LIST_KINDS: ReadonlySet<LineKind> = new Set<LineKind>(['bullet', 'task', 'ordered']);
+
+/** The styles that nest: a line taking one keeps the indent it has. */
+const LIST_STYLES: ReadonlySet<BlockStyle> = new Set<BlockStyle>(['bullet', 'ordered', 'task']);
+
+/** The kinds written with a bullet character, which survives a change between them. */
+const BULLET_KINDS: ReadonlySet<LineKind> = new Set<LineKind>(['bullet', 'task']);
+
+/** The bullet character a new bulleted or checklist item is written with. */
+const DEFAULT_BULLET = '-';
+
+/** An unchecked task box, with the space that separates it from the item's words. */
+const UNCHECKED_BOX = '[ ] ';
 
 /** One prefix replacement, in code points: ``[start, end)`` becomes ``insert``. */
 interface PrefixChange {
@@ -95,12 +113,24 @@ function firstOrdinal(chars: string[], first: JournalMarkdownLine): number {
   return (above.ordinal ?? 0) + 1;
 }
 
+/** The numbering and heading depth a run of new markers is written with. */
+interface MarkerContext {
+  ordinal: number;
+  headingLevel: number;
+}
+
+/** The bullet character a line already has, or the default for a line without one. */
+function bulletOf(chars: string[], line: JournalMarkdownLine): string {
+  return BULLET_KINDS.has(line.kind) ? (chars[line.indentEnd] ?? DEFAULT_BULLET) : DEFAULT_BULLET;
+}
+
 /** The marker (with its trailing space) a line takes for a style. */
-function markerFor(style: BlockStyle, ordinal: number, headingLevel: number): string {
-  if (style === 'bullet') return '- ';
-  if (style === 'ordered') return `${String(ordinal)}. `;
+function markerFor(style: BlockStyle, bullet: string, context: MarkerContext): string {
+  if (style === 'bullet') return `${bullet} `;
+  if (style === 'task') return `${bullet} ${UNCHECKED_BOX}`;
+  if (style === 'ordered') return `${String(context.ordinal)}. `;
   if (style === 'quote') return '> ';
-  return `${'#'.repeat(headingLevel)} `;
+  return `${'#'.repeat(context.headingLevel)} `;
 }
 
 /** The changes that give every target line the style. */
@@ -111,14 +141,16 @@ function applyChanges(
   headingLevel: number,
 ): PrefixChange[] {
   let ordinal = lines.length > 0 ? firstOrdinal(chars, lines[0]!) : 1;
-  return lines.map((line) => {
+  // An item that is already a task keeps its box as written, so making a mixed
+  // range a checklist never unchecks the items that were one already.
+  const styled = lines.filter((line) => style !== 'task' || !hasStyle(line, 'task'));
+  return styled.map((line) => {
     const keepsIndent =
-      (style === 'bullet' || style === 'ordered') &&
-      (LIST_KINDS.has(line.kind) || !STYLED_KINDS.has(line.kind));
+      LIST_STYLES.has(style) && (LIST_KINDS.has(line.kind) || !STYLED_KINDS.has(line.kind));
     const indent = keepsIndent ? chars.slice(line.start, line.indentEnd).join('') : '';
-    const insert = `${indent}${markerFor(style, ordinal, headingLevel)}`;
+    const marker = markerFor(style, bulletOf(chars, line), { ordinal, headingLevel });
     ordinal += 1;
-    return { start: line.start, end: prefixEnd(line), insert };
+    return { start: line.start, end: prefixEnd(line), insert: `${indent}${marker}` };
   });
 }
 
@@ -207,6 +239,7 @@ export function blockStyleState(body: string, selection: MarkdownSelection): Blo
   return {
     bullet: every('bullet'),
     ordered: every('ordered'),
+    task: every('task'),
     quote: every('quote'),
     heading: every('heading'),
   };

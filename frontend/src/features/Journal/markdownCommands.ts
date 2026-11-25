@@ -18,13 +18,14 @@ import { inlineStyleActive, toggleInlineStyle } from './markdownInlineToggle';
 
 /**
  * What an editor action does: style the selection, turn its lines into a list,
- * quote or heading, or move its list items a level.
+ * checklist, quote or heading, or move its list items a level.
  */
 export type MarkdownCommand = InlineStyle | BlockStyle | ShiftDirection;
 
 const BLOCK_STYLES: ReadonlySet<MarkdownCommand> = new Set<BlockStyle>([
   'bullet',
   'ordered',
+  'task',
   'quote',
   'heading',
 ]);
@@ -73,6 +74,15 @@ const SHORTCUT_CODES: Readonly<Record<string, InlineStyle>> = Object.freeze({
   KeyU: 'underline',
 });
 
+/**
+ * The one Shift chord: the primary modifier, Shift and the 9 key make a
+ * checklist. Shift changes what a digit key reports (``(`` on a US layout,
+ * ``)`` on a German one), so the physical key decides whenever it is known.
+ */
+const CHECKLIST_CODE = 'Digit9';
+/** What Shift+9 reports where no physical key is: the digit, or the US layout's ``(``. */
+const CHECKLIST_KEYS: ReadonlySet<string> = new Set(['9', '(']);
+
 /** A Latin letter: a layout that reports one means it, so ``code`` is not consulted. */
 const LATIN_LETTER = /^[a-z]$/iu;
 
@@ -85,9 +95,10 @@ export interface MarkdownCommandState {
   bold: boolean;
   italic: boolean;
   underline: boolean;
-  /** Line-level styles: whether every touched line is a bullet, number, quote or heading. */
+  /** Line-level styles: whether every touched line is a bullet, number, task, quote or heading. */
   bullet: boolean;
   ordered: boolean;
+  task: boolean;
   quote: boolean;
   heading: boolean;
   /** The caret's list level (0 = flush), or null off a list line. */
@@ -100,6 +111,12 @@ function isComposing(event: MarkdownKeyEvent): boolean {
   return event.isComposing === true || event.keyCode === IME_COMPOSITION_KEYCODE;
 }
 
+/** The command a Shift chord names: only the checklist's, so Shift+B / I / U stay unclaimed. */
+function shiftShortcutCommand(event: MarkdownKeyEvent): MarkdownCommand | null {
+  const named = event.code == null ? CHECKLIST_KEYS.has(event.key) : event.code === CHECKLIST_CODE;
+  return named ? 'task' : null;
+}
+
 /** The formatting shortcut a key names, or null for any other key. */
 function shortcutCommand(
   event: MarkdownKeyEvent,
@@ -107,7 +124,8 @@ function shortcutCommand(
 ): MarkdownCommand | null {
   const primaryHeld = primary === 'meta' ? event.metaKey === true : event.ctrlKey === true;
   const otherHeld = primary === 'meta' ? event.ctrlKey === true : event.metaKey === true;
-  if (!primaryHeld || otherHeld || event.shiftKey === true) return null;
+  if (!primaryHeld || otherHeld) return null;
+  if (event.shiftKey === true) return shiftShortcutCommand(event);
   if (LATIN_LETTER.test(event.key)) return SHORTCUT_STYLES[event.key.toLowerCase()] ?? null;
   return event.code == null ? null : (SHORTCUT_CODES[event.code] ?? null);
 }
