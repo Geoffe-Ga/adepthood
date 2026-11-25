@@ -68,7 +68,7 @@ const NOT_CONSENTED_COPY =
   'leaning toward where you stand in the course, rather than only on your last few entries. ' +
   'Perfectly fine to leave as it is.';
 const GATHERING_COPY =
-  'Your corpus is still filling out, so for now your reflections have little or no sorted ' +
+  'Your Corpus is still filling out, so for now your reflections have little or no sorted ' +
   'writing to draw on. Bringing in work you did elsewhere fills it faster. Nothing is ' +
   'waiting on you.';
 

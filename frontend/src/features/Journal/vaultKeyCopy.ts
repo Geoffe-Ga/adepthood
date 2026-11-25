@@ -22,12 +22,12 @@ const VENDOR_NAMES: Record<VaultKeyVendor, string> = {
 
 /** The receipt's payment route for a pass the vault wrote with the writer's key. */
 export function vaultKeyReceiptLabel(vendor: VaultKeyVendor): string {
-  return `Paid by your own ${VENDOR_NAMES[vendor]} key, through your vault`;
+  return `Paid by your own ${VENDOR_NAMES[vendor]} key, through your Corpus`;
 }
 
 /** The price line before a reading or letter the vault will write with the writer's key. */
 export function vaultKeyCost(vendor: VaultKeyVendor, noun: string): string {
-  return `Your vault will write this ${noun} with your own ${VENDOR_NAMES[vendor]} key. Your key pays for it, not your BotMason messages.`;
+  return `Your Corpus will write this ${noun} with your own ${VENDOR_NAMES[vendor]} key. Your key pays for it, not your BotMason messages.`;
 }
 
 /** The vendor a stored key belongs to, read from its prefix; ``null`` without a usable key. */

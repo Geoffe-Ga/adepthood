@@ -120,7 +120,9 @@ describe('preview copy agrees with the privacy policy', () => {
     const notIncluded = normalise(FEEDBACK_PREVIEW_COPY.notIncluded);
     expect(notIncluded).toContain('contents of the screen');
     expect(section).toContain('contents of the screen');
-    expect(notIncluded).toContain('vault addresses');
+    // The app says "Corpus" (epic #3802); the policy keeps its own word for the
+    // same address.
+    expect(notIncluded).toContain('corpus addresses');
     expect(section).toContain('vault address');
     expect(notIncluded).toContain('journal content');
     expect(notIncluded).toContain('passwords');

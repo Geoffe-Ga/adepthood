@@ -727,7 +727,7 @@ name:
 | `vault:read` | Read and search your Open and Personal writing |
 | `vault:desk` | Draft and reflect from your Open and Personal writing |
 | `vault:journal` | Add journal entries |
-| `vault:pipeline` | Re-sort your vault |
+| `vault:pipeline` | Re-sort your Corpus |
 | `offline_access` | Stay connected without asking you again |
 
 The mapping is owned by `backend/src/services/oauth_consent_copy.py`
@@ -858,7 +858,7 @@ Creek's `consumer` stamp and `tool` name are keys and are never echoed.
 
 **What a tool reads as.** One past-tense phrase per audited tool name --
 `creek.draft` "Drafted an essay", `creek.reflect` "Asked for a reflection",
-`creek.link` "Tried to re-sort the vault", `creek.mine` "Looked for seeds in
+`creek.link` "Tried to re-sort your Corpus", `creek.mine` "Looked for seeds in
 your writing", `creek.journal` "Saved a journal entry", and so on -- and
 "Other" for a tool with no phrase. `outcome: admitted` means only that the
 call passed the vault's pre-dispatch gates; the audit chain never records what
@@ -876,7 +876,7 @@ account owns, most specific first:
 | `adepthood` (the app's own calls on a self-connected vault) | Adepthood |
 | the account's managed-vault consumer identity | "Adepthood or one of your agents" -- the app's own `/v1` calls and every agent's `sub` share it -- or "Adepthood" while no agent was ever approved |
 | the account's derived agent subject (a self-connected vault's `sub`) | One of your agents |
-| anything else | Something else with access to your vault |
+| anything else | Something else with access to your Corpus |
 
 Today the first rule matches only a static consumer an operator named after an
 agent's client id; once #1976 lands it names every agent, with no change here.

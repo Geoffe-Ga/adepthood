@@ -146,6 +146,6 @@ export const AGENT_GRANT_PHRASES: ReadonlyMap<string, string> = new Map([
   ['vault:read', 'Read and search your Open and Personal writing'],
   ['vault:desk', 'Draft and reflect from your Open and Personal writing'],
   ['vault:journal', 'Add journal entries'],
-  ['vault:pipeline', 'Re-sort your vault'],
+  ['vault:pipeline', 'Re-sort your Corpus'],
   ['offline_access', 'Stay connected without asking you again'],
 ]);

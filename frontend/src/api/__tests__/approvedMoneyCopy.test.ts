@@ -24,7 +24,7 @@ describe('owner-approved money copy (#3262)', () => {
     [
       'INSUFFICIENT_OFFERINGS_COPY',
       INSUFFICIENT_OFFERINGS_COPY,
-      "You're out of BotMason credits, so nothing was charged. Credits pay for readings and letters your vault answers; page reading needs your own OpenAI or Anthropic API key, which you can add in Settings.",
+      "You're out of BotMason credits, so nothing was charged. Credits pay for readings and letters your Corpus writes; page reading needs your own OpenAI or Anthropic API key, which you can add in Settings.",
     ],
     [
       'LLM_KEY_REQUIRED_COPY',
@@ -39,7 +39,7 @@ describe('owner-approved money copy (#3262)', () => {
     [
       'VAULT_KEY_REQUIRED_COPY',
       VAULT_KEY_REQUIRED_COPY,
-      'Your vault writes reflections and letters only with your own API key for now, so nothing was charged. Add your OpenAI or Anthropic key in Settings to continue.',
+      'Your Corpus writes reflections and letters only with your own API key for now, so nothing was charged. Add your OpenAI or Anthropic key in Settings to continue.',
     ],
     [
       'NO_KEY_HINT',

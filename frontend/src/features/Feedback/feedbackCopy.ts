@@ -25,7 +25,7 @@ export const FEEDBACK_PREVIEW_COPY = {
   heading: 'What will be attached',
   lead: 'Along with your answers, this report carries only these details:',
   notIncluded:
-    'Not included: any other writing of yours, your journal content, passwords, private vault addresses, or the contents of the screen.',
+    'Not included: any other writing of yours, your journal content, passwords, private Corpus addresses, or the contents of the screen.',
   retention: 'Reports are kept for 180 days.',
 } as const;
 

@@ -39,8 +39,8 @@ SIGN_IN_REFUSED: Final = "That email and password did not match. Check them and 
 
 # --- deciding ---------------------------------------------------------------
 
-#: Follows the agent's name: "Claude Code would like to work with your vault".
-CONSENT_HEADING_SUFFIX: Final = "would like to work with your vault"
+#: Follows the agent's name: "Claude Code would like to work with your Corpus".
+CONSENT_HEADING_SUFFIX: Final = "would like to work with your Corpus"
 
 #: Stands in for the name of an agent that registered without one.
 CONSENT_UNNAMED_AGENT: Final = "An agent that did not give its name"
@@ -57,7 +57,7 @@ GRANT_DESCRIPTIONS: Final = MappingProxyType(
         "vault:read": "Read and search your Open and Personal writing",
         "vault:desk": "Draft and reflect from your Open and Personal writing",
         "vault:journal": "Add journal entries",
-        "vault:pipeline": "Re-sort your vault",
+        "vault:pipeline": "Re-sort your Corpus",
         "offline_access": "Stay connected without asking you again",
     }
 )
@@ -97,11 +97,11 @@ ERROR_BODIES: Final = MappingProxyType(
             "try connecting again. Nothing was shared."
         ),
         "other_vault": (
-            "This request named a vault that is not the one connected to your account. "
+            "This request named a Corpus that is not the one connected to your account. "
             "Nothing was shared."
         ),
         "no_vault": (
-            "Your account has no vault connected yet, so there is nothing for an agent to work "
+            "Your account has no Corpus connected yet, so there is nothing for an agent to work "
             "with. You can add one in Settings, under Where your writing lives."
         ),
         "expired": (

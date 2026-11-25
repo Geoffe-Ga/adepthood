@@ -317,7 +317,7 @@ describe('JournalEntryScreen — tier change PATCH failure', () => {
         true,
       );
       expect(getByTestId('journal-save-hint').props.children).toMatch(
-        /Intimate here.*vault.*not.*confirmed.*retry/i,
+        /Intimate here.*Corpus.*not.*confirmed.*retry/i,
       );
 
       fireEvent.press(page.getByTestId('privacy-tier-intimate'));
@@ -371,8 +371,8 @@ describe('JournalEntryScreen — tier change PATCH failure', () => {
     fireEvent.press(within(getByTestId('journal-page')).getByTestId('privacy-tier-intimate'));
     await waitFor(() => {
       const hint = String(getByTestId('journal-save-hint').props.children);
-      expect(hint).toMatch(/Intimate here.*cannot identify.*vault/i);
-      expect(hint).not.toMatch(/reconnect that vault|set to be deleted|can't be edited/i);
+      expect(hint).toMatch(/Intimate here.*cannot identify.*Corpus/i);
+      expect(hint).not.toMatch(/reconnect that Corpus|set to be deleted|can't be edited/i);
     });
     expect(getByTestId('journal-body-input').props.editable).not.toBe(false);
     expect(

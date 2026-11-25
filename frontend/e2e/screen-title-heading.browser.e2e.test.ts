@@ -40,7 +40,7 @@ const WALKED_TITLES: Readonly<Record<string, string>> = {
   ExportData: 'Export my data',
   DeleteAccount: 'Delete account',
   SupportCare: 'Support & care',
-  VaultActivation: 'Create managed vault',
+  VaultActivation: 'Create managed Corpus',
   VaultSettings: 'Where your writing lives',
 };
 

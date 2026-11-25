@@ -379,7 +379,7 @@ for (const width of [390, 1280]) {
       await remove.click();
       await page.getByTestId('journal-delete-confirm').click();
       await expect(page.getByTestId('journal-delete-error')).toContainText(
-        'cannot identify the vault',
+        'cannot identify the Corpus',
       );
       await expect(page.getByTestId('journal-delete-error')).toBeInViewport();
       await expect(page.getByTestId('journal-unreachable-reconnect')).toHaveCount(0);
@@ -438,7 +438,7 @@ for (const width of [390, 1280]) {
       await page.goto(`${frontendUrl()}/journal`);
       await page.getByTestId(`journal-shelf-delete-${id}`).click();
       await expect(page.getByTestId('journal-delete-dialog-body')).toContainText(
-        'may remain until the vault confirms',
+        'may remain until your Corpus confirms',
       );
       const removed = page.waitForResponse(
         (r) => r.request().method() === 'DELETE' && new URL(r.url()).pathname === `/journal/${id}`,
@@ -508,7 +508,7 @@ for (const width of [390, 1280]) {
     const notice = page.getByTestId('journal-delete-error');
     // A refusal must come into view without asking someone to guess where it went.
     await expect(notice).toBeInViewport();
-    await expect(notice).toContainText('cannot identify the vault');
+    await expect(notice).toContainText('cannot identify the Corpus');
     await expect(notice).toContainText('removal cannot be confirmed');
     await expect(page.getByTestId('journal-unreachable-reconnect')).toHaveCount(0);
     await expect(page.getByTestId(`journal-shelf-card-${id}`)).toBeVisible();
@@ -580,9 +580,9 @@ for (const width of [390, 1280]) {
       await tier(page).click();
       const hint = page.getByTestId('journal-save-hint');
       if (detail === 'vault_withdrawal_unrecorded_vault') {
-        await expect(hint).toContainText('cannot identify the vault');
-        await expect(hint).not.toContainText('reconnect that vault');
-      } else await expect(hint).toContainText('reconnect that vault in Settings');
+        await expect(hint).toContainText('cannot identify the Corpus');
+        await expect(hint).not.toContainText('reconnect that Corpus');
+      } else await expect(hint).toContainText('reconnect that Corpus in Settings');
       await expect(page.getByTestId('journal-body-input')).toBeEditable();
       await expect(tier(page)).toHaveAttribute('aria-checked', 'true');
       await enlargeText(page);

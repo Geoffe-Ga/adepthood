@@ -31,9 +31,9 @@ const PAGE_BODY = 'The willow bent all night and did not break. I woke grateful 
 /** A well-formed lane key; the lane vault never calls a vendor, so it is never used. */
 const OWN_KEY = 'sk-ant-api03-lane3437managedVAULTownKEYzz'; // pragma: allowlist secret
 /** The receipt's payment route, after the pass. */
-const LABEL = 'Paid by your own Anthropic key, through your vault';
+const LABEL = 'Paid by your own Anthropic key, through your Corpus';
 /** The price line, before anything runs: future tense, naming the hop. */
-const EXPLAINER = 'Your vault will write this reading with your own Anthropic key.';
+const EXPLAINER = 'Your Corpus will write this reading with your own Anthropic key.';
 const ARTIFACTS =
   process.env.MANAGED_VAULT_KEY_ARTIFACTS ?? join(__dirname, 'artifacts', 'managed-vault-own-key');
 

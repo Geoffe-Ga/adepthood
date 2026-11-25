@@ -56,13 +56,13 @@ import {
  * change to what a person is told, which should have to touch this spec.
  */
 const DEGRADED_MESSAGE =
-  "We couldn't confirm whether the upload finished — your vault may or may " +
+  "We couldn't confirm whether the upload finished — your Corpus may or may " +
   'not have the document. Please try again; sending the same file again ' +
   'updates it in place rather than adding a second copy.';
 
 /** Every way of saying the vault was left untouched, which this outcome has no evidence for. */
 const UNCHANGED_CLAIMS =
-  /wasn't stored|was not stored|nothing was|nothing in your vault|wasn't sent|unchanged/iu;
+  /wasn't stored|was not stored|nothing was|nothing in your Corpus|wasn't sent|unchanged/iu;
 
 const DEGRADED_EVENT = 'creek vault upload degraded';
 const HTTP_ACCEPTED = 202;

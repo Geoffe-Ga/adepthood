@@ -70,7 +70,7 @@ const NOTE: Marginalia = {
 
 const EXHAUSTED = 'You have no BotMason monthly messages or offerings available for this letter.';
 const VAULT_USES_CREDITS =
-  'Letters your vault writes use BotMason credits, even when an API key is saved.';
+  'Letters your Corpus writes use BotMason credits, even when an API key is saved.';
 
 /** A vault-bound wallet: ``cap`` monthly messages with ``remaining`` left, plus offerings. */
 function vaultUsage(cap: number, remaining: number, offerings: number): UsageResponse {

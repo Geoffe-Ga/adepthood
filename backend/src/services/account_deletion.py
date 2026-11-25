@@ -66,25 +66,27 @@ logger = logging.getLogger(__name__)
 VAULT_NOT_PURGED = "not_purged"
 VAULT_NOT_CONFIGURED = "not_configured"
 
-VAULT_GUIDANCE_NONE = "No Creek Vault was connected, so nothing of yours is held outside Adepthood."
+VAULT_GUIDANCE_NONE = "No Corpus was connected, so nothing of yours is held outside Adepthood."
 VAULT_GUIDANCE_CONFIGURED = (
-    "Your Creek Vault is yours, not ours. Adepthood withdraws individual journal "
+    "Your Corpus is yours, not ours. Adepthood withdraws individual journal "
     "pages when you make them Intimate or delete them, but account deletion cannot "
-    "run an account-wide purge — the vault contract has no such capability. Run "
-    "`creek purge` against your vault to erase everything else it holds."
+    "run an account-wide purge — the connection to your Corpus has no such "
+    "capability. Run `creek purge` against your Corpus to erase everything else it "
+    "holds."
 )
 VAULT_GUIDANCE_TEARDOWN_PENDING = (
-    "Your managed vault deletion has been requested. Adepthood will keep "
-    "reconciling the content-free cleanup receipt until Creek confirms that no "
-    "billable resource remains."
+    "Deletion of your managed Corpus has been requested. Adepthood will keep "
+    "reconciling the content-free cleanup receipt until the service that hosts it "
+    "confirms that no billable resource remains."
 )
 VAULT_GUIDANCE_TEARDOWN_COMPLETE = (
-    "Creek confirmed that the provisioned managed-vault allocation was deleted."
+    "The service that hosted your managed Corpus confirmed that its provisioned "
+    "allocation was deleted."
 )
 VAULT_GUIDANCE_DETACHED_NOTES = (
-    "Some journal pages still had a copy in a vault that had not confirmed it "
-    "deleted. For each, Adepthood keeps a note holding only an opaque vault "
-    "identifier and an entry number, not linked to you, until the vault confirms "
+    "Some journal pages still had a copy in a Corpus that had not confirmed it "
+    "deleted. For each, Adepthood keeps a note holding only an opaque Corpus "
+    "identifier and an entry number, not linked to you, until that Corpus confirms "
     f"or for {DETACHED_WITHDRAWAL_NOTE_RETENTION_DAYS} days at most."
 )
 

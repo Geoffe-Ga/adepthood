@@ -11,7 +11,7 @@
  *
  * **Patient with a busy vault too (#3770).** A `vault_busy` answer is the vault
  * occupied with a pass of its own, not the document failing: the row reads
- * "Waiting for your vault…", the send waits as long as the answer named and
+ * "Waiting for your Corpus…", the send waits as long as the answer named and
  * goes again, and none of it is charged against the pace. Those waits have
  * their own bound, {@link MAX_SEED_VAULT_BUSY_WAITS}.
  *

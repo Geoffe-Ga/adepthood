@@ -607,10 +607,10 @@ class NoNotesReason(Enum):
 # be has failed at the only thing this one is for.
 NO_NOTES_MESSAGES: Mapping[NoNotesReason, str] = {
     NoNotesReason.NOTHING_TO_ADD: (
-        "No margin notes came back this time. Your Higher Self read the page through "
-        "and didn't find a passage it could answer yet — most often that means the "
-        "thought is still arriving. Keep writing and ask again whenever you like; this "
-        "pass wasn't charged."
+        "No margin notes came back this time. Your Simulated Higher Self Voice read the "
+        "page through and didn't find a passage it could answer yet — most often that "
+        "means the thought is still arriving. Keep writing and ask again whenever you "
+        "like; this pass wasn't charged."
     ),
     NoNotesReason.NOTHING_ANCHORED: (
         "No margin notes came back this time. Notes were written, but none of them "

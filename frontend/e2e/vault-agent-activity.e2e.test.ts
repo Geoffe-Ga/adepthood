@@ -99,8 +99,8 @@ describe('vault.agent-activity-recent against a live server', () => {
     expect(
       activity.rows.map(({ agent, tool_label, outcome }) => [agent, tool_label, outcome]),
     ).toEqual([
-      ['Something else with access to your vault', 'Drafted an essay', 'admitted'],
-      ['Something else with access to your vault', 'Tried to re-sort the vault', 'refused'],
+      ['Something else with access to your Corpus', 'Drafted an essay', 'admitted'],
+      ['Something else with access to your Corpus', 'Tried to re-sort your Corpus', 'refused'],
       ['Adepthood', 'Saved a journal entry', 'admitted'],
     ]);
     expect(JSON.stringify(activity)).not.toContain(UNPLACED_STAMP);

@@ -54,7 +54,7 @@ const ADD_LICENSE_KEY = 'Add the license key from your Gumroad receipt to contin
  * (#3262); it makes no privacy promise (B24, #3076 gates those).
  */
 export const INSUFFICIENT_OFFERINGS_COPY =
-  "You're out of BotMason credits, so nothing was charged. Credits pay for readings and letters your vault answers; page reading needs your own OpenAI or Anthropic API key, which you can add in Settings.";
+  "You're out of BotMason credits, so nothing was charged. Credits pay for readings and letters your Corpus writes; page reading needs your own OpenAI or Anthropic API key, which you can add in Settings.";
 // Owner-approved wording (ADR 0009 phase (a), #3067; #3262): says plainly that
 // credits no longer pay for cloud AI. No privacy promise; B24 (#3076) gates those.
 /**
@@ -81,7 +81,7 @@ export const AI_ACCESS_REVOKED_COPY =
 // and permanent until a key is added, so it names the remedy and never asks the
 // writer to wait.
 export const VAULT_KEY_REQUIRED_COPY =
-  'Your vault writes reflections and letters only with your own API key for now, so nothing was charged. Add your OpenAI or Anthropic key in Settings to continue.';
+  'Your Corpus writes reflections and letters only with your own API key for now, so nothing was charged. Add your OpenAI or Anthropic key in Settings to continue.';
 
 const MONTHLY_FREE_MESSAGES_USED =
   "You've used up this month's free BotMason messages. Add your own API key in Settings, or wait for next month's fresh batch.";
@@ -223,15 +223,15 @@ export const USER_FACING_ERROR_MESSAGES: Readonly<Record<string, string>> = Obje
   // Only the deletion surface can add its recorded-delete/edit-lock context.
   // Every shared message keeps remote removal explicitly unconfirmed.
   vault_withdrawal_pending:
-    'Removal of a copy from your Corpus has not been confirmed. Adepthood retries while that vault is reachable.',
+    'Removal of a copy from your Corpus has not been confirmed. Adepthood retries while your Corpus is reachable.',
   vault_withdrawal_previous_vault:
-    'Removal has not been confirmed by your previous Corpus. Reconnect that vault in Settings to allow retry.',
+    'Removal has not been confirmed by your previous Corpus. Reconnect that Corpus in Settings to allow retry.',
   vault_withdrawal_disconnected_vault:
-    'Removal has not been confirmed by the Corpus you disconnected. Reconnect that vault in Settings to allow retry.',
+    'Removal has not been confirmed by the Corpus you disconnected. Reconnect that Corpus in Settings to allow retry.',
   // A copy made before Adepthood recorded which vault received it (#3095). No
   // vault can confirm it, so this never promises the deletion finishes on its own.
   vault_withdrawal_unrecorded_vault:
-    'Adepthood cannot identify the vault that received this older copy, so removal cannot be confirmed. It may remain in a vault you connected earlier.',
+    'Adepthood cannot identify the Corpus that received this older copy, so removal cannot be confirmed. It may remain in a Corpus you connected earlier.',
   journal_entry_deletion_pending:
     "This page is set to be deleted, so it can't be edited. Deletion finishes once your Corpus confirms its copy is gone.",
   // A promote or fold refused because the passage is from a page marked

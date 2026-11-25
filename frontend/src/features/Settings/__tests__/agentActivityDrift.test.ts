@@ -40,7 +40,7 @@ describe('the activity route speaks this section’s register', () => {
     const labels = new Map(tools.map(([tool, phrase]) => [tool, phrase]));
     expect(labels.get('creek.draft')).toBe('Drafted an essay');
     expect(labels.get('creek.reflect')).toBe('Asked for a reflection');
-    expect(labels.get('creek.link')).toBe('Tried to re-sort the vault');
+    expect(labels.get('creek.link')).toBe('Tried to re-sort your Corpus');
   });
 
   it.each(phrases.map((phrase) => [phrase]))('holds "%s" to the technical ban', (phrase) => {

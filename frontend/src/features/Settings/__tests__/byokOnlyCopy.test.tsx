@@ -59,12 +59,11 @@ describe('without a key of your own, Settings says what you lose', () => {
     }
   });
 
-  test('the out-of-credits copy prices vault readings and letters without pricing page reading', () => {
+  test('the out-of-credits copy prices Corpus readings and letters without pricing page reading', () => {
     expect(INSUFFICIENT_OFFERINGS_COPY).not.toMatch(
       /letters and page reading all draw from the same pool/i,
     );
-    expect(INSUFFICIENT_OFFERINGS_COPY).toMatch(/vault/i);
-    expect(INSUFFICIENT_OFFERINGS_COPY).toMatch(/readings and letters your vault answers/i);
+    expect(INSUFFICIENT_OFFERINGS_COPY).toMatch(/readings and letters your Corpus writes/i);
     expect(INSUFFICIENT_OFFERINGS_COPY).toMatch(/page reading needs your own/i);
     expect(INSUFFICIENT_OFFERINGS_COPY).not.toMatch(/private/i);
   });

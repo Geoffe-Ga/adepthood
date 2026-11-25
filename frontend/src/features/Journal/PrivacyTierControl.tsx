@@ -26,7 +26,7 @@ export const DEFAULT_TIER: PrivacyTier = 'personal';
 
 /** One-line copy shown under the control when ``intimate`` is selected. */
 const INTIMATE_EXPLAINER =
-  'Intimate pages stay in your Adepthood journal and are not shared with AI for new readings or copied to your Corpus. Earlier vault copies are requested for removal; they may remain until that vault confirms. Adepthood retries pending removal when it can reach that vault.';
+  'Intimate pages stay in your Adepthood journal and are not shared with AI for new readings or copied to your Corpus. Earlier copies in a Corpus are requested for removal; they may remain until that Corpus confirms. Adepthood retries pending removal when it can reach that Corpus.';
 
 interface TierOption {
   tier: PrivacyTier;

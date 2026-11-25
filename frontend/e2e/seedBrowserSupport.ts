@@ -63,8 +63,8 @@ export const IMPORT_ROUTE = '/corpus/import';
 const SETTINGS_ROW = 'settings-row-seed-corpus';
 
 /** The run's own words, read from the screen. */
-const LANDED_LINE = 'In your vault. It will show up in reflections from here on.';
-export const DEGRADED_LINE_START = "We couldn't confirm this reached your vault.";
+const LANDED_LINE = 'In your Corpus. It will show up in reflections from here on.';
+export const DEGRADED_LINE_START = "We couldn't confirm this reached your Corpus.";
 
 /** A spec's scratch space: folders written under it go with it. */
 export interface ScratchSpace {

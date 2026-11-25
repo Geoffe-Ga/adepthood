@@ -49,7 +49,7 @@ const CLASSIFY_PATH = '/v1/classifications';
 const LINKS_PATH = '/v1/links';
 const COMPLETE_ROUTE = '/corpus/import/complete';
 const SETTLING = "Settling what you've sent…";
-const SETTLED = "What you've sent has settled into your vault.";
+const SETTLED = "What you've sent has settled into your Corpus.";
 /** Generous: the app's reads back off to thirty seconds while the pass runs. */
 const SETTLE_TIMEOUT_MS = 90_000;
 

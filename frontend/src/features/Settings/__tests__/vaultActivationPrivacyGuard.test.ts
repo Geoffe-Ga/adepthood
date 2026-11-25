@@ -43,7 +43,7 @@ describe('private-vault activation privacy boundary', () => {
     // The settings screen's stack title is a literal like every sibling, pinned
     // here to the copy module's plain name so the two cannot drift (#3007).
     expect(navigation).toContain(`options={{ title: '${VAULT_TITLE}' }}`);
-    expect(navigation).toContain("options={{ title: 'Create managed vault' }}");
+    expect(navigation).toContain("options={{ title: 'Create managed Corpus' }}");
     expect(navigation).toContain(`under Advanced in ${VAULT_TITLE}`);
     expect(navigation).not.toMatch(
       /Managed (vault|Corpus) settings|Creek (vault|Corpus) settings/u,

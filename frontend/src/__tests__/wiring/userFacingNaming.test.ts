@@ -92,12 +92,54 @@ export const NAMING_RULES: readonly NamingRule[] = [
         text: 'adepthood-vault',
         why: 'the export file name, which the server and docs/your-data.md name the same way',
       },
-      {
-        file: 'features/Settings/agentsCopy.ts',
-        text: 'Re-sort your vault',
-        why: 'the consent page says it in these words (oauth_consent_copy.py, #3805); agentGrantDrift holds the two together',
-      },
     ],
+  },
+  {
+    // Standalone "vault" outside Settings (#3805): every top-level area of
+    // `src` except `features/Settings`, which #3804 sweeps. The word as a
+    // word, in a capitalised label ("Reconnect Vault", "Vault") or anywhere
+    // in a string with a space in it ("in your vault"). Tokens a user never
+    // reads have neither: API values (`'vault_busy'`, `'vault'`), route
+    // names (`'VaultDashboard'`), paths (`'/vault/agents'`), hint keys.
+    name: 'vault outside Settings',
+    pattern: /\bV(?:aults?|AULTS?)\b|^(?=[^]*\s)[^]*\bvaults?\b/u,
+    scope: [
+      'App.tsx',
+      'config.ts',
+      'index.ts',
+      'zodJitless.ts',
+      'api',
+      'components',
+      'constants',
+      'context',
+      'crypto',
+      'design',
+      'domain',
+      'hooks',
+      'navigation',
+      'observability',
+      'storage',
+      'store',
+      'test-utils',
+      'testing',
+      'utils',
+      'features/AdminFeedback',
+      'features/Auth',
+      'features/Course',
+      'features/Depth',
+      'features/Feedback',
+      'features/Habits',
+      'features/Invitations',
+      'features/Journal',
+      'features/Map',
+      'features/Practice',
+      'features/Program',
+      'features/Return',
+      'features/Seed',
+      'features/Welcome',
+    ],
+    instead: 'your Corpus',
+    allowlist: [],
   },
 ];
 
