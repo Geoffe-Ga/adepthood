@@ -4771,6 +4771,7 @@ interface EntryScreenDrawer {
   onSelectEntry: (_id: number) => void;
   onNewEntry: () => void;
   onOpenCorpus: (_destination: CorpusDestination) => void;
+  onOpenVaultDashboard: () => void;
   onOpenVoiceDrafts: () => void;
   onOpenPromotedQuotes: () => void;
 }
@@ -4800,6 +4801,11 @@ function useEntryScreenDrawer(
     (destination: CorpusDestination) => navigation.navigate(destination),
     [navigation],
   );
+  // The dashboard is a place beside the entry, so it navigates in place too.
+  const onOpenVaultDashboard = useCallback(() => {
+    navigation.navigate('VaultDashboard');
+    drawer.close();
+  }, [navigation, drawer]);
   // The shelf sits beside the entry rather than above it, so it navigates in
   // place like the corpus door: pushing would stack a second Journal history.
   const onOpenVoiceDrafts = useCallback(() => {
@@ -4820,6 +4826,7 @@ function useEntryScreenDrawer(
     onSelectEntry,
     onNewEntry,
     onOpenCorpus,
+    onOpenVaultDashboard,
     onOpenVoiceDrafts,
     onOpenPromotedQuotes,
   };
@@ -4969,6 +4976,7 @@ function EntryOverlays({
         onSelectEntry={entryDrawer.onSelectEntry}
         onNewEntry={entryDrawer.onNewEntry}
         onOpenCorpus={entryDrawer.onOpenCorpus}
+        onOpenVaultDashboard={entryDrawer.onOpenVaultDashboard}
         onOpenVoiceDrafts={entryDrawer.onOpenVoiceDrafts}
         onOpenPromotedQuotes={entryDrawer.onOpenPromotedQuotes}
       />

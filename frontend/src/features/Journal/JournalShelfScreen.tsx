@@ -332,6 +332,7 @@ interface ShelfNav {
   openPhotograph: () => void;
   openWithPrompt: () => void;
   openCorpus: (_destination: CorpusDestination) => void;
+  openVaultDashboard: () => void;
   openVoiceDrafts: () => void;
   openPromotedQuotes: () => void;
   openNotifications: () => void;
@@ -349,6 +350,7 @@ function useShelfNavigation(navigation: ShelfNavigation): ShelfNav {
     (destination: CorpusDestination) => navigation.navigate(destination),
     [navigation],
   );
+  const openVaultDashboard = useCallback(() => navigation.navigate('VaultDashboard'), [navigation]);
   const openVoiceDrafts = useCallback(() => navigation.navigate('VoiceDrafts'), [navigation]);
   const openPromotedQuotes = useCallback(() => navigation.navigate('PromotedQuotes'), [navigation]);
   const openNotifications = useCallback(
@@ -365,6 +367,7 @@ function useShelfNavigation(navigation: ShelfNavigation): ShelfNav {
     openPhotograph,
     openWithPrompt,
     openCorpus,
+    openVaultDashboard,
     openVoiceDrafts,
     openPromotedQuotes,
     openNotifications,
@@ -385,6 +388,7 @@ interface ShelfDrawer {
   onNewEntry: () => void;
   onPhotograph: () => void;
   onOpenCorpus: (_destination: CorpusDestination) => void;
+  onOpenVaultDashboard: () => void;
   onOpenVoiceDrafts: () => void;
   onOpenPromotedQuotes: () => void;
 }
@@ -408,6 +412,10 @@ function useShelfDrawer(nav: ShelfNav): ShelfDrawer {
     nav.openPhotograph();
     drawer.close();
   }, [nav, drawer]);
+  const onOpenVaultDashboard = useCallback(() => {
+    nav.openVaultDashboard();
+    drawer.close();
+  }, [nav, drawer]);
   const onOpenVoiceDrafts = useCallback(() => {
     nav.openVoiceDrafts();
     drawer.close();
@@ -422,6 +430,7 @@ function useShelfDrawer(nav: ShelfNav): ShelfDrawer {
     onNewEntry,
     onPhotograph,
     onOpenCorpus: nav.openCorpus,
+    onOpenVaultDashboard,
     onOpenVoiceDrafts,
     onOpenPromotedQuotes,
   };
@@ -576,6 +585,7 @@ function JournalShelfScreen(): React.JSX.Element {
         onNewEntry={shelfDrawer.onNewEntry}
         onPhotograph={shelfDrawer.onPhotograph}
         onOpenCorpus={shelfDrawer.onOpenCorpus}
+        onOpenVaultDashboard={shelfDrawer.onOpenVaultDashboard}
         onOpenVoiceDrafts={shelfDrawer.onOpenVoiceDrafts}
         onOpenPromotedQuotes={shelfDrawer.onOpenPromotedQuotes}
       />

@@ -107,6 +107,7 @@ const EXPECTED_BROWSER_JOURNEYS = [
   'journal-fold-selected-promoted-quotes.browser.e2e.test.ts',
   'journal-format-toolbar-scroll.browser.e2e.test.ts',
   'journal-idle-timer-obstruction.browser.e2e.test.ts',
+  'journal-vault-dashboard-door.browser.e2e.test.ts',
   'journal-timer-elevation.browser.e2e.test.ts',
   'journal-timer-stows-in-header.browser.e2e.test.ts',
   'journal-letter-care-escalation.browser.e2e.test.ts',

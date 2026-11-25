@@ -58,6 +58,7 @@ describe('Journal header drawer nav section', () => {
         onSelectEntry={jest.fn()}
         onNewEntry={jest.fn()}
         onOpenCorpus={jest.fn()}
+        onOpenVaultDashboard={jest.fn()}
         onOpenVoiceDrafts={jest.fn()}
         onOpenPromotedQuotes={jest.fn()}
       />,
@@ -83,6 +84,7 @@ describe('Journal header drawer nav section', () => {
         onSelectEntry={jest.fn()}
         onNewEntry={jest.fn()}
         onOpenCorpus={jest.fn()}
+        onOpenVaultDashboard={jest.fn()}
         onOpenVoiceDrafts={jest.fn()}
         onOpenPromotedQuotes={jest.fn()}
       />,
@@ -100,6 +102,7 @@ describe('Journal header drawer nav section', () => {
         onSelectEntry={jest.fn()}
         onNewEntry={jest.fn()}
         onOpenCorpus={jest.fn()}
+        onOpenVaultDashboard={jest.fn()}
         onOpenVoiceDrafts={jest.fn()}
         onOpenPromotedQuotes={jest.fn()}
       />,
@@ -121,6 +124,7 @@ describe('Journal header drawer nav section', () => {
         onSelectEntry={jest.fn()}
         onNewEntry={jest.fn()}
         onOpenCorpus={jest.fn()}
+        onOpenVaultDashboard={jest.fn()}
         onOpenVoiceDrafts={jest.fn()}
         onOpenPromotedQuotes={jest.fn()}
       />,

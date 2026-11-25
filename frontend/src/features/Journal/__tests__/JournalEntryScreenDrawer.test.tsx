@@ -224,6 +224,22 @@ describe('Journal header drawer from JournalEntryScreen', () => {
     expect(queryByTestId('screen-drawer')).toBeNull();
   });
 
+  it('opens the vault dashboard in place from the entry drawer and closes the drawer', async () => {
+    const { getByTestId, getByLabelText, navigation, queryByTestId } = renderScreen(7);
+    await waitFor(() => expect(getByTestId('journal-title-input')).toBeTruthy());
+
+    fireEvent.press(getByLabelText('Open Journal menu'));
+    await waitFor(() => expect(getByTestId('journal-drawer-vault-dashboard')).toBeTruthy());
+
+    await act(async () => {
+      fireEvent.press(getByTestId('journal-drawer-vault-dashboard'));
+    });
+
+    expect(navigation.navigate).toHaveBeenCalledWith('VaultDashboard');
+    expect(navigation.push).not.toHaveBeenCalledWith('VaultDashboard');
+    expect(queryByTestId('screen-drawer')).toBeNull();
+  });
+
   it('opens Write a review in place from the entry drawer and closes the drawer', async () => {
     const { getByTestId, getByLabelText, navigation, queryByTestId } = renderScreen(7);
     await waitFor(() => expect(getByTestId('journal-title-input')).toBeTruthy());

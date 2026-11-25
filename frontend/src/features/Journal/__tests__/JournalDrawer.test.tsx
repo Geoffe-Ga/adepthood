@@ -7,12 +7,21 @@
 // close/reopen (mirrors useCourseDrawerContent in Course/CourseDrawer.tsx).
 import { jest, describe, it, expect, beforeEach } from '@jest/globals';
 import { act, fireEvent, render, waitFor, within } from '@testing-library/react-native';
-import { Camera, Library, Quote, ScrollText, SquarePen } from 'lucide-react-native';
+import {
+  Camera,
+  LayoutDashboard,
+  Library,
+  Quote,
+  ScrollText,
+  SquarePen,
+} from 'lucide-react-native';
 import React, { useState } from 'react';
 import { TouchableOpacity, View } from 'react-native';
 
 import type { JournalListResponse, JournalMessage } from '@/api';
+import { NAV_ICON_SIZE, NAV_ICON_STROKE } from '@/components/drawer';
 import { ink } from '@/design/tokens';
+import { VAULT_DASHBOARD_TITLE } from '@/features/Settings/vaultDashboardCopy';
 
 const mockList = jest.fn() as jest.MockedFunction<
   (_p?: { search?: string; limit?: number; offset?: number }) => Promise<JournalListResponse>
@@ -94,6 +103,7 @@ interface DrawerHarness {
   onNewEntry?: () => void;
   onPhotograph?: () => void;
   onOpenCorpus?: () => void;
+  onOpenVaultDashboard?: () => void;
   onOpenVoiceDrafts?: () => void;
   onOpenPromotedQuotes?: () => void;
   onOpenNotifications?: () => void;
@@ -106,14 +116,21 @@ function drawerCallbacks(props: Partial<DrawerHarness>) {
     onRowPress: props.onRowPress ?? jest.fn(),
     onNewEntry: props.onNewEntry ?? jest.fn(),
     onOpenCorpus: props.onOpenCorpus ?? jest.fn(),
+    onOpenVaultDashboard: props.onOpenVaultDashboard ?? jest.fn(),
     onOpenVoiceDrafts: props.onOpenVoiceDrafts ?? jest.fn(),
     onOpenPromotedQuotes: props.onOpenPromotedQuotes ?? jest.fn(),
   };
 }
 
 function renderDrawer(props: Partial<DrawerHarness> = {}) {
-  const { onRowPress, onNewEntry, onOpenCorpus, onOpenVoiceDrafts, onOpenPromotedQuotes } =
-    drawerCallbacks(props);
+  const {
+    onRowPress,
+    onNewEntry,
+    onOpenCorpus,
+    onOpenVaultDashboard,
+    onOpenVoiceDrafts,
+    onOpenPromotedQuotes,
+  } = drawerCallbacks(props);
   const onLoadMore = jest.fn();
   const onRetry = jest.fn();
   const onConfirmBodySearch = jest.fn();
@@ -129,6 +146,7 @@ function renderDrawer(props: Partial<DrawerHarness> = {}) {
       onNewEntry={onNewEntry}
       onPhotograph={props.onPhotograph}
       onOpenCorpus={onOpenCorpus}
+      onOpenVaultDashboard={onOpenVaultDashboard}
       onOpenVoiceDrafts={onOpenVoiceDrafts}
       onOpenPromotedQuotes={onOpenPromotedQuotes}
       onOpenNotifications={props.onOpenNotifications}
@@ -143,6 +161,7 @@ function renderDrawer(props: Partial<DrawerHarness> = {}) {
     onRowPress,
     onNewEntry,
     onOpenCorpus,
+    onOpenVaultDashboard,
     onOpenVoiceDrafts,
     onOpenPromotedQuotes,
     onLoadMore,
@@ -351,6 +370,55 @@ describe('JournalDrawer (presentational)', () => {
     expect(onOpenCorpus).toHaveBeenCalledTimes(1);
   });
 
+  it('offers the dashboard as a door with no count, directly under Corpus upload', () => {
+    // Labelled by the dashboard's own title constant, so the door and the
+    // screen it opens cannot drift apart (#3794). A door, like Reflections:
+    // the counts live on the screen, never beside the row.
+    const onOpenVaultDashboard = jest.fn();
+    const { getByRole, getByTestId, getAllByTestId } = renderDrawer({
+      items: [],
+      onOpenVaultDashboard,
+    });
+
+    const row = getByRole('button', { name: VAULT_DASHBOARD_TITLE });
+    expect(within(row).getByText(VAULT_DASHBOARD_TITLE)).toBeTruthy();
+    expect(within(row).queryByText(/\d/)).toBeNull();
+    const doors = getAllByTestId(/^journal-drawer-(corpus|vault-dashboard|voice-drafts)$/).map(
+      (node) => node.props.testID as string,
+    );
+    expect(doors).toEqual([
+      'journal-drawer-corpus',
+      'journal-drawer-vault-dashboard',
+      'journal-drawer-voice-drafts',
+    ]);
+    fireEvent.press(getByTestId('journal-drawer-vault-dashboard'));
+    expect(onOpenVaultDashboard).toHaveBeenCalledTimes(1);
+  });
+
+  it('gives the dashboard row the same icon size, stroke and colour as its neighbours', () => {
+    const { getByTestId } = renderDrawer({ items: [] });
+    const icon = getByTestId('journal-drawer-vault-dashboard').findByType(LayoutDashboard);
+    const neighbour = getByTestId('journal-drawer-corpus').findByType(Library);
+
+    expect(icon.props).toMatchObject({
+      color: ink.muted,
+      size: NAV_ICON_SIZE,
+      strokeWidth: NAV_ICON_STROKE,
+    });
+    expect(icon.props.size).toBe(neighbour.props.size);
+    expect(icon.props.strokeWidth).toBe(neighbour.props.strokeWidth);
+  });
+
+  it('keeps the dashboard door beside its neighbours while a search query is active', () => {
+    const { getByTestId } = renderDrawer({ items: [entry(1)] });
+
+    fireEvent.changeText(getByTestId('drawer-search-input'), 'Entry');
+
+    expect(getByTestId('journal-drawer-corpus')).toBeTruthy();
+    expect(getByTestId('journal-drawer-vault-dashboard')).toBeTruthy();
+    expect(getByTestId('journal-drawer-voice-drafts')).toBeTruthy();
+  });
+
   it('offers Reflections as a door, never as a count', () => {
     // The shelf is retrieval, not an invitation (NORTH-STAR §3/§6): the row
     // names the place and says nothing about how much is in it, because the
@@ -426,6 +494,7 @@ function Harness(): React.JSX.Element {
           onRowPress={() => undefined}
           onNewEntry={() => undefined}
           onOpenCorpus={() => undefined}
+          onOpenVaultDashboard={() => undefined}
           onOpenVoiceDrafts={() => undefined}
           onOpenPromotedQuotes={() => undefined}
           corpusOpenState="idle"
