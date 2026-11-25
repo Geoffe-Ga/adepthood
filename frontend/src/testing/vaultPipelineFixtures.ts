@@ -1,5 +1,8 @@
 import type { StageRun, UploadReceipt, VaultFolder, VaultPipeline } from '@/api';
 
+type StageTotals = NonNullable<NonNullable<VaultPipeline['vault']>['stage_totals']>;
+type StageTotal = StageTotals['stages'][number];
+
 const FILENAME = 'on-attention.html';
 const SUBSTACK = '01-Fragments/Writing/Substack';
 const LANDED_AT = '2026-11-20T17:02:11Z';
@@ -99,6 +102,44 @@ export const VAULT_SNAPSHOT: NonNullable<VaultPipeline['vault']> = {
   documents_withheld: 1,
   jobs: [],
   stage_totals: null,
+};
+
+/** How many files the populated whole-corpus fixture holds: four digits, so grouping shows. */
+export const TOTALS_DOCUMENTS = 1240;
+
+function stageTotal(
+  stage: StageTotal['stage'],
+  covered: number,
+  left: Partial<Pick<StageTotal, 'partial' | 'failed'>> = {},
+): StageTotal {
+  return { stage, covered, partial: 0, failed: 0, ...left };
+}
+
+/**
+ * Creek's 0.37 whole-corpus stage counts (#3796), all seven stages in pipeline
+ * order: two finished, one that left some partly done, one that left some
+ * unfinished, one that left both, one under way and one not begun.
+ */
+export const STAGE_TOTALS: StageTotals = {
+  documents: TOTALS_DOCUMENTS,
+  stages: [
+    stageTotal('ingested', TOTALS_DOCUMENTS),
+    stageTotal('classified', 1180, { partial: 60 }),
+    stageTotal('praxis_scanned', TOTALS_DOCUMENTS),
+    stageTotal('linked:embeddings', 900, { failed: 3 }),
+    stageTotal('linked:temporal', 1100, { partial: 12, failed: 2 }),
+    stageTotal('linked:eddies', 64),
+    stageTotal('linked:threads', 0),
+  ],
+};
+
+/** Every receipt of an account that sent 1,243 files, three of which did not land. */
+export const SENT_TOTALS: VaultPipeline['totals']['sent'] = {
+  accepted: TOTALS_DOCUMENTS,
+  vault_unavailable: 0,
+  capability_unsupported: 0,
+  degraded: 0,
+  unsupported_source: 3,
 };
 
 export function pipelineAnswer(overrides: Partial<VaultPipeline> = {}): VaultPipeline {

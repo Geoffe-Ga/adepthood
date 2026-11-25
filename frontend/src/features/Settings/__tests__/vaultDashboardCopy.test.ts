@@ -12,6 +12,10 @@ import {
   batchCountsLine,
   childLabel,
   childNote,
+  CORPUS_TOTALS_HEADING,
+  CORPUS_TOTALS_NONE_WORKED,
+  CORPUS_TOTALS_NOTHING_SENT,
+  filesOfLine,
   indexedLine,
   documentStageLabel,
   documentStageMark,
@@ -20,6 +24,9 @@ import {
   landedInLine,
   passLine,
   receiptLine,
+  sentLandedLine,
+  sentNotLandedLine,
+  stageLeftLine,
   withheldLine,
   WRITERLESS_LINE,
 } from '@/features/Settings/vaultDashboardCopy';
@@ -242,5 +249,59 @@ describe('area words', () => {
     expect(childNote(childAt(authors, 0), authors)).toBe(
       `${WRITERLESS_LINE} — it is an example that came with your vault.`,
     );
+  });
+});
+
+describe('whole-corpus totals (#3796)', () => {
+  const none = { turnedAway: 0, notLanded: 0, unconfirmed: 0 };
+
+  test('"x of y files" groups its digits and never becomes a share of anything', () => {
+    expect(filesOfLine(1180, 1240)).toBe('1,180 of 1,240 files');
+    expect(filesOfLine(0, 12)).toBe('0 of 12 files');
+    expect(filesOfLine(1, 1)).toBe('1 of 1 file');
+    expect(filesOfLine(1180, 1240)).not.toMatch(/%/u);
+  });
+
+  test('the sent line says how many landed of how many were sent', () => {
+    expect(sentLandedLine(1240, 1243)).toBe('1,240 of 1,243 files landed');
+    expect(sentLandedLine(1, 1)).toBe('1 of 1 file landed');
+  });
+
+  test('nothing is said about files that did not land when every one did', () => {
+    expect(sentNotLandedLine(none)).toBeNull();
+  });
+
+  test('each way a file did not land is counted in its own words', () => {
+    expect(sentNotLandedLine({ ...none, turnedAway: 3 })).toBe('3 turned away for their file type');
+    expect(sentNotLandedLine({ ...none, turnedAway: 1 })).toBe('1 turned away for its file type');
+    expect(sentNotLandedLine({ ...none, notLanded: 2 })).toBe("2 didn't land");
+    expect(sentNotLandedLine({ ...none, unconfirmed: 1 })).toBe("1 couldn't be confirmed");
+    expect(sentNotLandedLine({ turnedAway: 1200, notLanded: 2, unconfirmed: 1 })).toBe(
+      "1,200 turned away for their file type · 2 didn't land · 1 couldn't be confirmed",
+    );
+  });
+
+  test('a stage says what it left, and nothing when it left nothing', () => {
+    expect(stageLeftLine(0, 0)).toBeNull();
+    expect(stageLeftLine(60, 0)).toBe('60 partly done');
+    expect(stageLeftLine(0, 3)).toBe("3 didn't finish");
+    expect(stageLeftLine(1060, 3)).toBe("1,060 partly done · 3 didn't finish");
+  });
+
+  test('new words say "your Corpus", and name neither the engine nor the old room', () => {
+    const lines = [
+      CORPUS_TOTALS_HEADING,
+      CORPUS_TOTALS_NOTHING_SENT,
+      CORPUS_TOTALS_NONE_WORKED,
+      sentLandedLine(1240, 1243),
+      sentNotLandedLine({ turnedAway: 1, notLanded: 1, unconfirmed: 1 }) ?? '',
+      stageLeftLine(1, 1) ?? '',
+    ];
+    for (const line of lines) {
+      expect(line).not.toMatch(/creek|vault/iu);
+      expect(line).not.toMatch(TOKEN_SHAPE);
+    }
+    expect(CORPUS_TOTALS_NOTHING_SENT).toContain('your Corpus');
+    expect(CORPUS_TOTALS_NONE_WORKED).toContain('Your Corpus');
   });
 });

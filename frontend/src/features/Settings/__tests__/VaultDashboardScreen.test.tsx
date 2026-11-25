@@ -24,6 +24,9 @@ import React from 'react';
 
 import { VAULT_UNREACHABLE } from '../vaultCopy';
 import {
+  CORPUS_TOTALS_HEADING,
+  CORPUS_TOTALS_NONE_WORKED,
+  CORPUS_TOTALS_NOTHING_SENT,
   VAULT_DASHBOARD_NO_PASSES,
   VAULT_DASHBOARD_NOT_CONNECTED,
   VAULT_DASHBOARD_NOTHING_YET,
@@ -39,7 +42,14 @@ import { touchTarget } from '@/design/tokens';
 import { setActiveUser } from '@/storage/userScope';
 import { resetAllStores } from '@/store/registry';
 import { expectNavigationOwnsTitle } from '@/testing/navigationOwnsTitle';
-import { pipelineAnswer, receipt, stageRun, VAULT_SNAPSHOT } from '@/testing/vaultPipelineFixtures';
+import {
+  pipelineAnswer,
+  receipt,
+  SENT_TOTALS,
+  STAGE_TOTALS,
+  stageRun,
+  VAULT_SNAPSHOT,
+} from '@/testing/vaultPipelineFixtures';
 
 /**
  * The "Your vault" dashboard (#3776): what came in and where it landed, what
@@ -401,5 +411,215 @@ describe('VaultDashboardScreen polling', () => {
     });
 
     expect(mockPipeline).toHaveBeenCalledTimes(1);
+  });
+});
+
+/** A whole answer over a populated corpus: 1,243 sent, 1,240 held, stages at every state. */
+function populatedAnswer(overrides: Partial<VaultPipeline> = {}): VaultPipeline {
+  return pipelineAnswer({
+    totals: { sent: SENT_TOTALS },
+    vault: { ...VAULT_SNAPSHOT, stage_totals: STAGE_TOTALS },
+    ...overrides,
+  });
+}
+
+const STAGE_TOKENS = [
+  'ingested',
+  'classified',
+  'praxis_scanned',
+  'linked:embeddings',
+  'linked:temporal',
+  'linked:eddies',
+  'linked:threads',
+] as const;
+
+describe('VaultDashboardScreen whole-corpus totals (#3796)', () => {
+  test('leads with how many files landed of all that were sent, and how many did not', async () => {
+    mockPipeline.mockResolvedValue(populatedAnswer());
+    const screen = await renderScreen();
+
+    const section = await screen.findByTestId('corpus-totals');
+    expect(section).toHaveTextContent(new RegExp(CORPUS_TOTALS_HEADING, 'u'));
+    expect(screen.getByTestId('corpus-totals-sent')).toHaveTextContent(
+      '1,240 of 1,243 files landed',
+    );
+    expect(screen.getByTestId('corpus-totals-not-landed')).toHaveTextContent(
+      '3 turned away for their file type',
+    );
+    const text = textOf(screen);
+    expect(text.indexOf(CORPUS_TOTALS_HEADING)).toBeGreaterThanOrEqual(0);
+    expect(text.indexOf(CORPUS_TOTALS_HEADING)).toBeLessThan(text.indexOf('What came in'));
+  });
+
+  test('says nothing about files that did not land when every one did', async () => {
+    mockPipeline.mockResolvedValue(pipelineAnswer());
+    const screen = await renderScreen();
+
+    expect(await screen.findByTestId('corpus-totals-sent')).toHaveTextContent('1 of 1 file landed');
+    expect(screen.queryByTestId('corpus-totals-not-landed')).toBeNull();
+  });
+
+  test('lists every stage in pipeline order as "x of y files", in the screen’s own words', async () => {
+    mockPipeline.mockResolvedValue(populatedAnswer());
+    const screen = await renderScreen();
+    await screen.findByTestId('corpus-totals-stages');
+
+    const rows = [
+      ['ingested', 'Brought in', '1,240 of 1,240 files'],
+      ['classified', 'Classified', '1,180 of 1,240 files'],
+      ['praxis_scanned', 'Read for praxis', '1,240 of 1,240 files'],
+      ['linked:embeddings', 'Linked by meaning', '900 of 1,240 files'],
+      ['linked:temporal', 'Linked in time', '1,100 of 1,240 files'],
+      ['linked:eddies', 'Eddies', '64 of 1,240 files'],
+      ['linked:threads', 'Threads', '0 of 1,240 files'],
+    ] as const;
+    rows.forEach(([stage, label, count], index) => {
+      expect(screen.getByTestId(`corpus-stage-label-${String(index)}`)).toHaveTextContent(label);
+      expect(screen.getByTestId(`corpus-stage-count-${String(index)}`)).toHaveTextContent(count);
+      expect(STAGE_TOKENS[index]).toBe(stage);
+    });
+    expect(screen.queryByTestId('corpus-stage-label-7')).toBeNull();
+
+    const section = textOf(screen);
+    for (const line of section) {
+      for (const token of ['praxis_scanned', 'linked:', 'ingested', 'unsupported_source']) {
+        expect(line).not.toContain(token);
+      }
+      expect(line).not.toMatch(PRESSURE);
+    }
+    expect(screen.queryByRole('progressbar')).toBeNull();
+  });
+
+  test('a finished stage carries the tick; one that left files says so on its row', async () => {
+    mockPipeline.mockResolvedValue(populatedAnswer());
+    const screen = await renderScreen();
+    await screen.findByTestId('corpus-totals-stages');
+
+    expect(screen.getByTestId('corpus-stage-done-0')).toHaveTextContent('✓');
+    expect(screen.getByTestId('corpus-stage-done-2')).toHaveTextContent('✓');
+    for (const unfinished of [1, 3, 4, 5, 6]) {
+      expect(screen.queryByTestId(`corpus-stage-done-${String(unfinished)}`)).toBeNull();
+    }
+    expect(screen.getByTestId('corpus-stage-left-1')).toHaveTextContent('60 partly done');
+    expect(screen.getByTestId('corpus-stage-left-3')).toHaveTextContent("3 didn't finish");
+    expect(screen.getByTestId('corpus-stage-left-4')).toHaveTextContent(
+      "12 partly done · 2 didn't finish",
+    );
+    for (const quiet of [0, 2, 5, 6]) {
+      expect(screen.queryByTestId(`corpus-stage-left-${String(quiet)}`)).toBeNull();
+    }
+    expect(screen.getByTestId('corpus-stage-1')).toHaveTextContent(
+      /Classified.*1,180 of 1,240 files.*60 partly done/u,
+    );
+  });
+
+  test('every count is in tabular numerals and its column is right-aligned', async () => {
+    mockPipeline.mockResolvedValue(populatedAnswer());
+    const screen = await renderScreen();
+    await screen.findByTestId('corpus-totals-stages');
+
+    for (const id of ['corpus-totals-sent', 'corpus-totals-not-landed', 'corpus-stage-left-1']) {
+      expect(screen.getByTestId(id)).toHaveStyle({ fontVariant: ['tabular-nums'] });
+    }
+    for (const index of STAGE_TOKENS.keys()) {
+      expect(screen.getByTestId(`corpus-stage-count-${String(index)}`)).toHaveStyle({
+        fontVariant: ['tabular-nums'],
+        textAlign: 'right',
+      });
+    }
+  });
+
+  test('an older image shows the sent line and the update notice in place of the stages', async () => {
+    mockPipeline.mockResolvedValue(populatedAnswer({ vault: VAULT_SNAPSHOT }));
+    const screen = await renderScreen();
+
+    expect(await screen.findByTestId('corpus-totals-sent')).toHaveTextContent(
+      '1,240 of 1,243 files landed',
+    );
+    expect(screen.getByTestId('corpus-totals-update-needed')).toHaveTextContent(
+      VAULT_UPDATE_NEEDED,
+    );
+    expect(screen.queryByTestId('corpus-totals-stages')).toBeNull();
+    expect(screen.getByTestId('vault-dashboard-shape')).toBeTruthy();
+  });
+
+  test.each([
+    ['unreachable', true, 'vault-dashboard-unreachable'],
+    ['not_connected', false, 'vault-dashboard-not-connected'],
+    ['update_needed', false, 'vault-dashboard-update-needed'],
+  ] as const)(
+    'a vault that is %s still shows the sent line, and its own notice once',
+    async (status, unreachable, notice) => {
+      mockPipeline.mockResolvedValue(
+        populatedAnswer({ vault: null, vault_status: status, vault_unreachable: unreachable }),
+      );
+      const screen = await renderScreen();
+
+      expect(await screen.findByTestId('corpus-totals-sent')).toHaveTextContent(
+        '1,240 of 1,243 files landed',
+      );
+      expect(screen.getByTestId(notice)).toBeTruthy();
+      expect(screen.queryByTestId('corpus-totals-stages')).toBeNull();
+      expect(screen.queryByTestId('corpus-totals-update-needed')).toBeNull();
+    },
+  );
+
+  test('an account that has sent nothing says so, without "0 of 0"', async () => {
+    mockPipeline.mockResolvedValue(
+      pipelineAnswer({
+        recent_uploads: [],
+        totals: { sent: { ...SENT_TOTALS, accepted: 0, unsupported_source: 0 } },
+        vault: { ...VAULT_SNAPSHOT, stage_totals: { ...STAGE_TOTALS, documents: 0 } },
+      }),
+    );
+    const screen = await renderScreen();
+
+    expect(await screen.findByTestId('corpus-totals-sent')).toHaveTextContent(
+      CORPUS_TOTALS_NOTHING_SENT,
+    );
+    expect(screen.queryByTestId('corpus-totals-stages')).toBeNull();
+    expect(screen.queryByText(CORPUS_TOTALS_NONE_WORKED)).toBeNull();
+    expect(screen.queryByText(/0 of 0/u)).toBeNull();
+  });
+
+  test('files that landed but are not counted yet say so instead of "0 of 0"', async () => {
+    mockPipeline.mockResolvedValue(
+      populatedAnswer({
+        vault: { ...VAULT_SNAPSHOT, stage_totals: { ...STAGE_TOTALS, documents: 0 } },
+      }),
+    );
+    const screen = await renderScreen();
+
+    expect(await screen.findByText(CORPUS_TOTALS_NONE_WORKED)).toBeTruthy();
+    expect(screen.queryByTestId('corpus-totals-stages')).toBeNull();
+  });
+
+  test('the counts move on the existing poll while a pass is going', async () => {
+    jest.useFakeTimers();
+    const going = [stageRun({ outcome: 'attempted' })];
+    const moved = {
+      ...STAGE_TOTALS,
+      stages: STAGE_TOTALS.stages.map((row) =>
+        row.stage === 'classified' ? { ...row, covered: 1240, partial: 0 } : row,
+      ),
+    };
+    mockPipeline
+      .mockResolvedValueOnce(populatedAnswer({ stage_runs: going }))
+      .mockResolvedValueOnce(
+        populatedAnswer({ vault: { ...VAULT_SNAPSHOT, stage_totals: moved } }),
+      );
+    const screen = await renderScreen();
+    expect(await screen.findByTestId('corpus-stage-count-1')).toHaveTextContent(
+      '1,180 of 1,240 files',
+    );
+
+    await act(async () => {
+      jest.advanceTimersByTime(VAULT_DASHBOARD_POLL_INTERVAL_MS);
+    });
+    await waitFor(() =>
+      expect(screen.getByTestId('corpus-stage-count-1')).toHaveTextContent('1,240 of 1,240 files'),
+    );
+    expect(screen.getByTestId('corpus-stage-done-1')).toHaveTextContent('✓');
+    expect(screen.queryByTestId('corpus-stage-left-1')).toBeNull();
   });
 });

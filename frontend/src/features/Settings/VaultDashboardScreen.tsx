@@ -7,6 +7,8 @@
  * quiet"). It renders ``GET /vault/pipeline`` (#3775) in three sections: the
  * receipts of what came in, the passes adepthood ran and the stages Creek
  * stamped on each recent file, and one row per ontology folder with its count.
+ * Ahead of them (#3796) sits the whole corpus: how many of the files sent
+ * landed, and each stage as "x of y files" over every file held.
  * Counts are counts and a finished stage is a tick: no score, no streak, no
  * percent-complete bar.
  *
@@ -41,12 +43,19 @@ import {
   areaSummary,
   childLabel,
   childNote,
+  CORPUS_TOTALS_HEADING,
+  CORPUS_TOTALS_NONE_WORKED,
+  CORPUS_TOTALS_NOTHING_SENT,
+  filesOfLine,
   folderLabel,
   indexedLine,
   landedInLine,
   lastPassLine,
   passLine,
   receiptLine,
+  sentLandedLine,
+  sentNotLandedLine,
+  stageLeftLine,
   VAULT_CREEK_HEADING,
   VAULT_DASHBOARD_LEAD,
   VAULT_DASHBOARD_NO_PASSES,
@@ -67,6 +76,8 @@ import {
   groupReceipts,
   isPipelineBusy,
   passSummary,
+  sentSummary,
+  stageFinished,
   type ReceiptGroup,
   type VaultArea,
 } from './vaultDashboardModel';
@@ -199,6 +210,126 @@ const VaultReachNotice = ({
   }
   return null;
 };
+
+type StageTotals = NonNullable<NonNullable<VaultPipeline['vault']>['stage_totals']>;
+
+/** Every file the account sent: how many landed, and how many did not and why. */
+const SentLines = ({ answer }: { answer: VaultPipeline }): React.JSX.Element => {
+  const { width } = useWindowDimensions();
+  const t = typeRamp(width);
+  const sent = sentSummary(answer.totals.sent);
+  const notLanded = sentNotLandedLine(sent);
+  return (
+    <View style={styles.card}>
+      <Text
+        style={[t.body, sent.total > 0 ? styles.name : styles.noticeText, styles.numerals]}
+        testID="corpus-totals-sent"
+      >
+        {sent.total > 0 ? sentLandedLine(sent.landed, sent.total) : CORPUS_TOTALS_NOTHING_SENT}
+      </Text>
+      {notLanded ? (
+        <Text style={[t.caption, styles.soft, styles.numerals]} testID="corpus-totals-not-landed">
+          {notLanded}
+        </Text>
+      ) : null}
+    </View>
+  );
+};
+
+/**
+ * One stage over the whole corpus: its name, "x of y files", and the finished
+ * tick in a slot every row keeps, so the counts share one right edge whether a
+ * row is ticked or not. What the stage left behind sits under it, on its row.
+ */
+const StageTotalRow = ({
+  row,
+  documents,
+  index,
+}: {
+  row: StageTotals['stages'][number];
+  documents: number;
+  index: number;
+}): React.JSX.Element => {
+  const { width } = useWindowDimensions();
+  const t = typeRamp(width);
+  const at = String(index);
+  const left = stageLeftLine(row.partial, row.failed);
+  return (
+    <View
+      style={[styles.line, index === 0 ? styles.firstLine : null]}
+      testID={`corpus-stage-${at}`}
+    >
+      <View style={styles.stageHead}>
+        <Text style={[t.body, styles.name, styles.folderLabel]} testID={`corpus-stage-label-${at}`}>
+          {documentStageLabel(row.stage)}
+        </Text>
+        <Text style={[t.body, styles.count, styles.numerals]} testID={`corpus-stage-count-${at}`}>
+          {filesOfLine(row.covered, documents)}
+        </Text>
+        <View style={styles.tickRoom}>
+          {stageFinished(row.covered, documents) ? (
+            <Text style={[t.body, styles.tick]} testID={`corpus-stage-done-${at}`}>
+              {documentStageMark('ok')}
+            </Text>
+          ) : null}
+        </View>
+      </View>
+      {left ? (
+        <Text style={[t.caption, styles.soft, styles.numerals]} testID={`corpus-stage-left-${at}`}>
+          {left}
+        </Text>
+      ) : null}
+    </View>
+  );
+};
+
+/** Each stage over every file held, or the one line that stands in for them. */
+const StageTotalsCard = ({
+  totals,
+  landed,
+}: {
+  totals: StageTotals | null;
+  landed: number;
+}): React.JSX.Element | null => {
+  const { width } = useWindowDimensions();
+  const t = typeRamp(width);
+  if (totals === null) {
+    return (
+      <View style={styles.notice} testID="corpus-totals-update-needed">
+        <Text style={[t.body, styles.noticeText]}>{VAULT_UPDATE_NEEDED}</Text>
+      </View>
+    );
+  }
+  if (totals.documents === 0) {
+    return landed > 0 ? (
+      <Text style={[t.body, styles.paragraph]}>{CORPUS_TOTALS_NONE_WORKED}</Text>
+    ) : null;
+  }
+  return (
+    <View style={styles.card} testID="corpus-totals-stages">
+      {totals.stages.map((row, index) => (
+        <StageTotalRow key={row.stage} row={row} documents={totals.documents} index={index} />
+      ))}
+    </View>
+  );
+};
+
+/**
+ * Everything sent in (#3796): the files that landed out of all that were sent,
+ * then each stage as "x of y files" over the whole corpus. Without the vault's
+ * half the sent line stands alone -- the notice above already says why.
+ */
+const CorpusTotalsSection = ({ answer }: { answer: VaultPipeline }): React.JSX.Element => (
+  <EditorialSection title={CORPUS_TOTALS_HEADING} testID="corpus-totals">
+    <SentLines answer={answer} />
+    {answer.vault ? (
+      <StageTotalsCard
+        totals={answer.vault.stage_totals}
+        landed={sentSummary(answer.totals.sent).landed}
+      />
+    ) : null}
+  </EditorialSection>
+);
 
 /** One import: its heading and counts, then each file and where it went. */
 const ReceiptGroupCard = ({ group }: { group: ReceiptGroup }): React.JSX.Element => {
@@ -493,6 +624,7 @@ const DashboardBody = ({
 }): React.JSX.Element => (
   <>
     <VaultReachNotice answer={answer} navigation={navigation} />
+    <CorpusTotalsSection answer={answer} />
     <UploadsSection answer={answer} />
     <CreekSection answer={answer} />
     {answer.vault ? <ShapeSection folders={answer.vault.folders} /> : null}
@@ -621,6 +753,18 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     justifyContent: 'space-between',
     columnGap: SPACING.sm,
+  },
+  stageHead: {
+    alignItems: 'baseline',
+    columnGap: SPACING.sm,
+    flexDirection: 'row',
+  },
+  tickRoom: {
+    alignItems: 'flex-end',
+    width: NAV_ICON_SIZE,
+  },
+  tick: {
+    color: ink.primary,
   },
   chevronRoom: {
     width: NAV_ICON_SIZE,

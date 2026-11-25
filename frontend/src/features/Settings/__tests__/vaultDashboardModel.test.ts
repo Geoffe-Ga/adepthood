@@ -7,6 +7,8 @@ import {
   isPipelineBusy,
   landedFolderFor,
   passSummary,
+  sentSummary,
+  stageFinished,
 } from '@/features/Settings/vaultDashboardModel';
 import { folder, SHAPE_FOLDERS } from '@/testing/vaultPipelineFixtures';
 
@@ -269,5 +271,47 @@ describe('groupFolderAreas', () => {
     expect(headless).toEqual([
       expect.objectContaining({ path: '05-Wavelength', header: null, writer: 'save' }),
     ]);
+  });
+});
+
+describe('sentSummary (#3796)', () => {
+  test('sorts every receipt of the account into landed, turned away, not landed, unconfirmed', () => {
+    expect(
+      sentSummary({
+        accepted: 1240,
+        vault_unavailable: 2,
+        capability_unsupported: 1,
+        degraded: 4,
+        unsupported_source: 3,
+      }),
+    ).toEqual({ total: 1250, landed: 1240, turnedAway: 3, notLanded: 3, unconfirmed: 4 });
+  });
+
+  test('an outcome this app has no name for still counts, as not landed', () => {
+    expect(sentSummary({ accepted: 5, something_new: 2 })).toEqual({
+      total: 7,
+      landed: 5,
+      turnedAway: 0,
+      notLanded: 2,
+      unconfirmed: 0,
+    });
+  });
+
+  test('an account that sent nothing sums to nothing', () => {
+    expect(sentSummary({})).toEqual({
+      total: 0,
+      landed: 0,
+      turnedAway: 0,
+      notLanded: 0,
+      unconfirmed: 0,
+    });
+  });
+});
+
+describe('stageFinished (#3796)', () => {
+  test('a stage is finished only when it covered every file there is', () => {
+    expect(stageFinished(1240, 1240)).toBe(true);
+    expect(stageFinished(1239, 1240)).toBe(false);
+    expect(stageFinished(0, 0)).toBe(false);
   });
 });

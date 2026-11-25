@@ -10,7 +10,7 @@
  * stage is a tick, and nothing here is a score, a streak or a percentage. An
  * empty folder is not a gap to fill; it says what would fill it, if anything.
  */
-import type { VaultArea } from './vaultDashboardModel';
+import type { SentSummary, VaultArea } from './vaultDashboardModel';
 
 import type { StageRun, UploadReceipt, VaultFolder, VaultDocument } from '@/api';
 
@@ -274,4 +274,52 @@ export function withheldLine(count: number): string | null {
   return count === 1
     ? '1 more is above the privacy level shared here, so it is not named.'
     : `${String(count)} more are above the privacy level shared here, so they are not named.`;
+}
+
+/** The whole-corpus section (#3796): every file sent, and each stage over all of them. */
+export const CORPUS_TOTALS_HEADING = 'Everything you sent in';
+export const CORPUS_TOTALS_NOTHING_SENT = "You haven't sent anything in to your Corpus yet.";
+export const CORPUS_TOTALS_NONE_WORKED = "Your Corpus hasn't worked through any of them yet.";
+
+/** Digits grouped the way the device's own locale groups them: 1,240. */
+const GROUPED = new Intl.NumberFormat();
+
+function grouped(count: number): string {
+  return GROUPED.format(count);
+}
+
+/** "1,180 of 1,240 files": a count beside the count it is out of, and nothing derived from them. */
+export function filesOfLine(count: number, outOf: number): string {
+  return `${grouped(count)} of ${grouped(outOf)} ${outOf === 1 ? 'file' : 'files'}`;
+}
+
+/** "1,240 of 1,243 files landed", over every file the account sent. */
+export function sentLandedLine(landed: number, total: number): string {
+  return `${filesOfLine(landed, total)} landed`;
+}
+
+/**
+ * The files that did not land, each kind counted in its own words, or null when
+ * every file landed. Turned away is a refusal of the file's type, not a
+ * failure; unconfirmed is a file that may or may not be held.
+ */
+export function sentNotLandedLine(
+  summary: Pick<SentSummary, 'turnedAway' | 'notLanded' | 'unconfirmed'>,
+): string | null {
+  const parts: string[] = [];
+  if (summary.turnedAway > 0) {
+    const whose = summary.turnedAway === 1 ? 'its' : 'their';
+    parts.push(`${grouped(summary.turnedAway)} turned away for ${whose} file type`);
+  }
+  if (summary.notLanded > 0) parts.push(`${grouped(summary.notLanded)} didn't land`);
+  if (summary.unconfirmed > 0) parts.push(`${grouped(summary.unconfirmed)} couldn't be confirmed`);
+  return parts.length > 0 ? parts.join(' · ') : null;
+}
+
+/** What a stage left behind, in the words a single file's stage uses, or null for nothing. */
+export function stageLeftLine(partial: number, failed: number): string | null {
+  const parts: string[] = [];
+  if (partial > 0) parts.push(`${grouped(partial)} ${DOCUMENT_OUTCOME_MARKS.partial} done`);
+  if (failed > 0) parts.push(`${grouped(failed)} ${DOCUMENT_OUTCOME_MARKS.failed}`);
+  return parts.length > 0 ? parts.join(' · ') : null;
 }
