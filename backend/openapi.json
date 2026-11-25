@@ -12360,7 +12360,7 @@
         "type": "object"
       },
       "VaultDocumentStage": {
-        "description": "One stage a whole-vault pass may have run over an uploaded document.",
+        "description": "One stage a whole-vault pass may have run over an uploaded document.\n\nDeclared in pipeline order: the order Creek lists a corpus's totals in.",
         "enum": [
           "ingested",
           "classified",
@@ -12533,6 +12533,9 @@
             "title": "Stage Runs",
             "type": "array"
           },
+          "totals": {
+            "$ref": "#/components/schemas/VaultPipelineTotalsResponse"
+          },
           "vault": {
             "anyOf": [
               {
@@ -12555,11 +12558,30 @@
           "recent_uploads",
           "next_before",
           "stage_runs",
+          "totals",
           "vault",
           "vault_status",
           "vault_unreachable"
         ],
         "title": "VaultPipelineResponse",
+        "type": "object"
+      },
+      "VaultPipelineTotalsResponse": {
+        "additionalProperties": false,
+        "description": "Whole-account counts that no page of ``recent_uploads`` can give (#3795).\n\n``sent`` maps every outcome a receipt may carry (``accepted`` and the ways\na file was not) to how many of the account's receipts carry it, zeros\nincluded. It does not depend on ``limit`` or ``before``.",
+        "properties": {
+          "sent": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "title": "Sent",
+            "type": "object"
+          }
+        },
+        "required": [
+          "sent"
+        ],
+        "title": "VaultPipelineTotalsResponse",
         "type": "object"
       },
       "VaultPraxisKind": {
@@ -12625,7 +12647,7 @@
       },
       "VaultSnapshotResponse": {
         "additionalProperties": false,
-        "description": "Creek's half: folders, recent uploads, the withheld count and jobs.",
+        "description": "Creek's half: folders, recent uploads, the withheld count and jobs.\n\n``stage_totals`` is ``null`` when the vault answers on an image older than\ncontract 0.37: everything else here is still its answer.",
         "properties": {
           "documents": {
             "items": {
@@ -12651,13 +12673,24 @@
             },
             "title": "Jobs",
             "type": "array"
+          },
+          "stage_totals": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/VaultStageTotalsResponse"
+              },
+              {
+                "type": "null"
+              }
+            ]
           }
         },
         "required": [
           "folders",
           "documents",
           "documents_withheld",
-          "jobs"
+          "jobs",
+          "stage_totals"
         ],
         "title": "VaultSnapshotResponse",
         "type": "object"
@@ -12694,6 +12727,58 @@
           "outcome"
         ],
         "title": "VaultStageResponse",
+        "type": "object"
+      },
+      "VaultStageTotalResponse": {
+        "additionalProperties": false,
+        "description": "How many of the account's documents one stage has reached.\n\nThe three counts are disjoint, so ``documents`` less all three is how many\nthe stage has not run over yet.",
+        "properties": {
+          "covered": {
+            "title": "Covered",
+            "type": "integer"
+          },
+          "failed": {
+            "title": "Failed",
+            "type": "integer"
+          },
+          "partial": {
+            "title": "Partial",
+            "type": "integer"
+          },
+          "stage": {
+            "$ref": "#/components/schemas/VaultDocumentStage"
+          }
+        },
+        "required": [
+          "stage",
+          "covered",
+          "partial",
+          "failed"
+        ],
+        "title": "VaultStageTotalResponse",
+        "type": "object"
+      },
+      "VaultStageTotalsResponse": {
+        "additionalProperties": false,
+        "description": "Creek's stage counts over every document the account uploaded (#3795).\n\n``documents`` is the whole corpus, not the listed page; ``stages`` holds\none row per stage in pipeline order, zero rows included. Counts only.",
+        "properties": {
+          "documents": {
+            "title": "Documents",
+            "type": "integer"
+          },
+          "stages": {
+            "items": {
+              "$ref": "#/components/schemas/VaultStageTotalResponse"
+            },
+            "title": "Stages",
+            "type": "array"
+          }
+        },
+        "required": [
+          "documents",
+          "stages"
+        ],
+        "title": "VaultStageTotalsResponse",
         "type": "object"
       },
       "VaultStatusJobKind": {

@@ -1,11 +1,14 @@
-"""What a Creek Vault says about its own shape: the values of the 0.34 status read (#3775).
+"""What a Creek Vault says about its own shape: the values of the status read (#3775, #3795).
 
 Creek publishes ``GET /v1/pipeline/status`` at contract 0.34 (Creek-Vault#2124):
 every folder ``creek init`` scaffolds with how many notes it holds and which
 subsystem fills it, the caller's most recent uploads with the stages each
 whole-vault pass has run over them, and the caller's newest durable pipeline
-jobs. This module holds the values one answer becomes once
-:mod:`services.creek_vault_pipeline_status_wire` has parsed it strictly.
+jobs. Contract 0.37 (Creek-Vault#2147) adds whole-corpus ``totals`` to the same
+answer: how many documents the caller ever uploaded and, per stage, how many of
+them it covered, left partial or failed. This module holds the values one
+answer becomes once :mod:`services.creek_vault_pipeline_status_wire` has parsed
+it strictly.
 
 **Content-free by construction.** A folder is a path from the scaffold and a
 count; a document is the upload's own external id, the filename the writer gave
@@ -29,6 +32,13 @@ from typing import Final
 #: The contract minor that publishes the status read. Declared on that one call
 #: only, and only to a vault whose handshake lists it; the base pin stays put.
 PIPELINE_STATUS_SINCE_MINOR: Final = "0.34"
+
+#: The contract minor whose answer also carries whole-corpus ``totals``
+#: (Creek-Vault#2147, #3795). Declared in place of
+#: :data:`PIPELINE_STATUS_SINCE_MINOR`, on the same one call, to a vault whose
+#: handshake lists it; an earlier vault is asked at the earlier minor and
+#: answers the same folders, documents and jobs without totals.
+PIPELINE_TOTALS_SINCE_MINOR: Final = "0.37"
 
 #: How many documents a status read asks for: Creek's own published default.
 PIPELINE_STATUS_DEFAULT_LIMIT: Final = 50
@@ -57,7 +67,10 @@ class VaultFolderWriterlessReason(enum.StrEnum):
 
 
 class VaultDocumentStage(enum.StrEnum):
-    """One stage a whole-vault pass may have run over an uploaded document."""
+    """One stage a whole-vault pass may have run over an uploaded document.
+
+    Declared in pipeline order: the order Creek lists a corpus's totals in.
+    """
 
     INGESTED = "ingested"
     CLASSIFIED = "classified"
@@ -66,6 +79,10 @@ class VaultDocumentStage(enum.StrEnum):
     LINKED_TEMPORAL = "linked:temporal"
     LINKED_EDDIES = "linked:eddies"
     LINKED_THREADS = "linked:threads"
+
+
+#: The stages in pipeline order, which is the order Creek lists their totals in.
+PIPELINE_STAGE_ORDER: Final = tuple(VaultDocumentStage)
 
 
 class VaultStageOutcome(enum.StrEnum):
@@ -156,10 +173,44 @@ class VaultStatusJob:
 
 
 @dataclass(frozen=True)
+class VaultStageTotal:
+    """How many of the caller's documents one stage has reached (0.37).
+
+    The three counts are disjoint: a document is counted at most once per
+    stage, so what is left of :attr:`VaultStageTotals.documents` after all
+    three is how many the stage has not run over yet.
+    """
+
+    stage: VaultDocumentStage
+    covered: int
+    partial: int
+    failed: int
+
+
+@dataclass(frozen=True)
+class VaultStageTotals:
+    """Stage counts over every document the caller uploaded, not one page (0.37).
+
+    ``documents`` counts every upload document, whatever its tier and whatever
+    limit the read named. ``stages`` holds one row per
+    :class:`VaultDocumentStage`, in pipeline order, zero rows included. Counts
+    only: no filename, id or path.
+    """
+
+    documents: int
+    stages: tuple[VaultStageTotal, ...]
+
+
+@dataclass(frozen=True)
 class VaultPipelineStatus:
-    """One whole status answer: folders, documents, the withheld count and jobs."""
+    """One whole status answer: folders, documents, the withheld count and jobs.
+
+    ``totals`` is the whole-corpus stage count a vault serving 0.37 adds, and
+    ``None`` from a vault that was asked at an earlier minor.
+    """
 
     folders: tuple[VaultFolderStatus, ...]
     documents: tuple[VaultDocumentStatus, ...]
     documents_withheld: int
     jobs: tuple[VaultStatusJob, ...]
+    totals: VaultStageTotals | None = None

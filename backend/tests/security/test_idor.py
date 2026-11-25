@@ -79,7 +79,7 @@ from models.prompt_dismissal import PromptDismissal
 from models.prompt_response import PromptResponse
 from models.stage_content import StageContent
 from models.stage_progress import StageProgress
-from models.upload_receipt import UploadReceipt
+from models.upload_receipt import RECEIPT_VAULT_STATUSES, UploadReceipt
 from models.user import User
 from models.user_practice import UserPractice
 from models.user_ui_flags import UserUiFlags
@@ -3660,7 +3660,8 @@ async def test_idor_vault_pipeline_shows_only_the_callers_receipts_runs_and_vaul
     parameter, ``before``, is a cursor compared only against rows already
     filtered to the caller, so Bob naming a cursor past Alice's receipt -- with
     her ``user_id`` smuggled in beside it -- still reads only his own (none).
-    Her stage runs are not his, the only vault dialled is his, under his key,
+    Her receipt is in none of his whole-account counts (#3795). Her stage runs
+    are not his, the only vault dialled is his, under his key,
     and the read writes no row.
     """
     alice_key = "alice-pipeline-key-0123456789"  # pragma: allowlist secret
@@ -3740,6 +3741,9 @@ async def test_idor_vault_pipeline_shows_only_the_callers_receipts_runs_and_vaul
     assert body["recent_uploads"] == []
     assert body["stage_runs"] == []
     assert body["vault_status"] == "ok"
+    # Alice's accepted receipt is in no count of Bob's (#3795): every outcome is zero.
+    assert set(body["totals"]["sent"]) == set(RECEIPT_VAULT_STATUSES)
+    assert set(body["totals"]["sent"].values()) == {0}
     assert _ALICE_RECEIPT_NAME not in response.text
     assert set(dialled) == {("v-bob-pipeline.vaults.example", f"Bearer {bob_key}")}
     assert await _counts() == before_counts

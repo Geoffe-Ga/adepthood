@@ -298,7 +298,13 @@ describe('VaultDashboardScreen', () => {
       pipelineAnswer({
         recent_uploads: [],
         stage_runs: [],
-        vault: { folders: [], documents: [], documents_withheld: 0, jobs: [] },
+        vault: {
+          folders: [],
+          documents: [],
+          documents_withheld: 0,
+          jobs: [],
+          stage_totals: null,
+        },
       }),
     );
     const screen = await renderScreen();

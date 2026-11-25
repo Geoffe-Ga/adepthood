@@ -2,8 +2,9 @@
 
 Did my files land, what has Creek run over them, and which parts of the vault
 hold something: the account's own upload receipts and stage runs, and Creek's
-0.34 ``GET /v1/pipeline/status`` re-projected (see
-:mod:`services.vault_pipeline_dashboard`).
+``GET /v1/pipeline/status`` re-projected (see
+:mod:`services.vault_pipeline_dashboard`), with whole-corpus totals (#3795): the
+account's receipts by outcome, and Creek's count of documents per stage.
 
 Owner-only and read-only. The account is the caller's own, from their bearer
 token, and the vault dialled is the one resolved for that account like every

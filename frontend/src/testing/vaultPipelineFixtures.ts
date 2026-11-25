@@ -98,6 +98,7 @@ export const VAULT_SNAPSHOT: NonNullable<VaultPipeline['vault']> = {
   ],
   documents_withheld: 1,
   jobs: [],
+  stage_totals: null,
 };
 
 export function pipelineAnswer(overrides: Partial<VaultPipeline> = {}): VaultPipeline {
@@ -105,6 +106,15 @@ export function pipelineAnswer(overrides: Partial<VaultPipeline> = {}): VaultPip
     recent_uploads: [receipt()],
     next_before: null,
     stage_runs: [stageRun()],
+    totals: {
+      sent: {
+        accepted: 1,
+        vault_unavailable: 0,
+        capability_unsupported: 0,
+        degraded: 0,
+        unsupported_source: 0,
+      },
+    },
     vault: VAULT_SNAPSHOT,
     vault_status: 'ok',
     vault_unreachable: false,

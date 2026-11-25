@@ -2003,15 +2003,54 @@ export const vaultJobSchema = z.object({
 
 export type VaultJobT = z.infer<typeof vaultJobSchema>;
 
-/** Creek's half: folders, recent uploads, the withheld count and jobs. */
+/**
+ * How many of the account's documents one stage has reached
+ * (``VaultStageTotalResponse``). The three counts are disjoint.
+ */
+export const vaultStageTotalSchema = z.object({
+  stage: z.enum(VAULT_DOCUMENT_STAGES),
+  covered: z.number().int().nonnegative(),
+  partial: z.number().int().nonnegative(),
+  failed: z.number().int().nonnegative(),
+});
+
+export type VaultStageTotalT = z.infer<typeof vaultStageTotalSchema>;
+
+/**
+ * Creek's stage counts over every document the account uploaded, not one page
+ * (``VaultStageTotalsResponse``): one row per stage, in pipeline order.
+ */
+export const vaultStageTotalsSchema = z.object({
+  documents: z.number().int().nonnegative(),
+  stages: z.array(vaultStageTotalSchema),
+});
+
+export type VaultStageTotalsT = z.infer<typeof vaultStageTotalsSchema>;
+
+/**
+ * Creek's half: folders, recent uploads, the withheld count and jobs.
+ * ``stage_totals`` is null from a vault that predates contract 0.37.
+ */
 export const vaultSnapshotSchema = z.object({
   folders: z.array(vaultFolderSchema),
   documents: z.array(vaultDocumentSchema),
   documents_withheld: z.number().int().nonnegative(),
   jobs: z.array(vaultJobSchema),
+  stage_totals: vaultStageTotalsSchema.nullable(),
 });
 
 export type VaultSnapshotT = z.infer<typeof vaultSnapshotSchema>;
+
+/**
+ * Whole-account counts no page of ``recent_uploads`` can give
+ * (``VaultPipelineTotalsResponse``): ``sent`` maps each receipt outcome to how
+ * many of the account's receipts carry it, zeros included.
+ */
+export const vaultPipelineTotalsSchema = z.object({
+  sent: z.record(z.string(), z.number().int().nonnegative()),
+});
+
+export type VaultPipelineTotalsT = z.infer<typeof vaultPipelineTotalsSchema>;
 
 /**
  * The whole dashboard read (``VaultPipelineResponse``). Always a 200: ``vault``
@@ -2022,6 +2061,7 @@ export const vaultPipelineSchema = z.object({
   recent_uploads: z.array(uploadReceiptSchema),
   next_before: z.number().int().positive().nullable(),
   stage_runs: z.array(stageRunSchema),
+  totals: vaultPipelineTotalsSchema,
   vault: vaultSnapshotSchema.nullable(),
   vault_status: z.enum(VAULT_STATUS_REACHES),
   vault_unreachable: z.boolean(),

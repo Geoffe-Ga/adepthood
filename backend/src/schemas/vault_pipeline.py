@@ -1,6 +1,6 @@
 """What ``GET /vault/pipeline`` answers (#3775): did my files land, and what has run over them.
 
-Three halves, read together by the "Your vault" dashboard (#3776):
+Four parts, read together by the "Your vault" dashboard (#3776):
 
 * ``recent_uploads`` -- adepthood's own receipts for the documents this account
   sent to its vault, newest first, each with the folder Creek says it landed in
@@ -9,7 +9,11 @@ Three halves, read together by the "Your vault" dashboard (#3776):
   drove on this account's vault, newest first, each with what occasioned it;
 * ``vault`` -- Creek's own account of its folders, the account's recent uploads
   and the stages each went through, and its newest jobs, re-projected onto the
-  types below.
+  types below. Its ``stage_totals`` are Creek's whole-corpus count of documents
+  per stage (contract 0.37, #3795), ``null`` from a vault that predates them;
+* ``totals`` -- how many files this account has sent, by outcome, counted over
+  every receipt rather than one page (#3795). Adepthood's own, so it is
+  answered whatever the vault says.
 
 ``vault_status`` says why ``vault`` is ``null`` when it is: no vault connected,
 a vault that could not be reached, or a vault on an image that predates the
@@ -147,8 +151,40 @@ class VaultJobResponse(BaseModel):
     updated_at: datetime
 
 
+class VaultStageTotalResponse(BaseModel):
+    """How many of the account's documents one stage has reached.
+
+    The three counts are disjoint, so ``documents`` less all three is how many
+    the stage has not run over yet.
+    """
+
+    model_config = _CLOSED
+
+    stage: VaultDocumentStage
+    covered: int
+    partial: int
+    failed: int
+
+
+class VaultStageTotalsResponse(BaseModel):
+    """Creek's stage counts over every document the account uploaded (#3795).
+
+    ``documents`` is the whole corpus, not the listed page; ``stages`` holds
+    one row per stage in pipeline order, zero rows included. Counts only.
+    """
+
+    model_config = _CLOSED
+
+    documents: int
+    stages: list[VaultStageTotalResponse]
+
+
 class VaultSnapshotResponse(BaseModel):
-    """Creek's half: folders, recent uploads, the withheld count and jobs."""
+    """Creek's half: folders, recent uploads, the withheld count and jobs.
+
+    ``stage_totals`` is ``null`` when the vault answers on an image older than
+    contract 0.37: everything else here is still its answer.
+    """
 
     model_config = _CLOSED
 
@@ -156,6 +192,20 @@ class VaultSnapshotResponse(BaseModel):
     documents: list[VaultDocumentResponse]
     documents_withheld: int
     jobs: list[VaultJobResponse]
+    stage_totals: VaultStageTotalsResponse | None
+
+
+class VaultPipelineTotalsResponse(BaseModel):
+    """Whole-account counts that no page of ``recent_uploads`` can give (#3795).
+
+    ``sent`` maps every outcome a receipt may carry (``accepted`` and the ways
+    a file was not) to how many of the account's receipts carry it, zeros
+    included. It does not depend on ``limit`` or ``before``.
+    """
+
+    model_config = _CLOSED
+
+    sent: dict[str, int]
 
 
 class VaultPipelineResponse(BaseModel):
@@ -170,6 +220,7 @@ class VaultPipelineResponse(BaseModel):
     recent_uploads: list[UploadReceiptResponse]
     next_before: int | None
     stage_runs: list[StageRunResponse]
+    totals: VaultPipelineTotalsResponse
     vault: VaultSnapshotResponse | None
     vault_status: VaultStatusReach
     vault_unreachable: bool

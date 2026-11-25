@@ -20,6 +20,10 @@ Pinned here:
   ``update_needed`` -- asked nothing if its handshake says so, and degraded the
   same way if it answers ``409 incompatible_version`` or ``404`` anyway.
 * **Read-only.** No stage is started by the read.
+* **Whole-corpus totals (#3795).** ``totals.sent`` counts every receipt of the
+  account by outcome, whatever page was asked for and whether or not the vault
+  answers. ``vault.stage_totals`` is Creek's 0.37 count of documents per stage,
+  asked for only from a vault that lists 0.37 and ``null`` from an earlier one.
 """
 
 from __future__ import annotations
@@ -59,6 +63,20 @@ _BASE: Final = Path(__file__).parent.parent / "fixtures" / "creek_v1" / "example
 _CAPABILITIES_PATH: Final = "/v1/capabilities"
 _STATUS_PATH: Final = "/v1/pipeline/status"
 _STATUS_MINOR: Final = "0.34"
+_TOTALLED_SLICE: Final = Path(__file__).parent.parent / "fixtures" / "creek_pipeline_status_v037"
+_TOTALS_MINOR: Final = "0.37"
+#: The corpus of Creek's published 0.37 success cell, and its embedded share.
+_PUBLISHED_DOCUMENTS: Final = 1240
+_PUBLISHED_EMBEDDED: Final = 900
+_STAGE_COUNT: Final = 7
+#: What an account that sent nothing has sent: every outcome, at zero.
+_NOTHING_SENT: Final = {
+    "accepted": 0,
+    "vault_unavailable": 0,
+    "capability_unsupported": 0,
+    "degraded": 0,
+    "unsupported_source": 0,
+}
 _STAGE_RUN_CAP: Final = 50
 _RECEIPT_PAGE: Final = 100
 _FILENAME: Final = "on-attention.html"
@@ -235,7 +253,9 @@ async def test_the_whole_answer_joins_receipts_runs_and_creeks_status(
     assert run["stage"] == "eddies"
     assert run["emitted"] == _EDDIES_EMITTED
     vault = body["vault"]
-    assert set(vault) == {"folders", "documents", "documents_withheld", "jobs"}
+    assert set(vault) == {"folders", "documents", "documents_withheld", "jobs", "stage_totals"}
+    assert vault["stage_totals"] is None
+    assert body["totals"] == {"sent": _NOTHING_SENT | {"accepted": 1}}
     praxis = next(f for f in vault["folders"] if f["path"] == "04-Praxis/Daily")
     assert praxis == {
         "path": "04-Praxis/Daily",
@@ -644,6 +664,236 @@ async def test_a_refused_file_types_receipt_reads_back_on_the_dashboard(
     (upload,) = response.json()["recent_uploads"]
     assert upload["vault_status"] == "unsupported_source"
     _validate(response)
+
+
+# --- whole-corpus totals (#3795) --------------------------------------------
+
+
+def _totalled_creek() -> _Creek:
+    """A Creek on contract 0.37: it lists the minor and answers with totals."""
+    return _Creek(
+        _read(_TOTALLED_SLICE / "pipeline-status" / "success.json"),
+        handshake=_read(_TOTALLED_SLICE / "examples" / "capabilities" / "success.json"),
+    )
+
+
+@pytest.mark.asyncio
+async def test_sent_totals_count_every_receipt_by_outcome_whatever_the_page(
+    async_client: AsyncClient,
+    db_session: AsyncSession,
+    serve: Callable[[_Creek], None],
+) -> None:
+    """Three accepted, one degraded, one refused: the same on every page of two."""
+    headers, user_id = await signup(async_client, "pipeline_sent_totals")
+    for name in ("one.md", "two.md", "three.md"):
+        await _receipt(db_session, user_id, name)
+    await _receipt(db_session, user_id, "four.md", vault_status="degraded")
+    await _receipt(db_session, user_id, "five.pages", vault_status="unsupported_source")
+    serve(_Creek())
+    expected = {"sent": _NOTHING_SENT | {"accepted": 3, "degraded": 1, "unsupported_source": 1}}
+
+    first = await async_client.get(_PIPELINE, params={"limit": _PAGE_OF_TWO}, headers=headers)
+    _validate(first)
+    assert len(first.json()["recent_uploads"]) == _PAGE_OF_TWO
+    assert first.json()["totals"] == expected
+
+    last = await async_client.get(
+        _PIPELINE, params={"limit": 1, "before": first.json()["next_before"]}, headers=headers
+    )
+    assert last.json()["totals"] == expected
+    whole = await async_client.get(_PIPELINE, headers=headers)
+    assert whole.json()["totals"] == expected
+
+
+@pytest.mark.asyncio
+async def test_sent_totals_name_every_outcome_at_zero_for_an_account_that_sent_nothing(
+    async_client: AsyncClient, serve: Callable[[_Creek], None]
+) -> None:
+    """An outcome is never inferred from its absence."""
+    headers, _user_id = await signup(async_client, "pipeline_sent_nothing")
+    serve(_Creek())
+
+    response = await async_client.get(_PIPELINE, headers=headers)
+
+    assert response.json()["totals"] == {"sent": _NOTHING_SENT}
+
+
+@pytest.mark.asyncio
+async def test_sent_totals_never_count_another_accounts_receipts(
+    async_client: AsyncClient,
+    db_session: AsyncSession,
+    serve: Callable[[_Creek], None],
+) -> None:
+    """Two accounts, each counted alone."""
+    headers, user_id = await signup(async_client, "pipeline_totals_mine")
+    _other_headers, other_id = await signup(async_client, "pipeline_totals_theirs")
+    await _receipt(db_session, user_id, "mine.md")
+    for name in ("theirs-1.md", "theirs-2.md"):
+        await _receipt(db_session, other_id, name)
+    await _receipt(db_session, other_id, "theirs-3.md", vault_status="degraded")
+    serve(_Creek())
+
+    response = await async_client.get(_PIPELINE, headers=headers)
+
+    assert response.json()["totals"] == {"sent": _NOTHING_SENT | {"accepted": 1}}
+
+
+@pytest.mark.asyncio
+async def test_sent_totals_are_answered_with_no_vault_connected(
+    async_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """Receipts are adepthood's own rows: a since-disconnected account still counts them."""
+    headers, user_id = await signup(async_client, "pipeline_totals_no_vault")
+    await _receipt(db_session, user_id, _FILENAME)
+    app.dependency_overrides[get_creek_vault_client] = LocalFallbackCreekVaultClient
+    try:
+        response = await async_client.get(_PIPELINE, headers=headers)
+    finally:
+        app.dependency_overrides.pop(get_creek_vault_client, None)
+
+    _validate(response)
+    body = response.json()
+    assert body["vault_status"] == "not_connected"
+    assert body["vault"] is None
+    assert body["totals"] == {"sent": _NOTHING_SENT | {"accepted": 1}}
+
+
+@pytest.mark.asyncio
+async def test_sent_totals_are_answered_when_the_vault_is_unreachable(
+    async_client: AsyncClient,
+    db_session: AsyncSession,
+    serve: Callable[[_Creek], None],
+) -> None:
+    """An outage takes Creek's half and nothing of adepthood's."""
+    headers, user_id = await signup(async_client, "pipeline_totals_outage")
+    await _receipt(db_session, user_id, _FILENAME)
+    await _receipt(db_session, user_id, "later.md", vault_status="vault_unavailable")
+
+    def _down(request: httpx.Request) -> Exception:
+        return httpx.ConnectError("synthetic outage", request=request)
+
+    serve(_Creek(transport_error=_down))
+
+    response = await async_client.get(_PIPELINE, headers=headers)
+
+    body = response.json()
+    assert body["vault_status"] == "unreachable"
+    assert body["vault"] is None
+    assert body["totals"] == {"sent": _NOTHING_SENT | {"accepted": 1, "vault_unavailable": 1}}
+
+
+@pytest.mark.asyncio
+async def test_a_vault_listing_0_37_is_asked_at_0_37_and_answers_stage_totals(
+    async_client: AsyncClient, serve: Callable[[_Creek], None]
+) -> None:
+    """Creek's totals are re-projected: the corpus, and one row per stage in order."""
+    headers, _user_id = await signup(async_client, "pipeline_stage_totals")
+    creek = _totalled_creek()
+    serve(creek)
+
+    response = await async_client.get(_PIPELINE, headers=headers)
+
+    assert response.status_code == HTTPStatus.OK
+    _validate(response)
+    body = response.json()
+    assert body["vault_status"] == "ok"
+    stage_totals = body["vault"]["stage_totals"]
+    assert set(stage_totals) == {"documents", "stages"}
+    assert stage_totals["documents"] == _PUBLISHED_DOCUMENTS
+    assert [row["stage"] for row in stage_totals["stages"]] == [
+        "ingested",
+        "classified",
+        "praxis_scanned",
+        "linked:embeddings",
+        "linked:temporal",
+        "linked:eddies",
+        "linked:threads",
+    ]
+    assert stage_totals["stages"][0] == {
+        "stage": "ingested",
+        "covered": _PUBLISHED_DOCUMENTS,
+        "partial": 0,
+        "failed": 0,
+    }
+    assert stage_totals["stages"][3]["covered"] == _PUBLISHED_EMBEDDED
+    assert stage_totals["stages"][5] == {
+        "stage": "linked:eddies",
+        "covered": 0,
+        "partial": _PUBLISHED_DOCUMENTS,
+        "failed": 0,
+    }
+    assert len(body["vault"]["folders"]) > 0
+    assert len(body["vault"]["documents"]) == 1
+    (status_call,) = creek.status_calls()
+    assert status_call.headers["X-Creek-Contract-Version"] == _TOTALS_MINOR
+    assert creek.non_reads() == []
+
+
+@pytest.mark.asyncio
+async def test_a_vault_on_0_34_still_answers_its_half_with_null_stage_totals(
+    async_client: AsyncClient, serve: Callable[[_Creek], None]
+) -> None:
+    """Folders, documents and jobs as before; no totals, and no 0.37 declared."""
+    headers, _user_id = await signup(async_client, "pipeline_no_stage_totals")
+    creek = _Creek()
+    serve(creek)
+
+    response = await async_client.get(_PIPELINE, headers=headers)
+
+    _validate(response)
+    vault = response.json()["vault"]
+    assert response.json()["vault_status"] == "ok"
+    assert vault["stage_totals"] is None
+    assert len(vault["folders"]) > 0
+    assert len(vault["documents"]) == 1
+    assert len(vault["jobs"]) == 1
+    (status_call,) = creek.status_calls()
+    assert status_call.headers["X-Creek-Contract-Version"] == _STATUS_MINOR
+
+
+def _unknown_stage(totals: dict[str, Any]) -> None:
+    """Name a stage Creek never published."""
+    totals["stages"][1]["stage"] = "SENTINEL-stage"
+
+
+def _negative_count(totals: dict[str, Any]) -> None:
+    """Count fewer than no documents."""
+    totals["stages"][1]["failed"] = -1
+
+
+def _covered_above_documents(totals: dict[str, Any]) -> None:
+    """Cover more documents than the corpus holds."""
+    totals["stages"][1]["covered"] = totals["documents"] + 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("corrupt", [_unknown_stage, _negative_count, _covered_above_documents])
+async def test_totals_off_the_contract_degrade_the_vault_half_and_echo_nothing(
+    async_client: AsyncClient,
+    db_session: AsyncSession,
+    serve: Callable[[_Creek], None],
+    caplog: pytest.LogCaptureFixture,
+    corrupt: Callable[[dict[str, Any]], None],
+) -> None:
+    """A contract error, degraded as every read failure is: receipts still answer."""
+    headers, user_id = await signup(async_client, f"pipeline_{corrupt.__name__}")
+    await _receipt(db_session, user_id, _FILENAME)
+    creek = _totalled_creek()
+    assert isinstance(creek.body, dict)
+    corrupt(creek.body["totals"])
+    serve(creek)
+
+    response = await async_client.get(_PIPELINE, headers=headers)
+
+    assert response.status_code == HTTPStatus.OK
+    body = response.json()
+    assert body["vault"] is None
+    assert body["vault_status"] == "unreachable"
+    assert body["vault_unreachable"] is True
+    assert body["totals"] == {"sent": _NOTHING_SENT | {"accepted": 1}}
+    assert "SENTINEL" not in response.text
+    assert "SENTINEL" not in caplog.text
+    assert _FILENAME not in caplog.text
 
 
 def test_one_imports_documents_share_a_batch_that_names_nothing() -> None:
