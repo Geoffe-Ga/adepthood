@@ -177,7 +177,7 @@ async def test_the_published_success_cell_comes_back_in_plain_words(
 
     The issue's example, row for row: newest first, each row exactly four keys,
     the app's own ``adepthood`` stamp named as Adepthood, and the person reading
-    "Drafted an essay" and "Tried to re-sort the vault" rather than tool names.
+    "Drafted an essay" and "Tried to re-sort your Corpus" rather than tool names.
     """
     headers, _user_id = await signup(async_client, "activity_cell")
     _serve(_Creek(_read("examples/agent-activity/success.json")))
@@ -199,7 +199,7 @@ async def test_the_published_success_cell_comes_back_in_plain_words(
         },
         {
             "agent": ACTIVITY_SOMETHING_ELSE,
-            "tool_label": "Tried to re-sort the vault",
+            "tool_label": "Tried to re-sort your Corpus",
             "at": "2026-10-24T18:01:50Z",
             "outcome": "refused",
         },
@@ -216,7 +216,7 @@ def test_the_three_named_tools_read_as_the_issue_names_them() -> None:
     """``creek.draft``, ``creek.reflect`` and ``creek.link`` in the words #3535 fixed."""
     assert TOOL_LABELS["creek.draft"] == "Drafted an essay"
     assert TOOL_LABELS["creek.reflect"] == "Asked for a reflection"
-    assert TOOL_LABELS["creek.link"] == "Tried to re-sort the vault"
+    assert TOOL_LABELS["creek.link"] == "Tried to re-sort your Corpus"
 
 
 @pytest.mark.asyncio

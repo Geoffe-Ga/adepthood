@@ -49,7 +49,7 @@ const DRAFTED: AgentActivityRow = {
 };
 const RESORT: AgentActivityRow = {
   agent: 'OpenClaw on my Mac mini',
-  tool_label: 'Tried to re-sort the vault',
+  tool_label: 'Tried to re-sort your Corpus',
   at: ago(6 * MINUTE_MS),
   outcome: 'refused',
 };
@@ -106,7 +106,7 @@ describe('AgentActivityList', () => {
 
     await findByTestId('vault-activity-list');
     expect(getByText('Drafted an essay')).toBeTruthy();
-    expect(getByText('Tried to re-sort the vault')).toBeTruthy();
+    expect(getByText('Tried to re-sort your Corpus')).toBeTruthy();
     expect(getByText('OpenClaw on my Mac mini · 5 minutes ago')).toBeTruthy();
     expect(getByText('OpenClaw on my Mac mini · 6 minutes ago')).toBeTruthy();
     expect(queryByTestId('vault-activity-refused-0')).toBeNull();

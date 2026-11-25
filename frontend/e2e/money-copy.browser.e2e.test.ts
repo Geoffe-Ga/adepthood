@@ -226,7 +226,7 @@ async function settingsHintFrames(page: Page, width: number): Promise<void> {
   await expect(page.getByTestId('essay-modal')).toHaveCount(0);
   await expect(page.getByTestId('resonance-explainer')).toHaveCount(0);
   const hint = page.getByTestId('no-key-hint');
-  await expect(hint).toContainText('Resonance notes and letters can still come from your vault');
+  await expect(hint).toContainText('Resonance notes and letters can still come from your Corpus');
   await completeCopy(hint);
   await capture(
     page,
@@ -246,7 +246,7 @@ async function removeKeyFrames(page: Page, width: number): Promise<void> {
   await page.goto(`${frontendUrl()}/api-key-settings`);
   await page.getByTestId('remove-key-button').click();
   const dialog = page.getByTestId('remove-key-dialog');
-  await expect(dialog).toContainText('Resonance notes and letters can still come from your vault');
+  await expect(dialog).toContainText('Resonance notes and letters can still come from your Corpus');
   const message = dialog.getByText(/Without your own key/u);
   await completeCopy(message);
   await capture(page, `settings-remove-key-${width}-normal`);
@@ -739,7 +739,7 @@ for (const width of WIDTHS) {
     await page.getByRole('button', { name: 'Get resonance' }).click();
     const refill = page.getByTestId('journal-resonance-refill');
     await expect(refill).toContainText(
-      'Readings your vault answers use BotMason credits, even when an API key is saved.',
+      'Readings your Corpus writes use BotMason credits, even when an API key is saved.',
     );
     await expect(page.getByTestId('journal-resonance-refill-add-key')).toHaveCount(0);
     const packUrl = process.env.EXPO_PUBLIC_CREDIT_PACK_URL ?? '';
@@ -831,7 +831,7 @@ for (const width of WIDTHS) {
       );
       const remedy = page.getByTestId('essay-wallet-remedy');
       await expect(remedy).toContainText(
-        'Letters your vault writes use BotMason credits, even when an API key is saved.',
+        'Letters your Corpus writes use BotMason credits, even when an API key is saved.',
       );
       await expect(remedy).toContainText(/reset/u);
       await expect(page.getByTestId('essay-ask')).toHaveCount(0);

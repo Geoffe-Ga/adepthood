@@ -12,7 +12,7 @@ import { NO_KEY_HINT, REMOVE_KEY_DIALOG_BODY } from '@/features/Settings/byokOnl
 describe('owner-approved money copy (#3262)', () => {
   it('updates only the three vault-letter clauses and keeps the other approved strings', () => {
     expect(INSUFFICIENT_OFFERINGS_COPY).toBe(
-      "You're out of BotMason credits, so nothing was charged. Credits pay for readings and letters your vault answers; page reading needs your own OpenAI or Anthropic API key, which you can add in Settings.",
+      "You're out of BotMason credits, so nothing was charged. Credits pay for readings and letters your Corpus writes; page reading needs your own OpenAI or Anthropic API key, which you can add in Settings.",
     );
     expect(LLM_KEY_REQUIRED_COPY).toBe(
       "BotMason's cloud AI needs an API key of your own — credits don't pay for it — so nothing was charged. Add your OpenAI or Anthropic key in Settings to continue.",
@@ -21,10 +21,10 @@ describe('owner-approved money copy (#3262)', () => {
       "BotMason can't do this on the app's allowance any more, because this account's APTITUDE membership is no longer active. Nothing was charged. Your journal, the course, your habits and your practice are all still here, and you can export or delete your data whenever you like.",
     );
     expect(NO_KEY_HINT).toBe(
-      "No key saved yet. BotMason's cloud AI features — resonance notes, letters, completion checks and page reading — need a key of your own, and credits don't pay for them. Resonance notes and letters can still come from your vault if you have one.",
+      "No key saved yet. BotMason's cloud AI features — resonance notes, letters, completion checks and page reading — need a key of your own, and credits don't pay for them. Resonance notes and letters can still come from your Corpus if you have one.",
     );
     expect(REMOVE_KEY_DIALOG_BODY).toBe(
-      "Without your own key, BotMason's cloud AI features — resonance notes, letters, completion checks and page reading — stop until you add one again. Resonance notes and letters can still come from your vault if you have one. Your journal itself is unaffected.",
+      "Without your own key, BotMason's cloud AI features — resonance notes, letters, completion checks and page reading — stop until you add one again. Resonance notes and letters can still come from your Corpus if you have one. Your journal itself is unaffected.",
     );
   });
 

@@ -15,9 +15,9 @@ import React from 'react';
 import type { JournalMessage, ResonanceResponse } from '@/api';
 
 const NO_NOTES =
-  'No margin notes came back this time. Your Higher Self read the page through and ' +
-  "didn't find a passage it could answer yet. Keep writing and ask again whenever " +
-  "you like; this pass wasn't charged.";
+  'No margin notes came back this time. Your Simulated Higher Self Voice read the page ' +
+  "through and didn't find a passage it could answer yet. Keep writing and ask again " +
+  "whenever you like; this pass wasn't charged.";
 
 const mockGet = jest.fn() as jest.MockedFunction<(_id: number) => Promise<JournalMessage>>;
 const mockList = jest.fn() as jest.MockedFunction<(_id: number) => Promise<{ items: unknown[] }>>;

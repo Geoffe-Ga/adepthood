@@ -30,11 +30,11 @@ export const SEED_STATUS_LINES: Record<SeedItemStatus, string> = {
   // while (#3770). Not a failure and not this document's doing: the run waits
   // as long as the vault asked, then sends it again.
   vault_waiting:
-    "Waiting for your vault… It's busy settling what it already holds, and this one goes " +
+    "Waiting for your Corpus… It's busy settling what it already holds, and this one goes " +
     "over as soon as it's free.",
   uploading: 'Going over now…',
-  ingested: 'In your vault. It will show up in reflections from here on.',
-  vault_unavailable: "Your vault didn't answer. Check that it's running, then send this again.",
+  ingested: 'In your Corpus. It will show up in reflections from here on.',
+  vault_unavailable: "Your Corpus didn't answer. Check that it's running, then send this again.",
   // One status, three causes: a vault without uploads, a vault whose version
   // this app cannot negotiate with, and a document marked Intimate, which has no
   // spelling on the vault wire at all. Nothing here can tell which, and the
@@ -45,25 +45,25 @@ export const SEED_STATUS_LINES: Record<SeedItemStatus, string> = {
   // never go.
   capability_unsupported:
     'Marked Intimate? That stays on this device — pick a different privacy level if you want ' +
-    "this in your vault. Otherwise Adepthood can't send to your vault just yet; keep this one " +
+    "this in your Corpus. Otherwise Adepthood can't send to your Corpus just yet; keep this one " +
     'and try again later.',
   // Answered after the document went over, so it cannot promise the vault is
   // unchanged: the vault may have kept it and lost only its reply (#3052).
   // Sending again is safe — the same file updates in place.
   degraded:
-    "We couldn't confirm this reached your vault. Send it again — the same file updates in " +
+    "We couldn't confirm this reached your Corpus. Send it again — the same file updates in " +
     'place rather than making a second copy.',
   // The vault stayed busy through every wait the run would take (#3770). It
   // refused before anything was written, so "nothing was stored" is a fact,
   // and the cause was the vault's moment, so it can go again.
   vault_busy:
-    'Your vault stayed busy the whole time, so this one is still with you and nothing was ' +
-    'stored. Send it again once your vault has settled.',
+    'Your Corpus stayed busy the whole time, so this one is still with you and nothing was ' +
+    'stored. Send it again once your Corpus has settled.',
   // The vault refused the file's type with a 415 (#3771) before writing
   // anything. Counted with the skipped files, and offered no resend: the same
   // file is refused the same way.
   unsupported_source:
-    "Skipped · your vault doesn't take this kind of file as a document, so nothing was " +
+    "Skipped · your Corpus doesn't take this kind of file as a document, so nothing was " +
     'stored. It is still with you.',
   in_corpus: 'Kept with the rest of your writing. It will show up in reflections from here on.',
   // The ordinary first answer rather than an error state: the corpus is off
@@ -82,7 +82,7 @@ export const SEED_STATUS_LINES: Record<SeedItemStatus, string> = {
   format_unreadable:
     "Adepthood can't open this kind of file on its own, so nothing was stored. It reads " +
     'Markdown and plain text — most apps, including Claude and ChatGPT, can export as ' +
-    'Markdown. A connected vault reads richer formats for you.',
+    'Markdown. A connected Corpus reads richer formats for you.',
   not_text:
     "This file is named as text but can't be read as text. Save a plain-text copy from the " +
     'app it came from and send that instead.',
@@ -113,7 +113,7 @@ export const SEED_STATUS_LINES: Record<SeedItemStatus, string> = {
   // as the count it belongs to, then says why in a phrase and that nothing left.
   //
   // Outside everything the vault reads, or a type it refuses outright.
-  unsupported_format: "Skipped · your vault doesn't read this type, so it was never sent.",
+  unsupported_format: "Skipped · your Corpus doesn't read this type, so it was never sent.",
   // A type the vault reads, left behind because the folder's attachments were
   // not switched on. Offered, never pressed: it is the person's choice.
   attachments_off:
@@ -139,7 +139,7 @@ export const SEED_STATUS_LINES: Record<SeedItemStatus, string> = {
   // byte of the document left it, so "nothing was stored" is a fact. The same
   // file can never fit, so this offers a smaller file rather than another go.
   managed_too_large:
-    'Too large for your vault, so nothing was stored. Your vault takes files up to about ' +
+    'Too large for your Corpus, so nothing was stored. Your Corpus takes files up to about ' +
     `${MANAGED_SEED_DOCUMENT_LABEL}; a smaller file, or this one split in parts, will go over.`,
   unreadable: "This file wouldn't open on this device.",
   // Decided on device from the platform's own connectivity signal, before any
@@ -281,7 +281,7 @@ export const SEED_PAUSED_PROGRESS_LINE =
  * the vault's own pass is holding things, not the pace and not the document.
  */
 export const SEED_VAULT_BUSY_PROGRESS_LINE =
-  "Waiting for your vault to finish what it's doing. The rest go over once it's free…";
+  "Waiting for your Corpus to finish what it's doing. The rest go over once it's free…";
 
 /**
  * The offer to send again the documents that did not go over (#3556), counting
@@ -354,11 +354,11 @@ export function uploadQueueIndicatorLine(remaining: number, failed = 0): string 
 export const SETTLING_LINE = "Settling what you've sent…";
 
 /** Once the pass has gone through the whole ladder. */
-export const SETTLED_LINE = "What you've sent has settled into your vault.";
+export const SETTLED_LINE = "What you've sent has settled into your Corpus.";
 
 /** When the vault could not be reached for the pass; what landed stays landed. */
 export const SETTLE_DEFERRED_LINE =
-  'Your vault was out of reach just now. What you sent is kept, and will settle on a later pass.';
+  'Your Corpus was out of reach just now. What you sent is kept, and will settle on a later pass.';
 
 /** What a batch header needs to say where the batch stands. */
 export interface SeedBatchHeader {

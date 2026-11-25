@@ -1589,7 +1589,10 @@ async def test_account_deletion_reports_a_completed_provisioned_teardown(
     assert deleted.json()["vault"] == {
         "configured": True,
         "purged": True,
-        "guidance": "Creek confirmed that the provisioned managed-vault allocation was deleted.",
+        "guidance": (
+            "The service that set up your managed Corpus confirmed that its provisioned "
+            "allocation was deleted."
+        ),
     }
     teardown = (await db_session.execute(select(VaultTeardownReceipt))).scalar_one()
     assert teardown.state == "deleted"

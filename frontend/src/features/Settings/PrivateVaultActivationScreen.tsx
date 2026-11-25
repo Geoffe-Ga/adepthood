@@ -34,15 +34,15 @@ function progressCopy(state: VaultActivation['state']): string {
     case 'submitting':
       return 'Sending your activation request…';
     case 'pending':
-      return 'Waiting for room to open up for your vault…';
+      return 'Waiting for room to open up for your Corpus…';
     case 'provisioning':
-      return 'Your managed vault is being set up…';
+      return 'Your managed Corpus is being set up…';
     case 'awaiting_handoff':
-      return 'Connecting Adepthood to your new vault…';
+      return 'Connecting Adepthood to your new Corpus…';
     case 'deleting':
-      return 'Clearing away the vault that did not finish…';
+      return 'Clearing away the setup that did not finish…';
     default:
-      return 'Checking your managed vault…';
+      return 'Checking your managed Corpus…';
   }
 }
 
@@ -55,16 +55,15 @@ function progressDetail(state: VaultActivation['state']): string {
 
 const CustodyNotice = (): React.JSX.Element => (
   <View style={styles.notice} testID="activation-custody-notice">
-    <Text style={styles.noticeTitle}>Who can read a managed vault</Text>
+    <Text style={styles.noticeTitle}>Who can read a managed Corpus</Text>
     <Text style={styles.body}>
-      A managed vault lives on servers run by a hosting company called Fly. It is encrypted, but Fly
-      holds the keys, so Fly, and anyone with enough access at Adepthood or among the people who
-      make the software behind the vault, could read what is stored there. It is not hidden from
-      them.
+      A managed Corpus lives on servers run by a hosting company called Fly. It is encrypted, but
+      Fly holds the keys, so Fly, and anyone with enough access at Adepthood or among the people who
+      make the software behind it, could read what is stored there. It is not hidden from them.
     </Text>
     <Text style={styles.body}>
-      Entries you mark Intimate stay in Adepthood and are never sent to a managed vault or to any
-      AI. Creating a vault does not change that.
+      Entries you mark Intimate stay in Adepthood and are never sent to a managed Corpus or to any
+      AI. Creating one does not change that.
     </Text>
     <Text style={styles.body} testID="activation-own-key-notice">
       {MANAGED_VAULT_OWN_KEY_NOTICE}
@@ -83,13 +82,13 @@ const Intro = ({ onContinue, onCancel }: { onContinue: () => void; onCancel: () 
       {VAULT_SORTING_CHOICE}
     </Text>
     <CustodyNotice />
-    <Text style={styles.floor}>Adepthood is complete without a managed vault.</Text>
+    <Text style={styles.floor}>Adepthood is complete without a managed Corpus.</Text>
     <View style={styles.actions}>
       <Button
         label="Continue"
         onPress={onContinue}
         testID="continue-vault-activation"
-        accessibilityLabel="Continue managed vault setup"
+        accessibilityLabel="Continue managed Corpus setup"
       />
       <Button
         label="Not now"
@@ -114,9 +113,9 @@ const ActivationConsent = ({
   onCancel: () => void;
 }) => (
   <View style={styles.card} testID="activation-consent">
-    <Text style={styles.sectionTitle}>Create an isolated managed vault</Text>
+    <Text style={styles.sectionTitle}>Create an isolated Corpus</Text>
     <Text style={styles.body}>
-      Adepthood will set up a vault just for your account, on Fly's servers. The hosting company
+      Adepthood will set up a Corpus just for your account, on Fly's servers. The hosting company
       holds the keys that open it, so it can come back on its own after a restart, and you will
       never be asked to make or keep a key yourself.
     </Text>
@@ -131,7 +130,7 @@ const ActivationConsent = ({
     ) : null}
     <View style={styles.actions}>
       <Button
-        label="Create managed vault"
+        label="Create managed Corpus"
         onPress={onActivate}
         busy={busy}
         testID="activate-private-vault"
@@ -159,20 +158,20 @@ const Progress = ({ state }: { state: VaultActivation['state'] }): React.JSX.Ele
 
 function readyCustodyCopy(custodyMode: VaultActivation['custody_mode']): string {
   if (custodyMode === 'provider_managed') {
-    return 'Your vault is locked with keys the hosting company (Fly) holds. Fly, and people with enough access at Adepthood or among the makers of the software behind it, can read what is stored there.';
+    return 'Your Corpus is locked with keys the hosting company (Fly) holds. Fly, and people with enough access at Adepthood or among the makers of the software behind it, can read what is stored there.';
   }
   if (custodyMode === 'wrapped_artifact_only') {
-    return 'This vault was set up under an older arrangement. Any key from that time never actually locked its storage, so there is no key of yours to recover.';
+    return 'This Corpus was set up under an older arrangement. Any key from that time never actually locked its storage, so there is no key of yours to recover.';
   }
-  return 'Adepthood cannot tell right now who holds the keys to this vault, so it will not promise you anything about who can read it.';
+  return 'Adepthood cannot tell right now who holds the keys to this Corpus, so it will not promise you anything about who can read it.';
 }
 
 const Ready = ({ activation }: { activation: VaultActivation }): React.JSX.Element => (
   <View style={styles.readyCard} testID="activation-ready">
-    <Text style={styles.sectionTitle}>Your managed vault is ready.</Text>
+    <Text style={styles.sectionTitle}>Your managed Corpus is ready.</Text>
     <Text style={styles.body}>{readyCustodyCopy(activation.custody_mode)}</Text>
     <Text style={styles.body}>
-      This vault is not sealed off from the people who run it. Entries you mark Intimate stay in
+      This Corpus is not sealed off from the people who run it. Entries you mark Intimate stay in
       Adepthood and never go there.
     </Text>
   </View>
@@ -196,19 +195,19 @@ const Failed = ({
   onRecover,
 }: FailedProps): React.JSX.Element => (
   <View style={styles.errorCard} testID="activation-failed">
-    <Text style={styles.sectionTitle}>Your managed vault is not ready yet.</Text>
+    <Text style={styles.sectionTitle}>Your managed Corpus is not ready yet.</Text>
     <Text style={styles.body}>
       Your journal still works. Entries you mark Intimate still stay in Adepthood, out of the
-      managed vault.
+      managed Corpus.
     </Text>
     {recoveryAvailable ? (
       <Text style={styles.body}>
-        The vault that did not finish has to be cleared away before a fresh one is made. Nothing
+        The setup that did not finish has to be cleared away before a fresh Corpus is made. Nothing
         from the old one is kept or reused.
       </Text>
     ) : !retryable ? (
       <Text style={styles.body}>
-        We could not clear away the unfinished vault on our own. Get in touch with support before
+        We could not clear away the unfinished setup on our own. Get in touch with support before
         trying again; nothing has been thrown out.
       </Text>
     ) : null}
@@ -232,7 +231,7 @@ const Failed = ({
 
 const LoadError = ({ onRetry }: { onRetry: () => void }): React.JSX.Element => (
   <View style={styles.errorCard} testID="activation-load-error">
-    <Text style={styles.sectionTitle}>We could not check your vault.</Text>
+    <Text style={styles.sectionTitle}>We could not check your Corpus.</Text>
     <Text style={styles.body}>Your journal still works. Check your connection and try again.</Text>
     <Button label="Check again" onPress={onRetry} testID="reload-vault-activation" />
   </View>
@@ -240,12 +239,10 @@ const LoadError = ({ onRetry }: { onRetry: () => void }): React.JSX.Element => (
 
 const ManagedVaultUnavailable = ({ onBack }: { onBack: () => void }): React.JSX.Element => (
   <View style={styles.card} testID="managed-vault-unavailable" accessibilityRole="summary">
-    <Text style={styles.sectionTitle}>
-      Managed vault creation is not available for this account yet.
-    </Text>
+    <Text style={styles.sectionTitle}>A managed Corpus is not available for this account yet.</Text>
     <Text style={styles.body}>
-      We are opening managed vaults gradually. Your journal is complete without it, and you can
-      still connect a vault you run yourself under Advanced in Where your writing lives.
+      We are opening the managed Corpus to accounts gradually. Your journal is complete without it,
+      and you can still connect one you run yourself under Advanced in Where your writing lives.
     </Text>
     <Button label="Back to settings" onPress={onBack} testID="unavailable-vault-back" />
   </View>
@@ -309,7 +306,7 @@ function useActivationCommands(
     () =>
       run(
         () => vaultActivation.activate(),
-        'We could not start the vault. Your journal still works.',
+        'We could not start setting up your Corpus. Your journal still works.',
       ),
     [run],
   );
@@ -403,9 +400,9 @@ const PrivateVaultActivationScreen = ({ navigation }: Props): React.JSX.Element 
     <ScreenScaffold scroll testID="private-vault-activation-screen">
       <ScreenHeader
         eyebrow="Optional storage"
-        title="Create managed vault"
+        title="Create managed Corpus"
         titleHidden
-        lead="A managed vault in the cloud, just for your account, set up only when you choose."
+        lead="A managed Corpus in the cloud, just for your account, set up only when you choose."
       />
       <View style={styles.content}>
         <ActivationContent controller={controller} onCancel={goBack} />

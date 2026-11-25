@@ -350,7 +350,7 @@ describe('JournalEntryScreen — nothing is charged before the cost is disclosed
     const refill = await findByTestId('journal-resonance-refill');
     expect(refill).toHaveTextContent(/July 1, 2026/u);
     expect(refill).toHaveTextContent(
-      /vault answers use BotMason credits, even when an API key is saved/u,
+      /Corpus writes use BotMason credits, even when an API key is saved/u,
     );
     expect(refill).not.toHaveTextContent(/Don.t show this again/u);
     expect(refill).not.toHaveTextContent(/Continue/u);

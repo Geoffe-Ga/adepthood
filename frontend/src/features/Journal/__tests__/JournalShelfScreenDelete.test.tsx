@@ -164,9 +164,9 @@ describe('deleting one journal entry from the shelf', () => {
     // The withdrawal from the ontologized corpus is a promise about where the writing goes.
     expect(body).toMatch(/reflections draw on/i);
     expect(body).toMatch(/removal of earlier copies in your Corpus is requested/i);
-    expect(body).toMatch(/may remain until the vault confirms/i);
+    expect(body).toMatch(/may remain until your Corpus confirms/i);
     expect(body).toMatch(/pending.*stays on your shelf.*cannot be edited/i);
-    expect(body).toMatch(/automatically retries.*recorded vault.*reachable/i);
+    expect(body).toMatch(/automatically retries.*Corpus that holds the copy.*reachable/i);
     expect(body).not.toMatch(/is removed too|so you can try again/i);
     // Never scold somebody for unwriting their own page.
     expect(body).not.toMatch(/permanent|forever|warning|sure\?/i);
@@ -224,7 +224,7 @@ describe('deleting one journal entry from the shelf', () => {
     expect(notice).toMatch(/set to be deleted/i);
     expect(notice).toMatch(/cannot be edited/i);
     expect(notice).toMatch(/removal.*your Corpus.*not been confirmed/i);
-    expect(notice).toMatch(/Adepthood retries while that vault is reachable/i);
+    expect(notice).toMatch(/Adepthood retries while your Corpus is reachable/i);
     expect(notice).not.toMatch(/could not delete|delete this page again|still on your shelf/i);
     expect(getByTestId('journal-shelf-card-2')).toBeTruthy();
   });
@@ -261,7 +261,7 @@ describe('a page whose vault copy cannot be confirmed gone (#3094)', () => {
     const notice = getByTestId('journal-delete-error').props.children as string;
     expect(notice).toMatch(/set to be deleted/i);
     expect(notice).toMatch(/not been confirmed.*previous Corpus/i);
-    expect(notice).toMatch(/reconnect that vault in Settings to allow retry/i);
+    expect(notice).toMatch(/reconnect that Corpus in Settings to allow retry/i);
     expect(notice).toMatch(/cannot be edited/i);
     expect(notice).not.toMatch(/finishes once you reconnect/i);
     expect(notice).not.toMatch(/could not delete/i);
@@ -286,11 +286,11 @@ describe('a page whose vault copy cannot be confirmed gone (#3094)', () => {
 
     const notice = getByTestId('journal-delete-error').props.children as string;
     expect(queryByTestId('journal-unreachable-reconnect')).toBeNull();
-    expect(notice).toMatch(/cannot identify the vault.*older copy/i);
+    expect(notice).toMatch(/cannot identify the Corpus.*older copy/i);
     expect(notice).toMatch(/removal cannot be confirmed/i);
-    expect(notice).toMatch(/may remain in a vault you connected earlier/i);
+    expect(notice).toMatch(/may remain in a Corpus you connected earlier/i);
     expect(notice).toMatch(/set to be deleted.*cannot be edited/i);
-    expect(notice).not.toMatch(/reconnect that vault/i);
+    expect(notice).not.toMatch(/reconnect that Corpus/i);
     expect(notice).not.toMatch(/withdrawn|is gone/i);
     expect(getByTestId('journal-unreachable-erase')).toBeTruthy();
   });

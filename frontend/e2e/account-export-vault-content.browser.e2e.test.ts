@@ -35,7 +35,7 @@ const VAULT_EXPORT_PATH = '/v1/export';
 const EXPORT_MINOR = '0.27';
 const NEEDS_UPDATE = 'vault_export_needs_update';
 const NEEDS_UPDATE_LINE =
-  'Your vault needs an update before its content can be exported. Nothing was saved.';
+  'Your Corpus needs an update before its content can be exported. Nothing was saved.';
 const HTTP_OK = 200;
 const HTTP_CONFLICT = 409;
 
@@ -236,7 +236,7 @@ test('a managed vault hands its writer everything it holds, across both pages', 
 
   // The receipt reports it whole, and the server logged none of it.
   await expect(page.getByTestId('export-data-receipt-saved')).toHaveText(
-    `Saved ${file.items.length} items from your vault to ${downloaded.suggestedFilename}.`,
+    `Saved ${file.items.length} items from your Corpus to ${downloaded.suggestedFilename}.`,
   );
   await expect(page.getByTestId('export-data-receipt-incomplete')).toHaveCount(0);
   await expect(page.getByTestId('export-data-error')).toHaveCount(0);

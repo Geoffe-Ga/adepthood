@@ -131,7 +131,7 @@ describe('PrivacyTierControl — intimate explainer', () => {
     // The implementation-specialist must put copy about AI not accessing intimate entries.
     expect(text.toLowerCase()).toMatch(/never sent to ai|not shared with ai|ai won.t|ai cannot/);
     expect(text).toMatch(/Adepthood journal/i);
-    expect(text).toMatch(/may remain.*vault confirms/i);
+    expect(text).toMatch(/may remain.*Corpus confirms/i);
     expect(text).toMatch(/retries pending removal/i);
     expect(text).not.toMatch(/is pulled back|choose Intimate again/i);
   });

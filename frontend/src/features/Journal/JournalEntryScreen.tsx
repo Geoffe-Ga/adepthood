@@ -199,13 +199,13 @@ const BLANK_HINT = ' ';
  */
 const WEEK_TAKEN_HINT = 'Already answered this week — copy this into a new page to keep it.';
 const VAULT_WITHDRAWAL_PENDING_HINT =
-  'Intimate here. Removal of the copy in your vault has not been confirmed yet. Adepthood will retry when that vault is reachable.';
+  'Intimate here. Removal of the copy in your Corpus has not been confirmed yet. Adepthood will retry when your Corpus is reachable.';
 // DRAFT copy (#3094 review), pending owner review. The copy is in a vault this
 // account is no longer connected to, so choosing Intimate again cannot reach it.
 const VAULT_WITHDRAWAL_RECONNECT_HINT =
-  'Intimate here. A copy of this page is in a Corpus you’re no longer connected to — reconnect that vault in Settings so it can remove the copy.';
+  'Intimate here. A copy of this page is in a Corpus you’re no longer connected to — reconnect that Corpus in Settings so it can remove the copy.';
 const VAULT_WITHDRAWAL_UNRECORDED_HINT =
-  'Intimate here. Adepthood cannot identify the vault that received this older copy, so removal cannot be confirmed. It may remain in a vault you connected earlier.';
+  'Intimate here. Adepthood cannot identify the Corpus that received this older copy, so removal cannot be confirmed. It may remain in a Corpus you connected earlier.';
 // A recorded DELETE locks edits. Its 409 omits the destination, so no known
 // vault or eventual confirmation can be promised for an older unrecorded copy.
 const DELETION_PENDING_HINT =

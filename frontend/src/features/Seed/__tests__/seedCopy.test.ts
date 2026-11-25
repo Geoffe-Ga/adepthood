@@ -145,7 +145,7 @@ describe('what each outcome says', () => {
     expect(line.toLowerCase()).toContain('updates in place');
     expect(line).not.toMatch(/nothing|wasn't stored|unchanged|never sent|wasn't sent/i);
     // No destination is named: which one answered is exactly what was lost.
-    expect(line.toLowerCase()).not.toContain('vault');
+    expect(line).not.toMatch(/vault|corpus/iu);
     expect(line).not.toBe(SEED_STATUS_LINES.degraded);
     expect(ranksOrShames(line)).toBe(false);
   });
@@ -175,18 +175,18 @@ describe('what each outcome says', () => {
     const line = SEED_STATUS_LINES.managed_too_large;
 
     expect(line).toContain(MANAGED_SEED_DOCUMENT_LABEL);
-    expect(line.toLowerCase()).toContain('too large for your vault');
+    expect(line).toContain('Too large for your Corpus');
     expect(line.toLowerCase()).toContain('nothing was stored');
     expect(line).not.toMatch(/try again|send it again|give it a minute/i);
     expect(line).not.toBe(SEED_STATUS_LINES.too_large);
     expect(ranksOrShames(line)).toBe(false);
   });
 
-  test('a document in the corpus is not described as being in a vault', () => {
+  test('a document kept in the app is not described as being in a connected Corpus', () => {
     // The two destinations are different places with different guarantees, and
-    // an account with no vault has nothing a "vault" sentence could refer to.
+    // an account with no vault has nothing a "your Corpus" sentence could refer to.
     expect(SEED_STATUS_LINES.in_corpus).toContain('writing');
-    expect(SEED_STATUS_LINES.in_corpus.toLowerCase()).not.toContain('vault');
+    expect(SEED_STATUS_LINES.in_corpus).not.toMatch(/vault|corpus/iu);
     expect(SEED_STATUS_LINES.in_corpus).not.toBe(SEED_STATUS_LINES.ingested);
   });
 
@@ -199,14 +199,15 @@ describe('what each outcome says', () => {
     expect(line).toContain('Nothing was stored');
     expect(line).toContain(VAULT_ROW_LABEL);
     expect(line.toLowerCase()).toContain('check on it');
-    expect(line.toLowerCase()).not.toContain('vault');
-    expect(line.toLowerCase()).not.toContain('creek');
+    expect(line).not.toMatch(/vault|corpus|creek/iu);
     expect(line).not.toBe(SEED_STATUS_LINES.failed);
     expect(ranksOrShames(line)).toBe(false);
   });
 
-  test('a document in the vault is not described as being in the corpus', () => {
-    expect(SEED_STATUS_LINES.ingested).toContain('vault');
+  test('a document in the connected Corpus says so by name', () => {
+    expect(SEED_STATUS_LINES.ingested).toBe(
+      'In your Corpus. It will show up in reflections from here on.',
+    );
   });
 
   test('the consent answer names the setting and does not read as a failure', () => {
@@ -239,13 +240,21 @@ describe('what each outcome says', () => {
 });
 
 describe('the words a person reads beneath a document', () => {
-  // Storage and request vocabulary — the corpus, its tiers and entries, the
-  // batch, the encoding — is the system's own. A person brought in their
-  // writing and chose how private it is, and the lines say it in those words.
-  const PLUMBING = /\bcorpus\b|\btiers?\b|\bbatch\b|UTF-8|language model|\bimported\b|in flight/i;
+  // Storage and request vocabulary — tiers and entries, the batch, the
+  // encoding — is the system's own. A person brought in their writing and chose
+  // how private it is, and the lines say it in those words.
+  const PLUMBING = /\btiers?\b|\bbatch\b|UTF-8|language model|\bimported\b|in flight/i;
+  // "your Corpus" is the app's name for the place (epic #3802) and takes a
+  // capital. The common noun, lowercase, is still the system's word.
+  const COMMON_NOUN_CORPUS = /\bcorpus\b/u;
 
   test.each(EVERY_STATUS)('%s talks about writing, not plumbing', (status) => {
     expect(SEED_STATUS_LINES[status]).not.toMatch(PLUMBING);
+    expect(SEED_STATUS_LINES[status]).not.toMatch(COMMON_NOUN_CORPUS);
+  });
+
+  test.each(EVERY_STATUS)('%s never says "vault"', (status) => {
+    expect(SEED_STATUS_LINES[status]).not.toMatch(/vault/iu);
   });
 
   test.each([
@@ -256,6 +265,7 @@ describe('the words a person reads beneath a document', () => {
     ...VAULT_GATE_COPY,
   ])('talks about writing, not plumbing: %s', (line) => {
     expect(line).not.toMatch(PLUMBING);
+    expect(line).not.toMatch(/corpus/iu);
   });
 });
 
@@ -350,13 +360,13 @@ describe('a skipped file says why, and that nothing was sent (#3771)', () => {
       'Skipped · a list of who received or opened a post, so it stays on this device and ' +
         'was never sent.',
     );
-    expect(line).not.toMatch(/creek|vault/iu);
+    expect(line).not.toMatch(/creek|vault|corpus/iu);
   });
 
   test('the examples read as the issue gives them', () => {
     expect(SEED_STATUS_LINES.attachments_off).toMatch(/^Skipped · attachments are off/u);
     expect(SEED_STATUS_LINES.unsupported_format).toMatch(
-      /^Skipped · your vault doesn't read this type/u,
+      /^Skipped · your Corpus doesn't read this type/u,
     );
   });
 
@@ -554,7 +564,7 @@ describe('a document held for a moment (#3556)', () => {
 
 describe('waiting for a busy vault (#3770)', () => {
   test('the row says it is waiting for the vault', () => {
-    expect(SEED_STATUS_LINES.vault_waiting.startsWith('Waiting for your vault…')).toBe(true);
+    expect(SEED_STATUS_LINES.vault_waiting.startsWith('Waiting for your Corpus…')).toBe(true);
   });
 
   test('the progress line names the vault, not the pace', () => {

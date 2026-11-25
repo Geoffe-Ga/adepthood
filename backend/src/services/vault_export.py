@@ -88,9 +88,9 @@ VAULT_EXPORT_MAX_BYTES = 1024 * 1024 * 1024
 
 #: What the file says about itself, in the reader's words.
 _ABOUT: Final = (
-    "Everything your Creek Vault held of yours when this file was made. Each "
+    "Everything your Corpus held of yours when this file was made. Each "
     "document is its original bytes, base64-encoded, with its SHA-256; each "
-    "fragment is the vault's file verbatim, with its privacy tier. Intimate "
+    "fragment is your Corpus's file verbatim, with its privacy tier. Intimate "
     'fragments are included, because this copy is yours. If "complete" at the '
     "end of this file is not true, the copy is missing something, and "
     '"incomplete_reason" says what.'

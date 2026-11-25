@@ -42,7 +42,7 @@ import {
 /** How each kind of skipped row opens. */
 const APP_SETTINGS_LINE = "Skipped · an app's own settings rather than your writing";
 const ATTACHMENTS_OFF_LINE = 'Skipped · attachments are off';
-const UNSUPPORTED_LINE = "Skipped · your vault doesn't read this type";
+const UNSUPPORTED_LINE = "Skipped · your Corpus doesn't read this type";
 
 /** Settings an Obsidian vault keeps beside the notes, which must never leave. */
 const OBSIDIAN_CONFIG = '{"lane3771": "must stay local"}\n';

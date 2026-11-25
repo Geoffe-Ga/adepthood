@@ -54,7 +54,7 @@ const TOO_LARGE_LINE =
   "sent. If it is a conversation export, send the export's .zip instead.";
 
 /** A type nothing reads, decided on the device. */
-const UNSUPPORTED_LINE = "Skipped · your vault doesn't read this type";
+const UNSUPPORTED_LINE = "Skipped · your Corpus doesn't read this type";
 
 /** One byte past the one-document cap the device and the server share. */
 const OVER_CAP_BYTES = 10 * 1024 * 1024 + 1;

@@ -58,7 +58,7 @@ function RefillMessage({
   return (
     <>
       <Text style={styles.body}>
-        Your BotMason balance has run out, so nothing was charged. Readings your vault answers use
+        Your BotMason balance has run out, so nothing was charged. Readings your Corpus writes use
         BotMason credits, even when an API key is saved. {resetCopy}
       </Text>
       {packUrl === null ? null : (

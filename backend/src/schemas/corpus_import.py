@@ -44,15 +44,15 @@ _READABLE_LIST = ", ".join(sorted(READABLE_SUFFIXES))
 CORPUS_IMPORT_MESSAGES: Mapping[CorpusImportStatus, str] = MappingProxyType(
     {
         CorpusImportStatus.STORED: (
-            "Your document is in your corpus. It will show up in reflections from here on."
+            "Your document is in your Corpus. It will show up in reflections from here on."
         ),
         # The default is no, and it is no on purpose, so this is the ordinary
         # first answer rather than an error state. It names the setting rather
         # than the endpoint, because the person reading it is looking at a
         # screen and not at an API.
         CorpusImportStatus.CONSENT_REQUIRED: (
-            "Nothing was imported. Adepthood only adds documents to your corpus once you "
-            "turn that on, and you haven't yet — switch on uploads in your corpus "
+            "Nothing was imported. Adepthood only adds documents to your Corpus once you "
+            "turn that on, and you haven't yet — switch on uploads in your Corpus "
             "settings and send it again."
         ),
         # The asymmetry, said plainly and without blaming the file. Placing a
@@ -62,13 +62,12 @@ CORPUS_IMPORT_MESSAGES: Mapping[CorpusImportStatus, str] = MappingProxyType(
             "This document is marked Intimate, so it stayed on your device and nothing "
             "was stored. Adepthood reads a document with a language model to place it "
             "among the frequencies, and Intimate writing never goes to one. Choose a "
-            "different tier if you want it in your corpus."
+            "different tier if you want it in your Corpus."
         ),
         CorpusImportStatus.FORMAT_UNREADABLE: (
             "Adepthood can't open this kind of file on its own, so nothing was stored. "
             f"It reads {_READABLE_LIST} files — most apps, including Claude and ChatGPT, "
-            "can export as Markdown. Connect a Creek Vault if you want richer formats "
-            "read for you."
+            "can export as Markdown. A connected Corpus reads richer formats for you."
         ),
         CorpusImportStatus.NOT_TEXT: (
             "This file is named as text but isn't readable as text, so nothing was "
@@ -78,7 +77,7 @@ CORPUS_IMPORT_MESSAGES: Mapping[CorpusImportStatus, str] = MappingProxyType(
             "There's no writing in this document, so there was nothing to store."
         ),
         CorpusImportStatus.DOCUMENT_TOO_LONG: (
-            "This document is longer than one corpus entry can hold, so nothing was "
+            "This document is longer than one Corpus entry can hold, so nothing was "
             f"stored. Split it into pieces of up to {MAX_DOCUMENT_CHARS:,} characters "
             "and send them separately."
         ),
@@ -87,7 +86,7 @@ CORPUS_IMPORT_MESSAGES: Mapping[CorpusImportStatus, str] = MappingProxyType(
         # retrieved by recency, which is the thing the corpus replaced.
         CorpusImportStatus.UNCLASSIFIED: (
             "Adepthood couldn't place this document among the frequencies, so it wasn't "
-            "added — a corpus entry has to sit somewhere on the map to be found again. "
+            "added — a Corpus entry has to sit somewhere on the map to be found again. "
             "Nothing was changed, and you can try again."
         ),
         # The one answer an account with no vault gets (#3015, #3016). Worded
@@ -98,8 +97,8 @@ CORPUS_IMPORT_MESSAGES: Mapping[CorpusImportStatus, str] = MappingProxyType(
         # this account* and offers "set it up or check on it", never "set one
         # up" to somebody who already has one.
         CorpusImportStatus.VAULT_REQUIRED: (
-            "Nothing was stored. A document you bring in is kept where your corpus "
-            "lives, and that isn't ready for this account yet. Open Where your corpus "
+            "Nothing was stored. A document you bring in is kept where your Corpus "
+            "lives, and that isn't ready for this account yet. Open Where your writing "
             "lives in Settings to set it up or check on it, then send this again."
         ),
     }

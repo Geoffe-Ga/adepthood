@@ -54,7 +54,7 @@ describe('ResonanceRefillDialog — a refused pass says how to proceed', () => {
 
     expect(getByText(/BotMason balance has run out/u)).toBeTruthy();
     expect(
-      getByText(/vault answers use BotMason credits, even when an API key is saved/u),
+      getByText(/Corpus writes use BotMason credits, even when an API key is saved/u),
     ).toBeTruthy();
     expect(getByText(/nothing was charged/iu)).toBeTruthy();
   });
@@ -88,7 +88,7 @@ describe('ResonanceRefillDialog — credits are offered only with a pack page (#
     mockCreditPackUrl = PACK_URL;
     const { getByTestId, getByText } = renderDialog('wallet_exhausted');
 
-    expect(getByText(/vault answers use BotMason credits/u)).toBeTruthy();
+    expect(getByText(/Corpus writes use BotMason credits/u)).toBeTruthy();
     expect(
       getByText(
         'Use the same email address as your Adepthood account when you buy, so the credits reach you.',

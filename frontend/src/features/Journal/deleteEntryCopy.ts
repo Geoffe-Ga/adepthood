@@ -18,8 +18,8 @@ export const DELETE_ENTRY_TITLE = 'Delete this page?';
  * quietly — deleting a page stops that writing being retrieved as context.
  */
 export const DELETE_ENTRY_BODY =
-  'Deletion is requested here and for the copy your reflections draw on. Removal of earlier copies in your Corpus is requested too; they may remain until the vault confirms. ' +
-  'While that removal is pending, the page stays on your shelf and cannot be edited. Adepthood automatically retries when the recorded vault is reachable. ' +
+  'Deletion is requested here and for the copy your reflections draw on. Removal of earlier copies in your Corpus is requested too; they may remain until your Corpus confirms. ' +
+  'While that removal is pending, the page stays on your shelf and cannot be edited. Adepthood automatically retries when the Corpus that holds the copy is reachable. ' +
   'There is no way back to it from inside the app.';
 
 /** Only a DELETE refusal establishes a recorded deletion and its editing lock. */
@@ -56,14 +56,14 @@ export const WITHDRAWAL_PENDING_LOCATIONS: Readonly<Record<string, CopyLocation>
 };
 
 /** Reconnect first: the primary way out. */
-export const UNREACHABLE_RECONNECT_LABEL = 'Reconnect vault';
+export const UNREACHABLE_RECONNECT_LABEL = 'Reconnect Corpus';
 
 /** The "I can't reach it" way out. */
 export const UNREACHABLE_ERASE_LABEL = "I can't reach it — delete here only";
 
 /** What deleting here only does, said before the person chooses it. */
 export const UNREACHABLE_ERASE_EXPLAINER =
-  "Deleting here only removes this page from Adepthood. We can't confirm the copy in that vault is gone, so you would need to delete it there yourself.";
+  "Deleting here only removes this page from Adepthood. We can't confirm the copy in that Corpus is gone, so you would need to delete it there yourself.";
 
 /** Where a copy may remain, in terms the person already knows. */
 const PLACE: Readonly<Record<CopyLocation, string>> = {
@@ -91,7 +91,7 @@ export function erasureReceiptNotice(receipt: JournalErasureReceipt): string {
     return 'Deleted. Your Corpus confirmed its copy is gone too.';
   }
   if (receipt.copy_location === 'unrecorded_vault') {
-    return `Deleted from Adepthood. This page was copied to a Corpus before ${VAULT_BINDING_BEGAN}, before we recorded which vault received it, so a copy may still be in ${PLACE.unrecorded_vault}. We can't confirm it's gone, so please delete it there.`;
+    return `Deleted from Adepthood. This page was copied to a Corpus before ${VAULT_BINDING_BEGAN}, before we recorded which Corpus received it, so a copy may still be in ${PLACE.unrecorded_vault}. We can't confirm it's gone, so please delete it there.`;
   }
   const place = PLACE[receipt.copy_location ?? 'connected_vault'];
   return `Deleted from Adepthood. A copy may still be in ${place}. We couldn't confirm it's gone, so please delete it there.`;

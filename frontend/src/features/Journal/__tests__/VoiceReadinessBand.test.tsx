@@ -61,14 +61,15 @@ const CARD = 'journal-voice-readiness-card';
 const DISMISS = 'journal-voice-readiness-dismiss';
 
 const NOT_CONSENTED_COPY =
-  'Sorting your journal is a separate decision, yours to make whenever you like. Say yes ' +
-  'to sorting, and everything you write ' +
-  'here, apart from Intimate entries and including what you have already written, is sorted ' +
-  'by Aspect. Each reflection from your Higher Self can then draw on a few of those passages, ' +
-  'leaning toward where you stand in the course, rather than only on your last few entries. ' +
+  'Sorting your journal is a separate decision, yours to make whenever you like. ' +
+  'With sorting on, a reflection from your Simulated Higher Self Voice can reach beyond ' +
+  'your last few entries into what you have already written. When it draws from sorted ' +
+  'writing, it uses a few passages at a time and can lean toward where you stand in the ' +
+  'course, never using an Intimate one. Everything else you write here is sorted by ' +
+  'Aspect. ' +
   'Perfectly fine to leave as it is.';
 const GATHERING_COPY =
-  'Your corpus is still filling out, so for now your reflections have little or no sorted ' +
+  'Your Corpus is still filling out, so for now your reflections have little or no sorted ' +
   'writing to draw on. Bringing in work you did elsewhere fills it faster. Nothing is ' +
   'waiting on you.';
 

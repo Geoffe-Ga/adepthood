@@ -48,7 +48,7 @@ const RETRY_AFTER_SECONDS = 1;
 const HTTP_ACCEPTED = 202;
 
 /** The row while the vault is busy: the issue's own words open it. */
-const VAULT_WAITING_START = 'Waiting for your vault…';
+const VAULT_WAITING_START = 'Waiting for your Corpus…';
 
 const { writeFolder } = registerSeedSpec('adepthood-seed-vault-busy-');
 

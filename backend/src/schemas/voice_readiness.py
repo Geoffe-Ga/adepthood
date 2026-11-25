@@ -77,7 +77,7 @@ VOICE_READINESS_MESSAGES: Mapping[VoiceReadinessState, str | None] = MappingProx
             "Perfectly fine to leave as it is."
         ),
         VoiceReadinessState.GATHERING: (
-            "Your corpus is still filling out, so for now your reflections have little or no "
+            "Your Corpus is still filling out, so for now your reflections have little or no "
             "sorted writing to draw on. Bringing in work you did elsewhere fills it faster. "
             "Nothing is waiting on you."
         ),

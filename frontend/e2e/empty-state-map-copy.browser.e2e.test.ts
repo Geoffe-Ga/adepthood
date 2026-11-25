@@ -14,7 +14,7 @@ const PHONE_AT_200 = { width: 195, height: 422 } as const;
 const DESKTOP = { width: 1280, height: 800 } as const;
 
 const JOURNAL_GAIN =
-  'Start your first page. With corpus sorting enabled, every eligible page not marked Intimate joins your private corpus, whether new or already written. Your Simulated Higher Self Voice may draw a few passages from it for a reflection.';
+  'Start your first page. With Corpus sorting enabled, every eligible page not marked Intimate joins your private Corpus, whether new or already written. Your Simulated Higher Self Voice may draw a few passages from it for a reflection.';
 const HABIT_GAIN =
   'Choose one habit. A minute a day begins the practice; you can build from there.';
 const MAP_LEAD =

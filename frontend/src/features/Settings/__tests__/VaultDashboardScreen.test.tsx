@@ -252,7 +252,7 @@ describe('VaultDashboardScreen', () => {
       `${WRITERLESS_LINE}.`,
     );
     expect(screen.queryByText(/yours to fill/u)).toBeNull();
-    expect(screen.queryByText(/example that came with your vault/u)).toBeNull();
+    expect(screen.queryByText(/example that came with your Corpus/u)).toBeNull();
 
     fireEvent.press(screen.getByTestId('vault-area-toggle-09-Reference'));
     fireEvent.press(screen.getByTestId('vault-area-toggle-11-Other-Authors'));
@@ -262,7 +262,7 @@ describe('VaultDashboardScreen', () => {
       `${WRITERLESS_LINE} — it's yours to fill.`,
       { exact: false },
     );
-    expect(screen.getByText(/example that came with your vault/u)).toBeTruthy();
+    expect(screen.getByText(/example that came with your Corpus/u)).toBeTruthy();
     expect(screen.getAllByText(/fills as practices surface/u)).toHaveLength(1);
   });
 
@@ -548,7 +548,7 @@ describe('VaultDashboardScreen whole-corpus totals (#3796)', () => {
     ['not_connected', false, 'vault-dashboard-not-connected'],
     ['update_needed', false, 'vault-dashboard-update-needed'],
   ] as const)(
-    'a vault that is %s still shows the sent line, and its own notice once',
+    'a Corpus that is %s still shows the sent line, and its own notice once',
     async (status, unreachable, notice) => {
       mockPipeline.mockResolvedValue(
         populatedAnswer({ vault: null, vault_status: status, vault_unreachable: unreachable }),

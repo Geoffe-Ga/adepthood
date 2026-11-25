@@ -48,7 +48,7 @@ describe('the price line before a vault reading or letter (#3437)', () => {
       expect(result.copy).toBe(vaultKeyCost('anthropic', noun));
       // Future tense before anything runs, naming the hop and the payer.
       expect(result.copy).toBe(
-        `Your vault will write this ${noun} with your own Anthropic key. Your key pays for it, not your BotMason messages.`,
+        `Your Corpus will write this ${noun} with your own Anthropic key. Your key pays for it, not your BotMason messages.`,
       );
       expect(result.copy).not.toMatch(/\bWritten\b/u);
       expect(result.canContinue).toBe(true);
@@ -105,8 +105,8 @@ describe('the per-use label after the pass (#3437)', () => {
   });
 
   it.each<['anthropic' | 'openai', string]>([
-    ['anthropic', 'Paid by your own Anthropic key, through your vault'],
-    ['openai', 'Paid by your own OpenAI key, through your vault'],
+    ['anthropic', 'Paid by your own Anthropic key, through your Corpus'],
+    ['openai', 'Paid by your own OpenAI key, through your Corpus'],
   ])('names the %s key the vault wrote with', (vendor, label) => {
     const { getByTestId } = render(
       <PassReceiptNotice provenance={pass({ own_key_vendor: vendor })} empty={false} />,

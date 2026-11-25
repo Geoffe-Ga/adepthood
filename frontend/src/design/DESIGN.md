@@ -258,14 +258,21 @@ error message, placeholder or accessibility label says them.
   own".
 - Where a privacy disclosure named Creek as a party who can read something,
   the party is still named, in plain words: "the people who make the software
-  behind the vault".
+  behind it". The disclosure keeps its three parties apart: "a hosting company
+  called Fly" holds the keys, "the people who run Adepthood" operate the app,
+  and "the people who make the software behind it" wrote what a Corpus runs
+  on. "Hosting" is Fly's word alone.
+- The two kinds are "a managed Corpus" (Adepthood sets it up) and "a Corpus
+  you run yourself".
 
-`src/__tests__/wiring/userFacingNaming.test.ts` holds the first and third rows
+`src/__tests__/wiring/userFacingNaming.test.ts` holds the first three rows
 against every string and JSX text under `src`. Its `NAMING_RULES` table takes
 a forbidden word, the directories it is forbidden in, and an allowlist with a
-reason per entry. The second row lands directory by directory (#3804
-Settings, #3805 everything else): each sweep adds a row scoped to what it has
-finished.
+reason per entry. Each word is one rule over all of `src`. "vault" survives in
+two strings, both allowlisted there with their reasons: the name of the export
+file a person downloads (`adepthood-vault-<date>.json`, which the server and
+`docs/your-data.md` spell the same way) and the anchor of a docs link that is
+opened, never shown.
 
 ## Constraints (carried from the epic)
 

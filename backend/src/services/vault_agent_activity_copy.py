@@ -42,7 +42,7 @@ ACTIVITY_ADEPTHOOD_OR_AN_AGENT: Final = "Adepthood or one of your agents"
 ACTIVITY_STOPPED_AGENT: Final = "An agent you stopped"
 
 #: Any stamp this account cannot place: never echoed, only named this way.
-ACTIVITY_SOMETHING_ELSE: Final = "Something else with access to your vault"
+ACTIVITY_SOMETHING_ELSE: Final = "Something else with access to your Corpus"
 
 #: A tool with no plain words yet.
 ACTIVITY_OTHER_TOOL: Final = "Other"
@@ -54,18 +54,18 @@ TOOL_LABELS: Final = MappingProxyType(
         "creek.author": "Wrote a piece in your voice",
         "creek.reflect": "Asked for a reflection",
         "creek.mine": "Looked for seeds in your writing",
-        "creek.link": "Tried to re-sort the vault",
+        "creek.link": "Tried to re-sort your Corpus",
         "creek.classify": "Tried to re-label your writing",
         "creek.ingest": "Tried to bring in new material",
-        "creek.compile": "Tried to rebuild the vault's pages",
-        "creek.purge.vault": "Tried to delete from the vault",
-        "creek.purge.source": "Tried to delete from the vault",
-        "creek.purge.fragment": "Tried to delete from the vault",
-        "creek.purge.daterange": "Tried to delete from the vault",
-        "creek.purge.classifications": "Tried to delete from the vault",
+        "creek.compile": "Tried to rebuild your Corpus's pages",
+        "creek.purge.vault": "Tried to delete from your Corpus",
+        "creek.purge.source": "Tried to delete from your Corpus",
+        "creek.purge.fragment": "Tried to delete from your Corpus",
+        "creek.purge.daterange": "Tried to delete from your Corpus",
+        "creek.purge.classifications": "Tried to delete from your Corpus",
         "creek.jobs.read": "Checked on a draft in progress",
         "creek.wheel": "Looked at the balance of your writing",
-        "creek.handshake": "Checked that the vault was there",
+        "creek.handshake": "Checked that your Corpus was there",
         "creek.journal": "Saved a journal entry",
         "creek.journal.withdraw": "Removed a journal entry",
         "creek.upload": "Added a document",

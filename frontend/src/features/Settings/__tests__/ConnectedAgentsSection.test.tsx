@@ -365,7 +365,7 @@ describe('ConnectedAgentsSection — the address to give an agent', () => {
     const { getByText, queryByText } = await renderSection(MANAGED);
 
     expect(
-      getByText('Adepthood can’t show an agent sign-in address for this vault yet.'),
+      getByText('Adepthood can’t show an agent sign-in address for this Corpus yet.'),
     ).toBeTruthy();
     expect(queryByText(AGENTS_EMPTY)).toBeNull();
   });
@@ -378,7 +378,7 @@ describe('ConnectedAgentsSection — the address to give an agent', () => {
 
     expect(within(getByTestId('vault-agents-address')).getByText(AGENT_ADDRESS)).toBeTruthy();
     expect(
-      queryByText('Adepthood can’t show an agent sign-in address for this vault yet.'),
+      queryByText('Adepthood can’t show an agent sign-in address for this Corpus yet.'),
     ).toBeNull();
     fireEvent.press(getByTestId('vault-agents-copy'));
     await waitFor(() => expect(mockCopy).toHaveBeenCalledWith(AGENT_ADDRESS));

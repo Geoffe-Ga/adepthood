@@ -84,7 +84,7 @@ def test_the_grant_sentences_are_the_ones_the_issue_names() -> None:
         "Draft and reflect from your Open and Personal writing"
     )
     assert copy.GRANT_DESCRIPTIONS["vault:journal"] == "Add journal entries"
-    assert copy.GRANT_DESCRIPTIONS["vault:pipeline"] == "Re-sort your vault"
+    assert copy.GRANT_DESCRIPTIONS["vault:pipeline"] == "Re-sort your Corpus"
 
 
 def test_the_floor_names_intimate_entries() -> None:

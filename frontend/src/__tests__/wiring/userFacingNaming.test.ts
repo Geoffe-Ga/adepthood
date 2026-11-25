@@ -21,9 +21,10 @@ import * as ts from 'typescript';
  * literals, template literal text and JSX text.
  *
  * **Extending it.** Each row of {@link NAMING_RULES} is one forbidden word, the
- * directories it is forbidden in, and the strings allowed to keep it. A sweep
- * that retires another word (standalone "vault", #3804 and #3805) adds a row
- * scoped to the directories it has finished, and widens the scope as it goes.
+ * directories it is forbidden in, and the strings allowed to keep it. Every
+ * row covers all of `src` today, standalone "vault" included (#3804, #3805).
+ * A sweep that retires another word may start with a row scoped to the
+ * directories it has finished, and widens the scope as it goes.
  */
 
 const SRC = path.resolve(__dirname, '..', '..');
@@ -69,6 +70,35 @@ export const NAMING_RULES: readonly NamingRule[] = [
     scope: [''],
     instead: 'your Simulated Higher Self Voice',
     allowlist: [],
+  },
+  {
+    // Standalone "vault", everywhere under `src` (#3804, #3805): the word as a
+    // word, lower-case, capitalised or shouted, singular or plural, wherever
+    // something stands beside it ("Your vault", "vault's", "managed vaults",
+    // "https://your-vault.example"), and a capitalised label that is nothing
+    // else ("Vault"). What keeps the word is what no user reads: a token that
+    // only starts with it (`vault-agent-row-`, `vault:read`, `vault_busy`,
+    // `VaultSettings`), a lower-case token that is nothing else (`'vault'`,
+    // the export format), and a segment of an API path (`/vault/agents`,
+    // `/users/me/export/vault`), which is why a slash on either side lets it
+    // through.
+    name: 'vault',
+    pattern:
+      /(?<=[^\w/])(?:[Vv]aults?|VAULTS?)(?![\w:/-])|(?<![\w/])(?:[Vv]aults?|VAULTS?)(?=[^\w:/-])|^(?:Vaults?|VAULTS?)$/u,
+    scope: [''],
+    instead: 'your Corpus',
+    allowlist: [
+      {
+        file: 'features/Settings/saveDataExport.ts',
+        text: 'adepthood-vault',
+        why: 'the name of the export file a person downloads, which the server and docs/your-data.md spell the same way; renaming it is not part of #3802',
+      },
+      {
+        file: 'features/Settings/vaultLinks.ts',
+        text: 'running-your-own-vault',
+        why: 'the anchor of a heading in docs/your-data.md, opened as a link and never shown',
+      },
+    ],
   },
 ];
 
@@ -194,6 +224,71 @@ const INTERNAL_ONLY_JSX = `
 export const Panel = () => <View testID="Creek-panel" nativeID="CreekRegion" />;
 `;
 
+const VAULT_RULE_NAME = 'vault';
+
+function vaultRule(): NamingRule {
+  const rule = NAMING_RULES.find((candidate) => candidate.name === VAULT_RULE_NAME);
+  if (!rule) throw new Error(`NAMING_RULES has no "${VAULT_RULE_NAME}" row any more.`);
+  return rule;
+}
+
+// Every shape the app's copy took when it said "vault".
+const VAULT_VIOLATING = `
+export const VAULT_DASHBOARD_TITLE = 'Your vault';
+export const VAULT_NONE_CONNECTED = 'No vault connected yet.';
+export const VAULT_SHAPE_HEADING = "Your vault's shape";
+const opening = 'Managed vaults are opening gradually';
+const waiting = 'Waiting for room to open up for your vault…';
+const landed = \`\${count} items from your vault\`;
+const paid = \`Paid by your own \${vendor} key, through your vault\`;
+const body = 'Removal is requested; ' + 'they may remain until the vault confirms.';
+const labels = { reconnect: 'Reconnect vault', heading: 'Vault settings', one: 'Vault' };
+const shout = 'VAULT';
+const placeholder = 'https://your-vault.example';
+const download = 'adepthood-vault';
+`;
+
+const VAULT_VIOLATING_JSX = `
+export const Offer = () => (
+  <View accessibilityLabel="Continue managed vault setup">
+    <Text>
+      Readings your vault answers use BotMason credits.
+    </Text>
+    <TextInput placeholder="Private vault address" />
+  </View>
+);
+`;
+
+// Everywhere "vault" stays: nothing here is read by a user.
+const VAULT_INTERNAL_ONLY = `
+// A vault is an optional depth, in a comment.
+import { vault } from '@/api';
+import { VAULT_ROW_LABEL } from '@/features/Settings/vaultCopy';
+type ExportFormat = 'json' | 'markdown' | 'vault';
+const run = () => exportAs('vault');
+const destination = z.enum(['vault', 'corpus']);
+const scopes = new Map([['vault:read', 'Read and search your Open and Personal writing']]);
+const refusals = { vault_url_malformed: VAULT_ADDRESS_INCOMPLETE };
+const status = 'vault_busy';
+const location = 'connected_vault';
+const source = 'creek_vault';
+const hint = 'vaultWithdrawalPending';
+navigation.navigate(first ? 'VaultDashboard' : 'VaultActivation');
+const landed = receipt.vault_status === 'accepted';
+const agents = '/vault/agents';
+const agent = \`/vault/agents/\${id}\`;
+const exported = '/users/me/export/vault';
+const VAULT_FIRST_CTA = 'Give your writing a place to live';
+`;
+
+const VAULT_INTERNAL_ONLY_JSX = `
+export const Row = ({ id }) => (
+  <View testID={\`vault-agent-row-\${id}\`}>
+    <Pressable testID="seed-vault-invitation-link" />
+  </View>
+);
+`;
+
 describe('findForbiddenNames', () => {
   it('flags the word in string literals, concatenations, templates and object values', () => {
     expect(findForbiddenNames('fixture.ts', VIOLATING, CREEK)).toEqual([
@@ -231,6 +326,55 @@ describe('findForbiddenNames', () => {
     expect(named('your Higher Self Voice may draw a few passages')).toEqual([]);
     expect(named('a reflection from your Higher Self can reach')).toHaveLength(1);
     expect(named('Higher Self may draw a few passages')).toHaveLength(1);
+  });
+});
+
+describe('the "vault" rule', () => {
+  const hits = (fileName: string, source: string): string[] =>
+    findForbiddenNames(fileName, source, vaultRule().pattern);
+
+  it('flags the word in headings, sentences, plurals, possessives, templates, bare labels and hyphenated names', () => {
+    expect(hits('fixture.ts', VAULT_VIOLATING)).toEqual([
+      '2: Your vault',
+      '3: No vault connected yet.',
+      "4: Your vault's shape",
+      '5: Managed vaults are opening gradually',
+      '6: Waiting for room to open up for your vault…',
+      '7: items from your vault',
+      '8: key, through your vault',
+      '9: they may remain until the vault confirms.',
+      '10: Reconnect vault',
+      '10: Vault settings',
+      '10: Vault',
+      '11: VAULT',
+      '12: https://your-vault.example',
+      '13: adepthood-vault',
+    ]);
+  });
+
+  it('flags the word in JSX text, accessibility labels and placeholders', () => {
+    expect(hits('fixture.tsx', VAULT_VIOLATING_JSX)).toEqual([
+      '3: Continue managed vault setup',
+      '5: Readings your vault answers use BotMason credits.',
+      '7: Private vault address',
+    ]);
+  });
+
+  it('leaves comments, identifiers, routes, scopes, API values and API paths alone', () => {
+    expect(hits('fixture.ts', VAULT_INTERNAL_ONLY)).toEqual([]);
+  });
+
+  it('leaves test IDs alone, templated or plain', () => {
+    expect(hits('fixture.tsx', VAULT_INTERNAL_ONLY_JSX)).toEqual([]);
+  });
+
+  it('is one rule over all of src, and keeps only the download name and a link anchor', () => {
+    expect(NAMING_RULES.filter((rule) => /vault/iu.test(rule.name))).toHaveLength(1);
+    expect(vaultRule().scope).toEqual(['']);
+    expect(vaultRule().allowlist.map((entry) => entry.text)).toEqual([
+      'adepthood-vault',
+      'running-your-own-vault',
+    ]);
   });
 });
 

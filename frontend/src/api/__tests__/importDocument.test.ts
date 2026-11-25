@@ -21,7 +21,7 @@ const VAULT_BODY = {
   tags: ['reflection'],
   corpus_status: null,
   fragment_id: null,
-  message: 'Your document is in your vault.',
+  message: 'Your document is in your Corpus.',
 };
 
 const CORPUS_BODY = {

@@ -83,7 +83,7 @@ const DELETION_RECEIPT = {
   erased: ['habit', 'journalentry'],
   anonymised: ['practice'],
   retained: ['coursestage'],
-  vault: { configured: false, purged: false, guidance: 'No Creek Vault was connected.' },
+  vault: { configured: false, purged: false, guidance: 'No Corpus was connected.' },
 };
 
 describe('users.deleteMyAccount', () => {

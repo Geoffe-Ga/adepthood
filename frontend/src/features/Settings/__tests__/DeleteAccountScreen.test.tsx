@@ -34,7 +34,7 @@ const RECEIPT: AccountDeletionReceipt = {
   vault: {
     configured: true,
     purged: false,
-    guidance: 'Your Creek Vault is yours, not ours. Run `creek purge` against it.',
+    guidance: 'Your Corpus is yours, not ours. Run `creek purge` against it.',
   },
 };
 

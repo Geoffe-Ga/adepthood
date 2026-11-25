@@ -297,10 +297,10 @@ class UploadDocumentRequest(BaseModel):
 UPLOAD_MESSAGES: Mapping[VaultUploadStatus, str] = MappingProxyType(
     {
         VaultUploadStatus.ACCEPTED: (
-            "Your document is in your vault. It will show up in reflections from here on."
+            "Your document is in your Corpus. It will show up in reflections from here on."
         ),
         VaultUploadStatus.VAULT_UNAVAILABLE: (
-            "Your vault didn't answer, so the document wasn't sent. Check that your vault "
+            "Your Corpus didn't answer, so the document wasn't sent. Check that your Corpus "
             "is running and reachable, then upload it again."
         ),
         # Reached three ways, and the message has to serve all three without
@@ -314,12 +314,12 @@ UPLOAD_MESSAGES: Mapping[VaultUploadStatus, str] = MappingProxyType(
         # Nothing here promises a retry of the same request, because none of the
         # three is cleared by one.
         VaultUploadStatus.CAPABILITY_UNSUPPORTED: (
-            "This document wasn't sent, and nothing in your vault changed — journal "
+            "This document wasn't sent, and nothing in your Corpus changed — journal "
             "entries still save as usual. If you marked it Intimate, that tier stays on "
-            "this device and never goes to a vault; choose a different tier if you want "
+            "this device and never goes to a Corpus; choose a different tier if you want "
             "it there. Otherwise file uploads aren't working between Adepthood and your "
-            "vault yet — update your vault if a newer version is out, and keep the file "
-            "until one of you has caught up."
+            "Corpus yet — update the software behind your Corpus if a newer version is "
+            "out, and keep the file until one of you has caught up."
         ),
         # Answered after the document went over the wire, so it cannot say the
         # vault is unchanged: a vault can keep the file and then have its reply
@@ -327,7 +327,7 @@ UPLOAD_MESSAGES: Mapping[VaultUploadStatus, str] = MappingProxyType(
         # thing true of every path here. Sending again is safe because the
         # upload's external id is stable, so a re-send updates in place.
         VaultUploadStatus.DEGRADED: (
-            "We couldn't confirm whether the upload finished — your vault may or may "
+            "We couldn't confirm whether the upload finished — your Corpus may or may "
             "not have the document. Please try again; sending the same file again "
             "updates it in place rather than adding a second copy."
         ),
@@ -336,7 +336,7 @@ UPLOAD_MESSAGES: Mapping[VaultUploadStatus, str] = MappingProxyType(
         # document is not in the vault yet and saying so is true. The wait is in
         # ``retry_after_seconds``; this sentence is for a client that shows it.
         VaultUploadStatus.VAULT_BUSY: (
-            "Your vault is busy settling what it already holds, so it hasn't taken "
+            "Your Corpus is busy settling what it already holds, so it hasn't taken "
             "this document yet. Give it a moment, then send the same file again — "
             "it updates in place rather than adding a second copy."
         ),
@@ -344,7 +344,7 @@ UPLOAD_MESSAGES: Mapping[VaultUploadStatus, str] = MappingProxyType(
         # (#3771) before writing anything, so "nothing was stored" is a fact.
         # It offers no resend: the same file is refused the same way.
         VaultUploadStatus.UNSUPPORTED_SOURCE: (
-            "Your vault doesn't take this kind of file as a document, so nothing was "
+            "Your Corpus doesn't take this kind of file as a document, so nothing was "
             "stored. The file is still with you."
         ),
     }

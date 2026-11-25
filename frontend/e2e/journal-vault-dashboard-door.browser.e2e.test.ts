@@ -48,8 +48,16 @@ test('the Journal drawer opens the dashboard, from the shelf and from an open en
   expect(answer.status()).toBe(HTTP_OK);
   expect(((await answer.json()) as { vault_status: string }).vault_status).toBe('not_connected');
   await expect(page.getByTestId('vault-dashboard-not-connected')).toBeVisible();
-  // The door and the screen it opens share one name.
-  await expect(page.getByRole('heading', { name: label }).first()).toBeVisible();
+  // The door and the screen it opens share one name: exactly one heading says
+  // exactly what the row said, and it is the stack header's, above the body.
+  // A substring match would be satisfied by a section heading that merely
+  // contains the words.
+  const title = page.getByRole('heading', { name: label, exact: true });
+  await expect(title).toHaveCount(1);
+  await expect(title).toBeVisible();
+  await expect(
+    page.getByTestId('vault-dashboard-screen').getByRole('heading', { name: label, exact: true }),
+  ).toHaveCount(0);
 
   // From an open entry: the same row, the same place.
   await page.goto(`${frontendUrl()}/journal`);

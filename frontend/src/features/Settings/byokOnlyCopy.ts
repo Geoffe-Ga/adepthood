@@ -10,11 +10,11 @@
 
 /** Under the key field while no key is saved. */
 export const NO_KEY_HINT =
-  "No key saved yet. BotMason's cloud AI features — resonance notes, letters, completion checks and page reading — need a key of your own, and credits don't pay for them. Resonance notes and letters can still come from your vault if you have one.";
+  "No key saved yet. BotMason's cloud AI features — resonance notes, letters, completion checks and page reading — need a key of your own, and credits don't pay for them. Resonance notes and letters can still come from your Corpus if you have one.";
 
 /** The remove-key confirmation's body. */
 export const REMOVE_KEY_DIALOG_BODY =
-  "Without your own key, BotMason's cloud AI features — resonance notes, letters, completion checks and page reading — stop until you add one again. Resonance notes and letters can still come from your vault if you have one. Your journal itself is unaffected.";
+  "Without your own key, BotMason's cloud AI features — resonance notes, letters, completion checks and page reading — stop until you add one again. Resonance notes and letters can still come from your Corpus if you have one. Your journal itself is unaffected.";
 
 /**
  * Removal could not reach the server, so the copy kept for a managed vault's
@@ -22,7 +22,7 @@ export const REMOVE_KEY_DIALOG_BODY =
  * truthful and the writer can simply try again.
  */
 export const VAULT_COPY_NOT_DELETED =
-  "Couldn't reach Adepthood to delete the copy of your key it keeps for your vault, so nothing was removed. Check your connection and try again.";
+  "Couldn't reach Adepthood to delete the copy of your key it keeps for your Corpus, so nothing was removed. Check your connection and try again.";
 
 /**
  * A managed vault's sort stopped because the writer's AI provider refused their
@@ -32,7 +32,7 @@ export const VAULT_COPY_NOT_DELETED =
  * re-sent -- only that a replaced key is used on the next write.
  */
 export const KEY_REJECTED_NOTICE =
-  'Your AI provider turned down the API key your vault last used to sort your writing, so that sort stopped. Your writing is all still here. Paste a working key below and your vault will use it the next time you write.';
+  'Your AI provider turned down the API key your Corpus last used to sort your writing, so that sort stopped. Your writing is all still here. Paste a working key below and your Corpus will use it the next time you write.';
 
 /** The hub's API key row while that refusal stands: where to go, not what went wrong. */
 export const KEY_REJECTED_HUB_DESCRIPTION =
