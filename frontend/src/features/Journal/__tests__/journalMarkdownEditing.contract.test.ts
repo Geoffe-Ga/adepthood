@@ -3,7 +3,8 @@ import { describe, expect, it } from '@jest/globals';
 
 import { parseJournalMarkdown } from '../journalMarkdown';
 import { BULLET_MARKERS } from '../journalMarkdownLines';
-import { continueMarkdownEdit } from '../markdownEditing';
+import { continueMarkdownEdit, deleteBackwardEdit } from '../markdownEditing';
+import { listLevelAt, shiftListLines } from '../markdownIndent';
 import { buildMirrorModel } from '../markdownMirror';
 
 /**
@@ -69,4 +70,74 @@ describe('bullet marker contract between the parser and the editor', () => {
       selection: { start: 0, end: 0 },
     });
   });
+});
+
+/** One list-item prefix per kind the dialect nests, and the prefix Return carries forward. */
+const LIST_ITEM_PREFIXES: readonly (readonly [prefix: string, kind: string, next: string])[] = [
+  ...BULLET_MARKERS.map((marker) => [`${marker} `, 'bullet', `${marker} `] as const),
+  ...BULLET_MARKERS.map((marker) => [`${marker} [x] `, 'task', `${marker} [ ] `] as const),
+  ['1. ', 'ordered', '2. '],
+  ['1) ', 'ordered', '2) '],
+];
+
+/**
+ * Every list kind the renderer draws is a list line to the editor: Return
+ * continues it, Return on an empty one leaves it, and Tab, Shift+Tab and
+ * Backspace nest it. Bullets, tasks and numbered items share one loop so a
+ * kind cannot be continued but not nested, or the reverse.
+ */
+describe('list item contract between the parser and the editor', () => {
+  it.each(LIST_ITEM_PREFIXES)('parses %j as a %s item and continues it on Return', (...row) => {
+    const [prefix, kind, next] = row;
+    const line = `${prefix}a thought`;
+    expect(parseJournalMarkdown(line).blocks[0]!.kind).toBe(kind);
+    const caret = line.length;
+    const end = caret + 1 + next.length;
+    expect(continueMarkdownEdit(line, `${line}\n`, { start: caret, end: caret })).toEqual({
+      text: `${line}\n${next}`,
+      selection: { start: end, end },
+    });
+  });
+
+  it.each(LIST_ITEM_PREFIXES)('exits an empty %j item on Return', (prefix) => {
+    const caret = prefix.length;
+    expect(continueMarkdownEdit(prefix, `${prefix}\n`, { start: caret, end: caret })).toEqual({
+      text: '',
+      selection: { start: 0, end: 0 },
+    });
+  });
+
+  it.each(LIST_ITEM_PREFIXES)('nests and un-nests a %j item', (prefix) => {
+    const line = `${prefix}a`;
+    const caret = { start: line.length, end: line.length };
+    expect(listLevelAt(line, caret.start)).toBe(0);
+    const nested = shiftListLines(line, caret, 'indent');
+    expect(nested).toEqual({
+      text: `  ${line}`,
+      selection: { start: caret.start + 2, end: caret.end + 2 },
+    });
+    expect(shiftListLines(nested!.text, nested!.selection!, 'outdent')).toEqual({
+      text: line,
+      selection: caret,
+    });
+  });
+
+  it.each(LIST_ITEM_PREFIXES)(
+    'steps a nested %j item out on Backspace, then drops its prefix',
+    (prefix) => {
+      const nested = `  ${prefix}a`;
+      const first = deleteBackwardEdit(nested, {
+        start: 2 + prefix.length,
+        end: 2 + prefix.length,
+      });
+      expect(first).toEqual({
+        text: `${prefix}a`,
+        selection: { start: prefix.length, end: prefix.length },
+      });
+      expect(deleteBackwardEdit(first!.text, first!.selection!)).toEqual({
+        text: 'a',
+        selection: { start: 0, end: 0 },
+      });
+    },
+  );
 });

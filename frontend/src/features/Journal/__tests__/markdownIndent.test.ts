@@ -152,9 +152,8 @@ describe('shiftListLines -- the caret line', () => {
     expect(listLevelAt('- [ ] a\n  - [x] b', 17)).toBe(1);
   });
 
-  it('never moves a heading, an ordered item or a rule', () => {
-    // Hanging indent for ordered items is a sibling issue in #3249.
-    expect(shiftListLines('## h\n1. one\n---', { start: 0, end: 15 }, 'indent')).toBeNull();
+  it('never moves a heading or a rule', () => {
+    expect(shiftListLines('## h\n---', { start: 0, end: 8 }, 'indent')).toBeNull();
   });
 });
 
@@ -209,6 +208,8 @@ describe('listLevelAt', () => {
     // A partial indent still counts as nested: outdent can remove it.
     [' - a', 2, 1],
     ['- a\n   - b', 8, 2],
+    ['1. a\n  1. b', 10, 1],
+    ['- [ ] a', 6, 0],
   ])('reads %j at %i as level %i', (body, caret, level) => {
     expect(listLevelAt(body, caret)).toBe(level);
   });
@@ -219,5 +220,84 @@ describe('listLevelAt', () => {
     ['-glued', 2],
   ])('is null off a list line: %j', (body, caret) => {
     expect(listLevelAt(body, caret)).toBeNull();
+  });
+});
+
+describe('inferIndentUnit -- numbered items', () => {
+  it('reads an indented numbered item as a list line', () => {
+    expect(inferIndentUnit('1. a\n    1. b')).toBe(WIDE_INDENT_UNIT);
+    expect(inferIndentUnit('1. a\n\t1. b')).toBe(TAB_INDENT_UNIT);
+  });
+});
+
+describe('shiftListLines -- numbered items', () => {
+  const caretIn = (body: string, text: string) => {
+    const at = body.indexOf(text) + text.length;
+    return { start: at, end: at };
+  };
+
+  it('nests a numbered item from 1. and closes the gap in the run it left', () => {
+    const body = '1. a\n2. b\n3. c';
+    expect(shiftListLines(body, caretIn(body, 'b'), 'indent')).toEqual({
+      text: '1. a\n  1. b\n2. c',
+      selection: { start: 11, end: 11 },
+    });
+  });
+
+  it('outdents a nested numbered item into the run above and renumbers what follows', () => {
+    const body = '1. a\n  1. b\n2. c';
+    expect(shiftListLines(body, caretIn(body, 'b'), 'outdent')).toEqual({
+      text: '1. a\n2. b\n3. c',
+      selection: { start: 9, end: 9 },
+    });
+  });
+
+  it('continues a nested run that is already there', () => {
+    const body = '1. a\n  1. x\n2. b\n3. c';
+    expect(shiftListLines(body, caretIn(body, 'b'), 'indent')!.text).toBe(
+      '1. a\n  1. x\n  2. b\n2. c',
+    );
+  });
+
+  it('numbers every selected item at its new level, in order', () => {
+    const body = '1. a\n2. b\n3. c\n4. d';
+    expect(shiftListLines(body, { start: 6, end: 14 }, 'indent')).toEqual({
+      text: '1. a\n  1. b\n  2. c\n2. d',
+      selection: { start: 8, end: 18 },
+    });
+  });
+
+  it('keeps each item its own punctuation', () => {
+    const body = '1) a\n2) b\n3) c';
+    expect(shiftListLines(body, caretIn(body, 'b'), 'indent')!.text).toBe('1) a\n  1) b\n2) c');
+  });
+
+  it('moves the selection with a number that grows a digit', () => {
+    const items = Array.from({ length: 9 }, (_, index) => `${String(index + 1)}. x`).join('\n');
+    const body = `${items}\n  1. j`;
+    const edit = shiftListLines(body, caretIn(body, 'j'), 'outdent');
+    expect(edit!.text).toBe(`${items}\n10. j`);
+    expect(edit!.selection).toEqual({ start: edit!.text.length, end: edit!.text.length });
+  });
+
+  it('stops renumbering at a blank line, a shallower line and another kind of line', () => {
+    const body = '1. a\n2. b\n- c\n3. d\n\n3. e';
+    expect(shiftListLines(body, caretIn(body, 'a'), 'indent')!.text).toBe(
+      '  1. a\n2. b\n- c\n3. d\n\n3. e',
+    );
+    const nested = '- p\n  1. a\n  2. b\n  3. c\n- q\n  3. z';
+    expect(shiftListLines(nested, caretIn(nested, 'b'), 'indent')!.text).toBe(
+      '- p\n  1. a\n    1. b\n  2. c\n- q\n  3. z',
+    );
+  });
+
+  it('leaves the numbers alone when a bullet moves', () => {
+    const body = '1. a\n- b\n1. c';
+    expect(shiftListLines(body, caretIn(body, 'b'), 'indent')!.text).toBe('1. a\n  - b\n1. c');
+  });
+
+  it('never rewrites a number that is already right, however it was typed', () => {
+    const body = '1. a\n2. b\n002. c';
+    expect(shiftListLines(body, caretIn(body, 'b'), 'indent')!.text).toBe('1. a\n  1. b\n002. c');
   });
 });

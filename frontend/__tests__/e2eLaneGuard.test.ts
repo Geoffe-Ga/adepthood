@@ -125,6 +125,7 @@ const EXPECTED_BROWSER_JOURNEYS = [
   'journal-morning-pages-never-offer.browser.e2e.test.ts',
   'journal-notification-center.browser.e2e.test.ts',
   'journal-only.browser.e2e.test.ts',
+  'journal-ordered-list-edit.browser.e2e.test.ts',
   'journal-own-voice-letter.browser.e2e.test.ts',
   'journal-promote-explainer.browser.e2e.test.ts',
   'journal-promote-opener-keeps-scroll.browser.e2e.test.ts',
