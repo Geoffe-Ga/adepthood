@@ -169,10 +169,10 @@ describe('receipts', () => {
 
   test.each([
     ['accepted', '01-Fragments/Notes', 'Landed in Notes'],
-    ['accepted', null, 'In your vault'],
+    ['accepted', null, 'In your Corpus'],
     ['degraded', null, "Couldn't be confirmed"],
-    ['vault_unavailable', null, "Didn't land — your vault wasn't reachable"],
-    ['capability_unsupported', null, "Didn't land — your vault can't take files yet"],
+    ['vault_unavailable', null, "Didn't land — your Corpus wasn't reachable"],
+    ['capability_unsupported', null, "Didn't land — your Corpus can't take files yet"],
     ['something_new', null, "Didn't land"],
   ])('a %s receipt in %s reads "%s"', (status, landedIn, line) => {
     expect(receiptLine({ ...base, vault_status: status, landed_in: landedIn })).toBe(line);
@@ -250,7 +250,7 @@ describe('area words', () => {
       `${WRITERLESS_LINE} — it's yours to fill.`,
     );
     expect(childNote(childAt(authors, 0), authors)).toBe(
-      `${WRITERLESS_LINE} — it is an example that came with your vault.`,
+      `${WRITERLESS_LINE} — it is an example that came with your Corpus.`,
     );
   });
 });
@@ -317,11 +317,11 @@ describe('whole-corpus totals (#3796)', () => {
 describe('the dashboard speaks of your Corpus', () => {
   test('the lead, the heading and the update notice say what was done, not who did it', () => {
     expect(VAULT_DASHBOARD_LEAD).toBe(
-      'What has come in, what has been done with it, and which rooms of your vault are still quiet.',
+      'What has come in, what has been done with it, and which rooms of your Corpus are still quiet.',
     );
     expect(VAULT_CREEK_HEADING).toBe('What has been done with your Corpus');
     expect(VAULT_UPDATE_NEEDED).toBe(
-      'Your vault needs an update to show this. What it holds, and what has been done with each file, will show here once it has one.',
+      'Your Corpus needs an update to show this. What it holds, and what has been done with each file, will show here once it has one.',
     );
   });
 

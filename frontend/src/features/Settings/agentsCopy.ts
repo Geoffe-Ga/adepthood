@@ -29,7 +29,7 @@
 export const AGENTS_EYEBROW = 'Optional';
 
 /** The section's heading. */
-export const AGENTS_HEADING = 'Agents that may read your vault';
+export const AGENTS_HEADING = 'Agents that may read your Corpus';
 
 /**
  * What an agent is, what is kept from it, and the floor. One paragraph.
@@ -41,10 +41,10 @@ export const AGENTS_HEADING = 'Agents that may read your vault';
  * what the vault hands over, which is what this one says.
  */
 export const AGENTS_WHAT_THEY_ARE =
-  'An agent you run elsewhere can draft and reflect from the Open and Personal writing in your vault. Intimate entries are never included. You can stop any of them here. Adepthood is complete without this.';
+  'An agent you run elsewhere can draft and reflect from the Open and Personal writing in your Corpus. Intimate entries are never included. You can stop any of them here. Adepthood is complete without this.';
 
 /** Above the address a person pastes into an agent. */
-export const AGENTS_ADDRESS_LABEL = 'Where an agent finds your vault';
+export const AGENTS_ADDRESS_LABEL = 'Where an agent finds your Corpus';
 
 /** Under the address: what to do with it, and what happens next. */
 export const AGENTS_ADDRESS_NOTE =
@@ -52,7 +52,7 @@ export const AGENTS_ADDRESS_NOTE =
 
 /** A managed allocation whose public agent address could not be confirmed (#3545). */
 export const AGENTS_MANAGED_ADDRESS_UNAVAILABLE =
-  'Adepthood can’t show an agent sign-in address for this vault yet.';
+  'Adepthood can’t show an agent sign-in address for this Corpus yet.';
 
 /** The copy affordance beside the address. */
 export const AGENTS_ADDRESS_COPY = 'Copy address';
@@ -69,11 +69,11 @@ export const AGENTS_ADDRESS_COPY_FAILED =
  * button: there is nothing on this screen that could add one.
  */
 export const AGENTS_EMPTY =
-  "No agent can read your vault yet. Approve one from the agent's own sign-in flow and it will show here.";
+  "No agent can read your Corpus yet. Approve one from the agent's own sign-in flow and it will show here.";
 
 /** The list could not be read. Never says "none" over a read that did not land. */
 export const AGENTS_LOAD_FAILED =
-  'Adepthood could not check which agents can read your vault just now.';
+  'Adepthood could not check which agents can read your Corpus just now.';
 
 /** Stands in for an agent that gave no name, in the consent page's own words. */
 export const AGENTS_UNNAMED = 'An agent that did not give its name';
@@ -95,7 +95,7 @@ export const AGENTS_STOP = 'Stop';
 
 /** The question asked in the row, in place, before anything is sent. */
 export const AGENTS_STOP_CONFIRM =
-  'Stop this agent? It can no longer reach your vault within ten minutes. You can approve it again from the agent whenever you like.';
+  'Stop this agent? It can no longer reach your Corpus within ten minutes. You can approve it again from the agent whenever you like.';
 
 /** The answer that goes ahead. */
 export const AGENTS_STOP_CONFIRM_BUTTON = 'Stop it';
@@ -108,7 +108,7 @@ export const AGENTS_STOPPING = 'Stopping…';
 
 /** Once the server has said yes. */
 export const AGENTS_STOPPED =
-  'Stopped. That agent can no longer reach your vault within ten minutes.';
+  'Stopped. That agent can no longer reach your Corpus within ten minutes.';
 
 /** When the stop did not land. The agent is still listed, because it still can. */
 export const AGENTS_STOP_FAILED =
@@ -126,11 +126,11 @@ export const ACTIVITY_WHAT_IT_IS = 'What each agent asked for, never what it rea
 
 /** Nothing asked yet. */
 export const ACTIVITY_EMPTY =
-  'Nothing yet. When an agent asks your vault for something, it shows here.';
+  'Nothing yet. When an agent asks your Corpus for something, it shows here.';
 
 /** The vault could not be read. Never says "nothing yet" over a read that did not land. */
 export const ACTIVITY_UNAVAILABLE =
-  'Adepthood could not check your vault for recent activity just now.';
+  'Adepthood could not check your Corpus for recent activity just now.';
 
 /** The small marker beside a call the vault turned down before it ran. */
 export const ACTIVITY_REFUSED = 'Refused';

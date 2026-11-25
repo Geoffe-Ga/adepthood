@@ -154,7 +154,7 @@ describe('ExportDataScreen — what your vault holds (#3579)', () => {
     await waitFor(() => expect(getByTestId('export-data-receipt')).toBeTruthy());
     expect(mockSaveDataExport).toHaveBeenCalledWith('vault');
     const saved = getByTestId('export-data-receipt-saved').props.children as string;
-    expect(saved).toContain('14 items from your vault');
+    expect(saved).toContain('14 items from your Corpus');
     expect(saved).toContain('adepthood-vault-2026-08-22.json');
     expect(queryByTestId('export-data-receipt-incomplete')).toBeNull();
   });
@@ -180,7 +180,7 @@ describe('ExportDataScreen — what your vault holds (#3579)', () => {
     ['vault_not_connected', 404, 'no Corpus connected'],
     ['vault_export_failed', 502, 'could not finish the export'],
   ])(
-    'a vault answering %s says so rather than saving an empty file',
+    'a Corpus answering %s says so rather than saving an empty file',
     async (detail, status, says) => {
       mockSaveDataExport.mockRejectedValue(new ApiError(status, detail));
       const { getByTestId, queryByTestId } = render(<ExportDataScreen />);

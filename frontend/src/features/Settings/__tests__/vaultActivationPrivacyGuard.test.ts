@@ -45,9 +45,11 @@ describe('private-vault activation privacy boundary', () => {
     expect(navigation).toContain(`options={{ title: '${VAULT_TITLE}' }}`);
     expect(navigation).toContain("options={{ title: 'Create managed vault' }}");
     expect(navigation).toContain(`under Advanced in ${VAULT_TITLE}`);
-    expect(navigation).not.toMatch(/Managed vault settings|Creek vault settings/u);
     expect(navigation).not.toMatch(
-      /title: 'Private vault'|title: 'Create private vault'|from Private Vault settings/u,
+      /Managed (vault|Corpus) settings|Creek (vault|Corpus) settings/u,
+    );
+    expect(navigation).not.toMatch(
+      /title: 'Private (vault|Corpus)'|title: 'Create private (vault|Corpus)'|from Private (Vault|Corpus) settings/u,
     );
   });
 

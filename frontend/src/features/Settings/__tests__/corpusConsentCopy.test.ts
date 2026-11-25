@@ -89,7 +89,7 @@ describe('the corpus-consent copy, against what the backend actually does', () =
     // for documents is described as what it does today rather than as a way in.
     const { description } = sourceCopy('upload');
 
-    expect(description).toMatch(/vault/u);
+    expect(description).toMatch(/Corpus/u);
     expect(description).toMatch(/nowhere to go/u);
     expect(ranksOrShames(description)).toBe(false);
   });

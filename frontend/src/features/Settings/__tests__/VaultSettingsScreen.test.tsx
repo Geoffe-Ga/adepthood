@@ -465,7 +465,7 @@ describe('VaultSettingsScreen — managed private vault', () => {
 
     const view = await renderWithFormOpen(NOT_CONNECTED);
 
-    expect(view.getByText('Continue managed vault setup')).toBeTruthy();
+    expect(view.getByText('Continue managed Corpus setup')).toBeTruthy();
     expect(view.getByText('Continue setup')).toBeTruthy();
   });
 
@@ -475,7 +475,7 @@ describe('VaultSettingsScreen — managed private vault', () => {
     const view = await renderWithFormOpen(NOT_CONNECTED);
 
     expect(
-      view.getByText('Adepthood could not check whether a managed vault is on offer'),
+      view.getByText('Adepthood could not check whether a managed Corpus is on offer'),
     ).toBeTruthy();
     expect(view.getByTestId('vault-address-input')).toBeTruthy();
   });
@@ -499,7 +499,7 @@ describe('VaultSettingsScreen — accessibility', () => {
   test('states its own optionality, so the floor stands alone when focused', async () => {
     const { getByTestId } = await renderVault();
 
-    expect(getByTestId('vault-floor')).toHaveTextContent(/complete without a vault/iu);
+    expect(getByTestId('vault-floor')).toHaveTextContent(/complete without one/iu);
   });
 });
 
@@ -593,7 +593,7 @@ describe('VaultSettingsScreen — reading the connection', () => {
   test('recognizes a managed connection and offers a check it never runs on its own', async () => {
     const view = await renderVault(CONNECTED_WITHOUT_ADDRESS);
 
-    expect(view.getByText('A managed vault is connected to your account.')).toBeTruthy();
+    expect(view.getByText('A managed Corpus is connected to your account.')).toBeTruthy();
     expect(view.getByTestId('vault-check-now')).toBeTruthy();
     expect(vault.checkReachability).not.toHaveBeenCalled();
     expect(view.queryByTestId('vault-connection-unknown', HIDDEN_TOO)).toBeNull();
@@ -645,7 +645,7 @@ describe('VaultSettingsScreen — the deployment-wide vault (#3608)', () => {
   test('never calls it a managed vault, which it is not', async () => {
     const view = await renderVault(DEPLOYMENT_VAULT);
 
-    expect(view.queryByText(/A managed vault is connected/u, HIDDEN_TOO)).toBeNull();
+    expect(view.queryByText(/A managed Corpus is connected/u, HIDDEN_TOO)).toBeNull();
   });
 
   test('offers no disconnect, even with the Advanced fold open', async () => {
@@ -1032,7 +1032,7 @@ describe('VaultSettingsScreen — the gain leads the promise deck', () => {
 
     expect(
       within(view.getByTestId('managed-vault-offer')).getByText(
-        /Fly, the people who run Adepthood and the people who make the software behind the vault can read what is stored there; anything you mark Intimate never goes there\./u,
+        /Fly, the people who run Adepthood and the people who make the software behind it can read what is stored there; anything you mark Intimate never goes there\./u,
       ),
     ).toBeTruthy();
   });
@@ -1334,10 +1334,10 @@ describe('VaultSettingsScreen — agents that may read your vault', () => {
 
 describe('VaultSettingsScreen — the way to see what is in the vault (#3776)', () => {
   test.each([
-    ['a vault of their own', CONNECTED],
-    ['a managed vault', CONNECTED_WITHOUT_ADDRESS],
-    ['the deployment-wide vault', DEPLOYMENT_VAULT],
-  ])('offers "Your vault" to an account with %s', async (_label, connection) => {
+    ['a Corpus of their own', CONNECTED],
+    ['a managed Corpus', CONNECTED_WITHOUT_ADDRESS],
+    ['the deployment-wide Corpus', DEPLOYMENT_VAULT],
+  ])('offers "Your Corpus" to an account with %s', async (_label, connection) => {
     const navigate = jest.fn();
     mockConnection.mockResolvedValue(connection);
     const view = render(<VaultSettingsScreen navigation={{ navigate }} />);

@@ -258,7 +258,7 @@ error message, placeholder or accessibility label says them.
   own".
 - Where a privacy disclosure named Creek as a party who can read something,
   the party is still named, in plain words: "the people who make the software
-  behind the vault".
+  behind it".
 
 `src/__tests__/wiring/userFacingNaming.test.ts` holds the first and third rows
 against every string and JSX text under `src`. Its `NAMING_RULES` table takes

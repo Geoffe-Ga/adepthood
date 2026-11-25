@@ -49,12 +49,12 @@ describe('agentsCopy — export surface', () => {
 describe('agentsCopy — the deck, verbatim', () => {
   it('names the section in plain words, under the same eyebrow as the screen', () => {
     expect(agentsCopy.AGENTS_EYEBROW).toBe('Optional');
-    expect(agentsCopy.AGENTS_HEADING).toBe('Agents that may read your vault');
+    expect(agentsCopy.AGENTS_HEADING).toBe('Agents that may read your Corpus');
   });
 
   it('explains an agent in the register of the vault deck, with the floor last', () => {
     expect(agentsCopy.AGENTS_WHAT_THEY_ARE).toBe(
-      'An agent you run elsewhere can draft and reflect from the Open and Personal writing in your vault. Intimate entries are never included. You can stop any of them here. Adepthood is complete without this.',
+      'An agent you run elsewhere can draft and reflect from the Open and Personal writing in your Corpus. Intimate entries are never included. You can stop any of them here. Adepthood is complete without this.',
     );
   });
 
@@ -65,7 +65,7 @@ describe('agentsCopy — the deck, verbatim', () => {
 
   it('describes an unconfirmed address without claiming sign-in is unsupported', () => {
     expect(agentsCopy.AGENTS_MANAGED_ADDRESS_UNAVAILABLE).toBe(
-      'Adepthood can’t show an agent sign-in address for this vault yet.',
+      'Adepthood can’t show an agent sign-in address for this Corpus yet.',
     );
   });
 

@@ -842,20 +842,20 @@ const ManagedActivationOffer = ({
 }): React.JSX.Element => (
   <View style={styles.activationOffer} testID="managed-vault-offer">
     <Text style={styles.formHeading}>
-      {continuing ? 'Continue managed vault setup' : 'Let Adepthood create one'}
+      {continuing ? 'Continue managed Corpus setup' : 'Let Adepthood create one'}
     </Text>
     <Text style={settingsFormStyles.body}>
-      Ask Adepthood to set up an optional vault for you, kept on Fly's servers. Fly, the people who
-      run Adepthood and the people who make the software behind the vault can read what is stored
-      there; anything you mark Intimate never goes there. Your journal stays open the whole time it
-      is being set up.
+      Ask Adepthood to set up an optional Corpus for you, kept on Fly's servers. Fly, the people who
+      run Adepthood and the people who make the software behind it can read what is stored there;
+      anything you mark Intimate never goes there. Your journal stays open the whole time it is
+      being set up.
     </Text>
     <Button
-      label={continuing ? 'Continue setup' : 'Create a managed vault'}
+      label={continuing ? 'Continue setup' : 'Create a managed Corpus'}
       onPress={onOpen}
       testID="open-vault-activation"
       accessibilityLabel={
-        continuing ? 'Continue managed vault setup' : 'Create an optional managed vault'
+        continuing ? 'Continue managed Corpus setup' : 'Create an optional managed Corpus'
       }
     />
   </View>
@@ -869,8 +869,8 @@ const ManagedActivationUnavailable = ({ unknown }: { unknown: boolean }): React.
   >
     <Text style={styles.formHeading}>
       {unknown
-        ? 'Adepthood could not check whether a managed vault is on offer'
-        : 'Managed vaults are opening gradually'}
+        ? 'Adepthood could not check whether a managed Corpus is on offer'
+        : 'The managed Corpus is opening gradually'}
     </Text>
     <Text style={settingsFormStyles.body}>
       {unknown ? VAULT_MANAGED_UNKNOWN_BODY : VAULT_MANAGED_UNAVAILABLE_BODY}

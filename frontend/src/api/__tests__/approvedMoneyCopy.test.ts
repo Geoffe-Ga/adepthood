@@ -44,12 +44,12 @@ describe('owner-approved money copy (#3262)', () => {
     [
       'NO_KEY_HINT',
       NO_KEY_HINT,
-      "No key saved yet. BotMason's cloud AI features — resonance notes, letters, completion checks and page reading — need a key of your own, and credits don't pay for them. Resonance notes and letters can still come from your vault if you have one.",
+      "No key saved yet. BotMason's cloud AI features — resonance notes, letters, completion checks and page reading — need a key of your own, and credits don't pay for them. Resonance notes and letters can still come from your Corpus if you have one.",
     ],
     [
       'REMOVE_KEY_DIALOG_BODY',
       REMOVE_KEY_DIALOG_BODY,
-      "Without your own key, BotMason's cloud AI features — resonance notes, letters, completion checks and page reading — stop until you add one again. Resonance notes and letters can still come from your vault if you have one. Your journal itself is unaffected.",
+      "Without your own key, BotMason's cloud AI features — resonance notes, letters, completion checks and page reading — stop until you add one again. Resonance notes and letters can still come from your Corpus if you have one. Your journal itself is unaffected.",
     ],
   ])('%s reads exactly as approved', (_name, actual, expected) => {
     expect(actual).toBe(expected);

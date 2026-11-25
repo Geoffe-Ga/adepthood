@@ -70,6 +70,35 @@ export const NAMING_RULES: readonly NamingRule[] = [
     instead: 'your Simulated Higher Self Voice',
     allowlist: [],
   },
+  {
+    // Standalone "vault", Settings first (#3804). Any case and either number,
+    // so "Your vault", "a managed vault" and "managed vaults" are all held.
+    // The word has to stand as a word in something longer than itself: a
+    // token that only starts with it (`vault-agent-row-`, `vault:read`,
+    // `vault_url_malformed`, `VaultSettings`) or is nothing else (`'vault'`,
+    // the export format) is a test ID, a scope, a refusal code or a route.
+    name: 'vault (Settings)',
+    pattern: /(?<=\W)vaults?(?![\w:-])|(?<!\w)vaults?(?=[^\w:-])/iu,
+    scope: ['features/Settings'],
+    instead: 'your Corpus',
+    allowlist: [
+      {
+        file: 'features/Settings/vaultLinks.ts',
+        text: 'running-your-own-vault',
+        why: 'the anchor of a heading in docs/your-data.md, opened as a link and never shown',
+      },
+      {
+        file: 'features/Settings/saveDataExport.ts',
+        text: 'adepthood-vault',
+        why: 'the export file name, which the server and docs/your-data.md name the same way',
+      },
+      {
+        file: 'features/Settings/agentsCopy.ts',
+        text: 'Re-sort your vault',
+        why: 'the consent page says it in these words (oauth_consent_copy.py, #3805); agentGrantDrift holds the two together',
+      },
+    ],
+  },
 ];
 
 const isSourceFile = (name: string): boolean =>

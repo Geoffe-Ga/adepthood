@@ -23,7 +23,7 @@ export const BYOK_HUB_DISCLOSURE =
  * with the key. Intimate entries never reach the vault, so never the provider.
  */
 export const BYOK_MANAGED_VAULT_DISCLOSURE =
-  'With a managed vault, those features pass it on from Adepthood to your vault, which sends your writing to that provider with it and keeps none of it. Entries you mark Intimate never go.';
+  'With a managed Corpus, those features pass it on from Adepthood to your Corpus, which sends your writing to that provider with it and keeps none of it. Entries you mark Intimate never go.';
 
 /**
  * The one copy Adepthood keeps (R1-1, ADR 0009 amendment 2026-11-01): an
@@ -32,9 +32,9 @@ export const BYOK_MANAGED_VAULT_DISCLOSURE =
  * otherwise; deleted on removal or replacement here.
  */
 export const BYOK_STORED_COPY_DISCLOSURE =
-  'So your vault can keep sorting what you write after you close the app, Adepthood keeps one encrypted copy of your key for that sorting alone. Adepthood can technically read it. Removing or replacing your key here deletes it.';
+  'So your Corpus can keep sorting what you write after you close the app, Adepthood keeps one encrypted copy of your key for that sorting alone. Adepthood can technically read it. Removing or replacing your key here deletes it.';
 
 /** Full disclosure shown before somebody saves a provider credential. */
 export const BYOK_DETAIL_DISCLOSURE =
   `${BYOK_HUB_DISCLOSURE} ${BYOK_MANAGED_VAULT_DISCLOSURE} ${BYOK_STORED_COPY_DISCLOSURE} ` +
-  'Without a managed vault, Adepthood does not persist it: nothing of your key is kept once the reply is back.';
+  'Without a managed Corpus, Adepthood does not persist it: nothing of your key is kept once the reply is back.';

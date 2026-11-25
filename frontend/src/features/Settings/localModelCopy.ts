@@ -13,7 +13,7 @@ export const LOCAL_MODEL_SWITCH_DESCRIPTION =
 
 /** Shown while the release gate is closed. */
 export const LOCAL_MODEL_UNAVAILABLE_NOTE =
-  'Cloud AI features need your own API key. A connected vault may answer supported readings.';
+  'Cloud AI features need your own API key. A connected Corpus may answer supported readings.';
 
 /** Under the switch while it is on: what is in use, and what the key is not. */
 export const LOCAL_MODEL_ON_NOTE =

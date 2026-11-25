@@ -156,7 +156,7 @@ for (const width of [390, 1280]) {
     await page.getByTestId('api-key-input').fill(OWN_KEY);
     await page.getByTestId('save-key-button').click();
     await expect(page.getByTestId('stored-key-card')).toBeVisible();
-    const disclosure = page.getByText(/With a managed vault, those features pass it on/u);
+    const disclosure = page.getByText(/With a managed Corpus, those features pass it on/u);
     await expect(disclosure).toBeVisible();
     await fits(disclosure);
     await frame(page, `settings-disclosure-${width}`, disclosure);

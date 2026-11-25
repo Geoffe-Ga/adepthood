@@ -152,7 +152,7 @@ export const CORPUS_SOURCE_COPY: Record<string, CorpusSourceCopy> = {
     // sorted here under this switch; it stays offered because epic #3015 leaves
     // consent untouched, and says honestly what it does today.
     description:
-      'Files you hand over through "Bring in your writing". They go to your vault and have ' +
+      'Files you hand over through "Bring in your writing". They go to your Corpus and have ' +
       'nowhere to go without one, so this switch lets nothing in today.',
   },
   import: {

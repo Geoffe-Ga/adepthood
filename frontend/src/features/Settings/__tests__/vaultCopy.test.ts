@@ -191,7 +191,7 @@ describe('vaultCopy — the promise deck, verbatim', () => {
 
   it('VAULT_ROW_DESCRIPTION names both choices, the separate yes, and the floor', () => {
     expect(VAULT_ROW_DESCRIPTION).toBe(
-      'Sorting lets reflections reach beyond your last few entries. Saying yes to sorting is a separate choice from an optional copy of what you write, kept in a vault Adepthood manages or one you run. The app is complete without either.',
+      'Sorting lets reflections reach beyond your last few entries. Saying yes to sorting is a separate choice from an optional copy of what you write, kept in a Corpus Adepthood manages or one you run. The app is complete without either.',
     );
   });
 
@@ -205,7 +205,7 @@ describe('vaultCopy — the promise deck, verbatim', () => {
 
   it('VAULT_PROMISE is the one promise the surface makes', () => {
     expect(VAULT_PROMISE).toBe(
-      'Your writing is yours; you choose whether Adepthood sends a copy to a vault.',
+      'Your writing is yours; you choose whether Adepthood sends a copy to a Corpus.',
     );
   });
 
@@ -216,19 +216,19 @@ describe('vaultCopy — the promise deck, verbatim', () => {
 
   it('VAULT_WHAT_IT_IS describes a vault in plain, non-technical terms', () => {
     expect(vaultCopy.VAULT_WHAT_IT_IS).toBe(
-      'A vault holds a copy of what you write, kept for your account alone. You can connect one you run or ask Adepthood to manage one. The people who run a managed vault can read what is in it, and neither kind ever receives Intimate entries.',
+      'A Corpus holds a copy of what you write, kept for your account alone. You can connect one you run or ask Adepthood to manage one. The people who run a managed Corpus can read what is in it, and neither kind ever receives Intimate entries.',
     );
   });
 
   it('VAULT_FLOOR states the app is complete without a vault', () => {
     expect(VAULT_FLOOR).toBe(
-      'Your journal, your reflections, and every entry you have written are all here either way. A vault adds an optional copy of your entries, kept for your account alone; it does not turn sorting on, which stays a separate choice. Adepthood is complete without a vault.',
+      'Your journal, your reflections, and every entry you have written are all here either way. A Corpus adds an optional copy of your entries, kept for your account alone; it does not turn sorting on, which stays a separate choice. Adepthood is complete without one.',
     );
   });
 
   it('VAULT_INTIMATE names both withdrawal and the offline retry', () => {
     expect(vaultCopy.VAULT_INTIMATE).toBe(
-      'An Intimate entry is never sent to your vault. If it was copied there before, Adepthood removes that copy. If your vault is offline, keep Intimate selected and choose it again when the vault is online.',
+      'An Intimate entry is never sent to your Corpus. If it was copied there before, Adepthood removes that copy. If your Corpus is offline, keep Intimate selected and choose it again when it is back online.',
     );
   });
 
@@ -244,7 +244,7 @@ describe('vaultCopy — the promise deck, verbatim', () => {
 
   it('VAULT_SORTING_CHOICE says a vault is not the yes, and where the yes lives', () => {
     expect(VAULT_SORTING_CHOICE).toBe(
-      'Creating a vault does not turn sorting on; that stays a separate choice, a switch under Your writing in Settings.',
+      'Creating a Corpus does not turn sorting on; that stays a separate choice, a switch under Your writing in Settings.',
     );
     // The switches sit in the hub group, beside the vault row (not behind a sub-screen).
     expect(VAULT_SORTING_CHOICE).toContain(CORPUS_GROUP_TITLE);
@@ -252,12 +252,12 @@ describe('vaultCopy — the promise deck, verbatim', () => {
   });
 
   it('VAULT_ADVANCED_TITLE names the fold as advanced and for a vault you run', () => {
-    expect(vaultCopy.VAULT_ADVANCED_TITLE).toBe('Advanced: connect a vault you run yourself');
+    expect(vaultCopy.VAULT_ADVANCED_TITLE).toBe('Advanced: connect a Corpus you run yourself');
   });
 
   it('VAULT_ADVANCED_EXPLAINER says what it is, who it is for, and that nobody needs it', () => {
     expect(VAULT_ADVANCED_EXPLAINER).toBe(
-      'This is for people who already run their own vault at a public web address. You give Adepthood that address and the key your vault issued. Adepthood then sends it a copy of each entry when you save or edit it, and of each voice draft if your vault accepts them, and documents you bring in go to it and are kept only there. Nothing Intimate is sent. Nobody needs this to use Adepthood.',
+      'This is for people who already run their own Corpus at a public web address. You give Adepthood that address and the key your Corpus issued. Adepthood then sends it a copy of each entry when you save or edit it, and of each voice draft if your Corpus accepts them, and documents you bring in go to it and are kept only there. Nothing Intimate is sent. Nobody needs this to use Adepthood.',
     );
   });
 
@@ -273,13 +273,13 @@ describe('vaultCopy — the promise deck, verbatim', () => {
 
   it('VAULT_MANAGED_UNKNOWN_BODY points at the Advanced section by name', () => {
     expect(vaultCopy.VAULT_MANAGED_UNKNOWN_BODY).toBe(
-      'You can try again later, or connect a vault you run yourself under Advanced, below.',
+      'You can try again later, or connect a Corpus you run yourself under Advanced, below.',
     );
   });
 
   it('VAULT_MANAGED_UNAVAILABLE_BODY points at the Advanced section without repeating the floor', () => {
     expect(vaultCopy.VAULT_MANAGED_UNAVAILABLE_BODY).toBe(
-      'Creating one is not available for this account yet. You can still connect a vault you run yourself under Advanced, below.',
+      'Creating one is not available for this account yet. You can still connect a Corpus you run yourself under Advanced, below.',
     );
   });
 });
@@ -309,32 +309,32 @@ describe('vaultCopy — the gain leads and the floor does not echo', () => {
 describe('vaultCopy — the form deck, verbatim', () => {
   it('VAULT_DEPLOYMENT_CONNECTED says whose vault it is and that there is nothing to undo here (#3608)', () => {
     expect(vaultCopy.VAULT_DEPLOYMENT_CONNECTED).toBe(
-      'Your writing goes to the vault this Adepthood was set up with. Whoever runs this Adepthood looks after it, so there is nothing to disconnect here. This does not check whether it is reachable right now.',
+      'Your writing goes to the Corpus this Adepthood was set up with. Whoever runs this Adepthood looks after it, so there is nothing to disconnect here. This does not check whether it is reachable right now.',
     );
   });
 
   it('VAULT_ADD_HEADING reads "Connect your vault"', () => {
-    expect(vaultCopy.VAULT_ADD_HEADING).toBe('Connect your vault');
+    expect(vaultCopy.VAULT_ADD_HEADING).toBe('Connect your Corpus');
   });
 
   it('VAULT_REPLACE_HEADING reads "Replace this vault"', () => {
-    expect(vaultCopy.VAULT_REPLACE_HEADING).toBe('Replace this vault');
+    expect(vaultCopy.VAULT_REPLACE_HEADING).toBe('Replace this Corpus');
   });
 
   it('VAULT_ADDRESS_LABEL reads "Your vault address"', () => {
-    expect(vaultCopy.VAULT_ADDRESS_LABEL).toBe('Your vault address');
+    expect(vaultCopy.VAULT_ADDRESS_LABEL).toBe('Your Corpus address');
   });
 
   it('VAULT_ADDRESS_PLACEHOLDER shows the shape of an address', () => {
-    expect(VAULT_ADDRESS_PLACEHOLDER).toBe('https://your-vault.example');
+    expect(VAULT_ADDRESS_PLACEHOLDER).toBe('https://your-corpus.example');
   });
 
   it('VAULT_KEY_LABEL reads "Your vault key"', () => {
-    expect(vaultCopy.VAULT_KEY_LABEL).toBe('Your vault key');
+    expect(vaultCopy.VAULT_KEY_LABEL).toBe('Your Corpus key');
   });
 
   it('VAULT_KEY_PLACEHOLDER points at where the key came from', () => {
-    expect(vaultCopy.VAULT_KEY_PLACEHOLDER).toBe('Paste the key your vault gave you');
+    expect(vaultCopy.VAULT_KEY_PLACEHOLDER).toBe('The key your Corpus gave you');
   });
 
   it('VAULT_KEY_SHOW reads "Show"', () => {
@@ -366,11 +366,13 @@ describe('vaultCopy — the form deck, verbatim', () => {
   });
 
   it('VAULT_NONE_CONNECTED states the empty case without regret', () => {
-    expect(vaultCopy.VAULT_NONE_CONNECTED).toBe('No vault connected yet.');
+    expect(vaultCopy.VAULT_NONE_CONNECTED).toBe('No Corpus connected yet.');
   });
 
   it('VAULT_MANAGED_CONNECTED states the binding and leaves health to "Check now" (#3406)', () => {
-    expect(vaultCopy.VAULT_MANAGED_CONNECTED).toBe('A managed vault is connected to your account.');
+    expect(vaultCopy.VAULT_MANAGED_CONNECTED).toBe(
+      'A managed Corpus is connected to your account.',
+    );
   });
 
   it('the reachability check reads as one press and three plain answers (#3406)', () => {
@@ -378,7 +380,7 @@ describe('vaultCopy — the form deck, verbatim', () => {
     expect(vaultCopy.VAULT_CHECKING_BUTTON).toBe('Checking…');
     expect(vaultCopy.VAULT_REACHABLE).toBe('Reachable just now.');
     expect(vaultCopy.VAULT_UNREACHABLE).toBe(
-      'Not reachable just now. Your entries are saved here, and anything that needs your vault will wait until it is back.',
+      'Not reachable just now. Your entries are saved here, and anything that needs your Corpus will wait until it is back.',
     );
     expect(vaultCopy.VAULT_REACHABILITY_UNKNOWN).toBe("Couldn't tell just now.");
     expect(vaultCopy.VAULT_CHECK_TOO_SOON).toBe(
@@ -400,7 +402,7 @@ describe('vaultCopy — the form deck, verbatim', () => {
 
   it('VAULT_STATUS_CONNECTED describes what connecting changed', () => {
     expect(vaultCopy.VAULT_STATUS_CONNECTED).toBe(
-      'Connected. Adepthood will send a copy of each new entry to your vault.',
+      'Connected. Adepthood will send a copy of each new entry to your Corpus.',
     );
   });
 
@@ -411,7 +413,7 @@ describe('vaultCopy — the form deck, verbatim', () => {
   });
 
   it('VAULT_DISCONNECT_CONFIRM_TITLE asks before it acts', () => {
-    expect(vaultCopy.VAULT_DISCONNECT_CONFIRM_TITLE).toBe('Disconnect this vault?');
+    expect(vaultCopy.VAULT_DISCONNECT_CONFIRM_TITLE).toBe('Disconnect this Corpus?');
   });
 
   it('VAULT_DISCONNECT_CONFIRM_BODY bounds what disconnecting does', () => {
@@ -425,22 +427,22 @@ describe('vaultCopy — the form deck, verbatim', () => {
   });
 
   it('VAULT_ADDRESS_MISSING asks for the address rather than scolding', () => {
-    expect(vaultCopy.VAULT_ADDRESS_MISSING).toBe('Add your vault address to connect.');
+    expect(vaultCopy.VAULT_ADDRESS_MISSING).toBe('Add your Corpus address to connect.');
   });
 
   it('VAULT_KEY_MISSING asks for the key rather than scolding', () => {
-    expect(vaultCopy.VAULT_KEY_MISSING).toBe('Add your vault key to connect.');
+    expect(vaultCopy.VAULT_KEY_MISSING).toBe('Add your Corpus key to connect.');
   });
 
   it('VAULT_LOAD_FAILED blames the moment, not the person', () => {
     expect(vaultCopy.VAULT_LOAD_FAILED).toBe(
-      'Adepthood could not check your vault connection just now.',
+      'Adepthood could not check your Corpus connection just now.',
     );
   });
 
   it('VAULT_CONNECT_FAILED invites a retry', () => {
     expect(vaultCopy.VAULT_CONNECT_FAILED).toBe(
-      'Adepthood could not connect to that vault just now. Try again in a moment.',
+      'Adepthood could not connect to that Corpus just now. Try again in a moment.',
     );
   });
 
@@ -452,69 +454,69 @@ describe('vaultCopy — the form deck, verbatim', () => {
 
   it('VAULT_ADDRESS_UNREADABLE covers an address nothing can parse', () => {
     expect(vaultCopy.VAULT_ADDRESS_UNREADABLE).toBe(
-      'Adepthood does not recognise that as an address. Copy it again from your vault.',
+      'Adepthood does not recognise that as an address. Copy it again from where your Corpus runs.',
     );
   });
 
   it('VAULT_ADDRESS_INCOMPLETE draws the whole span an address has to cover', () => {
     expect(vaultCopy.VAULT_ADDRESS_INCOMPLETE).toBe(
-      'Use the whole address, from https:// through the name of your vault.',
+      'Use the whole address, from https:// through the name of your Corpus.',
     );
   });
 
   it('VAULT_ADDRESS_EXTRA_PARTS covers an address carrying more than a vault', () => {
     expect(vaultCopy.VAULT_ADDRESS_EXTRA_PARTS).toBe(
-      'Use the plain address of your vault, with no sign-in, no question mark, and nothing after a #.',
+      'Use the plain address of your Corpus, with no sign-in, no question mark, and nothing after a #.',
     );
   });
 
   it('VAULT_ADDRESS_INSECURE asks for https and rules out this machine', () => {
     expect(VAULT_ADDRESS_INSECURE).toBe(
-      'Adepthood reaches a vault over https://, and cannot reach one that runs on this machine.',
+      'Adepthood reaches a Corpus over https://, and cannot reach one that runs on this machine.',
     );
   });
 
   it('VAULT_ADDRESS_PRIVATE covers a vault only the local network can reach', () => {
     expect(vaultCopy.VAULT_ADDRESS_PRIVATE).toBe(
-      'That address points somewhere only your own network can reach. Connect a vault Adepthood can reach from the open internet.',
+      'That address points somewhere only your own network can reach. Connect a Corpus Adepthood can reach from the open internet.',
     );
   });
 
   it('VAULT_ADDRESS_NOT_FOUND covers an address that pointed nowhere', () => {
     expect(vaultCopy.VAULT_ADDRESS_NOT_FOUND).toBe(
-      'Adepthood could not work out where that address points. Check it against your vault, and try again in a moment.',
+      'Adepthood could not work out where that address points. Check it against where your Corpus runs, and try again in a moment.',
     );
   });
 
   it('VAULT_KEY_REFUSED names the paste rather than quoting the key', () => {
     expect(vaultCopy.VAULT_KEY_REFUSED).toBe(
-      'That key has a space or a character Adepthood cannot send. Copy it again from your vault.',
+      'That key has a space or a character Adepthood cannot send. Copy it again from where your Corpus runs.',
     );
   });
 
   it('VAULT_CONNECTION_UNKNOWN reports the unread state and points at the folded form', () => {
     expect(vaultCopy.VAULT_CONNECTION_UNKNOWN).toBe(
-      'Adepthood could not tell whether a vault is already connected. You can still connect one you run yourself under Advanced, below, and Adepthood will ask first.',
+      'Adepthood could not tell whether a Corpus is already connected. You can still connect one you run yourself under Advanced, below, and Adepthood will ask first.',
     );
   });
 
   it('VAULT_REPLACE_CONFIRM_TITLE asks before it replaces', () => {
-    expect(vaultCopy.VAULT_REPLACE_CONFIRM_TITLE).toBe('Replace this vault?');
+    expect(vaultCopy.VAULT_REPLACE_CONFIRM_TITLE).toBe('Replace this Corpus?');
   });
 
   it('VAULT_REPLACE_CONFIRM_BODY bounds what replacing does to the old vault', () => {
     expect(vaultCopy.VAULT_REPLACE_CONFIRM_BODY).toBe(
-      'Adepthood will send copies to the new vault instead. Everything in the vault you are connected to now stays exactly where it is, and nothing you have written changes.',
+      'Adepthood will send copies to the new Corpus instead. Everything in the Corpus you are connected to now stays exactly where it is, and nothing you have written changes.',
     );
   });
 
   it('VAULT_REPLACE_UNKNOWN_CONFIRM_TITLE asks without claiming to know', () => {
-    expect(vaultCopy.VAULT_REPLACE_UNKNOWN_CONFIRM_TITLE).toBe('Connect this vault?');
+    expect(vaultCopy.VAULT_REPLACE_UNKNOWN_CONFIRM_TITLE).toBe('Connect this Corpus?');
   });
 
   it('VAULT_REPLACE_UNKNOWN_CONFIRM_BODY names the uncertainty and its consequence', () => {
     expect(vaultCopy.VAULT_REPLACE_UNKNOWN_CONFIRM_BODY).toBe(
-      'Adepthood could not tell whether another vault is already connected. If one is, this replaces it, and everything in it stays exactly where it is.',
+      'Adepthood could not tell whether another Corpus is already connected. If one is, this replaces it, and everything in it stays exactly where it is.',
     );
   });
 
@@ -633,9 +635,9 @@ describe('vaultCopy — a plain name, with Creek left to the custody statements 
 
 describe('vaultCopy — the Advanced fold explains itself (#3007)', () => {
   it('says who it is for and what it takes', () => {
-    expect(VAULT_ADVANCED_EXPLAINER).toMatch(/already run their own vault/u);
+    expect(VAULT_ADVANCED_EXPLAINER).toMatch(/already run their own Corpus/u);
     expect(VAULT_ADVANCED_EXPLAINER).toMatch(/public web address/u);
-    expect(VAULT_ADVANCED_EXPLAINER).toMatch(/the key your vault issued/u);
+    expect(VAULT_ADVANCED_EXPLAINER).toMatch(/the key your Corpus issued/u);
   });
 
   it('says everything Adepthood then sends, and that nobody needs it', () => {
@@ -643,7 +645,7 @@ describe('vaultCopy — the Advanced fold explains itself (#3007)', () => {
     // that accepts them, and a document brought in goes to the vault instead of
     // the corpus -- so it is kept only there. All three withhold Intimate.
     expect(VAULT_ADVANCED_EXPLAINER).toMatch(/a copy of each entry when you save or edit it/u);
-    expect(VAULT_ADVANCED_EXPLAINER).toMatch(/each voice draft if your vault accepts them/u);
+    expect(VAULT_ADVANCED_EXPLAINER).toMatch(/each voice draft if your Corpus accepts them/u);
     expect(VAULT_ADVANCED_EXPLAINER).toMatch(
       /documents you bring in go to it and are kept only there/u,
     );

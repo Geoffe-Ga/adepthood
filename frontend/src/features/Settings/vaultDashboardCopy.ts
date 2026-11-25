@@ -18,29 +18,29 @@ type FolderReason = NonNullable<VaultFolder['writer_reason']>;
 type DocumentStage = VaultDocument['stages'][number]['stage'];
 type DocumentOutcome = VaultDocument['stages'][number]['outcome'];
 
-export const VAULT_DASHBOARD_TITLE = 'Your vault';
+export const VAULT_DASHBOARD_TITLE = 'Your Corpus';
 export const VAULT_DASHBOARD_LEAD =
-  'What has come in, what has been done with it, and which rooms of your vault are still quiet.';
+  'What has come in, what has been done with it, and which rooms of your Corpus are still quiet.';
 
 export const VAULT_UPLOADS_HEADING = 'What came in';
 export const VAULT_CREEK_HEADING = 'What has been done with your Corpus';
 export const VAULT_DOCUMENTS_HEADING = 'Each file, step by step';
-export const VAULT_SHAPE_HEADING = "Your vault's shape";
+export const VAULT_SHAPE_HEADING = 'The shape of your Corpus';
 
 export const VAULT_UPDATE_NEEDED =
-  'Your vault needs an update to show this. What it holds, and what has been done with each file, will show here once it has one.';
+  'Your Corpus needs an update to show this. What it holds, and what has been done with each file, will show here once it has one.';
 export const VAULT_DASHBOARD_NOT_CONNECTED =
-  'There is no vault connected to this account, so there is nothing here to show yet. Where your writing lives is set up in Settings.';
+  'There is no Corpus connected to this account, so there is nothing here to show yet. Where your writing lives is set up in Settings.';
 export const VAULT_DASHBOARD_OPEN_SETTINGS = 'Where your writing lives';
 export const VAULT_DASHBOARD_NOTHING_YET =
   'Nothing has come in yet. When you bring in writing you already have, each file will show here with where it landed.';
-export const VAULT_DASHBOARD_NO_PASSES = 'No passes over your vault are recorded here yet.';
+export const VAULT_DASHBOARD_NO_PASSES = 'No passes over your Corpus are recorded here yet.';
 export const VAULT_DASHBOARD_READ_FAILURE =
-  "Your vault's page didn't load just now. Your writing is safe; try again in a moment.";
+  "The page for your Corpus didn't load just now. Your writing is safe; try again in a moment.";
 export const VAULT_DASHBOARD_RETRY = 'Try again';
 
 /** The entry point on Settings → Where your writing lives, and on a finished Seed run. */
-export const VAULT_DASHBOARD_OPEN_LABEL = 'See what is in your vault';
+export const VAULT_DASHBOARD_OPEN_LABEL = 'See what is in your Corpus';
 export const SEED_SEE_WHERE_LABEL = 'See where everything went';
 
 export const WRITERLESS_LINE = "This one doesn't fill on its own";
@@ -74,7 +74,7 @@ const WRITERLESS_REASONS: Readonly<Record<FolderReason, string>> = {
   container: 'it holds the folders beneath it',
   owner_curated: "it's yours to fill",
   indexed_at_parent: 'its notes are gathered in the folder above it',
-  template_example: 'it is an example that came with your vault',
+  template_example: 'it is an example that came with your Corpus',
 };
 
 /** "01-Fragments" -> "Fragments"; "External-Sources" -> "External Sources". */
@@ -207,7 +207,7 @@ const PASS_STAGE_FALLBACK = 'Another pass';
 
 const FAILURE_REASONS: Readonly<Record<string, string>> = {
   request_key_rejected: 'your own provider key was refused',
-  busy: 'your vault was busy, so it will try again',
+  busy: 'your Corpus was busy, so it will try again',
 };
 const FAILURE_REASON_FALLBACK = 'your Corpus will try again on its next pass';
 
@@ -239,8 +239,8 @@ export function lastPassLine(time: string): string {
 
 const RECEIPT_NOT_LANDED: Readonly<Record<string, string>> = {
   degraded: "Couldn't be confirmed",
-  vault_unavailable: "Didn't land — your vault wasn't reachable",
-  capability_unsupported: "Didn't land — your vault can't take files yet",
+  vault_unavailable: "Didn't land — your Corpus wasn't reachable",
+  capability_unsupported: "Didn't land — your Corpus can't take files yet",
 };
 const RECEIPT_NOT_LANDED_FALLBACK = "Didn't land";
 
@@ -252,7 +252,7 @@ export function receiptLanded(receipt: UploadReceipt): boolean {
 /** One file's line: where it landed, or why it didn't. */
 export function receiptLine(receipt: UploadReceipt): string {
   if (receiptLanded(receipt)) {
-    return receipt.landed_in ? landedInLine(receipt.landed_in) : 'In your vault';
+    return receipt.landed_in ? landedInLine(receipt.landed_in) : 'In your Corpus';
   }
   return RECEIPT_NOT_LANDED[receipt.vault_status] ?? RECEIPT_NOT_LANDED_FALLBACK;
 }
