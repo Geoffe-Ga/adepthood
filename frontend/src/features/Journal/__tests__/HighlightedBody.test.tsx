@@ -5,7 +5,7 @@ import React from 'react';
 import { StyleSheet } from 'react-native';
 
 import HighlightedBody from '../HighlightedBody';
-import { JOURNAL_ORDINAL_PAD, JOURNAL_TASK_GLYPHS } from '../ReadOnlyMarkdownText';
+import { JOURNAL_TASK_GLYPHS } from '../JournalListBlock';
 
 import type { Marginalia, PromotedQuote } from '@/api';
 import { SPACING, colors, editorialType } from '@/design/tokens';
@@ -22,11 +22,34 @@ const BODY = 'I walked by the river and the willow bent.';
 type RenderedNode = ReturnType<ReturnType<typeof render>['getByTestId']>;
 
 function renderedText(node: RenderedNode): string {
+  // An unseen marker sizer (aria-hidden) is layout, not text the reader gets.
+  if (node.props['aria-hidden'] === true) return '';
   return node.children
     .map((child: RenderedNode | string) =>
       typeof child === 'string' ? child : renderedText(child),
     )
     .join('');
+}
+
+/** Whether a rendered node sits under the element carrying ``testID``. */
+function isInside(node: RenderedNode, testID: string): boolean {
+  for (let at = node.parent; at != null; at = at.parent) {
+    if (at.props.testID === testID) return true;
+  }
+  return false;
+}
+
+/** Every unseen (aria-hidden) host element under a node, in order. */
+function unseenNodes(node: RenderedNode): RenderedNode[] {
+  if (node.props['aria-hidden'] === true && typeof node.type === 'string') return [node];
+  return node.children.flatMap((child: RenderedNode | string) =>
+    typeof child === 'string' ? [] : unseenNodes(child),
+  );
+}
+
+/** The text of every unseen host element under a node, in order. */
+function unseenTexts(node: RenderedNode): string[] {
+  return unseenNodes(node).map((unseen) => unseen.children.join(''));
 }
 
 function note(overrides: Partial<Marginalia> = {}): Marginalia {
@@ -248,13 +271,81 @@ describe('HighlightedBody -- lightweight Markdown', () => {
   it('draws a bullet glyph in place of every hidden marker, at the measured indent', () => {
     // The writer's own '- ' is hidden, so this glyph and this indent are the
     // whole visible payload of a list line. Three depths: flush, two spaces,
-    // and a tab (JOURNAL_TAB_COLUMNS).
+    // and a tab (JOURNAL_TAB_COLUMNS). Each line is its own row (#3252), so
+    // no line feed joins them.
     const { getByTestId } = render(
       <HighlightedBody body={'- one\n  - nested\n\t- tabbed'} notes={[]} onOpen={jest.fn()} />,
     );
 
+    expect(renderedText(getByTestId('journal-markdown-item-0'))).toBe('\u2022 one');
+    expect(renderedText(getByTestId('journal-markdown-item-6'))).toBe('  \u2022 nested');
+    expect(renderedText(getByTestId('journal-markdown-item-17'))).toBe('    \u2022 tabbed');
     expect(renderedText(getByTestId('journal-markdown-bullet-0'))).toBe(
-      '\u2022 one\n  \u2022 nested\n    \u2022 tabbed',
+      '\u2022 one  \u2022 nested    \u2022 tabbed',
+    );
+  });
+
+  it('lays a list line out as indent, marker column and a wrapping text cell (#3252)', () => {
+    // The hanging indent: the marker is a cell of its own, so the text cell is
+    // the only thing that wraps and every visual line starts on its left edge.
+    const { getByTestId } = render(
+      <HighlightedBody body={'- one\n  - nested'} notes={[]} onOpen={jest.fn()} />,
+    );
+
+    const row = getByTestId('journal-markdown-item-6');
+    expect(StyleSheet.flatten(row.props.style).flexDirection).toBe('row');
+    const marker = getByTestId('journal-markdown-marker-6');
+    expect(renderedText(marker)).toBe('\u2022 ');
+    expect(marker.props.selectable).toBe(false);
+    const text = getByTestId('journal-markdown-item-text-6');
+    expect(renderedText(text)).toBe('nested');
+    const textStyle = StyleSheet.flatten(text.props.style);
+    expect(textStyle).toEqual(
+      expect.objectContaining({ flexGrow: 1, flexShrink: 1, flexBasis: 0, minWidth: 0 }),
+    );
+    expect(textStyle.fontSize).toBe(editorialType.body.fontSize);
+    // The marker is set in the body type, so its column is measured in it.
+    expect(StyleSheet.flatten(marker.props.style).fontSize).toBe(editorialType.body.fontSize);
+  });
+
+  it('anchors a note that starts deep inside a long list line, in its text cell (#3252)', () => {
+    // The passage sits far enough into the item to be on a later visual line
+    // once the item wraps; its run must be a nested Text of the wrapping cell
+    // (never the marker column), carrying exactly the anchored words.
+    const body =
+      '- A long thought that runs past the edge of the page and wraps onto a second line where the heron stood.\n- next';
+    const start = body.indexOf('the heron stood');
+    const anchored = note({
+      id: 71,
+      anchor_start: start,
+      anchor_end: start + 'the heron stood'.length,
+      anchor_text: 'the heron stood',
+    });
+    const onOpen = jest.fn();
+    const { getByTestId } = render(
+      <HighlightedBody body={body} notes={[anchored]} onOpen={onOpen} />,
+    );
+
+    const highlight = getByTestId('highlight-71');
+    expect(renderedText(highlight)).toBe('the heron stood');
+    expect(isInside(highlight, 'journal-markdown-item-text-0')).toBe(true);
+    expect(isInside(highlight, 'journal-markdown-item-marker-0')).toBe(false);
+    expect(renderedText(getByTestId('journal-markdown-item-text-0'))).toBe(body.slice(2, -7));
+    fireEvent.press(highlight);
+    expect(onOpen).toHaveBeenCalledWith(anchored);
+  });
+
+  it('keeps one note across two list items as a primary run and a continuation (#3252)', () => {
+    const body = '- one\n- two';
+    const anchored = note({ id: 72, anchor_start: 3, anchor_end: 11, anchor_text: 'ne\n- two' });
+    const { getByTestId } = render(
+      <HighlightedBody body={body} notes={[anchored]} onOpen={jest.fn()} />,
+    );
+
+    expect(renderedText(getByTestId('highlight-72'))).toBe('ne');
+    expect(renderedText(getByTestId('highlight-72-continuation'))).toBe('two');
+    expect(isInside(getByTestId('highlight-72-continuation'), 'journal-markdown-item-text-6')).toBe(
+      true,
     );
   });
 
@@ -337,25 +428,56 @@ describe('HighlightedBody -- headings, ordered items, tasks and rules (#3251)', 
     expect(heading.props['aria-level']).toBe(3);
   });
 
-  it('draws each ordered marker as typed, soft ink, padded to a two-digit column', () => {
+  it('draws each ordered marker as typed, soft ink, in one column per block (#3252)', () => {
     const { getByTestId } = render(
       <HighlightedBody body={'9. nine\n10. ten\n3) three'} notes={[]} onOpen={jest.fn()} />,
     );
     const block = getByTestId('journal-markdown-ordered-0');
     expect(block.props.accessibilityLabel).toBe('List');
-    expect(renderedText(getByTestId('journal-markdown-ordinal-0'))).toBe(
-      `${JOURNAL_ORDINAL_PAD}9. `,
-    );
+    expect(renderedText(getByTestId('journal-markdown-ordinal-0'))).toBe('9. ');
     expect(renderedText(getByTestId('journal-markdown-ordinal-8'))).toBe('10. ');
-    expect(renderedText(getByTestId('journal-markdown-ordinal-16'))).toBe(
-      `${JOURNAL_ORDINAL_PAD}3) `,
-    );
+    expect(renderedText(getByTestId('journal-markdown-ordinal-16'))).toBe('3) ');
     const style = StyleSheet.flatten(getByTestId('journal-markdown-ordinal-0').props.style);
     expect(style.color).toBe(colors.paper.inkSoft);
     expect(style.fontVariant).toEqual(['tabular-nums']);
-    expect(renderedText(block)).toBe(
-      `${JOURNAL_ORDINAL_PAD}9. nine\n10. ten\n${JOURNAL_ORDINAL_PAD}3) three`,
+    expect(renderedText(block)).toBe('9. nine10. ten3) three');
+  });
+
+  it('gives 9. and 10. the same marker column: every row holds every marker shape (#3252)', () => {
+    // No width is measured in script. Each row's column carries an unseen copy
+    // of each marker shape at its level, so the layout engine sizes all three
+    // columns alike, and the number itself is pinned to the column's far edge.
+    const { getByTestId } = render(
+      <HighlightedBody body={'9. nine\n10. ten\n3) three'} notes={[]} onOpen={jest.fn()} />,
     );
+    const sizersOf = (start: number): string[] =>
+      unseenTexts(getByTestId(`journal-markdown-item-marker-${start}`));
+    expect(sizersOf(0)).toEqual(['0. ', '00. ', '0) ']);
+    expect(sizersOf(8)).toEqual(sizersOf(0));
+    expect(sizersOf(16)).toEqual(sizersOf(0));
+
+    const ordinal = StyleSheet.flatten(getByTestId('journal-markdown-ordinal-0').props.style);
+    expect(ordinal).toEqual(expect.objectContaining({ position: 'absolute', right: 0, top: 0 }));
+    // A sizer is unseen and unselectable, and wears the ordinal's own style so
+    // it is exactly as wide; only the first gives the column a line of height.
+    const [first, second] = unseenNodes(getByTestId('journal-markdown-item-marker-0'));
+    const firstStyle = StyleSheet.flatten(first?.props.style);
+    expect(firstStyle.color).toBe('transparent');
+    expect(firstStyle.fontVariant).toEqual(['tabular-nums']);
+    expect(firstStyle.height).toBeUndefined();
+    expect(first?.props.selectable).toBe(false);
+    expect(StyleSheet.flatten(second?.props.style).height).toBe(0);
+  });
+
+  it("gives a nested number the block's column, so its text sits its indent deeper (#3252)", () => {
+    // One column width for the whole block: a nested "1." under "10." takes
+    // the two-digit column too, and only its indent moves its text.
+    const { getByTestId } = render(
+      <HighlightedBody body={'10. ten\n  1. inner\n  2. other'} notes={[]} onOpen={jest.fn()} />,
+    );
+    expect(unseenTexts(getByTestId('journal-markdown-item-marker-8'))).toEqual(['00. ', '0. ']);
+    expect(unseenTexts(getByTestId('journal-markdown-item-marker-0'))).toEqual(['00. ', '0. ']);
+    expect(renderedText(getByTestId('journal-markdown-item-8'))).toBe('  1. inner');
   });
 
   it('draws a checkbox glyph for each task and dims, never strikes, a checked one', () => {
@@ -364,7 +486,7 @@ describe('HighlightedBody -- headings, ordered items, tasks and rules (#3251)', 
     );
     const block = getByTestId('journal-markdown-task-0');
     expect(renderedText(block)).toBe(
-      `${JOURNAL_TASK_GLYPHS.done} called Sam\n  ${JOURNAL_TASK_GLYPHS.open} book`,
+      `${JOURNAL_TASK_GLYPHS.done} called Sam  ${JOURNAL_TASK_GLYPHS.open} book`,
     );
     expect(renderedText(getByTestId('journal-markdown-checkbox-0'))).toBe(
       `${JOURNAL_TASK_GLYPHS.done} `,
@@ -373,6 +495,27 @@ describe('HighlightedBody -- headings, ordered items, tasks and rules (#3251)', 
     expect(done.color).toBe(colors.paper.inkSoft);
     expect(done.textDecorationLine).toBeUndefined();
     expect(queryByTestId('journal-markdown-task-done-17')).toBeNull();
+  });
+
+  it('holds open and done checkboxes to one column, and a lone glyph sizes itself (#3252)', () => {
+    const { getByTestId } = render(
+      <HighlightedBody body={'- [x] done\n- [ ] open'} notes={[]} onOpen={jest.fn()} />,
+    );
+    const open = getByTestId('journal-markdown-checkbox-11');
+    expect(StyleSheet.flatten(open.props.style)).toEqual(
+      expect.objectContaining({ position: 'absolute', left: 0, top: 0 }),
+    );
+    expect(renderedText(getByTestId('journal-markdown-item-11'))).toBe(
+      `${JOURNAL_TASK_GLYPHS.open} open`,
+    );
+
+    // A block whose every marker is the same glyph needs no sizer: in the flow.
+    const lone = render(
+      <HighlightedBody body={'- [ ] a\n- [ ] b'} notes={[]} onOpen={jest.fn()} />,
+    );
+    const glyph = lone.getByTestId('journal-markdown-checkbox-0');
+    expect(StyleSheet.flatten(glyph.props.style).position).toBeUndefined();
+    expect(unseenTexts(lone.getByTestId('journal-markdown-item-marker-0'))).toEqual([]);
   });
 
   it('makes finished-entry task glyphs accessible and pressable without opening an anchor', () => {

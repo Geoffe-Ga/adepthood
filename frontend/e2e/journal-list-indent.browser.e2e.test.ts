@@ -95,8 +95,13 @@ test('Tab, Shift+Tab, Return and Backspace nest a list and the nesting survives 
   await page.reload();
   await page.getByTestId(`journal-shelf-open-${entryId}`).click();
   const list = page.getByTestId('journal-markdown-bullet-6');
-  // Read verbatim: a normalising text matcher would collapse the indent under test.
-  expect(await list.evaluate((element) => element.textContent)).toBe(
-    '• one\n  • two\n    • three\n  • back\n• flat',
-  );
+  // Read verbatim: a normalising text matcher would collapse the indent under
+  // test. Each item is a row of its own (indent, marker, text -- #3252).
+  expect(
+    await list.evaluate((element) =>
+      [...element.querySelectorAll('[data-testid^="journal-markdown-item-"]')]
+        .filter((row) => /^journal-markdown-item-\d+$/u.test(row.getAttribute('data-testid') ?? ''))
+        .map((row) => row.textContent),
+    ),
+  ).toEqual(['• one', '  • two', '    • three', '  • back', '• flat']);
 });

@@ -3,10 +3,8 @@ import { render } from '@testing-library/react-native';
 import React from 'react';
 import { StyleSheet } from 'react-native';
 
-import ReadOnlyMarkdownText, {
-  JOURNAL_ORDINAL_PAD,
-  JOURNAL_TASK_GLYPHS,
-} from '../ReadOnlyMarkdownText';
+import { JOURNAL_TASK_GLYPHS } from '../JournalListBlock';
+import ReadOnlyMarkdownText, { splitTextStyle } from '../ReadOnlyMarkdownText';
 
 import { colors, editorialType } from '@/design/tokens';
 
@@ -14,6 +12,7 @@ type RenderedNode = ReturnType<ReturnType<typeof render>['getByTestId']>;
 
 /** Every string leaf under a node, verbatim, in render order. */
 function renderedText(node: RenderedNode): string {
+  if (node.props['aria-hidden'] === true) return '';
   return node.children
     .map((child: RenderedNode | string) =>
       typeof child === 'string' ? child : renderedText(child),
@@ -22,19 +21,52 @@ function renderedText(node: RenderedNode): string {
 }
 
 describe('ReadOnlyMarkdownText -- block dialect (#3251)', () => {
-  it('stays one Text for a body without a rule', () => {
+  it('stays one Text for a body with no rule and no list', () => {
+    const { getByTestId } = render(
+      <ReadOnlyMarkdownText body={'## Day\n*bold* line'} style={{ color: 'red' }} testID="flat" />,
+    );
+    const flat = getByTestId('flat');
+    expect(flat.type).toBe('Text');
+    expect(StyleSheet.flatten(flat.props.style).color).toBe('red');
+    expect(renderedText(flat)).toBe('Day\nbold line');
+  });
+
+  it('draws list lines as hanging-indent rows between its prose (#3252)', () => {
     const { getByTestId } = render(
       <ReadOnlyMarkdownText
-        body={'## Day\n1. a\n- [x] b'}
-        style={{ color: 'red' }}
+        body={'## Day\n1. a\n- [x] b\n  - *deep*\nafter'}
+        style={{ color: 'red', paddingTop: 4 }}
         testID="flat"
       />,
     );
     const flat = getByTestId('flat');
-    expect(StyleSheet.flatten(flat.props.style).color).toBe('red');
-    expect(renderedText(flat)).toBe(
-      `Day\n${JOURNAL_ORDINAL_PAD}1. a\n${JOURNAL_TASK_GLYPHS.done} b`,
-    );
+    // The container takes the caller's box once; each text takes its type.
+    expect(flat.type).toBe('View');
+    expect(StyleSheet.flatten(flat.props.style)).toEqual({ paddingTop: 4 });
+    expect(renderedText(flat)).toBe(`Day1. a${JOURNAL_TASK_GLYPHS.done} b  \u2022 deepafter`);
+    const row = getByTestId('journal-markdown-item-20');
+    expect(StyleSheet.flatten(row.props.style).flexDirection).toBe('row');
+    const text = getByTestId('journal-markdown-item-text-20');
+    expect(renderedText(text)).toBe('deep');
+    const textStyle = StyleSheet.flatten(text.props.style);
+    expect(textStyle).toEqual(expect.objectContaining({ color: 'red', flexGrow: 1, flexBasis: 0 }));
+    expect(textStyle.paddingTop).toBeUndefined();
+    expect(getByTestId('journal-markdown-bold-25')).toBeTruthy();
+    const marker = StyleSheet.flatten(getByTestId('journal-markdown-ordinal-7').props.style);
+    expect(marker.paddingTop).toBeUndefined();
+  });
+
+  it('splits a text style into its type and its box', () => {
+    expect(
+      splitTextStyle([
+        { fontSize: 18, color: 'red' },
+        { marginTop: 2, flex: 1 },
+      ]),
+    ).toEqual({
+      type: { fontSize: 18, color: 'red' },
+      box: { marginTop: 2, flex: 1 },
+    });
+    expect(splitTextStyle(undefined)).toEqual({ type: {}, box: {} });
   });
 
   it('draws a heading at its rung, inside the flat text', () => {
