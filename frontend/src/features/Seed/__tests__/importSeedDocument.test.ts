@@ -397,6 +397,18 @@ describe('one attempt, as the run sees it', () => {
     });
   });
 
+  test('a document already skipped keeps its reason and is never opened (#3798)', async () => {
+    // Even one that still carried a handle: the skip is decided before the read.
+    await expect(
+      attemptSeedDocument(
+        document({ name: '141234.my-post.opens.csv', skipped: 'subscriber_data' }),
+        'personal',
+      ),
+    ).resolves.toEqual({ status: 'subscriber_data', answered: false, retryAfterSeconds: null });
+    expect(mocked.__fileBase64).not.toHaveBeenCalled();
+    expect(mockFetch).not.toHaveBeenCalled();
+  });
+
   test('counts nothing for a document refused on device', async () => {
     await expect(
       attemptSeedDocument(document({ name: 'x.exe', seedable: false }), 'personal'),

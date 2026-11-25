@@ -100,6 +100,7 @@ const SKIP_STATUS: Readonly<Record<FolderLeftOutReason, SeedSkipStatus>> = {
   hidden: 'hidden_file',
   unsafe_path: 'unsafe_name',
   collision: 'name_collision',
+  subscriber_data: 'subscriber_data',
 };
 
 /**

@@ -174,6 +174,7 @@ describe('what the run reports', () => {
     'hidden_file',
     'unsafe_name',
     'name_collision',
+    'subscriber_data',
     'unsupported_source',
   ])('counts %s as skipped, never as failed (#3771)', (status) => {
     const state = seedRunReducer(EMPTY_SEED_RUN, {

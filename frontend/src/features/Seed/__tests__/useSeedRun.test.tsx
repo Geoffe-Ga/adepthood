@@ -278,6 +278,30 @@ describe('a multi-document run', () => {
     expect(mockFetch).toHaveBeenCalledTimes(1);
   });
 
+  test("a Substack export's stat CSV is skipped: never read, never sent (#3798)", async () => {
+    getDocumentAsync.mockResolvedValue({
+      canceled: false,
+      assets: [asset('141234.my-post.opens.csv'), asset('email_list.csv'), asset('posts.csv')],
+    });
+    mockFetch.mockReturnValue(vaultReply('accepted'));
+    const { result } = renderHook(() => useSeedRun());
+
+    await act(async () => {
+      await result.current.choose();
+    });
+
+    expect(statuses(result.current.items)).toEqual([
+      'subscriber_data',
+      'subscriber_data',
+      'ingested',
+    ]);
+    expect(result.current.tally).toMatchObject({ total: 3, landed: 1, skipped: 2, failed: 0 });
+    expect(mockFetch).toHaveBeenCalledTimes(1);
+    expect(JSON.parse(mockFetch.mock.calls[0][1].body).filename).toBe('posts.csv');
+    // One read, for the one document that went.
+    expect(mocked.__fileBase64).toHaveBeenCalledTimes(1);
+  });
+
   test('a second pick appends to the run rather than replacing it', async () => {
     getDocumentAsync.mockResolvedValueOnce({ canceled: false, assets: [asset('one.md')] });
     getDocumentAsync.mockResolvedValueOnce({ canceled: false, assets: [asset('two.md')] });

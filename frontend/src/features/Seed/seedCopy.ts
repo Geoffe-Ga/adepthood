@@ -130,6 +130,11 @@ export const SEED_STATUS_LINES: Record<SeedItemStatus, string> = {
   name_collision:
     'Skipped · another file here has the same path spelled another way, and either would ' +
     'overwrite the other, so neither was sent. Rename one and both can come in.',
+  // A Substack export's stat CSVs and subscriber roster (#3798): other people's
+  // addresses rather than the person's writing, so the device keeps them.
+  subscriber_data:
+    'Skipped · a list of who received or opened a post, so it stays on this device and ' +
+    'was never sent.',
   // The managed vault's request ceiling (#3051), checked on the server before a
   // byte of the document left it, so "nothing was stored" is a fact. The same
   // file can never fit, so this offers a smaller file rather than another go.

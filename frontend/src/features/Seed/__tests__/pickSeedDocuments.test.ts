@@ -38,6 +38,14 @@ describe('the formats a seed pick offers', () => {
     expect(isSeedableFilename('README')).toBe(false);
   });
 
+  test("turns down a Substack export's stat and subscriber CSVs (#3798)", () => {
+    expect(isSeedableFilename('141234.my-post.delivers.csv')).toBe(false);
+    expect(isSeedableFilename('141234.my-post.opens.csv')).toBe(false);
+    expect(isSeedableFilename('email_list.csv')).toBe(false);
+    expect(isSeedableFilename('posts.csv')).toBe(true);
+    expect(isSeedableFilename('budget.csv')).toBe(true);
+  });
+
   test('turns down a name the backend would refuse', () => {
     expect(isSeedableFilename('../escape.md')).toBe(false);
     expect(isSeedableFilename('.hidden.md')).toBe(false);
@@ -110,6 +118,39 @@ describe('pickSeedDocuments', () => {
     expect(result.kind).toBe('picked');
     if (result.kind !== 'picked') return;
     expect(result.documents.map((doc) => doc.seedable)).toEqual([true, false]);
+  });
+
+  test('keeps a stat or subscriber CSV by name only, already skipped (#3798)', async () => {
+    const browserFile = new File(['a@example.com'], '141234.my-post.opens.csv');
+    getDocumentAsync.mockResolvedValueOnce({
+      canceled: false,
+      assets: [
+        asset('141234.my-post.opens.csv', { file: browserFile }),
+        asset('email_list.csv'),
+        asset('posts.csv'),
+        asset('budget.csv'),
+      ],
+    });
+
+    const result = await pickSeedDocuments();
+
+    expect(result.kind).toBe('picked');
+    if (result.kind !== 'picked') return;
+    // No uri and no File: nothing is left that a read step could open.
+    expect(result.documents.slice(0, 2)).toEqual([
+      {
+        name: '141234.my-post.opens.csv',
+        uri: '',
+        size: null,
+        seedable: false,
+        skipped: 'subscriber_data',
+      },
+      { name: 'email_list.csv', uri: '', size: null, seedable: false, skipped: 'subscriber_data' },
+    ]);
+    expect(result.documents.slice(2)).toEqual([
+      { name: 'posts.csv', uri: 'file:///cache/posts.csv', size: 1024, seedable: true },
+      { name: 'budget.csv', uri: 'file:///cache/budget.csv', size: 1024, seedable: true },
+    ]);
   });
 
   test('drops an asset with no file uri rather than queueing a phantom', async () => {
