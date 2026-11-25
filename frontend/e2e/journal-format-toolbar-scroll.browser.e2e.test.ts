@@ -4,8 +4,8 @@ import { backendUrl, signUp, tokenFor } from './journalHabitsBrowserSupport';
 
 /**
  * The journal's formatting toolbar: every action on show -- inline styles,
- * line styles (heading, bulleted and numbered lists, quote) and list nesting --
- * on one line that never wraps, scrolling sideways when it outgrows its width. On web a mouse
+ * line styles (heading, bulleted and numbered lists, checklist, quote) and list
+ * nesting -- on one line that never wraps, scrolling sideways when it outgrows its width. On web a mouse
  * click-and-drag pans the strip, and the release that ends a drag never
  * presses the button it lands on. (A finger swipe is the browser's own
  * overflow scroll, which this does not re-test.)
@@ -18,6 +18,7 @@ const ACTIONS = [
   'heading',
   'bullet',
   'ordered',
+  'task',
   'quote',
   'indent',
   'outdent',

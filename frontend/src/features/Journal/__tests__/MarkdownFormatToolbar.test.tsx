@@ -9,6 +9,7 @@ import {
   Heading,
   Italic,
   List,
+  ListChecks,
   ListOrdered,
   TextQuote,
   Underline,
@@ -31,6 +32,7 @@ const GLYPHS: Partial<Record<MarkdownCommand, LucideIcon>> = {
   heading: Heading,
   bullet: List,
   ordered: ListOrdered,
+  task: ListChecks,
   quote: TextQuote,
 };
 
@@ -56,6 +58,7 @@ const PLAIN = {
   underline: false,
   bullet: false,
   ordered: false,
+  task: false,
   quote: false,
   heading: false,
   listLevel: null,
@@ -69,13 +72,23 @@ const ACTION_ORDER: MarkdownCommand[] = [
   'heading',
   'bullet',
   'ordered',
+  'task',
   'quote',
   'indent',
   'outdent',
 ];
 
 /** The style toggles: each reflects its state and reads as pressed on web. */
-const TOGGLES = ['bold', 'italic', 'underline', 'heading', 'bullet', 'ordered', 'quote'] as const;
+const TOGGLES = [
+  'bold',
+  'italic',
+  'underline',
+  'heading',
+  'bullet',
+  'ordered',
+  'task',
+  'quote',
+] as const;
 
 describe('MarkdownFormatToolbar -- inline styles', () => {
   const LABELLED: [label: string, command: MarkdownCommand][] = [
@@ -231,9 +244,31 @@ describe('MarkdownFormatToolbar -- pressed state for assistive technology and si
       <MarkdownFormatToolbar state={{ ...PLAIN, quote: true }} onCommand={jest.fn()} />,
     );
     expect(getByTestId('journal-format-quote').props['aria-pressed']).toBe(true);
-    for (const style of ['heading', 'bullet', 'ordered']) {
+    for (const style of ['heading', 'bullet', 'ordered', 'task']) {
       expect(getByTestId(`journal-format-${style}`).props['aria-pressed']).toBe(false);
     }
+  });
+
+  it('offers Checklist after Numbered list, pressed only on a task line', () => {
+    Platform.OS = 'web';
+    const onCommand = jest.fn();
+    const { getByLabelText, getByTestId } = render(
+      <MarkdownFormatToolbar
+        state={{ ...PLAIN, task: true, listLevel: 0 }}
+        onCommand={onCommand}
+      />,
+    );
+    const checklist = getByLabelText('Checklist');
+    expect(checklist.props.testID).toBe('journal-format-task');
+    expect(checklist.props['aria-pressed']).toBe(true);
+    expect(getByTestId('journal-format-bullet').props['aria-pressed']).toBe(false);
+    const target = StyleSheet.flatten(checklist.props.style);
+    expect(target.minWidth).toBeGreaterThanOrEqual(touchTarget.minimum);
+    expect(target.minHeight).toBeGreaterThanOrEqual(touchTarget.minimum);
+    // Indent and Outdent stay on offer on a task line.
+    expect(getByTestId('journal-format-indent').props.accessibilityState.disabled).toBe(false);
+    fireEvent.press(checklist);
+    expect(onCommand).toHaveBeenCalledWith('task');
   });
 
   it('leaves list actions without a pressed state: they are commands, not toggles', () => {

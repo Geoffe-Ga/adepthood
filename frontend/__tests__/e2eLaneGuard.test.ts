@@ -98,6 +98,7 @@ const EXPECTED_BROWSER_JOURNEYS = [
   'privacy-choices.browser.e2e.test.ts',
   'prompts-history.browser.e2e.test.ts',
   'prompts-recovery.browser.e2e.test.ts',
+  'journal-checklist-button.browser.e2e.test.ts',
   'journal-close-save.browser.e2e.test.ts',
   'journal-corpus-drawer.browser.e2e.test.ts',
   'journal-corpus-invitation-offer.browser.e2e.test.ts',

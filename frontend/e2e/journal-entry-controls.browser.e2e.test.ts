@@ -218,6 +218,7 @@ async function expectWritingTabOrder(page: Page): Promise<void> {
     'journal-format-heading',
     'journal-format-bullet',
     'journal-format-ordered',
+    'journal-format-task',
     'journal-format-quote',
     'journal-body-input',
   ]) {

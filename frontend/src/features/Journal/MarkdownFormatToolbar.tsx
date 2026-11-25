@@ -2,9 +2,9 @@
  * The body's formatting actions, for writers without a keyboard shortcut --
  * touch, and anyone who would rather press a button.
  *
- * Bold, Italic, Underline, Heading, Bulleted list, Numbered list, Quote,
- * Indent and Outdent. Every action is always on show; Indent and Outdent are
- * disabled while the caret is off a bulleted item, so the bar never shifts
+ * Bold, Italic, Underline, Heading, Bulleted list, Numbered list, Checklist,
+ * Quote, Indent and Outdent. Every action is always on show; Indent and Outdent are
+ * disabled while the caret is off a list item, so the bar never shifts
  * under the writer's thumb.
  * The actions sit on one line that never wraps: when they outgrow it, the
  * strip scrolls sideways -- a finger swipe on mobile, a click-and-drag (or
@@ -20,6 +20,7 @@ import {
   Heading,
   Italic,
   List,
+  ListChecks,
   ListIndentDecrease,
   ListIndentIncrease,
   ListOrdered,
@@ -64,6 +65,7 @@ const STYLE_ACTIONS: readonly (ToolbarAction & { command: ToggleCommand })[] = [
   { command: 'heading', label: 'Heading', Icon: Heading },
   { command: 'bullet', label: 'Bulleted list', Icon: List },
   { command: 'ordered', label: 'Numbered list', Icon: ListOrdered },
+  { command: 'task', label: 'Checklist', Icon: ListChecks },
   { command: 'quote', label: 'Quote', Icon: TextQuote },
 ];
 
