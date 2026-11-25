@@ -149,7 +149,7 @@ from domain.reading_recommendations import (
 )
 from domain.vault_export import VAULT_EXPORT_SINCE_MINOR, VaultExportPage
 from domain.vault_job_failure import BUSY_FAILURE_CODE_SINCE_MINOR
-from domain.vault_pipeline_status import PIPELINE_STATUS_SINCE_MINOR, VaultPipelineStatus
+from domain.vault_pipeline_status import VaultPipelineStatus
 from services.creek_vault_activity_wire import read_agent_activity
 from services.creek_vault_call_errors import HTTP_CALL_FAILED_ERRORS as _HTTP_CALL_FAILED_ERRORS
 from services.creek_vault_call_errors import (
@@ -194,7 +194,8 @@ from services.creek_vault_payload import (
 )
 from services.creek_vault_pinned_transport import build_pinned_destination_transport
 from services.creek_vault_pipeline_status_wire import (
-    pipeline_status_offered,
+    PIPELINE_STATUS_MINORS,
+    pipeline_status_minor,
     read_pipeline_status,
 )
 from services.creek_vault_readings import recommend_from_vault
@@ -914,7 +915,11 @@ _EXPORT_CALL = _CallDepartures(
     contract_minor=VAULT_EXPORT_SINCE_MINOR, deadline=EXPORT_DEADLINE_SECONDS
 )
 
-_PIPELINE_STATUS_CALL = _CallDepartures(contract_minor=PIPELINE_STATUS_SINCE_MINOR)
+# The pipeline status read (#3775, #3795), by the minor it declares: 0.37, whose
+# answer carries whole-corpus totals, to a vault listing it, else 0.34.
+_PIPELINE_STATUS_CALLS: Final = {
+    minor: _CallDepartures(contract_minor=minor) for minor in PIPELINE_STATUS_MINORS
+}
 
 # The job-status poll against a vault that serves contract 0.26, which is the
 # minor whose failed job says *why* it failed (Creek-Vault#1877). Only this read
@@ -2596,15 +2601,18 @@ class HttpCreekVaultClient:
             )
 
     async def pipeline_status(self, limit: int, /) -> VaultPipelineStatus:
-        """Read the vault's folders, uploads and jobs (0.34); see the status wire module."""
-        send = partial(self._authorized_request, departures=_PIPELINE_STATUS_CALL)
+        """Read the vault's folders, uploads, jobs and (0.37) totals; see the status wire module.
+
+        Declares the newest minor of the read the handshake listed. A vault that
+        listed none is refused inside the read before ``send`` is ever used, so
+        the standing departures stand in for a call that is never made.
+        """
+        minor = pipeline_status_minor(self._last_handshake)
+        departures = _STANDING_CALL if minor is None else _PIPELINE_STATUS_CALLS[minor]
+        send = partial(self._authorized_request, departures=departures)
         with _CountingOutcome(CreekCapability.PIPELINE):
             return await read_pipeline_status(
-                send,
-                self._url,
-                limit,
-                supported=pipeline_status_offered(self._last_handshake),
-                read_failure=_read_failure,
+                send, self._url, limit, minor=minor, read_failure=_read_failure
             )
 
 

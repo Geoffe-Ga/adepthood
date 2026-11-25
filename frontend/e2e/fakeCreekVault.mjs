@@ -110,13 +110,16 @@ import { fileURLToPath } from 'node:url';
  * vault held without reading backend files.
  *
  * `GET /v1/pipeline/status` (contract 0.34, Creek-Vault#2124, #3775) is opt-in
- * the same way, because the deployed vaults predate it: by default 0.34 is not
- * listed and adepthood's dashboard reports the vault needs an update.
- * `POST /__lane/advertise-pipeline-status` lists 0.34 and serves Creek's
- * published success cell (read verbatim from the vendored 0.34 slice), with its
- * one document re-addressed to every upload this vault holds so a receipt can
- * be matched to the folder it landed in; `POST /__lane/withdraw-pipeline-status`
- * restores the default. A read declaring anything but 0.34 is a 409.
+ * the same way, because the deployed vaults predate it: by default neither of
+ * its minors is listed and adepthood's dashboard reports the vault needs an
+ * update. `POST /__lane/advertise-pipeline-status` lists 0.34 and 0.37 and
+ * serves Creek's published success cell (read verbatim from the vendored slice
+ * of the minor the call declares), with its one document re-addressed to every
+ * upload this vault holds so a receipt can be matched to the folder it landed
+ * in. A call declaring 0.37 (Creek-Vault#2147, #3795) also gets `totals`,
+ * counted over those same uploads; one declaring 0.34 gets the 0.34 body, which
+ * has no such key. `POST /__lane/withdraw-pipeline-status` restores the
+ * default. A read declaring any other minor is a 409.
  *
  * The owner's own voice and the related threads (contracts 0.35/0.36,
  * Creek-Vault#2126/#2127, #3778) are opt-in the same way, because the deployed
@@ -200,7 +203,9 @@ const EXPORT_CONTROLS = new Map([
 ]);
 /** The minor of Creek's pipeline status read (contract 0.34, Creek-Vault#2124, #3775). */
 const PIPELINE_STATUS_MINOR = '0.34';
-/** Whether this vault lists 0.34 and answers `GET /v1/pipeline/status`. */
+/** The minor whose status answer carries whole-corpus `totals` (contract 0.37, #3795). */
+const PIPELINE_TOTALS_MINOR = '0.37';
+/** Whether this vault lists 0.34 and 0.37 and answers `GET /v1/pipeline/status`. */
 let pipelineStatusServed = false;
 /** The minor of Creek's owner voice and related threads (contracts 0.35/0.36, #3778). */
 const OWN_VOICE_MINOR = '0.36';
@@ -327,21 +332,30 @@ const EXPORT_SUCCESS = JSON.parse(
   ),
 );
 
-/**
- * Creek's published pipeline-status success cell, verbatim from the vendored
- * 0.34 slice. Its folders, job and document shape are what the read answers.
- */
-const PIPELINE_STATUS_SUCCESS = JSON.parse(
-  readFileSync(
-    fileURLToPath(
-      new URL(
-        '../../backend/tests/fixtures/creek_pipeline_status_v034/pipeline-status/success.json',
-        import.meta.url,
+/** Creek's published pipeline-status success cell, verbatim from one vendored slice. */
+function publishedPipelineStatus(slice) {
+  return JSON.parse(
+    readFileSync(
+      fileURLToPath(
+        new URL(
+          `../../backend/tests/fixtures/${slice}/pipeline-status/success.json`,
+          import.meta.url,
+        ),
       ),
+      'utf8',
     ),
-    'utf8',
-  ),
-);
+  );
+}
+
+/**
+ * The published success cell of each minor that serves the status read. Its
+ * folders, job and document shape are what a call declaring that minor is
+ * answered; only the 0.37 cell carries `totals`.
+ */
+const PIPELINE_STATUS_SUCCESS = new Map([
+  [PIPELINE_STATUS_MINOR, publishedPipelineStatus('creek_pipeline_status_v034')],
+  [PIPELINE_TOTALS_MINOR, publishedPipelineStatus('creek_pipeline_status_v037')],
+]);
 
 /** One item over a published cell's own keys: a key it lacks, or one more, refuses to boot. */
 function shapedLike(cell, values) {
@@ -602,7 +616,7 @@ function capabilities(response) {
     .concat(readingsAdvertised ? [READING_MINOR] : [])
     .concat(requestKeysRejected ? [FAILURE_CODE_MINOR] : [])
     .concat(exportMinors())
-    .concat(pipelineStatusServed ? [PIPELINE_STATUS_MINOR] : [])
+    .concat(pipelineStatusServed ? [PIPELINE_STATUS_MINOR, PIPELINE_TOTALS_MINOR] : [])
     .concat(ownVoiceServed ? [OWN_VOICE_MINOR] : []);
   send(response, HTTP_OK, {
     capabilities: ADVERTISED_CAPABILITIES.filter((name) => !lettersHeld || name !== 'letters')
@@ -1314,11 +1328,33 @@ function exportRead(request, response, url) {
 }
 
 /**
- * `GET /v1/pipeline/status` (0.34): the published success cell, its one document
- * repeated once per upload this vault holds under that upload's external id.
+ * Whole-corpus totals over `count` uploads that each carry `trail`, in the
+ * published cell's stage order: a stage the trail stamped `ok` covered them
+ * all, one it stamped `partial` left them all partial, and one it never
+ * stamped reached none.
+ */
+function pipelineTotals(published, trail, count) {
+  const outcomes = new Map(trail.map((stamp) => [stamp.stage, stamp.outcome]));
+  const counted = (stage, outcome) => (outcomes.get(stage) === outcome ? count : 0);
+  return {
+    documents: count,
+    stages: published.stages.map(({ stage }) => ({
+      stage,
+      covered: counted(stage, 'ok'),
+      partial: counted(stage, 'partial'),
+      failed: counted(stage, 'failed'),
+    })),
+  };
+}
+
+/**
+ * `GET /v1/pipeline/status` (0.34, 0.37): the declared minor's published
+ * success cell, its one document repeated once per upload this vault holds
+ * under that upload's external id, and at 0.37 the totals over those uploads.
  *
- * Only a call declaring 0.34 to a vault that lists it is answered; anything
- * else is the `409 incompatible_version` Creek gives an earlier minor.
+ * Only a call declaring one of those minors to a vault that lists them is
+ * answered; anything else is the `409 incompatible_version` Creek gives an
+ * earlier minor.
  */
 function pipelineStatusRead(request, response) {
   request.resume();
@@ -1331,15 +1367,20 @@ function pipelineStatusRead(request, response) {
     declared,
     ceiling: request.headers[CEILING_HEADER] ?? null,
   });
-  if (!pipelineStatusServed || declared !== PIPELINE_STATUS_MINOR) {
+  const cell = pipelineStatusServed ? PIPELINE_STATUS_SUCCESS.get(declared) : undefined;
+  if (cell === undefined) {
     refuse(response, HTTP_INCOMPATIBLE_VERSION, 'incompatible_version');
     return;
   }
-  const [published] = PIPELINE_STATUS_SUCCESS.documents;
+  const [published] = cell.documents;
   const documents = [...fragments.values()]
     .filter((fragment) => fragment.kind === 'upload')
     .map((fragment) => ({ ...published, external_id: fragment.externalId }));
-  send(response, HTTP_OK, { ...PIPELINE_STATUS_SUCCESS, documents });
+  const totals =
+    cell.totals === undefined
+      ? {}
+      : { totals: pipelineTotals(cell.totals, published.stages, documents.length) };
+  send(response, HTTP_OK, { ...cell, documents, ...totals });
 }
 
 /** Serve one authorised `/v1` call, or say this vault has no such route. */

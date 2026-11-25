@@ -43,6 +43,7 @@ const ANSWER: VaultPipeline = {
     },
   ],
   next_before: null,
+  totals: { sent: { accepted: 1240, degraded: 0, unsupported_source: 3 } },
   stage_runs: [
     {
       trigger: 'document_import',
@@ -83,6 +84,13 @@ const ANSWER: VaultPipeline = {
         updated_at: '2026-11-20T17:05:30Z',
       },
     ],
+    stage_totals: {
+      documents: 1240,
+      stages: [
+        { stage: 'ingested', covered: 1240, partial: 0, failed: 0 },
+        { stage: 'linked:eddies', covered: 0, partial: 1240, failed: 0 },
+      ],
+    },
   },
   vault_status: 'ok',
   vault_unreachable: false,
@@ -119,6 +127,13 @@ describe('vault.pipeline', () => {
     await expect(vault.pipeline({}, 'tok')).resolves.toEqual(older);
   });
 
+  test('keeps a vault that predates stage totals, with the rest of its half', async () => {
+    const earlier = { ...ANSWER, vault: { ...ANSWER.vault, stage_totals: null } };
+    mockFetch.mockReturnValueOnce(jsonResponse(earlier));
+
+    await expect(vault.pipeline({}, 'tok')).resolves.toEqual(earlier);
+  });
+
   test.each([
     ['a vault status it does not know', { vault_status: 'sleeping' }],
     [
@@ -139,6 +154,20 @@ describe('vault.pipeline', () => {
       },
     ],
     ['a negative count', { stage_runs: [{ ...ANSWER.stage_runs[0], emitted: -1 }] }],
+    ['a negative count of files sent', { totals: { sent: { accepted: -1 } } }],
+    ['an answer with no totals', { totals: undefined }],
+    [
+      'a stage total for a stage it does not know',
+      {
+        vault: {
+          ...ANSWER.vault,
+          stage_totals: {
+            documents: 1,
+            stages: [{ stage: 'published', covered: 1, partial: 0, failed: 0 }],
+          },
+        },
+      },
+    ],
   ])('raises ApiValidationError on %s', async (_label, drift) => {
     mockFetch.mockReturnValueOnce(jsonResponse({ ...ANSWER, ...drift }));
 

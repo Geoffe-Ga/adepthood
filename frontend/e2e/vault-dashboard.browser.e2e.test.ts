@@ -18,9 +18,9 @@ import {
  *
  * Nothing on adepthood's side is stubbed. The lane's Creek vault -- the process
  * the server's production `CREEK_VAULT_URL` names -- is armed with
- * `POST /__lane/advertise-pipeline-status`, which lists contract 0.34 and serves
- * Creek's published pipeline-status success cell with its one document
- * re-addressed to every upload the vault holds. The upload goes through the
+ * `POST /__lane/advertise-pipeline-status`, which lists contracts 0.34 and 0.37
+ * and serves Creek's published pipeline-status success cell with its one
+ * document re-addressed to every upload the vault holds. The upload goes through the
  * real Seed screen and `POST /corpus/import`, which writes the receipt; the
  * dashboard reads the real `GET /vault/pipeline`, which matches that receipt to
  * Creek's document by the external id it addressed the upload by. So the folder

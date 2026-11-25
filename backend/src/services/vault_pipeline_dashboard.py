@@ -1,8 +1,9 @@
 """The "Your vault" read: receipts, stage runs, and Creek's own status, in one answer (#3775).
 
-``GET /vault/pipeline`` answers three questions an owner asks of their vault:
-did my files land, what has Creek run over them, and which parts of the
-ontology hold something. The first two are adepthood's own records --
+``GET /vault/pipeline`` answers the questions an owner asks of their vault:
+did my files land, what has Creek run over them, which parts of the ontology
+hold something, and (#3795) has the whole corpus gone through. The first two
+are adepthood's own records --
 :class:`~models.upload_receipt.UploadReceipt` and
 :class:`~models.vault_pipeline_run.VaultPipelineRun` -- read for the caller's
 account alone. The third is Creek's ``GET /v1/pipeline/status`` (contract
@@ -16,6 +17,14 @@ vault that does not -- or that lists it and then answers ``409
 incompatible_version`` or ``404 not_found`` anyway -- is reported as
 ``update_needed``: a plain "your vault needs an update to show this", not an
 error and not an outage.
+
+**Whole-corpus totals (#3795).** Receipts come a page at a time and Creek's
+documents are clamped to its newest 200, so neither list can count a corpus.
+``totals.sent`` is one grouped query over every receipt of the account, and
+``vault.stage_totals`` is Creek's own per-stage count, which contract 0.37
+adds to the same read. 0.37 is declared the way 0.34 is -- on this call only,
+to a vault whose handshake lists it -- and a vault that lists only 0.34 is
+still asked at 0.34 and answers everything but the stage totals.
 
 **Degrading.** Every other failure the adapter can raise is ``unreachable``,
 logged through :func:`services.creek_vault_read.log_read_degraded` with
@@ -32,7 +41,7 @@ from posixpath import dirname
 from typing import Final
 
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlmodel import col, select
+from sqlmodel import col, func, select
 
 from domain.creek_vault import (
     CreekCapability,
@@ -47,9 +56,10 @@ from domain.vault_pipeline_status import (
     VaultDocumentStatus,
     VaultFolderStatus,
     VaultPipelineStatus,
+    VaultStageTotals,
     VaultStatusJob,
 )
-from models.upload_receipt import UploadReceipt
+from models.upload_receipt import RECEIPT_VAULT_STATUSES, UploadReceipt
 from models.vault_pipeline_run import VaultPipelineRun
 from schemas.vault_pipeline import (
     StageRunResponse,
@@ -58,8 +68,11 @@ from schemas.vault_pipeline import (
     VaultFolderResponse,
     VaultJobResponse,
     VaultPipelineResponse,
+    VaultPipelineTotalsResponse,
     VaultSnapshotResponse,
     VaultStageResponse,
+    VaultStageTotalResponse,
+    VaultStageTotalsResponse,
     VaultStatusReach,
 )
 from services.corpus_import import reaches_a_vault
@@ -115,6 +128,20 @@ async def _receipts(session: AsyncSession, user_id: int, page: ReceiptPage) -> l
     return list(result.scalars().all())
 
 
+async def _sent_totals(session: AsyncSession, user_id: int) -> dict[str, int]:
+    """How many receipts this account has per outcome, over all of them, zeros included.
+
+    One grouped query scoped to ``user_id``; no page bounds it.
+    """
+    result = await session.execute(
+        select(col(UploadReceipt.vault_status), func.count().label("receipts"))
+        .where(col(UploadReceipt.user_id) == user_id)
+        .group_by(col(UploadReceipt.vault_status))
+    )
+    counted: dict[str, int] = {row.vault_status: row.receipts for row in result.all()}
+    return {status: counted.get(status, 0) for status in RECEIPT_VAULT_STATUSES}
+
+
 async def _stage_runs(session: AsyncSession, user_id: int) -> list[VaultPipelineRun]:
     """This account's :data:`STAGE_RUN_CAP` most recent stage runs, newest first."""
     result = await session.execute(
@@ -140,8 +167,8 @@ async def _vault_half(client: CreekVaultPipelineStatusClient) -> _VaultHalf:
     """Ask the caller's own vault, gated as every vault read is: a handshake first.
 
     A connected vault that cannot be reached at all is ``unreachable``; one
-    whose handshake does not list 0.34 is ``update_needed`` and is asked
-    nothing more.
+    whose handshake lists no minor of the status read is ``update_needed``
+    and is asked nothing more.
     """
     if not reaches_a_vault(client):
         return _VaultHalf(VaultStatusReach.NOT_CONNECTED)
@@ -249,6 +276,21 @@ def _job(job: VaultStatusJob) -> VaultJobResponse:
     )
 
 
+def _stage_totals(totals: VaultStageTotals | None) -> VaultStageTotalsResponse | None:
+    """Project Creek's whole-corpus stage counts, or ``None`` from a vault before 0.37."""
+    if totals is None:
+        return None
+    return VaultStageTotalsResponse(
+        documents=totals.documents,
+        stages=[
+            VaultStageTotalResponse(
+                stage=row.stage, covered=row.covered, partial=row.partial, failed=row.failed
+            )
+            for row in totals.stages
+        ],
+    )
+
+
 def _snapshot(status: VaultPipelineStatus | None) -> VaultSnapshotResponse | None:
     """Project Creek's whole answer, or ``None`` when there is none."""
     if status is None:
@@ -258,6 +300,7 @@ def _snapshot(status: VaultPipelineStatus | None) -> VaultSnapshotResponse | Non
         documents=[_document(document) for document in status.documents],
         documents_withheld=status.documents_withheld,
         jobs=[_job(job) for job in status.jobs],
+        stage_totals=_stage_totals(status.totals),
     )
 
 
@@ -267,12 +310,13 @@ async def read_vault_pipeline(
     client: CreekVaultPipelineStatusClient,
     page: ReceiptPage,
 ) -> VaultPipelineResponse:
-    """The account's receipts, stage runs and vault status, in one answer.
+    """The account's receipts, their whole-account totals, stage runs and vault status.
 
     The account's own rows are read and the transaction closed before the vault
     is dialled, so the pooled connection is not held across that round trip.
     """
     receipts = await _receipts(session, user_id, page)
+    sent = await _sent_totals(session, user_id)
     runs = await _stage_runs(session, user_id)
     await session.commit()
     vault = await _vault_half(client)
@@ -281,6 +325,7 @@ async def read_vault_pipeline(
         recent_uploads=uploads,
         next_before=next_before,
         stage_runs=[_stage_run(run) for run in runs],
+        totals=VaultPipelineTotalsResponse(sent=sent),
         vault=_snapshot(vault.status),
         vault_status=vault.reach,
         vault_unreachable=vault.reach is VaultStatusReach.UNREACHABLE,

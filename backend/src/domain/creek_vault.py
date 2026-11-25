@@ -110,7 +110,10 @@ from domain.vault_related import VaultRelatedThread, VaultReplyVoice
 #    status read (`GET /v1/pipeline/status`, Creek-Vault#2124, #3775) declares
 #    0.34 only to a vault listing 0.34 (`PIPELINE_STATUS_SINCE_MINOR`); an older
 #    vault is asked nothing and the dashboard says it needs an update.
-#    `tests/test_creek_contract_0_34_pipeline_status.py` pins it.
+#    `tests/test_creek_contract_0_34_pipeline_status.py` pins it. The same read
+#    declares 0.37 instead -- whose answer adds whole-corpus stage `totals`
+#    (Creek-Vault#2147, #3795, `PIPELINE_TOTALS_SINCE_MINOR`) -- to a vault
+#    listing 0.37; `tests/test_creek_contract_0_37_pipeline_totals.py` pins it.
 CONTRACT_VERSION = "0.22.0"
 
 
@@ -1698,7 +1701,8 @@ class CreekVaultPipelineStatusClient(CreekVaultClient, Protocol):
         included) as :class:`CreekVaultContractError`, an absent or unlistable
         vault as :class:`CreekVaultUnavailableError` -- and a vault whose
         handshake did not list 0.34 raises :class:`CreekCapabilityUnsupportedError`
-        before any request is built.
+        before any request is built. A vault listing 0.37 is asked at 0.37 and
+        its answer carries ``totals`` (#3795); an earlier one leaves it ``None``.
         """
 
 
