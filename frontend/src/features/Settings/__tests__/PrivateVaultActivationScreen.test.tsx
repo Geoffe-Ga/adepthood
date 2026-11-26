@@ -88,7 +88,11 @@ describe('provider-managed vault activation choice', () => {
     expect(view.getByText(/optional storage/iu)).toBeTruthy();
     expect(view.getByText('Adepthood is complete without a managed Corpus.')).toBeTruthy();
     expect(view.getByText(/Fly holds the keys/u)).toBeTruthy();
-    expect(view.getByText(/could read what is stored there/u)).toBeTruthy();
+    expect(
+      view.getByText(
+        /so Fly, and anyone with enough access at Adepthood or at Creek \(the software behind it\), could read what is stored there\. It is not hidden from them\./u,
+      ),
+    ).toBeTruthy();
     expect(
       view.getByText(
         /Entries you mark Intimate stay in Adepthood and are never sent to a managed Corpus/u,
@@ -245,7 +249,11 @@ describe('resumable progress and honest custody', () => {
 
     expect(view.getByText('Your managed Corpus is ready.')).toBeTruthy();
     expect(view.getByText(/keys the hosting company \(Fly\) holds/u)).toBeTruthy();
-    expect(view.getByText(/can read what is stored there/u)).toBeTruthy();
+    expect(
+      view.getByText(
+        /Fly, and people with enough access at Adepthood or at Creek \(the software behind it\), can read what is stored there\./u,
+      ),
+    ).toBeTruthy();
     expect(view.getByText(/not sealed off from the people who run it/u)).toBeTruthy();
     expect(
       view.getByText(/Entries you mark Intimate stay in Adepthood and never go there/u),

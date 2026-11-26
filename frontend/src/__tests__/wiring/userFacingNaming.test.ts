@@ -9,7 +9,9 @@ import * as ts from 'typescript';
  *
  * "Creek" is the internal name of the software behind a person's body of
  * writing. Nobody using the app was ever told it, so no screen, error message
- * or accessibility label may say it: the app says **your Corpus**, and what
+ * or accessibility label may say it, with one exception: the three sentences
+ * that disclose who can read a managed Corpus name every party, Creek among
+ * them (#3828). Everywhere else the app says **your Corpus**, and what
  * speaks back from it is **your Simulated Higher Self Voice** ("your Higher
  * Self Voice" once a screen has said it in full). The glossary is the "Naming"
  * section of `src/design/DESIGN.md`.
@@ -54,13 +56,35 @@ interface NamingRule {
   allowlist: readonly AllowedString[];
 }
 
+/** Why the custody disclosures, and nothing else, say "Creek" (#3828). */
+const CUSTODY_NAMES_EVERY_PARTY =
+  'custody disclosure names every party (owner decision 2026-11-26)';
+
 export const NAMING_RULES: readonly NamingRule[] = [
   {
     name: 'Creek',
     pattern: /Creek/u,
     scope: [''],
     instead: 'your Corpus',
-    allowlist: [],
+    // The three sentences that say who can read a managed Corpus, and no
+    // other string (#3828). Each entry is the whole clause naming the parties.
+    allowlist: [
+      {
+        file: 'features/Settings/PrivateVaultActivationScreen.tsx',
+        text: 'so Fly, and anyone with enough access at Adepthood or at Creek (the software behind it), could read what is stored there.',
+        why: CUSTODY_NAMES_EVERY_PARTY,
+      },
+      {
+        file: 'features/Settings/PrivateVaultActivationScreen.tsx',
+        text: 'Fly, and people with enough access at Adepthood or at Creek (the software behind it), can read what is stored there.',
+        why: CUSTODY_NAMES_EVERY_PARTY,
+      },
+      {
+        file: 'features/Settings/VaultSettingsScreen.tsx',
+        text: 'Fly, the people who run Adepthood, and the people at Creek (the software behind it) can read what is stored there;',
+        why: CUSTODY_NAMES_EVERY_PARTY,
+      },
+    ],
   },
   {
     // "Higher Self" names what writes reflections and letters only as part of
@@ -225,12 +249,16 @@ export const Panel = () => <View testID="Creek-panel" nativeID="CreekRegion" />;
 `;
 
 const VAULT_RULE_NAME = 'vault';
+const CREEK_RULE_NAME = 'Creek';
 
-function vaultRule(): NamingRule {
-  const rule = NAMING_RULES.find((candidate) => candidate.name === VAULT_RULE_NAME);
-  if (!rule) throw new Error(`NAMING_RULES has no "${VAULT_RULE_NAME}" row any more.`);
+function ruleNamed(name: string): NamingRule {
+  const rule = NAMING_RULES.find((candidate) => candidate.name === name);
+  if (!rule) throw new Error(`NAMING_RULES has no "${name}" row any more.`);
   return rule;
 }
+
+const vaultRule = (): NamingRule => ruleNamed(VAULT_RULE_NAME);
+const creekRule = (): NamingRule => ruleNamed(CREEK_RULE_NAME);
 
 // Every shape the app's copy took when it said "vault".
 const VAULT_VIOLATING = `
@@ -378,6 +406,42 @@ describe('the "vault" rule', () => {
   });
 });
 
+describe('the "Creek" rule', () => {
+  it('is one rule over all of src, and keeps only the three custody disclosures', () => {
+    expect(NAMING_RULES.filter((rule) => /creek/iu.test(rule.name))).toHaveLength(1);
+    expect(creekRule().scope).toEqual(['']);
+    expect(creekRule().allowlist.map(({ file, text }) => ({ file, text }))).toEqual([
+      {
+        file: 'features/Settings/PrivateVaultActivationScreen.tsx',
+        text: 'so Fly, and anyone with enough access at Adepthood or at Creek (the software behind it), could read what is stored there.',
+      },
+      {
+        file: 'features/Settings/PrivateVaultActivationScreen.tsx',
+        text: 'Fly, and people with enough access at Adepthood or at Creek (the software behind it), can read what is stored there.',
+      },
+      {
+        file: 'features/Settings/VaultSettingsScreen.tsx',
+        text: 'Fly, the people who run Adepthood, and the people at Creek (the software behind it) can read what is stored there;',
+      },
+    ]);
+  });
+
+  it('gives each of the three the owner decision as its reason', () => {
+    expect(creekRule().allowlist.map((entry) => entry.why)).toEqual([
+      'custody disclosure names every party (owner decision 2026-11-26)',
+      'custody disclosure names every party (owner decision 2026-11-26)',
+      'custody disclosure names every party (owner decision 2026-11-26)',
+    ]);
+  });
+
+  it('glosses the name where it is said, and says it once per sentence', () => {
+    for (const entry of creekRule().allowlist) {
+      expect(entry.text).toContain('Creek (the software behind it)');
+      expect(entry.text.match(/Creek/gu)).toHaveLength(1);
+    }
+  });
+});
+
 describe('the allowlist and scope of a naming rule', () => {
   it('scopes a rule to a directory and everything beneath it, and to nothing beside it', () => {
     expect(inScope('features/Settings/vaultCopy.ts', ['features/Settings'])).toBe(true);
@@ -398,6 +462,20 @@ describe('the allowlist and scope of a naming rule', () => {
     for (const rule of NAMING_RULES) {
       for (const entry of rule.allowlist) expect(entry.why.trim()).not.toBe('');
     }
+  });
+
+  it('keeps no entry for a string the app no longer says', () => {
+    const stale = NAMING_RULES.flatMap((rule) =>
+      rule.allowlist
+        .filter((entry) => {
+          const source = fs.readFileSync(path.join(SRC, entry.file), 'utf-8');
+          const hits = findForbiddenNames(entry.file, source, rule.pattern);
+          return !hits.some((hit) => hit.includes(entry.text));
+        })
+        .map((entry) => `${rule.name}: ${entry.file}: ${entry.text}`),
+    );
+
+    expect(stale).toEqual([]);
   });
 });
 
