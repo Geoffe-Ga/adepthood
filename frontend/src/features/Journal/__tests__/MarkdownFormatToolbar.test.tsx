@@ -18,7 +18,7 @@ import {
 import React from 'react';
 import { StyleSheet } from 'react-native';
 
-import type { MarkdownCommand } from '../markdownCommands';
+import type { MarkdownCommand, MarkdownCommandState } from '../markdownCommands';
 import MarkdownFormatToolbar from '../MarkdownFormatToolbar';
 
 import { decorativeHidden } from '@/components/a11yHidden';
@@ -30,9 +30,6 @@ const GLYPHS: Partial<Record<MarkdownCommand, LucideIcon>> = {
   italic: Italic,
   underline: Underline,
   heading: Heading,
-  bullet: List,
-  ordered: ListOrdered,
-  task: ListChecks,
   quote: TextQuote,
 };
 
@@ -61,6 +58,7 @@ const PLAIN = {
   task: false,
   quote: false,
   heading: false,
+  list: null,
   listLevel: null,
 };
 
@@ -70,25 +68,17 @@ const ACTION_ORDER: MarkdownCommand[] = [
   'italic',
   'underline',
   'heading',
-  'bullet',
-  'ordered',
-  'task',
+  'list',
   'quote',
   'indent',
   'outdent',
 ];
 
-/** The style toggles: each reflects its state and reads as pressed on web. */
-const TOGGLES = [
-  'bold',
-  'italic',
-  'underline',
-  'heading',
-  'bullet',
-  'ordered',
-  'task',
-  'quote',
-] as const;
+/** The style toggles read straight from the editor state, pressed on web when on. */
+const TOGGLES = ['bold', 'italic', 'underline', 'heading', 'quote'] as const;
+
+/** Every control with a pressed state: the toggles and the List control. */
+const PRESSABLE = [...TOGGLES, 'list'] as const;
 
 describe('MarkdownFormatToolbar -- inline styles', () => {
   const LABELLED: [label: string, command: MarkdownCommand][] = [
@@ -96,8 +86,6 @@ describe('MarkdownFormatToolbar -- inline styles', () => {
     ['Italic', 'italic'],
     ['Underline', 'underline'],
     ['Heading', 'heading'],
-    ['Bulleted list', 'bullet'],
-    ['Numbered list', 'ordered'],
     ['Quote', 'quote'],
   ];
   it.each(LABELLED)('offers %s as a labelled button that runs the %s command', (label, command) => {
@@ -129,7 +117,7 @@ describe('MarkdownFormatToolbar -- inline styles', () => {
 
   it('gives every action at least the minimum touch target', () => {
     const { getByTestId } = render(<MarkdownFormatToolbar state={PLAIN} onCommand={jest.fn()} />);
-    for (const style of TOGGLES) {
+    for (const style of PRESSABLE) {
       const flat = StyleSheet.flatten(getByTestId(`journal-format-${style}`).props.style);
       expect(flat.minWidth).toBeGreaterThanOrEqual(touchTarget.minimum);
       expect(flat.minHeight).toBeGreaterThanOrEqual(touchTarget.minimum);
@@ -140,6 +128,76 @@ describe('MarkdownFormatToolbar -- inline styles', () => {
     const source = readFileSync(join(__dirname, '..', 'MarkdownFormatToolbar.tsx'), 'utf8');
     expect(source).not.toMatch(/#[\da-f]{3,8}\b/iu);
     expect(source).not.toMatch(/rgba?\(/iu);
+  });
+});
+
+describe('MarkdownFormatToolbar -- the one List control (#3826)', () => {
+  const Platform = require('react-native').Platform as { OS: string };
+  let originalOS: string;
+  beforeEach(() => {
+    originalOS = Platform.OS;
+    Platform.OS = 'web';
+  });
+  afterEach(() => {
+    Platform.OS = originalOS;
+  });
+
+  const KINDS: [
+    kind: MarkdownCommandState['list'],
+    Glyph: LucideIcon,
+    label: string,
+    pressed: boolean,
+  ][] = [
+    [null, List, 'List: none. Press for bulleted.', false],
+    ['bullet', List, 'List: bulleted. Press for numbered.', true],
+    ['ordered', ListOrdered, 'List: numbered. Press for checkbox.', true],
+    ['task', ListChecks, 'List: checkbox. Press for plain text.', true],
+  ];
+
+  it.each(KINDS)(
+    'on a line of kind %s draws that kind’s glyph and names it and the next press',
+    (kind, Glyph, label, pressed) => {
+      const onCommand = jest.fn();
+      const { getByTestId } = render(
+        <MarkdownFormatToolbar state={{ ...PLAIN, list: kind }} onCommand={onCommand} />,
+      );
+      const button = getByTestId('journal-format-list');
+      expect(button.props.accessibilityLabel).toBe(label);
+      expect(button.props['aria-pressed']).toBe(pressed);
+      expect(button.props.accessibilityState).toMatchObject({ selected: pressed });
+      const glyphs = within(button).UNSAFE_queryAllByType(Glyph);
+      expect(glyphs).toHaveLength(1);
+      expect(glyphs[0]?.props).toMatchObject(decorativeHidden());
+      for (const Other of [List, ListOrdered, ListChecks].filter((icon) => icon !== Glyph)) {
+        expect(within(button).UNSAFE_queryAllByType(Other)).toHaveLength(0);
+      }
+      // Whatever the line is, the control always sends the one cycling command.
+      fireEvent.press(button);
+      expect(onCommand).toHaveBeenCalledTimes(1);
+      expect(onCommand).toHaveBeenCalledWith('list');
+    },
+  );
+
+  it('replaces the three list buttons: none of them is drawn', () => {
+    const { queryByTestId } = render(<MarkdownFormatToolbar state={PLAIN} onCommand={jest.fn()} />);
+    for (const gone of ['bullet', 'ordered', 'task']) {
+      expect(queryByTestId(`journal-format-${gone}`)).toBeNull();
+    }
+  });
+
+  it('shows the same pressed bar as any toggle, and keeps the minimum touch target', () => {
+    const { getByTestId } = render(
+      <MarkdownFormatToolbar
+        state={{ ...PLAIN, list: 'task', listLevel: 0 }}
+        onCommand={jest.fn()}
+      />,
+    );
+    const flat = StyleSheet.flatten(getByTestId('journal-format-list').props.style);
+    expect(flat.borderBottomColor).toBe(colors.paper.ink);
+    expect(flat.minWidth).toBeGreaterThanOrEqual(touchTarget.minimum);
+    expect(flat.minHeight).toBeGreaterThanOrEqual(touchTarget.minimum);
+    // Indent and Outdent stay on offer on a list line.
+    expect(getByTestId('journal-format-indent').props.accessibilityState.disabled).toBe(false);
   });
 });
 
@@ -244,31 +302,9 @@ describe('MarkdownFormatToolbar -- pressed state for assistive technology and si
       <MarkdownFormatToolbar state={{ ...PLAIN, quote: true }} onCommand={jest.fn()} />,
     );
     expect(getByTestId('journal-format-quote').props['aria-pressed']).toBe(true);
-    for (const style of ['heading', 'bullet', 'ordered', 'task']) {
+    for (const style of ['heading', 'list']) {
       expect(getByTestId(`journal-format-${style}`).props['aria-pressed']).toBe(false);
     }
-  });
-
-  it('offers Checklist after Numbered list, pressed only on a task line', () => {
-    Platform.OS = 'web';
-    const onCommand = jest.fn();
-    const { getByLabelText, getByTestId } = render(
-      <MarkdownFormatToolbar
-        state={{ ...PLAIN, task: true, listLevel: 0 }}
-        onCommand={onCommand}
-      />,
-    );
-    const checklist = getByLabelText('Checklist');
-    expect(checklist.props.testID).toBe('journal-format-task');
-    expect(checklist.props['aria-pressed']).toBe(true);
-    expect(getByTestId('journal-format-bullet').props['aria-pressed']).toBe(false);
-    const target = StyleSheet.flatten(checklist.props.style);
-    expect(target.minWidth).toBeGreaterThanOrEqual(touchTarget.minimum);
-    expect(target.minHeight).toBeGreaterThanOrEqual(touchTarget.minimum);
-    // Indent and Outdent stay on offer on a task line.
-    expect(getByTestId('journal-format-indent').props.accessibilityState.disabled).toBe(false);
-    fireEvent.press(checklist);
-    expect(onCommand).toHaveBeenCalledWith('task');
   });
 
   it('leaves list actions without a pressed state: they are commands, not toggles', () => {

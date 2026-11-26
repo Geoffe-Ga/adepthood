@@ -53,6 +53,31 @@ describe('keyCommand -- formatting shortcuts', () => {
     expect(keyCommand({ ...keys, ctrlKey: true, shiftKey: true }, 'ctrl')).toBe('task');
   });
 
+  it.each<[string, MarkdownKeyEvent, MarkdownCommand]>([
+    ['the physical 8 key (US Shift+8 reports "*")', { key: '*', code: 'Digit8' }, 'bullet'],
+    ['the physical 8 key on a layout that reports "("', { key: '(', code: 'Digit8' }, 'bullet'],
+    ['a bare "8" with no code', { key: '8' }, 'bullet'],
+    ['a bare "*" with no code', { key: '*' }, 'bullet'],
+    ['the physical 7 key (US Shift+7 reports "&")', { key: '&', code: 'Digit7' }, 'ordered'],
+    ['the physical 7 key on a layout that reports "/"', { key: '/', code: 'Digit7' }, 'ordered'],
+    ['a bare "7" with no code', { key: '7' }, 'ordered'],
+    ['a bare "&" with no code', { key: '&' }, 'ordered'],
+  ])(
+    'maps the primary modifier plus Shift and %s straight to its list kind (#3826)',
+    (_label, keys, command) => {
+      expect(keyCommand({ ...keys, metaKey: true, shiftKey: true }, 'meta')).toBe(command);
+      expect(keyCommand({ ...keys, ctrlKey: true, shiftKey: true }, 'ctrl')).toBe(command);
+    },
+  );
+
+  it('never maps a key to the cycling List command: the keyboard names a kind directly', () => {
+    for (const code of ['Digit7', 'Digit8', 'Digit9']) {
+      expect(keyCommand({ key: code, code, metaKey: true, shiftKey: true }, 'meta')).not.toBe(
+        'list',
+      );
+    }
+  });
+
   it.each<[string, MarkdownKeyEvent]>([
     ['without Shift', { key: '9', code: 'Digit9', metaKey: true }],
     ['without the primary modifier', { key: '(', code: 'Digit9', shiftKey: true }],
@@ -63,9 +88,12 @@ describe('keyCommand -- formatting shortcuts', () => {
     ],
     [
       'on another physical key that reports "("',
-      { key: '(', code: 'Digit8', metaKey: true, shiftKey: true },
+      { key: '(', code: 'Digit0', metaKey: true, shiftKey: true },
     ],
-    ['on Shift+8', { key: '*', code: 'Digit8', metaKey: true, shiftKey: true }],
+    ['on Shift+6', { key: '^', code: 'Digit6', metaKey: true, shiftKey: true }],
+    ['on a bare "6" with no code', { key: '6', metaKey: true, shiftKey: true }],
+    ['on Shift+7 without the primary modifier', { key: '&', code: 'Digit7', shiftKey: true }],
+    ['on 8 without Shift', { key: '8', code: 'Digit8', metaKey: true }],
     ['on Shift+I', { key: 'I', code: 'KeyI', metaKey: true, shiftKey: true }],
     ['on Shift+U by physical key', { key: 'г', code: 'KeyU', metaKey: true, shiftKey: true }],
   ])('leaves the checklist chord alone %s', (_label, event) => {
@@ -119,6 +147,36 @@ describe('applyMarkdownCommand -- line styles', () => {
   it('consumes a press with nothing to style, such as on a rule', () => {
     expect(applyMarkdownCommand('---', { start: 1, end: 1 }, 'bullet')).toEqual({
       kind: 'consumed',
+    });
+  });
+
+  it('steps the caret line along the list cycle on the List command (#3826)', () => {
+    const presses: string[] = [];
+    let body = 'note';
+    for (let press = 0; press < 4; press += 1) {
+      const result = applyMarkdownCommand(body, { start: body.length, end: body.length }, 'list');
+      if (result.kind !== 'edit') throw new Error('the List command did not edit');
+      body = result.edit.text;
+      presses.push(body);
+    }
+    expect(presses).toEqual(['- note', '1. note', '- [ ] note', 'note']);
+  });
+
+  it('consumes a List press with nothing to step, such as on a rule', () => {
+    expect(applyMarkdownCommand('---', { start: 1, end: 1 }, 'list')).toEqual({
+      kind: 'consumed',
+    });
+  });
+
+  it('reports the list kind the List control steps from', () => {
+    expect(markdownCommandState('note', { start: 1, end: 1 }).list).toBeNull();
+    expect(markdownCommandState('- note', { start: 3, end: 3 }).list).toBe('bullet');
+    expect(markdownCommandState('1. note', { start: 3, end: 3 }).list).toBe('ordered');
+    expect(markdownCommandState('- [x] note', { start: 7, end: 7 }).list).toBe('task');
+    expect(markdownCommandState('1. a\n   more', { start: 9, end: 9 })).toMatchObject({
+      list: 'ordered',
+      ordered: true,
+      listLevel: 0,
     });
   });
 

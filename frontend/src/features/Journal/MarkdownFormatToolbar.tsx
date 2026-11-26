@@ -2,10 +2,15 @@
  * The body's formatting actions, for writers without a keyboard shortcut --
  * touch, and anyone who would rather press a button.
  *
- * Bold, Italic, Underline, Heading, Bulleted list, Numbered list, Checklist,
- * Quote, Indent and Outdent. Every action is always on show; Indent and Outdent are
- * disabled while the caret is off a list item, so the bar never shifts
- * under the writer's thumb.
+ * Bold, Italic, Underline, Heading, List, Quote, Indent and Outdent. Every
+ * action is always on show; Indent and Outdent are disabled while the caret is
+ * off a list item, so the bar never shifts under the writer's thumb.
+ *
+ * List is one control for three kinds (issue 3826): each press steps the line
+ * from prose to a bullet, a number, a checkbox, and back to prose, and its icon
+ * and label say which the line is now. That keeps every style within reach at
+ * phone width without a swipe.
+ *
  * The actions sit on one line that never wraps: when they outgrow it, the
  * strip scrolls sideways -- a finger swipe on mobile, a click-and-drag (or
  * trackpad pan) on web.
@@ -31,6 +36,7 @@ import {
 import React, { useRef } from 'react';
 import { Pressable, ScrollView, StyleSheet, View, type PressableProps } from 'react-native';
 
+import { nextListKind, type ListKind } from './markdownBlockToggle';
 import type { MarkdownCommand, MarkdownCommandState } from './markdownCommands';
 import { useWebDragScroll } from './webDragScroll';
 
@@ -51,23 +57,55 @@ interface ToolbarAction {
   Icon: LucideIcon;
 }
 
-/** The commands whose on/off state the toolbar reflects. */
-type ToggleCommand = Exclude<MarkdownCommand, 'indent' | 'outdent'>;
+/** The commands whose on/off state the toolbar reads straight from the editor state. */
+type ToggleCommand = 'bold' | 'italic' | 'underline' | 'heading' | 'quote';
 
 /**
- * Inline styles, then line styles. Heading steps ``#`` to ``###`` and back to
- * prose; the others turn the touched lines into that block, or back.
+ * The styles before the List control: inline styles, then Heading, which steps
+ * ``#`` to ``###`` and back to prose.
  */
-const STYLE_ACTIONS: readonly (ToolbarAction & { command: ToggleCommand })[] = [
+const LEADING_ACTIONS: readonly (ToolbarAction & { command: ToggleCommand })[] = [
   { command: 'bold', label: 'Bold', Icon: Bold },
   { command: 'italic', label: 'Italic', Icon: Italic },
   { command: 'underline', label: 'Underline', Icon: Underline },
   { command: 'heading', label: 'Heading', Icon: Heading },
-  { command: 'bullet', label: 'Bulleted list', Icon: List },
-  { command: 'ordered', label: 'Numbered list', Icon: ListOrdered },
-  { command: 'task', label: 'Checklist', Icon: ListChecks },
-  { command: 'quote', label: 'Quote', Icon: TextQuote },
 ];
+
+/** The style after it: Quote turns the touched lines into a quotation, or back. */
+const QUOTE_ACTION: ToolbarAction & { command: ToggleCommand } = {
+  command: 'quote',
+  label: 'Quote',
+  Icon: TextQuote,
+};
+
+/** The glyph the List control draws for each kind; prose shares the bullet list's. */
+const LIST_ICONS: Readonly<Record<ListKind, LucideIcon>> = Object.freeze({
+  bullet: List,
+  ordered: ListOrdered,
+  task: ListChecks,
+});
+
+/** How the List control's label names each kind. */
+const LIST_NAMES: Readonly<Record<ListKind, string>> = Object.freeze({
+  bullet: 'bulleted',
+  ordered: 'numbered',
+  task: 'checkbox',
+});
+
+/**
+ * The List control at a line of ``kind``: the glyph of what the line is now,
+ * and a label that names it and what the next press does.
+ */
+function listAction(kind: ListKind | null): ToolbarAction {
+  const next = nextListKind(kind);
+  const now = kind == null ? 'none' : LIST_NAMES[kind];
+  const then = next == null ? 'plain text' : LIST_NAMES[next];
+  return {
+    command: 'list',
+    label: `List: ${now}. Press for ${then}.`,
+    Icon: LIST_ICONS[kind ?? 'bullet'],
+  };
+}
 
 const INDENT_ACTION: ToolbarAction = {
   command: 'indent',
@@ -126,6 +164,31 @@ function ToolbarButton({
   );
 }
 
+/** The style toggles, in strip order: inline styles, Heading, List, Quote. */
+function StyleButtons({ state, onCommand }: MarkdownFormatToolbarProps): React.JSX.Element {
+  return (
+    <>
+      {LEADING_ACTIONS.map((action) => (
+        <ToolbarButton
+          key={action.command}
+          action={action}
+          selected={state[action.command]}
+          toggle
+          onCommand={onCommand}
+        />
+      ))}
+      {/* Pressed on any list kind: its glyph says which. */}
+      <ToolbarButton
+        action={listAction(state.list)}
+        selected={state.list != null}
+        toggle
+        onCommand={onCommand}
+      />
+      <ToolbarButton action={QUOTE_ACTION} selected={state.quote} toggle onCommand={onCommand} />
+    </>
+  );
+}
+
 export default function MarkdownFormatToolbar({
   state,
   onCommand,
@@ -143,15 +206,7 @@ export default function MarkdownFormatToolbar({
         contentContainerStyle={styles.row}
         testID="journal-format-toolbar-scroll"
       >
-        {STYLE_ACTIONS.map((action) => (
-          <ToolbarButton
-            key={action.command}
-            action={action}
-            selected={state[action.command]}
-            toggle
-            onCommand={onCommand}
-          />
-        ))}
+        <StyleButtons state={state} onCommand={onCommand} />
         <ToolbarButton
           action={INDENT_ACTION}
           selected={false}

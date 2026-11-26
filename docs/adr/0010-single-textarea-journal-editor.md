@@ -117,8 +117,10 @@ plain indented text, and read mode already draws rows.
 
 - A long list item wraps to the left edge while it is being written and hangs
   under its text once the entry is read.
-- A writer who wants a second line inside an item uses Shift+Return. Phone soft
-  keyboards have no Shift+Return, so on a phone this needs a hardware keyboard.
+- A writer who wants a second line inside an item uses Shift+Return. That works
+  on web and desktop only: the native text field reports the key without its
+  modifiers, so on a phone Return is always a plain Return, with or without a
+  hardware keyboard.
 - A continuation line in the editor sits 1.5 to 9 px left of its item's text,
   by marker. No code measures glyph widths to correct it.
 - The stored body, the anchor model and the platform's own editing behaviour

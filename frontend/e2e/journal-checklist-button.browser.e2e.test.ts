@@ -3,31 +3,36 @@ import { expect, test, type Page } from '@playwright/test';
 import { backendUrl, signUp, tokenFor } from './journalHabitsBrowserSupport';
 
 /**
- * The Checklist button: one press turns the caret's line into an unchecked
- * task, and from there Return keeps the checklist going until an empty box
- * ends it -- the button is the way into "checkbox mode". It converts a bullet
- * or a numbered item in place, clears a task (checked or not) back to prose,
- * and is never pressed together with Bulleted list. All in the real
- * <textarea>, through the autosave and read routes, into read mode after a
- * cold reload.
+ * The List button: one control for three kinds. Each press steps the caret's
+ * line from prose to a bullet, a number, a checkbox, and back to prose; its
+ * label and pressed state say where the line is. Three presses on a blank line
+ * are the way into "checkbox mode", where Return keeps the checklist going
+ * until an empty box ends it. Cmd/Ctrl+Shift+7, 8 and 9 name a kind directly,
+ * a checked task is cleared whole when it leaves the cycle, and an item's
+ * Shift+Return continuation line goes with it, re-indented under each new
+ * marker. All in the real <textarea>, through the autosave and read routes,
+ * into read mode after a cold reload.
  */
 
-async function press(page: Page, name: string): Promise<void> {
-  const button = page.getByRole('button', { name, exact: true });
-  await button.scrollIntoViewIfNeeded();
-  await button.click();
+const LABELS = {
+  none: 'List: none. Press for bulleted.',
+  bullet: 'List: bulleted. Press for numbered.',
+  ordered: 'List: numbered. Press for checkbox.',
+  task: 'List: checkbox. Press for plain text.',
+} as const;
+
+/** The List button reads as the line's kind: its label, and pressed on any list kind. */
+async function expectList(page: Page, kind: keyof typeof LABELS): Promise<void> {
+  const button = page.getByTestId('journal-format-list');
+  await expect(button).toHaveAttribute('aria-label', LABELS[kind]);
+  await expect(button).toHaveAttribute('aria-pressed', String(kind !== 'none'));
 }
 
-async function expectPressed(page: Page, pressed: Record<string, boolean>): Promise<void> {
-  for (const [command, on] of Object.entries(pressed)) {
-    await expect(page.getByTestId(`journal-format-${command}`)).toHaveAttribute(
-      'aria-pressed',
-      String(on),
-    );
-  }
+async function pressList(page: Page): Promise<void> {
+  await page.getByTestId('journal-format-list').click();
 }
 
-test('Checklist starts a task list that Return continues and an empty box ends', async ({
+test('List cycles a line through bullet, number and checkbox, and Return keeps a checklist going', async ({
   page,
 }) => {
   await page.setViewportSize({ width: 390, height: 844 });
@@ -41,51 +46,76 @@ test('Checklist starts a task list that Return continues and an empty box ends',
   await page.getByTestId('journal-title-input').fill('Checklist');
   const field = page.getByTestId('journal-body-input');
 
-  // On a blank line the button is released; one press starts an unchecked box.
+  // The three buttons this one replaced are gone.
+  for (const gone of ['bullet', 'ordered', 'task']) {
+    await expect(page.getByTestId(`journal-format-${gone}`)).toHaveCount(0);
+  }
+
+  // On a blank line the button is released; each press is one step of the cycle.
   await field.click();
-  await expectPressed(page, { task: false, bullet: false });
-  await press(page, 'Checklist');
+  await expectList(page, 'none');
+  await pressList(page);
+  await expect(field).toHaveValue('- ');
+  await expectList(page, 'bullet');
+  await pressList(page);
+  await expect(field).toHaveValue('1. ');
+  await expectList(page, 'ordered');
+  await pressList(page);
   await expect(field).toHaveValue('- [ ] ');
   await expect(field).toBeFocused();
-  await expectPressed(page, { task: true, bullet: false, ordered: false });
+  await expectList(page, 'task');
   await expect(page.getByRole('button', { name: 'Indent list item' })).toBeEnabled();
 
   // Type, Return: a new unchecked box. Return on the empty box: out of the list.
   await page.keyboard.type('buy oats');
   await page.keyboard.press('Enter');
   await expect(field).toHaveValue('- [ ] buy oats\n- [ ] ');
-  await expectPressed(page, { task: true });
+  await expectList(page, 'task');
   await page.keyboard.type('buy milk');
   await page.keyboard.press('Enter');
   await expect(field).toHaveValue('- [ ] buy oats\n- [ ] buy milk\n- [ ] ');
   await page.keyboard.press('Enter');
   await expect(field).toHaveValue('- [ ] buy oats\n- [ ] buy milk\n');
-  await expectPressed(page, { task: false });
+  await expectList(page, 'none');
 
-  // A numbered item becomes a task in place, from the keyboard chord.
+  // The keyboard names a kind directly: a numbered item becomes a task in place.
   await page.keyboard.type('2. call Sam');
-  await expectPressed(page, { ordered: true, task: false });
+  await expectList(page, 'ordered');
   await page.keyboard.press('ControlOrMeta+Shift+Digit9');
   await expect(field).toHaveValue('- [ ] buy oats\n- [ ] buy milk\n- [ ] call Sam');
-  await expectPressed(page, { ordered: false, task: true });
+  await expectList(page, 'task');
 
-  // A checked task is cleared whole; its words stay.
+  // A checked task leaves the cycle whole: the box goes, its words stay.
   await page.keyboard.press('Enter');
   await page.keyboard.press('Enter');
   await page.keyboard.type('- [x] rest');
-  await expectPressed(page, { task: true, bullet: false });
-  await press(page, 'Checklist');
-  await expect(field).toHaveValue('- [ ] buy oats\n- [ ] buy milk\n- [ ] call Sam\nrest');
-  await expectPressed(page, { task: false, bullet: false });
+  await expectList(page, 'task');
+  await pressList(page);
+  const head = '- [ ] buy oats\n- [ ] buy milk\n- [ ] call Sam\n';
+  await expect(field).toHaveValue(`${head}rest`);
+  await expectList(page, 'none');
 
-  // Bulleted list and Checklist trade places on the same line, never both pressed.
-  await press(page, 'Bulleted list');
-  await expect(field).toHaveValue('- [ ] buy oats\n- [ ] buy milk\n- [ ] call Sam\n- rest');
-  await expectPressed(page, { task: false, bullet: true });
-  await press(page, 'Checklist');
-  const message = '- [ ] buy oats\n- [ ] buy milk\n- [ ] call Sam\n- [ ] rest';
+  // Cmd/Ctrl+Shift+7 numbers the line and +8 bullets it, without cycling.
+  await page.keyboard.press('ControlOrMeta+Shift+Digit7');
+  await expect(field).toHaveValue(`${head}1. rest`);
+  await expectList(page, 'ordered');
+  await page.keyboard.press('ControlOrMeta+Shift+Digit8');
+  await expect(field).toHaveValue(`${head}- rest`);
+  await expectList(page, 'bullet');
+
+  // A continuation line belongs to its item: it follows it through the cycle,
+  // re-indented under each new marker, also when the caret is on that line.
+  await page.keyboard.press('Shift+Enter');
+  await page.keyboard.type('a while');
+  await expect(field).toHaveValue(`${head}- rest\n  a while`);
+  await expectList(page, 'bullet');
+  await pressList(page);
+  await expect(field).toHaveValue(`${head}1. rest\n   a while`);
+  await expectList(page, 'ordered');
+  await pressList(page);
+  const message = `${head}- [ ] rest\n      a while`;
   await expect(field).toHaveValue(message);
-  await expectPressed(page, { task: true, bullet: false });
+  await expectList(page, 'task');
 
   const entryId = ((await (await created).json()) as { id: number }).id;
   await page.getByTestId('journal-finish-button').click();
