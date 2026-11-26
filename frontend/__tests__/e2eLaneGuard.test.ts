@@ -112,6 +112,7 @@ const EXPECTED_BROWSER_JOURNEYS = [
   'journal-timer-elevation.browser.e2e.test.ts',
   'journal-timer-stows-in-header.browser.e2e.test.ts',
   'journal-letter-care-escalation.browser.e2e.test.ts',
+  'journal-list-continuation.browser.e2e.test.ts',
   'journal-list-indent.browser.e2e.test.ts',
   'journal-live-edit-anchors.browser.e2e.test.ts',
   'journal-live-markdown.browser.e2e.test.ts',

@@ -15,8 +15,13 @@
  * item, ``task`` a bullet carrying a ``[ ]`` / ``[x]`` checkbox, and ``rule`` a
  * line that is only ``---``, ``***`` or ``___``. {@link classifyLine} is the only
  * place any of them is recognised.
+ *
+ * ``continuation`` is the one kind a line cannot have on its own: an unmarked
+ * line under a list item's text, which belongs to that item. Only
+ * ``classifyLines``, which reads each line after the one above it, reports it.
  */
-export type LineKind = 'quote' | 'bullet' | 'ordered' | 'task' | 'heading' | 'rule' | 'plain';
+export type LineKind =
+  'quote' | 'bullet' | 'ordered' | 'task' | 'heading' | 'rule' | 'continuation' | 'plain';
 
 /**
  * What separates a line's opening marker from its content.
@@ -66,11 +71,19 @@ export interface JournalMarkdownLine {
   ordinal: number | null;
   /** Whether a task line's box is checked, null on every other kind. */
   taskChecked: boolean | null;
+  /**
+   * The list item a ``continuation`` line belongs to, null on every other
+   * kind. It is the item's own classified line, so its marker, indent and text
+   * column are read from it rather than measured again.
+   */
+  owner: JournalMarkdownLine | null;
 }
 
 /**
  * Adjacent lines of one kind, rendered as a single block element. A heading
- * or a rule is always a block of its own line: each draws its own element.
+ * or a rule is always a block of its own line: each draws its own element. A
+ * list block also holds its items' ``continuation`` lines, each right after
+ * the item (or sibling continuation line) it follows.
  */
 export interface JournalMarkdownBlock {
   /** Code-point index of the first line, used for stable keys and test IDs. */

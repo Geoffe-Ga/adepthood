@@ -116,3 +116,67 @@ describe('ReadOnlyMarkdownText -- block dialect (#3251)', () => {
     expect(getByTestId('journal-markdown-rule-0')).toBeTruthy();
   });
 });
+
+/** The unseen sizers are hidden from assistive technology, so queries must ask for them. */
+const HIDDEN = { includeHiddenElements: true };
+
+/** The text of every unseen (aria-hidden) element under a node, in order. */
+function unseenTexts(node: RenderedNode): string[] {
+  if (node.props['aria-hidden'] === true && typeof node.type === 'string') {
+    return [node.children.join('')];
+  }
+  return node.children.flatMap((child: RenderedNode | string) =>
+    typeof child === 'string' ? [] : unseenTexts(child),
+  );
+}
+
+describe('ReadOnlyMarkdownText -- continuation lines (#3800)', () => {
+  it.each([
+    ['a bullet', '- one\n  two', ['\u2022 ']],
+    ['a numbered item', '1. one\n   two', ['0. ']],
+    ['a checkbox', '- [x] one\n      two', [`${JOURNAL_TASK_GLYPHS.done} `]],
+  ])(
+    'sets a continuation line of %s as a row on its item’s marker column, with no marker',
+    (_name, body, sizers) => {
+      const { getByTestId, queryByTestId } = render(
+        <ReadOnlyMarkdownText body={body} testID="flat" />,
+      );
+      const start = String(body.indexOf('\n') + 1);
+      const row = getByTestId(`journal-markdown-continuation-${start}`);
+      expect(StyleSheet.flatten(row.props.style).flexDirection).toBe('row');
+      // The block's marker shapes, in no ink: the column is as wide as the
+      // item's, so the text below starts exactly where the text above does.
+      const column = getByTestId(`journal-markdown-item-marker-${start}`, HIDDEN);
+      expect(unseenTexts(column)).toEqual(sizers);
+      expect(renderedText(column)).toBe('');
+      expect(renderedText(getByTestId(`journal-markdown-item-text-${start}`))).toBe('two');
+      expect(queryByTestId(`journal-markdown-item-${start}`)).toBeNull();
+      expect(renderedText(getByTestId('flat')).endsWith('onetwo')).toBe(true);
+    },
+  );
+
+  it('keeps the unseen sizers in the ordinal’s tabular figures', () => {
+    const { UNSAFE_getAllByProps } = render(<ReadOnlyMarkdownText body={'12. one\n    two'} />);
+    const sizers = UNSAFE_getAllByProps({ 'aria-hidden': true }).filter(
+      (node) => typeof node.type === 'string',
+    );
+    expect(sizers.length).toBeGreaterThan(0);
+    for (const sizer of sizers) {
+      const style = StyleSheet.flatten(sizer.props.style);
+      expect(style.fontVariant).toEqual(['tabular-nums']);
+      expect(style.color).toBe('transparent');
+      expect(sizer.props.selectable).toBe(false);
+    }
+  });
+
+  it('indents a nested item’s continuation line with the item', () => {
+    const { getByTestId } = render(<ReadOnlyMarkdownText body={'- a\n  - b\n    c'} />);
+    expect(renderedText(getByTestId('journal-markdown-item-4'))).toBe('  \u2022 b');
+    expect(renderedText(getByTestId('journal-markdown-continuation-10'))).toBe('  c');
+  });
+
+  it('dims the continuation line of a checked task with it', () => {
+    const { getByTestId } = render(<ReadOnlyMarkdownText body={'- [x] one\n      two'} />);
+    expect(renderedText(getByTestId('journal-markdown-task-done-10'))).toBe('two');
+  });
+});

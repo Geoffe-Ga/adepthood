@@ -14,7 +14,8 @@
  *   item still above it.
  *
  * A run is the contiguous same-indent stretch of one list: lines indented
- * deeper belong to the item above them and are stepped over, while a blank
+ * deeper, and an item's continuation lines (``classifyLines``), belong to the
+ * item above them and are stepped over, while a blank
  * line, a shallower line, or a same-indent line that is not a numbered item
  * ends it. Each item keeps its own punctuation (``1)`` stays ``)``), an item
  * above the step is never rewritten, a list is never restarted at a number
@@ -22,7 +23,7 @@
  * exactly as typed (``007.``).
  */
 import { utf16ToCodePoint } from './codePoints';
-import { MAX_ORDINAL_DIGITS, classifyLine, sourceLines } from './journalMarkdownLines';
+import { MAX_ORDINAL_DIGITS, classifyLines } from './journalMarkdownLines';
 import type { JournalMarkdownLine } from './journalMarkdownTypes';
 import type { MarkdownEdit } from './markdownEditing';
 import { applySourceChanges, type SourceChange } from './sourceChanges';
@@ -80,6 +81,8 @@ function siblingIndex(
 ): number | null {
   for (let index = from + direction; index >= 0 && index < items.length; index += direction) {
     const { line } = items[index]!;
+    // An item's continuation line belongs to it, even one holding only its indent.
+    if (line.kind === 'continuation') continue;
     if (line.indentEnd === line.end || line.indentWidth < width) return null;
     if (line.indentWidth === width) return index;
   }
@@ -152,10 +155,7 @@ export function renumberOrderedLists(
   steps: readonly RenumberStep[],
 ): MarkdownEdit {
   const chars = Array.from(edit.text);
-  const items: Item[] = sourceLines(chars).map((source) => {
-    const line = classifyLine(chars, source);
-    return { line, ordinal: line.ordinal };
-  });
+  const items: Item[] = classifyLines(chars).map((line) => ({ line, ordinal: line.ordinal }));
   for (const step of steps) applyStep(items, step);
   const changes = ordinalChanges(items);
   if (changes.length === 0) return edit;

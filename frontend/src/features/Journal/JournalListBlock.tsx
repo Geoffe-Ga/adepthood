@@ -18,6 +18,11 @@
  * them, in whatever face the body is set in. A row whose marker is the block's
  * only shape needs no copy and simply sits in the column.
  *
+ * A list item's continuation line (#3800: an unmarked line under the item's
+ * text, see ``continuedItem``) is a row too. It takes its item's indent and
+ * the same sizers, and draws no marker, so its text starts where the item's
+ * does.
+ *
  * Shared by {@link HighlightedBody} (the entry reader) and
  * {@link ReadOnlyMarkdownText} (previews), so the two cannot drift. Not named
  * ``markdown*``: ``journalMarkdownPurity.test.ts`` reserves that prefix for
@@ -144,6 +149,8 @@ function markerShape(marker: string): string {
 function markerShapes(document: JournalMarkdownDocument, block: JournalMarkdownBlock): string[] {
   const shapes: string[] = [];
   for (const line of block.lines) {
+    // A continuation line has no marker; it borrows the column its item sized.
+    if (line.owner != null) continue;
     const shape = markerShape(listMarkerText(document, line));
     if (!shapes.includes(shape)) shapes.push(shape);
   }
@@ -225,20 +232,54 @@ function Marker(props: MarkerProps): React.JSX.Element {
   );
 }
 
-/**
- * The marker column of one row: as wide as the widest marker shape in the
- * block, with the row's own marker on it.
- */
-function MarkerColumn({
-  layout,
-  line,
-  shapes,
-}: {
+interface MarkerColumnProps {
   layout: ListBlockLayout;
   line: JournalMarkdownLine;
   shapes: readonly string[];
+}
+
+/** An unseen copy of every marker shape in the block: the column's width, no ink. */
+function Sizers({
+  layout,
+  kind,
+  shapes,
+}: {
+  layout: ListBlockLayout;
+  kind: JournalMarkdownLine['kind'];
+  shapes: readonly string[];
 }): React.JSX.Element {
-  const text = listMarkerText(layout.document, line);
+  return (
+    <>
+      {shapes.map((shape, index) => (
+        <Text
+          key={shape}
+          {...decorativeHidden()}
+          selectable={false}
+          style={[
+            layout.textStyle,
+            markerStyle(kind),
+            styles.sizer,
+            index > 0 && styles.sizerStacked,
+          ]}
+        >
+          {shape}
+        </Text>
+      ))}
+    </>
+  );
+}
+
+/**
+ * The marker column of one row: as wide as the widest marker shape in the
+ * block, with the row's own marker on it.
+ *
+ * A continuation line (#3800) has the column and nothing on it: the same
+ * sizers its item's row holds, so its text cell starts on exactly the item's
+ * text column, and no marker of its own.
+ */
+function MarkerColumn({ layout, line, shapes }: MarkerColumnProps): React.JSX.Element {
+  const item = line.owner ?? line;
+  const text = line.owner == null ? listMarkerText(layout.document, line) : null;
   // The block's only shape, and exactly this marker: it sizes itself.
   const sizesItself = shapes.length === 1 && shapes[0] === text;
   return (
@@ -246,31 +287,21 @@ function MarkerColumn({
       style={[styles.markerColumn, layout.onTaskPress != null && styles.markerColumnRaised]}
       testID={`journal-markdown-item-marker-${line.start}`}
     >
-      {sizesItself
-        ? null
-        : shapes.map((shape, index) => (
-            <Text
-              key={shape}
-              {...decorativeHidden()}
-              selectable={false}
-              style={[
-                layout.textStyle,
-                markerStyle(line.kind),
-                styles.sizer,
-                index > 0 && styles.sizerStacked,
-              ]}
-            >
-              {shape}
-            </Text>
-          ))}
-      <Marker layout={layout} line={line} text={text} placed={!sizesItself} />
+      {sizesItself ? null : <Sizers layout={layout} kind={item.kind} shapes={shapes} />}
+      {text == null ? null : (
+        <Marker layout={layout} line={line} text={text} placed={!sizesItself} />
+      )}
     </View>
   );
 }
 
-/** A checked task's text is dimmed, not struck: strikethrough is an inline style of its own. */
+/**
+ * A checked task's text is dimmed, not struck: strikethrough is an inline
+ * style of its own. Its continuation lines are its text too, and dim with it.
+ */
 function itemContent(line: JournalMarkdownLine, content: React.ReactNode[]): React.ReactNode {
-  if (line.kind !== 'task' || line.taskChecked !== true) return content;
+  const item = line.owner ?? line;
+  if (item.kind !== 'task' || item.taskChecked !== true) return content;
   return (
     <Text style={styles.taskDone} testID={`journal-markdown-task-done-${line.start}`}>
       {content}
@@ -278,8 +309,16 @@ function itemContent(line: JournalMarkdownLine, content: React.ReactNode[]): Rea
   );
 }
 
+/** A row's test ID: an item's, or a continuation line's (which has no marker). */
+function rowTestID(line: JournalMarkdownLine): string {
+  return `journal-markdown-${line.owner == null ? 'item' : 'continuation'}-${line.start}`;
+}
+
 /**
  * The rows of a list block, one per source line, in order.
+ *
+ * A continuation line is a row of its item: the item's indent, the block's
+ * marker column with nothing drawn on it, and its own text cell.
  *
  * @param layout - The block and the type it is set in.
  * @param contentOf - The line's visible content (anchored runs included).
@@ -290,10 +329,10 @@ export function renderListRows(
 ): React.ReactNode[] {
   const shapes = markerShapes(layout.document, layout.block);
   return layout.block.lines.map((line) => (
-    <View key={line.start} style={styles.row} testID={`journal-markdown-item-${line.start}`}>
-      {line.indentWidth > 0 ? (
+    <View key={line.start} style={styles.row} testID={rowTestID(line)}>
+      {(line.owner ?? line).indentWidth > 0 ? (
         <Text selectable={false} style={layout.textStyle}>
-          {JOURNAL_INDENT_COLUMN.repeat(line.indentWidth)}
+          {JOURNAL_INDENT_COLUMN.repeat((line.owner ?? line).indentWidth)}
         </Text>
       ) : null}
       <MarkerColumn layout={layout} line={line} shapes={shapes} />
