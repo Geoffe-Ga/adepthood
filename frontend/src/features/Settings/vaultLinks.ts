@@ -1,5 +1,5 @@
 /**
- * Where the vault screen's "Learn how to run one" link goes.
+ * Where the vault screen's "Learn how to run your own" link goes.
  *
  * Kept out of ``vaultCopy.ts`` on purpose: that module's promise deck may not
  * spell a transport, and only three named form strings may say ``https``. A URL

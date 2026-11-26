@@ -119,6 +119,7 @@ import {
   VAULT_MANAGED_UNAVAILABLE_BODY,
   VAULT_MANAGED_UNKNOWN_BODY,
   VAULT_NONE_CONNECTED,
+  VAULT_ACTIVATION_TITLE,
   VAULT_PROMISE,
   VAULT_REPLACE_BUTTON,
   VAULT_REPLACE_CONFIRM_BODY,
@@ -842,20 +843,20 @@ const ManagedActivationOffer = ({
 }): React.JSX.Element => (
   <View style={styles.activationOffer} testID="managed-vault-offer">
     <Text style={styles.formHeading}>
-      {continuing ? 'Continue managed Corpus setup' : 'Let Adepthood create one'}
+      {continuing ? 'Continue managed storage setup' : 'Let Adepthood set it up'}
     </Text>
     <Text style={settingsFormStyles.body}>
-      Ask Adepthood to set up an optional Corpus for you, kept on Fly's servers. Fly, the people who
-      run Adepthood, and the people at Creek (the software behind it) can read what is stored there;
+      Ask Adepthood to set up optional storage for you, on Fly's servers. Fly, the people who run
+      Adepthood, and the people at Creek (the software behind it) can read what is stored there;
       anything you mark Intimate never goes there. Your journal stays open the whole time it is
       being set up.
     </Text>
     <Button
-      label={continuing ? 'Continue setup' : 'Create a managed Corpus'}
+      label={continuing ? 'Continue setup' : VAULT_ACTIVATION_TITLE}
       onPress={onOpen}
       testID="open-vault-activation"
       accessibilityLabel={
-        continuing ? 'Continue managed Corpus setup' : 'Create an optional managed Corpus'
+        continuing ? 'Continue managed storage setup' : 'Set up optional managed storage'
       }
     />
   </View>
@@ -869,8 +870,8 @@ const ManagedActivationUnavailable = ({ unknown }: { unknown: boolean }): React.
   >
     <Text style={styles.formHeading}>
       {unknown
-        ? 'Adepthood could not check whether a managed Corpus is on offer'
-        : 'The managed Corpus is opening gradually'}
+        ? 'Adepthood could not check whether managed storage is on offer'
+        : 'Managed storage is opening gradually'}
     </Text>
     <Text style={settingsFormStyles.body}>
       {unknown ? VAULT_MANAGED_UNKNOWN_BODY : VAULT_MANAGED_UNAVAILABLE_BODY}

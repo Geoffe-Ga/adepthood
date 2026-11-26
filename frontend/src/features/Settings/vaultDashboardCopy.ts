@@ -28,9 +28,9 @@ export const VAULT_DOCUMENTS_HEADING = 'Each file, step by step';
 export const VAULT_SHAPE_HEADING = 'The shape of your Corpus';
 
 export const VAULT_UPDATE_NEEDED =
-  'Your Corpus needs an update to show this. What it holds, and what has been done with each file, will show here once it has one.';
+  'The software behind your Corpus needs an update to show this. What your Corpus holds, and what has been done with each file, will show here once it has one.';
 export const VAULT_DASHBOARD_NOT_CONNECTED =
-  'There is no Corpus connected to this account, so there is nothing here to show yet. Where your writing lives is set up in Settings.';
+  'Nothing is connected to keep your Corpus, so there is nothing here to show yet. Where your writing lives is set up in Settings.';
 export const VAULT_DASHBOARD_OPEN_SETTINGS = 'Where your writing lives';
 export const VAULT_DASHBOARD_NOTHING_YET =
   'Nothing has come in yet. When you bring in writing you already have, each file will show here with where it landed.';
@@ -239,7 +239,7 @@ export function lastPassLine(time: string): string {
 
 const RECEIPT_NOT_LANDED: Readonly<Record<string, string>> = {
   degraded: "Couldn't be confirmed",
-  vault_unavailable: "Didn't land — your Corpus wasn't reachable",
+  vault_unavailable: "Didn't land — where your Corpus is kept wasn't reachable",
   capability_unsupported: "Didn't land — your Corpus can't take files yet",
 };
 const RECEIPT_NOT_LANDED_FALLBACK = "Didn't land";

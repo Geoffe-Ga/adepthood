@@ -70,14 +70,14 @@ export const CORPUS_SORT_STOP_LINES: Readonly<
   no_consent: 'Nothing was sorted, because sorting is off for what you write here.',
   consent_withdrawn: 'Sorting stopped because sorting was turned off for what you write here.',
   boundary_changed:
-    'Sorting stopped because your Corpus connection changed. Starting again sorts into the ' +
+    'Sorting stopped because where your Corpus is kept changed. Starting again sorts into the ' +
     'right place.',
   suspended: 'Sorting is paused on our side for now. You can try again later.',
   provider_refused:
     'Sorting stopped because the service that sorts writing is not answering right now. You ' +
     'can try again later.',
   vault_unavailable:
-    'Sorting stopped because your Corpus could not be reached. You can start again once it ' +
+    'Sorting stopped because where your Corpus is kept could not be reached. You can start again once it ' +
     'is back.',
 };
 

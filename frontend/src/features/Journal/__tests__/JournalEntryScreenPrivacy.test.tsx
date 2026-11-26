@@ -371,8 +371,8 @@ describe('JournalEntryScreen — tier change PATCH failure', () => {
     fireEvent.press(within(getByTestId('journal-page')).getByTestId('privacy-tier-intimate'));
     await waitFor(() => {
       const hint = String(getByTestId('journal-save-hint').props.children);
-      expect(hint).toMatch(/Intimate here.*cannot identify.*Corpus/i);
-      expect(hint).not.toMatch(/reconnect that Corpus|set to be deleted|can't be edited/i);
+      expect(hint).toMatch(/Intimate here.*cannot identify the storage that received/i);
+      expect(hint).not.toMatch(/reconnect it in Settings|set to be deleted|can't be edited/i);
     });
     expect(getByTestId('journal-body-input').props.editable).not.toBe(false);
     expect(

@@ -2,7 +2,7 @@
 import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 
-import { VAULT_TITLE } from '../vaultCopy';
+import { VAULT_ACTIVATION_TITLE, VAULT_TITLE } from '../vaultCopy';
 
 const FRONTEND_SOURCE = join(process.cwd(), 'src');
 
@@ -43,7 +43,14 @@ describe('private-vault activation privacy boundary', () => {
     // The settings screen's stack title is a literal like every sibling, pinned
     // here to the copy module's plain name so the two cannot drift (#3007).
     expect(navigation).toContain(`options={{ title: '${VAULT_TITLE}' }}`);
-    expect(navigation).toContain("options={{ title: 'Create managed Corpus' }}");
+    // The activation screen's stack title, its hidden heading and its consent
+    // button all read one constant, never a literal each (#3824).
+    expect(navigation).toContain('options={{ title: VAULT_ACTIVATION_TITLE }}');
+    expect(navigation).toContain('title={VAULT_ACTIVATION_TITLE}');
+    expect(navigation).toContain('label={VAULT_ACTIVATION_TITLE}');
+    expect(navigation).not.toContain(`'${VAULT_ACTIVATION_TITLE}'`);
+    expect(navigation).not.toContain(`"${VAULT_ACTIVATION_TITLE}"`);
+    expect(VAULT_ACTIVATION_TITLE).not.toMatch(/private|vault|Creek|Corpus/iu);
     expect(navigation).toContain(`under Advanced in ${VAULT_TITLE}`);
     expect(navigation).not.toMatch(
       /Managed (vault|Corpus) settings|Creek (vault|Corpus) settings/u,

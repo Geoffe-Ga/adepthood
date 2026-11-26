@@ -124,6 +124,19 @@ export const NAMING_RULES: readonly NamingRule[] = [
       },
     ],
   },
+  {
+    // "Corpus" always means the writing (#3827). A word straight before it
+    // that counts it, points at it, or connects it makes it a place instead:
+    // "a Corpus you run", "this Corpus", "No Corpus connected", "a managed
+    // Corpus", "Reconnect Corpus". The place is "where your Corpus is kept",
+    // or plain "storage" where it needs a noun.
+    name: 'Corpus as a place',
+    pattern:
+      /\b(?:an?|another|this|that|the|no|new|fresh|previous|managed|connected|isolated|(?:re|dis)?connect|create|replace) Corpus\b/iu,
+    scope: [''],
+    instead: 'where your Corpus is kept, or "storage"',
+    allowlist: [],
+  },
 ];
 
 const isSourceFile = (name: string): boolean =>
@@ -403,6 +416,45 @@ describe('the "vault" rule', () => {
       'adepthood-vault',
       'running-your-own-vault',
     ]);
+  });
+});
+
+describe('the "Corpus as a place" rule', () => {
+  const placed = (text: string): string[] =>
+    findForbiddenNames(
+      'fixture.ts',
+      `const line = ${JSON.stringify(text)};`,
+      ruleNamed('Corpus as a place').pattern,
+    );
+
+  it.each([
+    'No Corpus was connected, so nothing of yours is held outside Adepthood.',
+    'Reconnect Corpus',
+    'A connected Corpus reads richer formats for you.',
+    'Advanced: connect a Corpus you run yourself',
+    'Create managed Corpus',
+    'Replace this Corpus?',
+    'Reconnect that Corpus in Settings to allow retry.',
+    'It may remain in the Corpus you disconnected.',
+  ])('flags %j', (text) => {
+    expect(placed(text)).toHaveLength(1);
+  });
+
+  it.each([
+    'In your Corpus. It will show up in reflections from here on.',
+    'fills as your Corpus learns how you write',
+    'Readings your Corpus writes use BotMason credits.',
+    'Nothing is connected to keep your Corpus.',
+    "Where your Corpus is kept didn't answer.",
+    'With Corpus sorting enabled, every eligible page joins your private Corpus.',
+    'Corpus upload',
+  ])('leaves %j alone', (text) => {
+    expect(placed(text)).toEqual([]);
+  });
+
+  it('covers all of src and allows nothing', () => {
+    expect(ruleNamed('Corpus as a place').scope).toEqual(['']);
+    expect(ruleNamed('Corpus as a place').allowlist).toEqual([]);
   });
 });
 

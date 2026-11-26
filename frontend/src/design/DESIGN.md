@@ -237,16 +237,35 @@ person's body of writing; nobody using the app was told them, so no screen,
 error message, placeholder or accessibility label says them, apart from the
 three custody disclosures below.
 
-| Internal                                                              | In the app                       |
-| --------------------------------------------------------------------- | -------------------------------- |
-| Creek, Creek Vault, your Creek vault                                  | your Corpus                      |
-| vault, your vault (the writer's body of writing and where it is kept) | your Corpus                      |
-| the Higher Self, when naming what writes reflections and letters      | your Simulated Higher Self Voice |
-| Code identifiers, route names, test IDs, API fields, logs             | unchanged                        |
+| Internal                                                         | In the app                       |
+| ---------------------------------------------------------------- | -------------------------------- |
+| Creek, Creek Vault, your Creek vault                             | your Corpus                      |
+| vault, your vault (the writer's body of sorted writing)          | your Corpus                      |
+| vault, your vault (where that writing is kept or runs)           | where your Corpus is kept        |
+| the Higher Self, when naming what writes reflections and letters | your Simulated Higher Self Voice |
+| Code identifiers, route names, test IDs, API fields, logs        | unchanged                        |
 
 - **Corpus** is a proper noun and takes a capital; "your" stays lowercase
-  mid-sentence. Another Corpus than the one connected now is "a Corpus you
-  connected earlier", "the Corpus you disconnected".
+  mid-sentence.
+- **"Corpus" always means the writing** (#3827): a person's body of sorted
+  writing, and what that body does with writing. It is never the thing that is
+  connected, set up, managed, reached, updated, replaced or deleted. A
+  sentence about that says where the Corpus is kept or runs, or that nothing
+  is connected to keep it, so somebody with nothing connected is never told
+  both that a page joined their Corpus and that they have no Corpus.
+  - The writing, or the Corpus acting on it, says "your Corpus": "In your
+    Corpus. It will show up in reflections from here on.", "fills as your
+    Corpus learns how you write", "Readings your Corpus writes use BotMason
+    credits".
+  - The place says where it is kept: "Nothing is connected to keep your
+    Corpus", "Where your Corpus is kept didn't answer", "Copy it again from
+    where your Corpus runs".
+  - Where the place needs a noun of its own it is plain "storage", never a
+    second product name: "managed storage" (Adepthood sets it up), "storage
+    you run yourself", "the storage you disconnected", "the storage that keeps
+    your Corpus". A button that follows a sentence already naming the place
+    drops the noun: "Reconnect". An update is asked of "the software behind
+    your Corpus".
 - **Simulated Higher Self Voice** is said in full the first time a screen
   names what writes reflections and letters, and may shorten to "your Higher
   Self Voice" after that. "Higher Self" never stands alone as its name.
@@ -258,20 +277,24 @@ three custody disclosures below.
   "Creek doesn't fill this one on its own" is "This one doesn't fill on its
   own".
 - **The one exception: custody disclosures name Creek** (#3828, owner decision
-  2026-11-26). A sentence that says who can read a managed Corpus names every
+  2026-11-26). A sentence that says who can read managed storage names every
   party rather than describing one of them, so three sentences say "Creek",
   each with a short gloss where it is said: "Creek (the software behind it)".
   They are the custody notice and the readiness line on the activation screen,
   and the offer under "Where your writing lives" in Settings. The disclosure
   keeps its three parties apart: "a hosting company called Fly" holds the
   keys, "the people who run Adepthood" operate the app, and Creek is the
-  software a Corpus runs on. "Hosting" is Fly's word alone. No other string
+  software behind the storage. "Hosting" is Fly's word alone. No other string
   says "Creek".
-- The two kinds are "a managed Corpus" (Adepthood sets it up) and "a Corpus
-  you run yourself".
+- The two kinds are "managed storage" (Adepthood sets it up) and "storage you
+  run yourself". The screen that sets up the first is titled "Set up managed
+  storage"; its stack title, hidden heading and consent button read one
+  constant, `VAULT_ACTIVATION_TITLE` (#3824).
 
-`src/__tests__/wiring/userFacingNaming.test.ts` holds the first three rows
-against every string and JSX text under `src`. Its `NAMING_RULES` table takes
+`src/__tests__/wiring/userFacingNaming.test.ts` holds this table's forbidden
+words against every string and JSX text under `src`, and with them the forms
+that make a Corpus a place: an article, "this", "that", "no", "managed",
+"connected" or a connecting verb straight before the word. Its `NAMING_RULES` table takes
 a forbidden word, the directories it is forbidden in, and an allowlist with a
 reason per entry. Each word is one rule over all of `src`. "Creek" survives in
 the three custody sentences above, each allowlisted with the reason "custody

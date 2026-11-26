@@ -46,7 +46,21 @@ export const VAULT_ROW_LABEL = 'Where your writing lives';
  * separate from the vault because a vault turns no sorting on.
  */
 export const VAULT_ROW_DESCRIPTION =
-  'Sorting lets reflections reach beyond your last few entries. Saying yes to sorting is a separate choice from an optional copy of what you write, kept in a Corpus Adepthood manages or one you run. The app is complete without either.';
+  'Sorting lets reflections reach beyond your last few entries. Saying yes to sorting is a separate choice from an optional copy of what you write, kept in storage Adepthood manages or storage you run. The app is complete without either.';
+
+/**
+ * The name of the screen that sets up managed storage, and of the press that
+ * does it: the stack title, the screen's own hidden heading, the consent
+ * button and the Settings button that opens the screen all read this one
+ * constant, so they cannot drift apart (#3824).
+ */
+export const VAULT_ACTIVATION_TITLE = 'Set up managed storage';
+
+/**
+ * The heading of the card that asks for the yes. "Isolated" is the promise the
+ * card makes: storage for this account and no other (#3825).
+ */
+export const VAULT_ACTIVATION_CONSENT_HEADING = 'Set up isolated storage';
 
 /** Header eyebrow. Sets the register before the title: this is a choice. */
 export const VAULT_EYEBROW = 'Optional';
@@ -63,7 +77,7 @@ export const VAULT_TITLE = 'Where your writing lives';
  * neither Adepthood nor a provider-managed vault can promise.
  */
 export const VAULT_PROMISE =
-  'Your writing is yours; you choose whether Adepthood sends a copy to a Corpus.';
+  'Your writing is yours; you choose whether Adepthood sends a copy to storage you connect.';
 
 /**
  * What a vault is. Says "sends a copy of each entry" rather than "a copy of
@@ -73,7 +87,7 @@ export const VAULT_PROMISE =
  * happens, so it describes an addition and never a transfer.
  */
 export const VAULT_WHAT_IT_IS =
-  'A Corpus holds a copy of what you write, kept for your account alone. You can connect one you run or ask Adepthood to manage one. The people who run a managed Corpus can read what is in it, and neither kind ever receives Intimate entries.';
+  'Connected storage holds a copy of what you write, kept for your account alone. You can connect storage you run or ask Adepthood to manage it. The people who run managed storage can read what is in it, and neither kind ever receives Intimate entries.';
 
 /**
  * The floor. Declining is a complete way to use Adepthood, so this says so
@@ -86,7 +100,7 @@ export const VAULT_WHAT_IT_IS =
  * a vault" stays true of the journal and reflections, which are what it names.
  */
 export const VAULT_FLOOR =
-  'Your journal, your reflections, and every entry you have written are all here either way. A Corpus adds an optional copy of your entries, kept for your account alone; it does not turn sorting on, which stays a separate choice. Adepthood is complete without one.';
+  'Your journal, your reflections, and every entry you have written are all here either way. Connected storage adds an optional copy of your entries, kept for your account alone; it does not turn sorting on, which stays a separate choice. Adepthood is complete without it.';
 
 /**
  * Said where somebody is about to create a managed vault, so that the press
@@ -94,7 +108,7 @@ export const VAULT_FLOOR =
  * switches under Your writing in Settings, beside the vault row itself.
  */
 export const VAULT_SORTING_CHOICE =
-  'Creating a Corpus does not turn sorting on; that stays a separate choice, a switch under Your writing in Settings.';
+  'Setting up storage does not turn sorting on; that stays a separate choice, a switch under Your writing in Settings.';
 
 /**
  * The Intimate boundary. No Intimate body is sent. A prior non-Intimate copy is
@@ -102,7 +116,7 @@ export const VAULT_SORTING_CHOICE =
  * choice in place with an explicit retry rather than claiming it was removed.
  */
 export const VAULT_INTIMATE =
-  'An Intimate entry is never sent to your Corpus. If it was copied there before, Adepthood removes that copy. If your Corpus is offline, keep Intimate selected and choose it again when it is back online.';
+  'An Intimate entry is never sent to connected storage. If it was copied there before, Adepthood removes that copy. If that storage is offline, keep Intimate selected and choose it again when it is back online.';
 
 /**
  * The hinge between the explanation and the form, inside the Advanced fold. The
@@ -111,14 +125,14 @@ export const VAULT_INTIMATE =
  * reversible thing to try.
  */
 export const VAULT_CONNECT_INTRO =
-  'Connecting one is reversible: you can disconnect whenever you like, and nothing you have written changes either way.';
+  'Connecting it is reversible: you can disconnect whenever you like, and nothing you have written changes either way.';
 
 /**
  * The header of the fold the form lives behind. Says the section is advanced and
  * who it is for before anybody opens it, so somebody without a vault of their
  * own can pass it by.
  */
-export const VAULT_ADVANCED_TITLE = 'Advanced: connect a Corpus you run yourself';
+export const VAULT_ADVANCED_TITLE = 'Advanced: connect storage you run';
 
 /**
  * What the fold is, who it is for, and everything Adepthood sends once it is
@@ -130,7 +144,7 @@ export const VAULT_ADVANCED_TITLE = 'Advanced: connect a Corpus you run yourself
  * on the floor.
  */
 export const VAULT_ADVANCED_EXPLAINER =
-  'This is for people who already run their own Corpus at a public web address. You give Adepthood that address and the key your Corpus issued. Adepthood then sends it a copy of each entry when you save or edit it, and of each voice draft if your Corpus accepts them, and documents you bring in go to it and are kept only there. Nothing Intimate is sent. Nobody needs this to use Adepthood.';
+  'This is for people who already keep their Corpus in storage they run, at a public web address. You give Adepthood that address and the key issued there. Adepthood then sends it a copy of each entry when you save or edit it, and of each voice draft if it accepts them, and documents you bring in go to it and are kept only there. Nothing Intimate is sent. Nobody needs this to use Adepthood.';
 
 /**
  * What it is not. The two things people most often take a vault to be, and the
@@ -141,48 +155,48 @@ export const VAULT_ADVANCED_NOT =
   'It is not a folder on your phone or laptop, and it is not a cloud drive. An address only your own network can reach is refused.';
 
 /** The link to the plain-language guide in ``docs/your-data.md``. */
-export const VAULT_ADVANCED_LEARN_MORE = 'Learn how to run one';
+export const VAULT_ADVANCED_LEARN_MORE = 'Learn how to run your own';
 
 /**
  * Managed availability could not be checked. Points at the folded form by the
  * name its header shows, because "below" alone would name a form nobody sees.
  */
 export const VAULT_MANAGED_UNKNOWN_BODY =
-  'You can try again later, or connect a Corpus you run yourself under Advanced, below.';
+  'You can try again later, or connect storage you run yourself under Advanced, below.';
 
 /** Managed vaults are not open yet. Names the available fold without echoing the floor. */
 export const VAULT_MANAGED_UNAVAILABLE_BODY =
-  'Creating one is not available for this account yet. You can still connect a Corpus you run yourself under Advanced, below.';
+  'Setting it up is not available for this account yet. You can still connect storage you run yourself under Advanced, below.';
 
 /** Form heading with nothing connected. A thing to do, not a step outstanding. */
-export const VAULT_ADD_HEADING = 'Connect your Corpus';
+export const VAULT_ADD_HEADING = 'Connect your storage';
 
 /**
  * Form heading with one already connected. "Replace" rather than "Update",
  * because the write swaps both the address and the key together; there is no
  * way to change one and keep the other.
  */
-export const VAULT_REPLACE_HEADING = 'Replace this Corpus';
+export const VAULT_REPLACE_HEADING = 'Replace this storage';
 
 /** Address field label. Says whose the vault is, in the register of the deck. */
-export const VAULT_ADDRESS_LABEL = 'Your Corpus address';
+export const VAULT_ADDRESS_LABEL = 'Your storage address';
 
 /**
  * Address placeholder. One of only three strings allowed to spell a transport:
  * the address has a shape, and a field that will not show it is a field people
  * fill in wrongly and are then refused for.
  */
-export const VAULT_ADDRESS_PLACEHOLDER = 'https://your-corpus.example';
+export const VAULT_ADDRESS_PLACEHOLDER = 'https://your-storage.example';
 
 /** Key field label. Parallel to the address label, so the pair reads as one ask. */
-export const VAULT_KEY_LABEL = 'Your Corpus key';
+export const VAULT_KEY_LABEL = 'Your storage key';
 
 /**
  * Key placeholder. Points at where the value came from rather than describing
  * its shape: the vault issues it, so the person is being asked to fetch rather
  * than to invent.
  */
-export const VAULT_KEY_PLACEHOLDER = 'The key your Corpus gave you';
+export const VAULT_KEY_PLACEHOLDER = 'The key your storage gave you';
 
 /** Reveal toggle, masked state. One word, because it labels a control. */
 export const VAULT_KEY_SHOW = 'Show';
@@ -212,13 +226,13 @@ export const VAULT_CONNECTED_LABEL = 'Connected to';
  * The empty state. "Yet" without regret: it reports the state and leaves the
  * offers below it rather than reading as something left undone.
  */
-export const VAULT_NONE_CONNECTED = 'No Corpus connected yet.';
+export const VAULT_NONE_CONNECTED = 'Nothing connected yet.';
 
 /**
  * A confirmed managed binding. It says nothing about current runtime health,
  * and no longer has to say so: "Check now" beside it asks the vault (#3406).
  */
-export const VAULT_MANAGED_CONNECTED = 'A managed Corpus is connected to your account.';
+export const VAULT_MANAGED_CONNECTED = 'Managed storage is connected to your account.';
 
 /** The one control that asks the vault whether it answers. Nothing asks on its own. */
 export const VAULT_CHECK_NOW_BUTTON = 'Check now';
@@ -237,7 +251,7 @@ export const VAULT_REACHABLE = 'Reachable just now.';
  * every line that names reflections to that.
  */
 export const VAULT_UNREACHABLE =
-  'Not reachable just now. Your entries are saved here, and anything that needs your Corpus will wait until it is back.';
+  'Not reachable just now. Your entries are saved here, and anything that needs this storage will wait until it is back.';
 
 /**
  * The check landed without settling it, or could not be asked at all. Never
@@ -255,7 +269,7 @@ export const VAULT_CHECK_TOO_SOON = 'You have checked a few times just now. Try 
  * no-health-check disclaimer the managed sentence does.
  */
 export const VAULT_DEPLOYMENT_CONNECTED =
-  'Your writing goes to the Corpus this Adepthood was set up with. Whoever runs this Adepthood looks after it, so there is nothing to disconnect here. This does not check whether it is reachable right now.';
+  'Your writing goes to the storage this Adepthood was set up with. Whoever runs this Adepthood looks after it, so there is nothing to disconnect here. This does not check whether it is reachable right now.';
 
 /**
  * Said when the read could not establish whether a vault is attached at all.
@@ -266,7 +280,7 @@ export const VAULT_DEPLOYMENT_CONNECTED =
  * Advanced section, because in this state the form is folded away.
  */
 export const VAULT_CONNECTION_UNKNOWN =
-  'Adepthood could not tell whether a Corpus is already connected. You can still connect one you run yourself under Advanced, below, and Adepthood will ask first.';
+  'Adepthood could not tell whether storage is already connected. You can still connect storage you run yourself under Advanced, below, and Adepthood will ask first.';
 
 /**
  * Said after a successful connect. Describes what changed from here on — new
@@ -274,7 +288,7 @@ export const VAULT_CONNECTION_UNKNOWN =
  * that implied otherwise would promise a backfill there is no path for.
  */
 export const VAULT_STATUS_CONNECTED =
-  'Connected. Adepthood will send a copy of each new entry to your Corpus.';
+  'Connected. Adepthood will send a copy of each new entry there.';
 
 /**
  * Said after a successful disconnect. Answers the only question worth asking
@@ -283,7 +297,7 @@ export const VAULT_STATUS_CONNECTED =
 export const VAULT_STATUS_DISCONNECTED = 'Disconnected. Everything you have written is still here.';
 
 /** Confirmation title. A question, because the action is taken on an answer. */
-export const VAULT_DISCONNECT_CONFIRM_TITLE = 'Disconnect this Corpus?';
+export const VAULT_DISCONNECT_CONFIRM_TITLE = 'Disconnect this storage?';
 
 /**
  * Confirmation body. Bounds the action in both directions — what stops, what
@@ -294,7 +308,7 @@ export const VAULT_DISCONNECT_CONFIRM_BODY =
   'Adepthood will stop sending copies there. Every entry stays exactly where it is, and you can connect again whenever you like.';
 
 /** Confirmation title for a connect that would replace one already attached. */
-export const VAULT_REPLACE_CONFIRM_TITLE = 'Replace this Corpus?';
+export const VAULT_REPLACE_CONFIRM_TITLE = 'Replace this storage?';
 
 /**
  * Confirmation body. Bounds the swap in both directions — where copies go from
@@ -303,7 +317,7 @@ export const VAULT_REPLACE_CONFIRM_TITLE = 'Replace this Corpus?';
  * not: Adepthood only ever stops writing to it.
  */
 export const VAULT_REPLACE_CONFIRM_BODY =
-  'Adepthood will send copies to the new Corpus instead. Everything in the Corpus you are connected to now stays exactly where it is, and nothing you have written changes.';
+  'Adepthood will send copies to the new storage instead. Everything in the storage you are connected to now stays exactly where it is, and nothing you have written changes.';
 
 /**
  * Confirmation title when the read could not say whether anything is attached.
@@ -311,7 +325,7 @@ export const VAULT_REPLACE_CONFIRM_BODY =
  * there is another to replace would invent the same answer the notice above it
  * declines to invent.
  */
-export const VAULT_REPLACE_UNKNOWN_CONFIRM_TITLE = 'Connect this Corpus?';
+export const VAULT_REPLACE_UNKNOWN_CONFIRM_TITLE = 'Connect this storage?';
 
 /**
  * Confirmation body for that case. The uncertainty comes first and its
@@ -320,7 +334,7 @@ export const VAULT_REPLACE_UNKNOWN_CONFIRM_TITLE = 'Connect this Corpus?';
  * same thing — a vault that is replaced keeps everything in it.
  */
 export const VAULT_REPLACE_UNKNOWN_CONFIRM_BODY =
-  'Adepthood could not tell whether another Corpus is already connected. If one is, this replaces it, and everything in it stays exactly where it is.';
+  'Adepthood could not tell whether other storage is already connected. If it is, this replaces it, and everything in it stays exactly where it is.';
 
 /**
  * The affirmative in both replace confirmations. It names the act rather than
@@ -337,16 +351,16 @@ export const VAULT_CANCEL = 'Cancel';
  * Empty address. Phrased as the next thing to do rather than as a rule broken,
  * which is the register the whole surface is written in.
  */
-export const VAULT_ADDRESS_MISSING = 'Add your Corpus address to connect.';
+export const VAULT_ADDRESS_MISSING = 'Add your storage address to connect.';
 
 /** Empty key. The same sentence shape, so the two blanks read as one pair. */
-export const VAULT_KEY_MISSING = 'Add your Corpus key to connect.';
+export const VAULT_KEY_MISSING = 'Add your storage key to connect.';
 
 /**
  * The read failed. Blames the moment rather than the person or their vault:
  * the app could not check, which says nothing about whether one is attached.
  */
-export const VAULT_LOAD_FAILED = 'Adepthood could not check your Corpus connection just now.';
+export const VAULT_LOAD_FAILED = 'Adepthood could not check what is connected just now.';
 
 /**
  * A connect attempt failed for a reason the screen has no sentence for. Names
@@ -354,7 +368,7 @@ export const VAULT_LOAD_FAILED = 'Adepthood could not check your Corpus connecti
  * often transient than it is something the person can fix by re-reading.
  */
 export const VAULT_CONNECT_FAILED =
-  'Adepthood could not connect to that Corpus just now. Try again in a moment.';
+  'Adepthood could not connect to that storage just now. Try again in a moment.';
 
 /** A disconnect attempt failed. Same shape, same invitation to try again. */
 export const VAULT_DISCONNECT_FAILED =
@@ -379,7 +393,7 @@ export const VAULT_ADDRESS_UNREADABLE =
  * and states the fix rather than the defect.
  */
 export const VAULT_ADDRESS_INCOMPLETE =
-  'Use the whole address, from https:// through the name of your Corpus.';
+  'Use the whole address, from https:// through the name of your storage.';
 
 /**
  * The address carried more than a vault. Lists the three shapes people
@@ -387,7 +401,7 @@ export const VAULT_ADDRESS_INCOMPLETE =
  * components" is only a useful refusal to whoever wrote the classifier.
  */
 export const VAULT_ADDRESS_EXTRA_PARTS =
-  'Use the plain address of your Corpus, with no sign-in, no question mark, and nothing after a #.';
+  'Use the plain address of your storage, with no sign-in, no question mark, and nothing after a #.';
 
 /**
  * The address asked for a transport Adepthood will not carry a key over. One
@@ -398,7 +412,7 @@ export const VAULT_ADDRESS_EXTRA_PARTS =
  * connection that cannot be made.
  */
 export const VAULT_ADDRESS_INSECURE =
-  'Adepthood reaches a Corpus over https://, and cannot reach one that runs on this machine.';
+  'Adepthood reaches storage over https://, and cannot reach storage that runs on this machine.';
 
 /**
  * The address named a destination only the reader's own network can reach.
@@ -407,7 +421,7 @@ export const VAULT_ADDRESS_INSECURE =
  * refusal body on purpose, being written for whoever reads the server's logs.
  */
 export const VAULT_ADDRESS_PRIVATE =
-  'That address points somewhere only your own network can reach. Connect a Corpus Adepthood can reach from the open internet.';
+  'That address points somewhere only your own network can reach. Connect storage Adepthood can reach from the open internet.';
 
 /**
  * Nothing could be found at that address. It invites a re-check and a retry
@@ -434,4 +448,4 @@ export const VAULT_KEY_REFUSED =
  * 2026-10-16 amendment): what happens to the key, and to the writing.
  */
 export const MANAGED_VAULT_OWN_KEY_NOTICE =
-  'If you save your own Anthropic or OpenAI key, your managed Corpus writes your readings and letters, and sorts new writing, with it. Each time, Adepthood passes the key to your Corpus and your Corpus sends that writing to your provider. Neither keeps the key, and nothing is drawn from your BotMason messages.';
+  'If you save your own Anthropic or OpenAI key, your Corpus writes your readings and letters, and sorts new writing, with it. Each time, Adepthood passes the key to your Corpus and your Corpus sends that writing to your provider. Neither keeps the key, and nothing is drawn from your BotMason messages.';

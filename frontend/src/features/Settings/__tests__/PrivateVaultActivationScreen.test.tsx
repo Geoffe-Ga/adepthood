@@ -3,7 +3,13 @@ import { act, fireEvent, render, within } from '@testing-library/react-native';
 import React from 'react';
 
 import PrivateVaultActivationScreen from '../PrivateVaultActivationScreen';
-import { HIGHER_SELF_GAIN, VAULT_SORTING_CHOICE, VAULT_TITLE } from '../vaultCopy';
+import {
+  HIGHER_SELF_GAIN,
+  VAULT_ACTIVATION_CONSENT_HEADING,
+  VAULT_ACTIVATION_TITLE,
+  VAULT_SORTING_CHOICE,
+  VAULT_TITLE,
+} from '../vaultCopy';
 
 import { vaultActivation, type VaultActivation } from '@/api';
 import { settle } from '@/testing/asyncSettle';
@@ -86,7 +92,7 @@ describe('provider-managed vault activation choice', () => {
     const view = await renderActivation();
 
     expect(view.getByText(/optional storage/iu)).toBeTruthy();
-    expect(view.getByText('Adepthood is complete without a managed Corpus.')).toBeTruthy();
+    expect(view.getByText('Adepthood is complete without managed storage.')).toBeTruthy();
     expect(view.getByText(/Fly holds the keys/u)).toBeTruthy();
     expect(
       view.getByText(
@@ -95,7 +101,7 @@ describe('provider-managed vault activation choice', () => {
     ).toBeTruthy();
     expect(
       view.getByText(
-        /Entries you mark Intimate stay in Adepthood and are never sent to a managed Corpus/u,
+        /Entries you mark Intimate stay in Adepthood and are never sent to managed storage or to any AI\. Setting it up does not change that\./u,
       ),
     ).toBeTruthy();
     expect(view.queryByTestId('vault-passphrase-input')).toBeNull();
@@ -118,7 +124,7 @@ describe('provider-managed vault activation choice', () => {
       'activation-sorting-choice',
       'activation-custody-notice',
     ]);
-    expect(view.getByText('Adepthood is complete without a managed Corpus.')).toBeTruthy();
+    expect(view.getByText('Adepthood is complete without managed storage.')).toBeTruthy();
   });
 
   it('names the settings screen it returns to by the name it now has (#3007)', async () => {
@@ -160,7 +166,7 @@ describe('provider-managed vault activation choice', () => {
     await act(async () => fireEvent.press(view.getByTestId('activate-private-vault')));
 
     expect(
-      view.getByText('We could not start setting up your Corpus. Your journal still works.'),
+      view.getByText('We could not start setting up your storage. Your journal still works.'),
     ).toBeTruthy();
     expect(view.getByTestId('cancel-vault-activation')).toBeTruthy();
   });
@@ -217,7 +223,7 @@ describe('resumable progress and honest custody', () => {
     };
     const view = await renderActivation(failed);
 
-    expect(view.getByText(/has to be cleared away before a fresh Corpus is made/u)).toBeTruthy();
+    expect(view.getByText(/has to be cleared away before storage is set up afresh/u)).toBeTruthy();
     await act(async () => fireEvent.press(view.getByTestId('recover-vault-activation')));
 
     expect(mockRecover).toHaveBeenCalledTimes(1);
@@ -247,7 +253,7 @@ describe('resumable progress and honest custody', () => {
   it('renders explicit provider-managed truth at readiness', async () => {
     const view = await renderActivation(READY);
 
-    expect(view.getByText('Your managed Corpus is ready.')).toBeTruthy();
+    expect(view.getByText('Your managed storage is ready.')).toBeTruthy();
     expect(view.getByText(/keys the hosting company \(Fly\) holds/u)).toBeTruthy();
     expect(
       view.getByText(
@@ -294,11 +300,37 @@ describe('resumable progress and honest custody', () => {
 });
 
 /** The stack header's title for this screen, as `RootStack.tsx` sets it. */
-const NAV_TITLE = 'Create managed Corpus';
+const NAV_TITLE = VAULT_ACTIVATION_TITLE;
 /** The paraphrase the body used to paint under it (#2995). */
 const RETIRED_BODY_TITLE = 'Create your managed Corpus';
 const EYEBROW = 'OPTIONAL STORAGE';
-const LEAD = 'A managed Corpus in the cloud, just for your account, set up only when you choose.';
+const LEAD = 'Managed storage in the cloud, just for your account, set up only when you choose.';
+
+describe('the consent stage names what it sets up (#3824, #3825)', () => {
+  const renderAtConsent = async (): Promise<Awaited<ReturnType<typeof renderActivation>>> => {
+    const view = await renderActivation();
+    fireEvent.press(view.getByTestId('continue-vault-activation'));
+    return view;
+  };
+
+  it('pins the two names word for word', () => {
+    expect(VAULT_ACTIVATION_TITLE).toBe('Set up managed storage');
+    expect(VAULT_ACTIVATION_CONSENT_HEADING).toBe('Set up isolated storage');
+  });
+
+  it('heads the consent card with exactly that heading', async () => {
+    const view = await renderAtConsent();
+    const card = within(view.getByTestId('activation-consent'));
+
+    expect(card.getByText('Set up isolated storage')).toBeTruthy();
+  });
+
+  it('labels the consent button with the screen title, word for word', async () => {
+    const view = await renderAtConsent();
+
+    expect(view.getByTestId('activate-private-vault')).toHaveTextContent(VAULT_ACTIVATION_TITLE);
+  });
+});
 
 describe('PrivateVaultActivationScreen — navigation owns the title (#2962)', () => {
   // Not the consent stage: its primary button is labelled NAV_TITLE, which is
@@ -307,7 +339,7 @@ describe('PrivateVaultActivationScreen — navigation owns the title (#2962)', (
     ['intro', INACTIVE],
     ['unavailable', { ...INACTIVE, new_activation_available: false }],
   ] as const)(
-    'paints no body title under the "Create managed Corpus" stack header on the %s stage, adds no header, and moves no focus',
+    'paints no body title under the stack header on the %s stage, adds no header, and moves no focus',
     async (_stage, status) => {
       const focus = watchFocusMoves();
       const view = await renderActivation(status);

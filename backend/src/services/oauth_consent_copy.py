@@ -97,12 +97,12 @@ ERROR_BODIES: Final = MappingProxyType(
             "try connecting again. Nothing was shared."
         ),
         "other_vault": (
-            "This request named a Corpus that is not the one connected to your account. "
+            "This request named storage that is not what is connected to your account. "
             "Nothing was shared."
         ),
         "no_vault": (
-            "Your account has no Corpus connected yet, so there is nothing for an agent to work "
-            "with. You can add one in Settings, under Where your writing lives."
+            "Nothing is connected to keep your Corpus yet, so there is nothing for an agent to "
+            "work with. You can set that up in Settings, under Where your writing lives."
         ),
         "expired": (
             "This page was open for a while, so it stopped waiting. Go back to the agent and "

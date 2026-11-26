@@ -65,7 +65,7 @@ describe('agentsCopy — the deck, verbatim', () => {
 
   it('describes an unconfirmed address without claiming sign-in is unsupported', () => {
     expect(agentsCopy.AGENTS_MANAGED_ADDRESS_UNAVAILABLE).toBe(
-      'Adepthood can’t show an agent sign-in address for this Corpus yet.',
+      'Adepthood can’t show an agent sign-in address for where your Corpus is kept yet.',
     );
   });
 

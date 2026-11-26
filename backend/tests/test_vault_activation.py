@@ -1590,7 +1590,7 @@ async def test_account_deletion_reports_a_completed_provisioned_teardown(
         "configured": True,
         "purged": True,
         "guidance": (
-            "The service that set up your managed Corpus confirmed that its provisioned "
+            "The service that set up your managed storage confirmed that its provisioned "
             "allocation was deleted."
         ),
     }

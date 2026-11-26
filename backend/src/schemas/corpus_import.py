@@ -67,7 +67,8 @@ CORPUS_IMPORT_MESSAGES: Mapping[CorpusImportStatus, str] = MappingProxyType(
         CorpusImportStatus.FORMAT_UNREADABLE: (
             "Adepthood can't open this kind of file on its own, so nothing was stored. "
             f"It reads {_READABLE_LIST} files — most apps, including Claude and ChatGPT, "
-            "can export as Markdown. A connected Corpus reads richer formats for you."
+            "can export as Markdown. Storage connected to keep your Corpus reads richer "
+            "formats for you."
         ),
         CorpusImportStatus.NOT_TEXT: (
             "This file is named as text but isn't readable as text, so nothing was "

@@ -110,7 +110,7 @@ describe('account-deletion journey against a live server', () => {
     // else's vault or instruct this user to purge it.
     expect(receipt.vault.purged).toBe(false);
     expect(receipt.vault.configured).toBe(false);
-    expect(receipt.vault.guidance).toContain('No Corpus was connected');
+    expect(receipt.vault.guidance).toContain('Nothing was connected to keep your Corpus');
   });
 
   it('kills the session it was holding, so the token cannot outlive the account', async () => {

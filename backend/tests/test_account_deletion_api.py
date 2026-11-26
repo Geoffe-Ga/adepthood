@@ -238,7 +238,10 @@ async def test_unconfigured_account_receipt_and_audit_say_no_vault(
     assert response.json()["vault"] == {
         "configured": False,
         "purged": False,
-        "guidance": "No Corpus was connected, so nothing of yours is held outside Adepthood.",
+        "guidance": (
+            "Nothing was connected to keep your Corpus, so nothing of yours is held "
+            "outside Adepthood."
+        ),
     }
     audit = (
         await db_session.execute(
@@ -269,7 +272,7 @@ async def test_non_owner_does_not_claim_the_owner_bound_deployment_vault(
 
     assert response.status_code == HTTPStatus.OK
     assert response.json()["vault"]["configured"] is False
-    assert "No Corpus" in response.json()["vault"]["guidance"]
+    assert "Nothing was connected to keep your Corpus" in response.json()["vault"]["guidance"]
     audit = (
         await db_session.execute(
             select(AccountDeletionAudit).where(col(AccountDeletionAudit.user_id) == user_id)

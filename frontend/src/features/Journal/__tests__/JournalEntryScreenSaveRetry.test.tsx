@@ -892,7 +892,9 @@ describe('a page whose deletion is in progress, and a copy in another vault (#30
       await pressTier(screen, 'intimate');
 
       expect(tierSelected(screen, 'intimate')).toBe(true);
-      expect(hint(screen)).toMatch(/no longer connected to — reconnect that Corpus/);
+      expect(hint(screen)).toMatch(
+        /in storage you’re no longer connected to — reconnect it in Settings/,
+      );
       expect(hint(screen)).not.toMatch(/choose Intimate again/);
     },
   );

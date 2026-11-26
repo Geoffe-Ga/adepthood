@@ -8,7 +8,7 @@ import { VAULT_RUN_YOUR_OWN_DOC_ANCHOR, VAULT_RUN_YOUR_OWN_DOC_URL } from '../va
 import { REPO_ROOT } from '@/testing/backendSource';
 
 /**
- * The "Learn how to run one" link lands on a heading that exists.
+ * The "Learn how to run your own" link lands on a heading that exists.
  *
  * GitHub serves a fragment that matches no heading as the top of the page,
  * silently, and the backend's path resolver for the legal links stops at the

@@ -379,7 +379,7 @@ for (const width of [390, 1280]) {
       await remove.click();
       await page.getByTestId('journal-delete-confirm').click();
       await expect(page.getByTestId('journal-delete-error')).toContainText(
-        'cannot identify the Corpus',
+        'cannot identify the storage',
       );
       await expect(page.getByTestId('journal-delete-error')).toBeInViewport();
       await expect(page.getByTestId('journal-unreachable-reconnect')).toHaveCount(0);
@@ -407,7 +407,7 @@ for (const width of [390, 1280]) {
         await erase.click();
       }
       await expect(page.getByTestId('journal-erasure-receipt')).toContainText(
-        'a copy may still be in a Corpus you connected earlier',
+        'a copy may still be in storage you connected earlier',
       );
       expect(copyOrigin('show', id)).toMatchObject({
         deleted_here: true,
@@ -438,7 +438,7 @@ for (const width of [390, 1280]) {
       await page.goto(`${frontendUrl()}/journal`);
       await page.getByTestId(`journal-shelf-delete-${id}`).click();
       await expect(page.getByTestId('journal-delete-dialog-body')).toContainText(
-        'may remain until your Corpus confirms',
+        'may remain until the storage that holds them confirms',
       );
       const removed = page.waitForResponse(
         (r) => r.request().method() === 'DELETE' && new URL(r.url()).pathname === `/journal/${id}`,
@@ -508,7 +508,7 @@ for (const width of [390, 1280]) {
     const notice = page.getByTestId('journal-delete-error');
     // A refusal must come into view without asking someone to guess where it went.
     await expect(notice).toBeInViewport();
-    await expect(notice).toContainText('cannot identify the Corpus');
+    await expect(notice).toContainText('cannot identify the storage');
     await expect(notice).toContainText('removal cannot be confirmed');
     await expect(page.getByTestId('journal-unreachable-reconnect')).toHaveCount(0);
     await expect(page.getByTestId(`journal-shelf-card-${id}`)).toBeVisible();
@@ -580,9 +580,9 @@ for (const width of [390, 1280]) {
       await tier(page).click();
       const hint = page.getByTestId('journal-save-hint');
       if (detail === 'vault_withdrawal_unrecorded_vault') {
-        await expect(hint).toContainText('cannot identify the Corpus');
-        await expect(hint).not.toContainText('reconnect that Corpus');
-      } else await expect(hint).toContainText('reconnect that Corpus in Settings');
+        await expect(hint).toContainText('cannot identify the storage');
+        await expect(hint).not.toContainText('reconnect it in Settings');
+      } else await expect(hint).toContainText('reconnect it in Settings');
       await expect(page.getByTestId('journal-body-input')).toBeEditable();
       await expect(tier(page)).toHaveAttribute('aria-checked', 'true');
       await enlargeText(page);
