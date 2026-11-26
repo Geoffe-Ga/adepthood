@@ -846,7 +846,7 @@ const ManagedActivationOffer = ({
     </Text>
     <Text style={settingsFormStyles.body}>
       Ask Adepthood to set up an optional Corpus for you, kept on Fly's servers. Fly, the people who
-      run Adepthood and the people who make the software behind it can read what is stored there;
+      run Adepthood, and the people at Creek (the software behind it) can read what is stored there;
       anything you mark Intimate never goes there. Your journal stays open the whole time it is
       being set up.
     </Text>

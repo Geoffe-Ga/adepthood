@@ -234,7 +234,8 @@ reviewer's pass over those screenshots, screen by screen.
 The app has its own names for things, and a person using it meets only those.
 "Creek" and "Creek Vault" are internal names for the software behind a
 person's body of writing; nobody using the app was told them, so no screen,
-error message, placeholder or accessibility label says them.
+error message, placeholder or accessibility label says them, apart from the
+three custody disclosures below.
 
 | Internal                                                              | In the app                       |
 | --------------------------------------------------------------------- | -------------------------------- |
@@ -256,19 +257,26 @@ error message, placeholder or accessibility label says them.
   out: "What Creek has done" is "What has been done with your Corpus", and
   "Creek doesn't fill this one on its own" is "This one doesn't fill on its
   own".
-- Where a privacy disclosure named Creek as a party who can read something,
-  the party is still named, in plain words: "the people who make the software
-  behind it". The disclosure keeps its three parties apart: "a hosting company
-  called Fly" holds the keys, "the people who run Adepthood" operate the app,
-  and "the people who make the software behind it" wrote what a Corpus runs
-  on. "Hosting" is Fly's word alone.
+- **The one exception: custody disclosures name Creek** (#3828, owner decision
+  2026-11-26). A sentence that says who can read a managed Corpus names every
+  party rather than describing one of them, so three sentences say "Creek",
+  each with a short gloss where it is said: "Creek (the software behind it)".
+  They are the custody notice and the readiness line on the activation screen,
+  and the offer under "Where your writing lives" in Settings. The disclosure
+  keeps its three parties apart: "a hosting company called Fly" holds the
+  keys, "the people who run Adepthood" operate the app, and Creek is the
+  software a Corpus runs on. "Hosting" is Fly's word alone. No other string
+  says "Creek".
 - The two kinds are "a managed Corpus" (Adepthood sets it up) and "a Corpus
   you run yourself".
 
 `src/__tests__/wiring/userFacingNaming.test.ts` holds the first three rows
 against every string and JSX text under `src`. Its `NAMING_RULES` table takes
 a forbidden word, the directories it is forbidden in, and an allowlist with a
-reason per entry. Each word is one rule over all of `src`. "vault" survives in
+reason per entry. Each word is one rule over all of `src`. "Creek" survives in
+the three custody sentences above, each allowlisted with the reason "custody
+disclosure names every party (owner decision 2026-11-26)", and a test pins the
+list so a fourth entry fails. "vault" survives in
 two strings, both allowlisted there with their reasons: the name of the export
 file a person downloads (`adepthood-vault-<date>.json`, which the server and
 `docs/your-data.md` spell the same way) and the anchor of a docs link that is

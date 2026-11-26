@@ -1032,7 +1032,7 @@ describe('VaultSettingsScreen — the gain leads the promise deck', () => {
 
     expect(
       within(view.getByTestId('managed-vault-offer')).getByText(
-        /Fly, the people who run Adepthood and the people who make the software behind it can read what is stored there; anything you mark Intimate never goes there\./u,
+        /Fly, the people who run Adepthood, and the people at Creek \(the software behind it\) can read what is stored there; anything you mark Intimate never goes there\./u,
       ),
     ).toBeTruthy();
   });
