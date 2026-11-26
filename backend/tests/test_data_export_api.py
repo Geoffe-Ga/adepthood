@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from collections.abc import Iterator
 from datetime import UTC, datetime, timedelta
 from http import HTTPStatus
@@ -27,10 +28,12 @@ from cryptography.fernet import Fernet
 from httpx import AsyncClient
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlmodel import SQLModel
 
 from domain.data_export import EXPORT_PAGE_SIZE, MANIFEST, Included, Omitted
 from main import app
 from models.journal_entry import JournalEntry
+from routers.data_export import _VAULT_FILENAME
 from services import journal_encryption as je
 from services.data_export import ExportSubject, stream_json_export
 from tests.helpers.feedback_triage import make_account, seed_report
@@ -614,3 +617,103 @@ async def test_the_writing_timer_habit_link_is_exported_as_the_habit_id(
     assert habit_id in {row["id"] for row in _records(document, "habits")}
     assert all("has_seen_welcome" not in row for row in rows)
     assert all("energy_scaffolding_archived" not in row for row in rows)
+
+
+# --------------------------------------------------------------------------
+# The reasons under ``not_included`` are copy the account holder reads (#3829)
+# --------------------------------------------------------------------------
+
+# "vault" as a word of prose, or the internal product name. What stays is what
+# is not prose: the export route ``/users/me/export/vault`` and the collection
+# key ``vault_agents``, each fenced by the slash or underscore beside it.
+_INTERNAL_NAME_IN_PROSE = re.compile(r"Creek|(?<![\w/])[Vv]aults?(?![\w/])")
+
+# Every reason that named the vault or Creek before it was reworded. The key
+# each is filed under is a table name, and none of them moved.
+_REWORDED_REASON_KEYS = (
+    "journalwithdrawalnote",
+    "journalwithdrawalobligation",
+    "oauth_authorization_code",
+    "oauth_client",
+    "oauth_refresh_token",
+    "uservaultconfig",
+    "vaultactivation",
+    "vaultbulkimportrun",
+    "vaultclassificationkey",
+    "vaultpipelinefollowup",
+    "vaultpipelinerun",
+    "voicedraftretraction",
+)
+
+# Collection names and field names that spell "vault". They are identifiers a
+# reader's own tooling may key on, so the rewording left every one alone.
+_VAULT_NAMED_FIELDS = {
+    "vault_agents": (),
+    "journal_entries": ("vault_destination",),
+    "upload_receipts": ("vault_ref", "vault_status"),
+}
+
+
+@pytest.mark.asyncio
+async def test_the_archive_says_why_it_leaves_things_out_in_the_apps_own_words(
+    async_client: AsyncClient,
+) -> None:
+    """A downloaded archive's ``not_included`` never says "vault" or "Creek" as prose.
+
+    The reasons are written into the file the account holder opens, so they are
+    held to the app's names: the writing is the Corpus, and the place is where
+    it is kept.
+    """
+    headers, _ = await _signup(async_client, "reasons")
+
+    _, document = await _export(async_client, headers)
+
+    reasons: dict[str, str] = document["not_included"]
+    offenders = {
+        name: reason for name, reason in reasons.items() if _INTERNAL_NAME_IN_PROSE.search(reason)
+    }
+    assert offenders == {}
+    assert reasons["uservaultconfig"].startswith(
+        "What the account connected to keep its Corpus, and the key that opens it."
+    )
+    assert "GET /users/me/export/vault" in reasons["uservaultconfig"]
+    assert "the vault_agents collection" in reasons["oauth_refresh_token"]
+
+
+def test_the_naming_guard_on_reasons_flags_prose_and_spares_identifiers() -> None:
+    """The guard fails on the words it retired and passes the route and the key."""
+    assert _INTERNAL_NAME_IN_PROSE.search("The Creek Vault the account connected")
+    assert _INTERNAL_NAME_IN_PROSE.search("for a managed vault that is")
+    assert _INTERNAL_NAME_IN_PROSE.search("whether that vault confirmed it.")
+    assert not _INTERNAL_NAME_IN_PROSE.search("by GET /users/me/export/vault, so")
+    assert not _INTERNAL_NAME_IN_PROSE.search("the vault_agents collection already carries")
+
+
+@pytest.mark.asyncio
+async def test_rewording_the_reasons_moved_no_key_collection_field_or_file_name(
+    async_client: AsyncClient,
+) -> None:
+    """Only sentences changed: the archive's keys and the downloads' names did not."""
+    headers, _ = await _signup(async_client, "shape")
+
+    _, document = await _export(async_client, headers)
+    vault_download = await async_client.get(f"{_EXPORT_PATH}/vault", headers=headers)
+
+    assert list(document) == ["format", "format_version", "exported_at", "records", "not_included"]
+    assert set(_REWORDED_REASON_KEYS) <= set(document["not_included"])
+    assert set(document["not_included"]) == {
+        name for name, rule in MANIFEST.items() if isinstance(rule, Omitted)
+    }
+    for collection, fields in _VAULT_NAMED_FIELDS.items():
+        assert collection in document["records"]
+        table, rule = next(
+            (table, rule)
+            for table, rule in MANIFEST.items()
+            if isinstance(rule, Included) and rule.key == collection
+        )
+        exported = set(SQLModel.metadata.tables[table].columns.keys()) - rule.dropped()
+        assert set(fields) <= exported
+    assert _VAULT_FILENAME == ("adepthood-vault", "json")
+    # No vault is connected, so the vault file is refused, by the same route.
+    assert vault_download.status_code == HTTPStatus.NOT_FOUND
+    assert vault_download.json()["detail"] == "vault_not_connected"

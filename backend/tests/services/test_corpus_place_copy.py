@@ -26,6 +26,8 @@ from services import account_deletion, oauth_consent_copy, vault_agent_activity_
 
 # A word straight before "Corpus" that counts it, points at it or connects it
 # makes it a place. "a Corpus entry" is an entry in the writing, so it stays.
+# The same pattern is written out in the frontend guard named above (its
+# "Corpus as a place" rule). Change the two together.
 _CORPUS_AS_A_PLACE = re.compile(
     r"\b(?:an?|another|this|that|the|no|new|fresh|previous|managed|connected|isolated|"
     r"(?:re|dis)?connect|create|replace) Corpus\b(?! entry)",

@@ -130,6 +130,9 @@ export const NAMING_RULES: readonly NamingRule[] = [
     // "a Corpus you run", "this Corpus", "No Corpus connected", "a managed
     // Corpus", "Reconnect Corpus". The place is "where your Corpus is kept",
     // or plain "storage" where it needs a noun.
+    //
+    // The server's sentences are held to the same pattern, written out again in
+    // backend/tests/services/test_corpus_place_copy.py. Change the two together.
     name: 'Corpus as a place',
     pattern:
       /\b(?:an?|another|this|that|the|no|new|fresh|previous|managed|connected|isolated|(?:re|dis)?connect|create|replace) Corpus\b/iu,
