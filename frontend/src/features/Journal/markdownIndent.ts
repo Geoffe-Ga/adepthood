@@ -129,7 +129,12 @@ interface ListMove {
   change: SourceChange;
 }
 
-/** The continuation lines of the item at ``index``: the lines right after it that it owns. */
+/**
+ * The continuation lines of the item at ``index``: the lines right after it that it owns.
+ *
+ * Ownership is matched by reference, not by value: ``classifyLines`` hands each
+ * continuation line the very object of its item, so ``lines`` must come from one call.
+ */
 function continuationsOf(
   lines: readonly JournalMarkdownLine[],
   index: number,
