@@ -39,9 +39,10 @@ test('Return numbers and renumbers a list, continues checkboxes and leaves an em
   await page.getByTestId('journal-title-input').fill('Numbered list');
   const field = page.getByTestId('journal-body-input');
 
-  // The Numbered list button starts the list; Return keeps it going.
+  // Two presses of the List button (bullet, then number) start the list; Return keeps it going.
   await field.click();
-  await page.getByRole('button', { name: 'Numbered list', exact: true }).click();
+  await page.getByTestId('journal-format-list').click();
+  await page.getByTestId('journal-format-list').click();
   await expect(field).toHaveValue('1. ');
   await page.keyboard.type('walked');
   await page.keyboard.press('Enter');

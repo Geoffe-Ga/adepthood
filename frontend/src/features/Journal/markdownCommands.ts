@@ -11,16 +11,27 @@
  * ``edit`` and ``consumed`` both claim the key; only ``pass`` lets it through.
  */
 import type { InlineStyle } from './journalMarkdown';
-import { blockStyleState, toggleBlockStyle, type BlockStyle } from './markdownBlockToggle';
+import {
+  blockStyleState,
+  cycleListStyle,
+  listKindAt,
+  toggleBlockStyle,
+  type BlockStyle,
+  type ListKind,
+} from './markdownBlockToggle';
 import type { MarkdownEdit, MarkdownSelection } from './markdownEditing';
 import { listLevelAt, shiftListLines, type ShiftDirection } from './markdownIndent';
 import { inlineStyleActive, toggleInlineStyle } from './markdownInlineToggle';
 
+/** The toolbar's List control: one step along bullet, number, checkbox, prose. */
+export type ListCycleCommand = 'list';
+
 /**
  * What an editor action does: style the selection, turn its lines into a list,
- * checklist, quote or heading, or move its list items a level.
+ * checklist, quote or heading, step them along the list cycle, or move its
+ * list items a level.
  */
-export type MarkdownCommand = InlineStyle | BlockStyle | ShiftDirection;
+export type MarkdownCommand = InlineStyle | BlockStyle | ListCycleCommand | ShiftDirection;
 
 const BLOCK_STYLES: ReadonlySet<MarkdownCommand> = new Set<BlockStyle>([
   'bullet',
@@ -75,13 +86,25 @@ const SHORTCUT_CODES: Readonly<Record<string, InlineStyle>> = Object.freeze({
 });
 
 /**
- * The one Shift chord: the primary modifier, Shift and the 9 key make a
- * checklist. Shift changes what a digit key reports (``(`` on a US layout,
- * ``)`` on a German one), so the physical key decides whenever it is known.
+ * The Shift chords: the primary modifier, Shift and a digit key name a list
+ * kind directly -- 7 a numbered list, 8 a bulleted list, 9 a checklist. Shift
+ * changes what a digit key reports (9 is ``(`` on a US layout, ``)`` on a
+ * German one), so the physical key decides whenever it is known.
  */
-const CHECKLIST_CODE = 'Digit9';
-/** What Shift+9 reports where no physical key is: the digit, or the US layout's ``(``. */
-const CHECKLIST_KEYS: ReadonlySet<string> = new Set(['9', '(']);
+const LIST_CODES: Readonly<Record<string, ListKind>> = Object.freeze({
+  Digit7: 'ordered',
+  Digit8: 'bullet',
+  Digit9: 'task',
+});
+/** What those chords report where no physical key is: the digit, or the US layout's symbol. */
+const LIST_KEYS: Readonly<Record<string, ListKind>> = Object.freeze({
+  '7': 'ordered',
+  '&': 'ordered',
+  '8': 'bullet',
+  '*': 'bullet',
+  '9': 'task',
+  '(': 'task',
+});
 
 /** A Latin letter: a layout that reports one means it, so ``code`` is not consulted. */
 const LATIN_LETTER = /^[a-z]$/iu;
@@ -101,6 +124,8 @@ export interface MarkdownCommandState {
   task: boolean;
   quote: boolean;
   heading: boolean;
+  /** The list kind the List control steps from: the first touched line's, or null off a list. */
+  list: ListKind | null;
   /** The caret's list level (0 = flush), or null off a list line. */
   listLevel: number | null;
 }
@@ -111,10 +136,10 @@ function isComposing(event: MarkdownKeyEvent): boolean {
   return event.isComposing === true || event.keyCode === IME_COMPOSITION_KEYCODE;
 }
 
-/** The command a Shift chord names: only the checklist's, so Shift+B / I / U stay unclaimed. */
+/** The command a Shift chord names: only a list kind's, so Shift+B / I / U stay unclaimed. */
 function shiftShortcutCommand(event: MarkdownKeyEvent): MarkdownCommand | null {
-  const named = event.code == null ? CHECKLIST_KEYS.has(event.key) : event.code === CHECKLIST_CODE;
-  return named ? 'task' : null;
+  const named = event.code == null ? LIST_KEYS[event.key] : LIST_CODES[event.code];
+  return named ?? null;
 }
 
 /** The formatting shortcut a key names, or null for any other key. */
@@ -163,6 +188,10 @@ export function applyMarkdownCommand(
     const shifted = shiftListLines(body, selection, command);
     return shifted == null ? { kind: 'pass' } : { kind: 'edit', edit: shifted };
   }
+  if (command === 'list') {
+    const edit = cycleListStyle(body, selection);
+    return edit == null ? { kind: 'consumed' } : { kind: 'edit', edit };
+  }
   if (isBlockStyle(command)) {
     const edit = toggleBlockStyle(body, selection, command);
     return edit == null ? { kind: 'consumed' } : { kind: 'edit', edit };
@@ -183,6 +212,7 @@ export function markdownCommandState(
     italic: inlineStyleActive(body, selection, 'italic'),
     underline: inlineStyleActive(body, selection, 'underline'),
     ...blockStyleState(body, selection),
+    list: listKindAt(body, selection),
     listLevel: listLevelAt(body, selection.start),
   };
 }

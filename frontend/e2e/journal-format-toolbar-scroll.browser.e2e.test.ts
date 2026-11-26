@@ -4,8 +4,10 @@ import { backendUrl, signUp, tokenFor } from './journalHabitsBrowserSupport';
 
 /**
  * The journal's formatting toolbar: every action on show -- inline styles,
- * line styles (heading, bulleted and numbered lists, checklist, quote) and list
- * nesting -- on one line that never wraps, scrolling sideways when it outgrows its width. On web a mouse
+ * line styles (heading, the one List control, quote) and list nesting -- on
+ * one line that never wraps, scrolling sideways when it outgrows its width. At
+ * phone width every style, List included, is reachable without a swipe; only
+ * Indent and Outdent may sit behind one. On web a mouse
  * click-and-drag pans the strip, and the release that ends a drag never
  * presses the button it lands on. (A finger swipe is the browser's own
  * overflow scroll, which this does not re-test.)
@@ -16,13 +18,17 @@ const ACTIONS = [
   'italic',
   'underline',
   'heading',
-  'bullet',
-  'ordered',
-  'task',
+  'list',
   'quote',
   'indent',
   'outdent',
 ] as const;
+
+/** The styles a phone must reach without swiping the strip. */
+const ALWAYS_IN_REACH = ['bold', 'italic', 'underline', 'heading', 'list', 'quote'] as const;
+
+/** The smallest target a finger can be asked to hit. */
+const MIN_TARGET_PX = 44;
 
 /** Narrower than the 44px actions, so the strip must overflow. */
 const NARROW_STRIP_PX = 120;
@@ -59,6 +65,25 @@ test('shows every formatting action on one line, list actions disabled on prose'
   await expect(page.getByRole('button', { name: 'Indent list item' })).toBeDisabled();
   await expect(page.getByRole('button', { name: 'Outdent list item' })).toBeDisabled();
   expect(new Set(await actionTops(page)).size).toBe(1);
+});
+
+test('at phone width every style, List included, is in reach without scrolling the strip', async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await openFreshPage(page, 'journal-toolbar-reach');
+  const strip = page.getByTestId('journal-format-toolbar-scroll');
+  expect(await strip.evaluate((node) => (node as HTMLElement).scrollLeft)).toBe(0);
+  const frame = await strip.boundingBox();
+  if (frame == null) throw new Error('toolbar strip has no box');
+  for (const action of ALWAYS_IN_REACH) {
+    const box = await page.getByTestId(`journal-format-${action}`).boundingBox();
+    if (box == null) throw new Error(`journal-format-${action} has no box`);
+    expect(box.x, action).toBeGreaterThanOrEqual(frame.x);
+    expect(box.x + box.width, action).toBeLessThanOrEqual(frame.x + frame.width);
+    expect(box.width, action).toBeGreaterThanOrEqual(MIN_TARGET_PX);
+    expect(box.height, action).toBeGreaterThanOrEqual(MIN_TARGET_PX);
+  }
 });
 
 test('an overflowing toolbar stays one line and a mouse drag scrolls it without pressing', async ({
@@ -150,10 +175,13 @@ test('line-style buttons make a heading, lists and a quote that save and render'
   await expect(field).toHaveValue('Plan\nmilk\neggs\nfirst\nsecond\n> said');
   await expect(page.getByTestId('journal-format-quote')).toHaveAttribute('aria-pressed', 'true');
 
+  // One press of List bullets the range; a second numbers it 1, 2.
   await selectLines(field, 'first', 'second');
-  await press('Numbered list');
+  await page.getByTestId('journal-format-list').click();
+  await expect(field).toHaveValue('Plan\nmilk\neggs\n- first\n- second\n> said');
+  await page.getByTestId('journal-format-list').click();
   await selectLines(field, 'milk', 'eggs');
-  await press('Bulleted list');
+  await page.getByTestId('journal-format-list').click();
   await selectLines(field, 'Plan');
   await press('Heading');
   const message = '# Plan\n- milk\n- eggs\n1. first\n2. second\n> said';
