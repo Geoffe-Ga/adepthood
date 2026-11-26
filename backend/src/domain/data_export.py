@@ -353,14 +353,15 @@ MANIFEST: Mapping[str, ExportRule] = {
         drop_columns=("vault_ref", "vault_tags", "idem_key"),
     ),
     "journalwithdrawalnote": Omitted(
-        "A detached note left after an account is deleted: an opaque vault "
-        "fingerprint and an entry id with no account reference. It belongs to "
-        "no live account, so no export can reach it.",
+        "A detached note left after an account is deleted: an opaque "
+        "fingerprint of where a copy was kept and an entry id with no account "
+        "reference. It belongs to no live account, so no export can reach it.",
     ),
     "journalwithdrawalobligation": Omitted(
-        "Content-free bookkeeping of which deleted pages still owe their vault "
-        "copy a withdrawal, and whether that vault confirmed it. The pages "
-        "themselves are deleted; this is housekeeping, as voicedraftretraction is.",
+        "Content-free bookkeeping of which deleted pages still owe a withdrawal "
+        "of the copy kept outside Adepthood, and whether the storage holding it "
+        "confirmed. The pages themselves are deleted; this is housekeeping, as "
+        "voicedraftretraction is.",
     ),
     "licensebinding": Omitted(
         "The processor's sale identifier for the licence this account "
@@ -401,17 +402,18 @@ MANIFEST: Mapping[str, ExportRule] = {
         "Unspent one-time codes waiting for an agent to exchange them, gone "
         "within a minute. A code's digest is a credential's shadow, not "
         "anything the account wrote or chose beyond the approval itself, "
-        "which the vault agents collection already carries.",
+        "which the vault_agents collection already carries.",
     ),
     "oauth_client": Omitted(
-        "The anonymous registry of vault agents: what each agent said about "
-        "itself when it registered. No row names an account.",
+        "The anonymous registry of agents that asked to work with somebody's Corpus: "
+        "what each agent said about itself when it registered. No row names an "
+        "account.",
     ),
     "oauth_refresh_token": Omitted(
         "Digests of the refresh tokens the account's agents hold, and when each "
         "was rotated or revoked. A credential's shadow, not a decision: the "
         "decisions \u2014 which agents, which grants, when each was last used \u2014 are "
-        "in the vault agents collection (#3533).",
+        "in the vault_agents collection (#3533).",
     ),
     "passwordresettoken": Omitted(
         "Live recovery credentials. Anything that can be redeemed for a "
@@ -558,50 +560,51 @@ MANIFEST: Mapping[str, ExportRule] = {
         drop_columns=("has_seen_welcome", "energy_scaffolding_archived"),
     ),
     "uservaultconfig": Omitted(
-        "The Creek Vault the account connected, and the key that opens it. "
-        "The key is a live secret for a system this export has no business "
-        "copying into a plaintext file. What the vault holds of the account's "
+        "What the account connected to keep its Corpus, and the key that opens "
+        "it. The key is a live secret for a system this export has no business "
+        "copying into a plaintext file. What the account's Corpus holds "
         "— imported documents, attachments and their fragments, every tier "
         "— is exported separately, by GET /users/me/export/vault, so this "
-        "archive still downloads when the vault is asleep.",
+        "archive still downloads when that storage is asleep.",
     ),
     "vaultactivation": Omitted(
-        "Private-vault provisioning state and opaque control-plane handles. "
+        "Provisioning state for managed storage, and opaque control-plane handles. "
         "They describe application housekeeping, not anything the account wrote.",
     ),
     "vaultclassificationkey": Omitted(
-        "The account's own AI provider key, kept encrypted only so its vault "
+        "The account's own AI provider key, kept encrypted only so its Corpus "
         "can sort new writing in the background (R1-1). It is a live secret "
         "for the account's own provider account, which this export has no "
         "business copying into a plaintext file; the account already holds "
         "the key on its own device.",
     ),
     "vaultbulkimportrun": Omitted(
-        "Scheduling state for one bulk upload's vault pass: whether the "
-        "background run is going, how it ended and why it stopped. It describes "
-        "this app's housekeeping rather than anything the account wrote; the "
-        "documents and the ontology the pass produced live in the vault, whose "
-        "contents GET /users/me/export/vault exports.",
+        "Scheduling state for the pass over the account's Corpus that follows "
+        "one bulk upload: whether the background run is going, how it ended and "
+        "why it stopped. It describes this app's housekeeping rather than "
+        "anything the account wrote; the documents and the ontology the pass "
+        "produced are in the account's Corpus, whose contents "
+        "GET /users/me/export/vault exports.",
     ),
     "vaultpipelinefollowup": Omitted(
-        "Content-free scheduling state saying a newer vault write needs one "
+        "Content-free scheduling state saying newer writing in the Corpus needs one "
         "post-snapshot classification pass. It is application housekeeping, "
         "not part of the account's writing.",
     ),
     "vaultpipelinerun": Omitted(
-        "Scheduling state: when adepthood last asked the account's vault to "
+        "Scheduling state: when adepthood last asked the account's Corpus to "
         "classify and link itself. It describes this app's housekeeping "
         "rather than anything the account wrote, and the ontology the passes "
-        "produced lives in the vault, whose contents GET /users/me/export/vault "
-        "exports.",
+        "produced is in the account's Corpus, whose contents "
+        "GET /users/me/export/vault exports.",
     ),
     "vaultteardownreceipt": Omitted(
         "Content-free post-deletion reconciliation state. It has no account "
         "reference and belongs to operations, not to an export.",
     ),
     "voicedraftretraction": Omitted(
-        "Content-free bookkeeping of which essays were mirrored to the "
-        "account's vault and whether their withdrawal was confirmed. The essays "
+        "Content-free bookkeeping of which essays were mirrored to where the "
+        "account's Corpus is kept and whether their withdrawal was confirmed. The essays "
         "themselves are exported with their notes; this is housekeeping.",
     ),
     "walletaudit": Omitted(
