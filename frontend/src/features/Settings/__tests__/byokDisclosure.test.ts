@@ -59,7 +59,7 @@ describe('the BYOK disclosure follows the key across both service boundaries', (
     ].join(' ');
 
     expect(copy).not.toMatch(/never upload/i);
-    expect(BYOK_DETAIL_DISCLOSURE).toMatch(/without a managed corpus, adepthood does not persist/i);
+    expect(BYOK_DETAIL_DISCLOSURE).toMatch(/without managed storage, adepthood does not persist/i);
     expect(prose(PRIVACY_POLICY)).toMatch(/never persisted/i);
   });
 
@@ -71,7 +71,7 @@ describe('the BYOK disclosure follows the key across both service boundaries', (
     // The unqualified promise is gone from the screen: it is now false for a
     // managed vault's writer.
     expect(BYOK_DETAIL_DISCLOSURE).not.toMatch(
-      /(?<!managed corpus, )adepthood does not persist it/i,
+      /(?<!managed storage, )adepthood does not persist it/i,
     );
     expect(prose(PRIVACY_POLICY)).toContain('adepthood keeps one encrypted copy of your key');
   });

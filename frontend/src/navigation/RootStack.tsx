@@ -25,6 +25,7 @@ import ProgramStartSettingsScreen from '../features/Settings/ProgramStartSetting
 import SettingsHubScreen from '../features/Settings/SettingsHubScreen';
 import SupportCareScreen from '../features/Settings/SupportCareScreen';
 import TimezoneSettingsScreen from '../features/Settings/TimezoneSettingsScreen';
+import { VAULT_ACTIVATION_TITLE } from '../features/Settings/vaultCopy';
 import { VAULT_DASHBOARD_TITLE } from '../features/Settings/vaultDashboardCopy';
 import VaultDashboardScreen from '../features/Settings/VaultDashboardScreen';
 import VaultSettingsScreen from '../features/Settings/VaultSettingsScreen';
@@ -327,7 +328,7 @@ const RootStack = (): React.JSX.Element => (
     <Stack.Screen
       name="VaultActivation"
       component={PrivateVaultActivationScreen}
-      options={{ title: 'Create managed Corpus' }}
+      options={{ title: VAULT_ACTIVATION_TITLE }}
     />
     <Stack.Screen
       name="SharePreview"

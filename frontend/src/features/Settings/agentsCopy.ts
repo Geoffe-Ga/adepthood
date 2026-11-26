@@ -52,7 +52,7 @@ export const AGENTS_ADDRESS_NOTE =
 
 /** A managed allocation whose public agent address could not be confirmed (#3545). */
 export const AGENTS_MANAGED_ADDRESS_UNAVAILABLE =
-  'Adepthood can’t show an agent sign-in address for this Corpus yet.';
+  'Adepthood can’t show an agent sign-in address for where your Corpus is kept yet.';
 
 /** The copy affordance beside the address. */
 export const AGENTS_ADDRESS_COPY = 'Copy address';
@@ -95,7 +95,7 @@ export const AGENTS_STOP = 'Stop';
 
 /** The question asked in the row, in place, before anything is sent. */
 export const AGENTS_STOP_CONFIRM =
-  'Stop this agent? It can no longer reach your Corpus within ten minutes. You can approve it again from the agent whenever you like.';
+  'Stop this agent? It can no longer work with your Corpus within ten minutes. You can approve it again from the agent whenever you like.';
 
 /** The answer that goes ahead. */
 export const AGENTS_STOP_CONFIRM_BUTTON = 'Stop it';
@@ -108,7 +108,7 @@ export const AGENTS_STOPPING = 'Stopping…';
 
 /** Once the server has said yes. */
 export const AGENTS_STOPPED =
-  'Stopped. That agent can no longer reach your Corpus within ten minutes.';
+  'Stopped. That agent can no longer work with your Corpus within ten minutes.';
 
 /** When the stop did not land. The agent is still listed, because it still can. */
 export const AGENTS_STOP_FAILED =

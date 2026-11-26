@@ -171,7 +171,7 @@ describe('receipts', () => {
     ['accepted', '01-Fragments/Notes', 'Landed in Notes'],
     ['accepted', null, 'In your Corpus'],
     ['degraded', null, "Couldn't be confirmed"],
-    ['vault_unavailable', null, "Didn't land — your Corpus wasn't reachable"],
+    ['vault_unavailable', null, "Didn't land — where your Corpus is kept wasn't reachable"],
     ['capability_unsupported', null, "Didn't land — your Corpus can't take files yet"],
     ['something_new', null, "Didn't land"],
   ])('a %s receipt in %s reads "%s"', (status, landedIn, line) => {
@@ -321,7 +321,7 @@ describe('the dashboard speaks of your Corpus', () => {
     );
     expect(VAULT_CREEK_HEADING).toBe('What has been done with your Corpus');
     expect(VAULT_UPDATE_NEEDED).toBe(
-      'Your Corpus needs an update to show this. What it holds, and what has been done with each file, will show here once it has one.',
+      'The software behind your Corpus needs an update to show this. What your Corpus holds, and what has been done with each file, will show here once it has one.',
     );
   });
 

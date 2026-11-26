@@ -111,7 +111,9 @@ describe('FeedbackComposerScreen — the single payload seam', () => {
     await openComposer();
     fireEvent.press(screen.getByTestId(IDS.categoryOption('idea')));
     const preview = within(screen.getByTestId(IDS.preview));
-    expect(preview.getByText(/journal content, passwords, private Corpus addresses/)).toBeTruthy();
+    expect(
+      preview.getByText(/journal content, passwords, the address of where your Corpus is kept/),
+    ).toBeTruthy();
     expect(preview.getByText(/contents of the screen/)).toBeTruthy();
     expect(preview.getByText(/180 days/)).toBeTruthy();
   });

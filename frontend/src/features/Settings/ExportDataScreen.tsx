@@ -32,7 +32,7 @@ const LEAD =
 
 /** What the archive deliberately does not carry, in the app's own words. */
 const NOT_INCLUDED = [
-  'Your password, sign-in links, and the key to any Corpus you connected — a working key does not belong in a file on a laptop.',
+  'Your password, sign-in links, and the key to any storage you connected — a working key does not belong in a file on a laptop.',
   'Notes the app kept about your use of it: sign-in attempts, what each AI request cost, and the running tally of your allowance.',
   'The shared course, which is not yours to take. Practices you contributed are yours, and are included.',
 ];
@@ -51,17 +51,17 @@ const GENERIC_FAILURE =
  */
 const VAULT_FAILURES: Readonly<Record<string, string>> = {
   vault_not_connected:
-    'You have no Corpus connected, so there is nothing more to export. Everything you wrote here is in the two files above.',
+    'Nothing is connected to keep your Corpus, so there is nothing more to export. Everything you wrote here is in the two files above.',
   vault_unavailable:
-    'Your Corpus is asleep or unreachable right now, so its content could not be exported. Nothing was saved. Try again in a minute.',
+    'Where your Corpus is kept is asleep or out of reach right now, so its content could not be exported. Nothing was saved. Try again in a minute.',
   vault_export_needs_update:
-    'Your Corpus needs an update before its content can be exported. Nothing was saved.',
+    'The software behind your Corpus needs an update before its content can be exported. Nothing was saved.',
   vault_export_failed:
-    'Your Corpus could not finish the export. Nothing was saved. Try again later.',
+    'The export from where your Corpus is kept could not finish. Nothing was saved. Try again later.',
 };
 
 const VAULT_INCOMPLETE =
-  'This copy is incomplete: your Corpus stopped answering partway, or held something it could not include. What arrived is saved. Try again for a whole copy.';
+  'This copy is incomplete: where your Corpus is kept stopped answering partway, or held something that could not be included. What arrived is saved. Try again for a whole copy.';
 
 function failureMessage(error: unknown): string {
   if (error instanceof ApiError) return VAULT_FAILURES[error.detail] ?? GENERIC_FAILURE;
@@ -198,7 +198,7 @@ export default function ExportDataScreen(): React.JSX.Element {
       />
       <ExportButton
         label="What my Corpus holds (JSON)"
-        description="If you have a Corpus connected: every document you imported, as its original file, and every fragment made from your writing, Intimate included."
+        description="If something is connected to keep your Corpus: every document you imported, as its original file, and every fragment made from your writing, Intimate included."
         busy={state.running === 'vault'}
         disabled={busy}
         onPress={exportVault}

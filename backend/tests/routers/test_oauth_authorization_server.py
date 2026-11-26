@@ -359,7 +359,7 @@ async def test_an_account_without_a_vault_has_nothing_to_authorize(
     )
     assert response.status_code == HTTPStatus.BAD_REQUEST
     assert "invalid_target" in response.text
-    assert "no Corpus connected yet" in response.text
+    assert "Nothing is connected to keep your Corpus yet" in response.text
     assert await _count(db_session, OAuthAuthorizationCode) == 0
 
 

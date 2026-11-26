@@ -65,7 +65,7 @@ TOOL_LABELS: Final = MappingProxyType(
         "creek.purge.classifications": "Tried to delete from your Corpus",
         "creek.jobs.read": "Checked on a draft in progress",
         "creek.wheel": "Looked at the balance of your writing",
-        "creek.handshake": "Checked that your Corpus was there",
+        "creek.handshake": "Checked that it was connected",
         "creek.journal": "Saved a journal entry",
         "creek.journal.withdraw": "Removed a journal entry",
         "creek.upload": "Added a document",

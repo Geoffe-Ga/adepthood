@@ -300,8 +300,8 @@ UPLOAD_MESSAGES: Mapping[VaultUploadStatus, str] = MappingProxyType(
             "Your document is in your Corpus. It will show up in reflections from here on."
         ),
         VaultUploadStatus.VAULT_UNAVAILABLE: (
-            "Your Corpus didn't answer, so the document wasn't sent. Check that your Corpus "
-            "is running and reachable, then upload it again."
+            "Where your Corpus is kept didn't answer, so the document wasn't sent. Check "
+            "that it is running and reachable, then upload it again."
         ),
         # Reached three ways, and the message has to serve all three without
         # misdirecting any: the vault never offered uploads, it offers a route
@@ -316,10 +316,10 @@ UPLOAD_MESSAGES: Mapping[VaultUploadStatus, str] = MappingProxyType(
         VaultUploadStatus.CAPABILITY_UNSUPPORTED: (
             "This document wasn't sent, and nothing in your Corpus changed — journal "
             "entries still save as usual. If you marked it Intimate, that tier stays on "
-            "this device and never goes to a Corpus; choose a different tier if you want "
-            "it there. Otherwise file uploads aren't working between Adepthood and your "
-            "Corpus yet — update the software behind your Corpus if a newer version is "
-            "out, and keep the file until one of you has caught up."
+            "this device and never goes into your Corpus; choose a different tier if you "
+            "want it there. Otherwise file uploads aren't working between Adepthood and "
+            "where your Corpus is kept yet — update the software behind your Corpus if a "
+            "newer version is out, and keep the file until one of them has caught up."
         ),
         # Answered after the document went over the wire, so it cannot say the
         # vault is unchanged: a vault can keep the file and then have its reply

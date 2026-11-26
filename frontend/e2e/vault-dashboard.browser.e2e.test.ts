@@ -261,7 +261,7 @@ test('a vault that predates the status read says it needs an update', async ({ p
   await page.getByTestId('vault-open-dashboard').click();
 
   await expect(page.getByTestId('vault-dashboard-update-needed')).toContainText(
-    'Your Corpus needs an update to show this.',
+    'The software behind your Corpus needs an update to show this.',
   );
   await expect(page.getByTestId('vault-dashboard-shape')).toHaveCount(0);
   // What was sent is adepthood's own record, so it still shows; the stages do not.

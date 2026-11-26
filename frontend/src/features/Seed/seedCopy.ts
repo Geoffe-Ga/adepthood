@@ -34,7 +34,8 @@ export const SEED_STATUS_LINES: Record<SeedItemStatus, string> = {
     "over as soon as it's free.",
   uploading: 'Going over now…',
   ingested: 'In your Corpus. It will show up in reflections from here on.',
-  vault_unavailable: "Your Corpus didn't answer. Check that it's running, then send this again.",
+  vault_unavailable:
+    "Where your Corpus is kept didn't answer. Check that it's running, then send this again.",
   // One status, three causes: a vault without uploads, a vault whose version
   // this app cannot negotiate with, and a document marked Intimate, which has no
   // spelling on the vault wire at all. Nothing here can tell which, and the
@@ -45,7 +46,7 @@ export const SEED_STATUS_LINES: Record<SeedItemStatus, string> = {
   // never go.
   capability_unsupported:
     'Marked Intimate? That stays on this device — pick a different privacy level if you want ' +
-    "this in your Corpus. Otherwise Adepthood can't send to your Corpus just yet; keep this one " +
+    "this in your Corpus. Otherwise Adepthood can't send to where your Corpus is kept just yet; keep this one " +
     'and try again later.',
   // Answered after the document went over, so it cannot promise the vault is
   // unchanged: the vault may have kept it and lost only its reply (#3052).
@@ -82,7 +83,7 @@ export const SEED_STATUS_LINES: Record<SeedItemStatus, string> = {
   format_unreadable:
     "Adepthood can't open this kind of file on its own, so nothing was stored. It reads " +
     'Markdown and plain text — most apps, including Claude and ChatGPT, can export as ' +
-    'Markdown. A connected Corpus reads richer formats for you.',
+    'Markdown. Storage connected to keep your Corpus reads richer formats for you.',
   not_text:
     "This file is named as text but can't be read as text. Save a plain-text copy from the " +
     'app it came from and send that instead.',
@@ -358,7 +359,7 @@ export const SETTLED_LINE = "What you've sent has settled into your Corpus.";
 
 /** When the vault could not be reached for the pass; what landed stays landed. */
 export const SETTLE_DEFERRED_LINE =
-  'Your Corpus was out of reach just now. What you sent is kept, and will settle on a later pass.';
+  'Where your Corpus is kept was out of reach just now. What you sent is saved, and will settle on a later pass.';
 
 /** What a batch header needs to say where the batch stands. */
 export interface SeedBatchHeader {

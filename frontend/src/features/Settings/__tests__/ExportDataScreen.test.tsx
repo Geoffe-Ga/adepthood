@@ -175,23 +175,24 @@ describe('ExportDataScreen — what your vault holds (#3579)', () => {
   });
 
   test.each([
-    ['vault_unavailable', 503, 'asleep or unreachable'],
-    ['vault_export_needs_update', 409, 'needs an update before its content can be exported'],
-    ['vault_not_connected', 404, 'no Corpus connected'],
-    ['vault_export_failed', 502, 'could not finish the export'],
-  ])(
-    'a Corpus answering %s says so rather than saving an empty file',
-    async (detail, status, says) => {
-      mockSaveDataExport.mockRejectedValue(new ApiError(status, detail));
-      const { getByTestId, queryByTestId } = render(<ExportDataScreen />);
+    ['vault_unavailable', 503, 'Where your Corpus is kept is asleep or out of reach'],
+    [
+      'vault_export_needs_update',
+      409,
+      'The software behind your Corpus needs an update before its content can be exported',
+    ],
+    ['vault_not_connected', 404, 'Nothing is connected to keep your Corpus'],
+    ['vault_export_failed', 502, 'The export from where your Corpus is kept could not finish'],
+  ])('an answer of %s says so rather than saving an empty file', async (detail, status, says) => {
+    mockSaveDataExport.mockRejectedValue(new ApiError(status, detail));
+    const { getByTestId, queryByTestId } = render(<ExportDataScreen />);
 
-      fireEvent.press(getByTestId('export-data-vault'));
+    fireEvent.press(getByTestId('export-data-vault'));
 
-      await waitFor(() => expect(getByTestId('export-data-error')).toBeTruthy());
-      expect(getByTestId('export-data-error').props.children as string).toContain(says);
-      expect(queryByTestId('export-data-receipt')).toBeNull();
-    },
-  );
+    await waitFor(() => expect(getByTestId('export-data-error')).toBeTruthy());
+    expect(getByTestId('export-data-error').props.children as string).toContain(says);
+    expect(queryByTestId('export-data-receipt')).toBeNull();
+  });
 });
 
 describe('ExportDataScreen — navigation owns the title (#2962)', () => {

@@ -35,7 +35,7 @@ const VAULT_EXPORT_PATH = '/v1/export';
 const EXPORT_MINOR = '0.27';
 const NEEDS_UPDATE = 'vault_export_needs_update';
 const NEEDS_UPDATE_LINE =
-  'Your Corpus needs an update before its content can be exported. Nothing was saved.';
+  'The software behind your Corpus needs an update before its content can be exported. Nothing was saved.';
 const HTTP_OK = 200;
 const HTTP_CONFLICT = 409;
 
