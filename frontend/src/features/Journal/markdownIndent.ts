@@ -11,6 +11,9 @@
  * A numbered item that changes level is renumbered for where it lands, and so
  * is the run it left (``markdownOrderedList.ts``).
  *
+ * An item's continuation lines (``classifyLines``) are part of it: they move
+ * with it, and a caret on one moves the item.
+ *
  * No maximum depth is enforced. The lower bound, level 0, always exists.
  */
 import { utf16ToCodePoint } from './codePoints';
@@ -18,6 +21,7 @@ import {
   BULLET_MARKERS,
   JOURNAL_TAB_COLUMNS,
   classifyLine,
+  classifyLines,
   sourceLines,
 } from './journalMarkdownLines';
 import type { JournalMarkdownLine } from './journalMarkdownTypes';
@@ -125,11 +129,60 @@ interface ListMove {
   change: SourceChange;
 }
 
+/** The continuation lines of the item at ``index``: the lines right after it that it owns. */
+function continuationsOf(
+  lines: readonly JournalMarkdownLine[],
+  index: number,
+): JournalMarkdownLine[] {
+  const item = lines[index];
+  const owned: JournalMarkdownLine[] = [];
+  for (let next = index + 1; lines[next]?.owner === item; next += 1) owned.push(lines[next]!);
+  return owned;
+}
+
+/** Whether the selection touches an item on its own line or on one of its continuation lines. */
+function touchesItem(
+  lines: readonly JournalMarkdownLine[],
+  index: number,
+  start: number,
+  end: number,
+): boolean {
+  return [lines[index]!, ...continuationsOf(lines, index)].some((line) =>
+    touches(line, start, end),
+  );
+}
+
+/**
+ * The change that carries a continuation line along with its item.
+ *
+ * A continuation line normally opens with its item's own indent, and then the
+ * item's change is repeated at the same place in it, so the two stay on one
+ * tab stop. One indented some other way is pushed in from its start, and on
+ * an outdent is left where it is: it still clears the item's text column.
+ */
+function followItem(
+  chars: string[],
+  line: JournalMarkdownLine,
+  move: ListMove,
+  direction: ShiftDirection,
+): SourceChange | null {
+  const item = move.line;
+  const itemIndent = chars.slice(item.start, item.indentEnd).join('');
+  const shared = chars.slice(line.start, line.start + (item.indentEnd - item.start)).join('');
+  if (shared === itemIndent) {
+    const offset = line.start - item.start;
+    return { ...move.change, start: move.change.start + offset, end: move.change.end + offset };
+  }
+  return direction === 'indent'
+    ? { start: line.start, end: line.start, insert: move.change.insert }
+    : null;
+}
+
 /**
  * Move the list item(s) under a UTF-16 selection one level in or out.
  *
- * Every list line the selection touches moves; prose and quote lines never do.
- * A numbered item is renumbered for its new level, as is the run it left, in
+ * Every list line the selection touches moves, with its continuation lines;
+ * prose and quote lines never do. A numbered item is renumbered for its new level, as is the run it left, in
  * the same edit. The returned selection covers the same content, shifted by what was inserted
  * or removed before it. Null when no touched line can move -- a selection with
  * no list line, or an outdent with every touched item already at level 0 --
@@ -144,18 +197,21 @@ export function shiftListLines(
   const start = utf16ToCodePoint(body, Math.min(selection.start, selection.end));
   const end = utf16ToCodePoint(body, Math.max(selection.start, selection.end));
   const unit = inferIndentUnit(body);
-  const moves = sourceLines(chars)
-    .map((source, index) => ({ index, line: classifyLine(chars, source) }))
-    .filter(({ line }) => isListLine(line) && touches(line, start, end))
+  const lines = classifyLines(chars);
+  const moves = lines
+    .map((line, index) => ({ index, line }))
+    .filter(({ index, line }) => isListLine(line) && touchesItem(lines, index, start, end))
     .map(({ index, line }) => ({ index, line, change: changeFor(chars, line, direction, unit) }))
     .filter((move): move is ListMove => move.change != null);
   if (moves.length === 0) return null;
 
-  const shifted = applySourceChanges(
-    chars,
-    moves.map((move) => move.change),
-    { start, end },
-  );
+  const changes = moves.flatMap((move) => [
+    move.change,
+    ...continuationsOf(lines, move.index)
+      .map((line) => followItem(chars, line, move, direction))
+      .filter((change): change is SourceChange => change != null),
+  ]);
+  const shifted = applySourceChanges(chars, changes, { start, end });
   return renumberOrderedLists(
     shifted,
     moves.map(({ index, line }) => ({ line: index, movedFrom: line.indentWidth })),
@@ -164,14 +220,16 @@ export function shiftListLines(
 
 /**
  * The nesting level of the list item at a UTF-16 caret -- 0 for a flush item
- * -- or null when the caret is not on a list line.
+ * -- or null when the caret is not on a list line. A caret on a continuation
+ * line is in the item that line belongs to.
  */
 export function listLevelAt(body: string, caret: number): number | null {
   const chars = Array.from(body);
   const position = utf16ToCodePoint(body, caret);
-  const line = sourceLines(chars)
-    .map((source) => classifyLine(chars, source))
-    .find((candidate) => candidate.start <= position && position <= candidate.end);
-  if (line == null || !isListLine(line)) return null;
-  return Math.ceil(line.indentWidth / unitColumns(inferIndentUnit(body)));
+  const line = classifyLines(chars).find(
+    (candidate) => candidate.start <= position && position <= candidate.end,
+  );
+  const item = line?.owner ?? line;
+  if (item == null || !isListLine(item)) return null;
+  return Math.ceil(item.indentWidth / unitColumns(inferIndentUnit(body)));
 }

@@ -31,6 +31,7 @@ describe('classifyLine', () => {
       headingLevel: null,
       ordinal: null,
       taskChecked: null,
+      owner: null,
     });
   });
 

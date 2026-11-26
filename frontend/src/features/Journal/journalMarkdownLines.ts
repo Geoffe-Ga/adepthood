@@ -5,6 +5,10 @@
  * and the editor's Return handling -- so the two can never drift about what a
  * marker is. Where they legitimately differ they differ on a named field
  * (``markerFollowedBy``), not on a private regex.
+ *
+ * ``classifyLine`` reads a line on its own; ``classifyLines`` reads a whole
+ * body and adds the one kind that depends on the line above, a list item's
+ * continuation line (the rule is stated once, on ``continuedItem``).
  */
 import type {
   CharacterFormat,
@@ -243,7 +247,77 @@ export function classifyLine(chars: string[], line: SourceLine): JournalMarkdown
     headingLevel: block.headingLevel,
     ordinal: block.ordinal,
     taskChecked: block.taskChecked,
+    owner: null,
   };
+}
+
+/** The kinds drawn as list items: the lines a continuation line can belong to. */
+const ITEM_KINDS: ReadonlySet<LineKind> = new Set<LineKind>(['bullet', 'task', 'ordered']);
+
+/** Whether the renderer draws this line as a list item. */
+export function isListItem(line: JournalMarkdownLine): boolean {
+  return ITEM_KINDS.has(line.kind);
+}
+
+/** The column an item's text starts at: its indent plus its marker's width. */
+function textColumn(item: JournalMarkdownLine): number {
+  return item.indentWidth + (item.contentStart - item.indentEnd);
+}
+
+/**
+ * Whether a line opens with a marker either consumer acts on: any block the
+ * renderer draws, or a marker the editor continues on Return (``-\tfoo``). A
+ * marker glued to its text (``-5 degrees``, ``>so``) is prose.
+ */
+function carriesMarker(line: JournalMarkdownLine): boolean {
+  if (line.kind !== 'plain') return true;
+  return line.marker != null && line.markerFollowedBy !== 'none';
+}
+
+/**
+ * THE CONTINUATION RULE -- the one place it is decided.
+ *
+ * A line continues a list item when all of these hold:
+ *
+ * 1. it comes directly after the item, or after another continuation line of
+ *    that item (so a blank line, or any other line, ends the item);
+ * 2. it carries no marker of its own -- an indented ``- x`` or ``1. x`` is a
+ *    nested item, and a heading, rule or quote is itself;
+ * 3. its indent reaches at least the item's text column (the item's indent
+ *    plus its marker's width: ``- `` is 2, ``10. `` is 4, ``- [ ] `` is 6). A
+ *    line indented less is ordinary prose.
+ *
+ * A line holding nothing but that indent qualifies: it is the line
+ * Shift+Return has just opened, and it must already answer to Return and
+ * Backspace as part of the item. An empty line never reaches the column.
+ */
+function continuedItem(
+  above: JournalMarkdownLine | undefined,
+  line: JournalMarkdownLine,
+): JournalMarkdownLine | null {
+  if (above == null || carriesMarker(line)) return null;
+  const item = above.owner ?? (isListItem(above) ? above : null);
+  if (item == null) return null;
+  return line.indentWidth >= textColumn(item) ? item : null;
+}
+
+/**
+ * Classify every line of a body, each read after the one above it.
+ *
+ * ``classifyLine`` reads one line on its own, which settles every kind but
+ * one; this adds the ``continuation`` lines, whose content starts after their
+ * indent and whose ``owner`` is the item they belong to.
+ */
+export function classifyLines(chars: string[]): JournalMarkdownLine[] {
+  const lines: JournalMarkdownLine[] = [];
+  for (const source of sourceLines(chars)) {
+    const line = classifyLine(chars, source);
+    const owner = continuedItem(lines.at(-1), line);
+    lines.push(
+      owner == null ? line : { ...line, kind: 'continuation', contentStart: line.indentEnd, owner },
+    );
+  }
+  return lines;
 }
 
 /** Kinds that draw one element per line, so two in a row never merge. */
@@ -252,20 +326,28 @@ const SINGLE_LINE_KINDS: ReadonlySet<LineKind> = new Set<LineKind>(['heading', '
 /** Kinds that nest as list items, and so report their indent widths. */
 const LIST_KINDS: ReadonlySet<LineKind> = new Set<LineKind>(['bullet', 'task']);
 
+/** Whether a line joins the block before it rather than opening one. */
+function joinsBlock(current: JournalMarkdownBlock | undefined, line: JournalMarkdownLine): boolean {
+  if (current == null) return false;
+  // A continuation line directly follows its item, whose block is the current one.
+  if (line.kind === 'continuation') return true;
+  return current.kind === line.kind && !SINGLE_LINE_KINDS.has(line.kind);
+}
+
 /**
  * Gather adjacent lines of the same kind so a multi-line quotation (or list)
- * is one block. A heading or a rule is always a block of its own.
+ * is one block. A heading or a rule is always a block of its own, and a
+ * continuation line stays in the list block of the item it belongs to.
  */
 export function buildBlocks(chars: string[]): JournalMarkdownBlock[] {
   const blocks: JournalMarkdownBlock[] = [];
-  for (const source of sourceLines(chars)) {
-    const line = classifyLine(chars, source);
+  for (const line of classifyLines(chars)) {
     const current = blocks.at(-1);
-    if (current != null && current.kind === line.kind && !SINGLE_LINE_KINDS.has(line.kind)) {
+    if (current != null && joinsBlock(current, line)) {
       current.lines.push(line);
     } else {
       blocks.push({
-        start: source.start,
+        start: line.start,
         quote: line.kind === 'quote',
         kind: line.kind,
         lines: [line],
@@ -281,7 +363,9 @@ export function buildBlocks(chars: string[]): JournalMarkdownBlock[] {
  * The indent and marker of every structured line -- a quote's ``> ``, a
  * bullet's ``- ``, a heading's ``## ``, an ordered ``1. ``, a task's ``- [x] ``
  * and every character of a rule -- keep their source positions so an anchor
- * that crosses them still resolves; only their glyphs go.
+ * that crosses them still resolves; only their glyphs go. A continuation
+ * line's prefix is its indent: the renderer sets the line under its item's
+ * text itself.
  */
 export function hideBlockPrefixes(
   formats: CharacterFormat[],
@@ -303,7 +387,8 @@ export function bulletIndentWidths(blocks: JournalMarkdownBlock[]): number[] {
   for (const block of blocks) {
     if (!LIST_KINDS.has(block.kind)) continue;
     for (const line of block.lines) {
-      if (line.indentWidth > 0) widths.add(line.indentWidth);
+      // A continuation line's indent is its item's text column, not a level.
+      if (line.kind !== 'continuation' && line.indentWidth > 0) widths.add(line.indentWidth);
     }
   }
   return [...widths].sort((a, b) => a - b);

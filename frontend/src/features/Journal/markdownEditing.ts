@@ -16,11 +16,28 @@
 import { codePointToUtf16 } from './codePoints';
 import { classifyLine, sourceLines } from './journalMarkdownLines';
 import type { JournalMarkdownLine, LineKind } from './journalMarkdownTypes';
+import {
+  continuationReturnEdit,
+  itemMarker,
+  joinContinuationEdit,
+  softBreakEdit,
+} from './markdownContinuation';
 import { inferIndentUnit, isListLine, outdentIndent, shiftListLines } from './markdownIndent';
-import { followingOrdinal, orderedMarker, renumberOrderedLists } from './markdownOrderedList';
+import { followingOrdinal, renumberOrderedLists } from './markdownOrderedList';
 
 /** The key name a field reports for a forward delete. */
 const FORWARD_DELETE_KEY = 'Delete';
+/** The key name a field reports for Return. */
+const RETURN_KEY = 'Enter';
+
+/**
+ * The key a field last reported, where it reports keys at all. ``shiftKey`` is
+ * absent on a platform that does not report modifiers with the key.
+ */
+export interface FieldKey {
+  key: string;
+  shiftKey?: boolean;
+}
 
 export interface MarkdownEdit {
   text: string;
@@ -83,9 +100,6 @@ function isSeparated(line: JournalMarkdownLine): boolean {
 /** The kinds whose hidden prefix the classifier measures as ``contentStart``. */
 const BLOCK_PREFIX_KINDS: ReadonlySet<LineKind> = new Set<LineKind>(['ordered', 'task', 'heading']);
 
-/** The box a continued or stepped-out task item opens with: always unchecked. */
-const UNCHECKED_BOX = '[ ]';
-
 /** The line feeds before a UTF-16 offset: the zero-based index of its line. */
 function lineIndexAt(text: string, offset: number): number {
   return text.slice(0, offset).split('\n').length - 1;
@@ -100,17 +114,6 @@ function lineIndexAt(text: string, offset: number): number {
 function returnPrefixEnd(line: JournalMarkdownLine): number | null {
   if (BLOCK_PREFIX_KINDS.has(line.kind)) return line.contentStart;
   return line.marker != null && isSeparated(line) ? line.markerEnd : null;
-}
-
-/**
- * The marker (with its trailing space) an item hands to a line that follows
- * it or replaces it: a numbered item's punctuation with ``ordinal``, a task's
- * bullet with an unchecked box, or the bullet / quote marker as typed.
- */
-function itemMarker(line: JournalMarkdownLine, chars: string[], ordinal: number): string {
-  if (line.kind === 'ordered') return orderedMarker(chars, line, ordinal);
-  const marker = line.marker ?? '';
-  return line.kind === 'task' ? `${marker} ${UNCHECKED_BOX} ` : `${marker} `;
 }
 
 /** One Return on a marked line: the texts either side of it and where the line sits. */
@@ -173,15 +176,25 @@ function continueItem(press: ReturnPress): MarkdownEdit {
  * list item steps it out one level, and Return on any other empty marker exits
  * the block. A heading with text and a rule never continue.
  *
- * Every block is read from ``classifyLine``; nothing here matches line text.
+ * A list item can run over several lines (``markdownContinuation.ts``). With
+ * ``softBreak`` -- the line feed came from Shift+Return -- the new line is a
+ * continuation line of the item, indented under its text, and off a list item
+ * the line feed is left exactly as the field made it. Return on a continuation
+ * line starts the next item.
+ *
+ * Every block is read from the shared classifier; nothing here matches line text.
  */
 export function continueMarkdownEdit(
   previous: string,
   next: string,
   previousSelection?: MarkdownSelection,
+  softBreak = false,
 ): MarkdownEdit {
   const newlineIndex = insertedLineFeed(previous, next, previousSelection);
   if (newlineIndex == null) return { text: next };
+  if (softBreak) return softBreakEdit(previous, next, newlineIndex) ?? { text: next };
+  const nextItem = continuationReturnEdit(previous, next, newlineIndex);
+  if (nextItem != null) return nextItem;
 
   const lineStart = previous.lastIndexOf('\n', newlineIndex - 1) + 1;
   const chars = Array.from(previous.slice(lineStart, newlineIndex));
@@ -218,7 +231,8 @@ function markedLineAtCaret(body: string, caret: number): JournalMarkdownLine | n
  * keeping its marker and the caret at its content. Any other marked line -- a
  * level-0 item, a quote, a heading -- loses its
  * whole hidden prefix in one step: the prefix renders as nothing, so deleting
- * it one invisible character at a time would look like a stuck key.
+ * it one invisible character at a time would look like a stuck key. A list
+ * item's continuation line loses its indent and joins the line above.
  */
 export function deleteBackwardEdit(
   body: string,
@@ -226,7 +240,7 @@ export function deleteBackwardEdit(
 ): MarkdownEdit | null {
   if (selection.start !== selection.end) return null;
   const line = markedLineAtCaret(body, selection.start);
-  if (line == null) return null;
+  if (line == null) return joinContinuationEdit(body, selection);
   const outdented = isListLine(line) ? shiftListLines(body, selection, 'outdent') : null;
   if (outdented != null) return outdented;
   const lineStart = codePointToUtf16(body, line.start);
@@ -249,28 +263,32 @@ function isBackspaceAt(previous: string, next: string, selection: MarkdownSelect
  * The editor's reading of one change the field reports.
  *
  * A Backspace at a marked line's content start becomes ``deleteBackwardEdit``
- * (outdent a nested item, drop a level-0 prefix); an inserted line feed
- * becomes ``continueMarkdownEdit``. Those two are the only changes that ever
- * renumber a list. Anything else -- typing, paste, dictation,
+ * (outdent a nested item, drop a level-0 prefix, join a continuation line); an
+ * inserted line feed becomes ``continueMarkdownEdit``. Those two are the only
+ * changes that ever renumber a list. Anything else -- typing, paste, dictation,
  * a forward Delete -- is kept exactly as the field reported it. ``lastKey`` is
  * the key the field last reported, when it reports keys: a forward ``Delete``
- * can produce the same text as Backspace (``-  x``), and is never rewritten.
+ * can produce the same text as Backspace (``-  x``), and is never rewritten;
+ * and a line feed made by Return with Shift held opens a continuation line
+ * inside a list item instead of a new item. Where the field reports no Shift,
+ * Return behaves as it always has.
  */
 export function reconcileBodyChange(
   previous: string,
   next: string,
   previousSelection?: MarkdownSelection,
-  lastKey?: string,
+  lastKey?: FieldKey,
 ): MarkdownEdit {
   if (
     previousSelection != null &&
-    lastKey !== FORWARD_DELETE_KEY &&
+    lastKey?.key !== FORWARD_DELETE_KEY &&
     isBackspaceAt(previous, next, previousSelection)
   ) {
     const edit = deleteBackwardEdit(previous, previousSelection);
     if (edit != null) return edit;
   }
-  return continueMarkdownEdit(previous, next, previousSelection);
+  const softBreak = lastKey?.key === RETURN_KEY && lastKey.shiftKey === true;
+  return continueMarkdownEdit(previous, next, previousSelection, softBreak);
 }
 
 /** One contiguous UTF-16 replacement: ``before[start, end)`` becomes ``text``. */

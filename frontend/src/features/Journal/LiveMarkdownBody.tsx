@@ -31,7 +31,12 @@ import {
   type MarkdownCommand,
   type MarkdownKeyEvent,
 } from './markdownCommands';
-import { reconcileBodyChange, type MarkdownEdit, type MarkdownSelection } from './markdownEditing';
+import {
+  reconcileBodyChange,
+  type FieldKey,
+  type MarkdownEdit,
+  type MarkdownSelection,
+} from './markdownEditing';
 import MarkdownFormatToolbar from './MarkdownFormatToolbar';
 import { useGrowingFieldHeight } from './useGrowingFieldHeight';
 import { useLiveMirrorEnabled } from './useLiveMirrorEnabled';
@@ -124,10 +129,11 @@ function useApplyEdit(
 
 /**
  * The key the field reported last, read once: a forward Delete can leave the
- * same text Backspace would, and must never be rewritten as one.
+ * same text Backspace would, and must never be rewritten as one; and Return
+ * with Shift held opens a continuation line in a list item, not a new item.
  */
 function useLastKey() {
-  const lastKeyRef = useRef<string | undefined>(undefined);
+  const lastKeyRef = useRef<FieldKey | undefined>(undefined);
   const takeLastKey = useCallback(() => {
     const key = lastKeyRef.current;
     lastKeyRef.current = undefined;
@@ -211,7 +217,8 @@ function useMarkdownKeyCommands(body: string, bindings: BodyBindings) {
   const primary = useMemo(editorPrimaryModifier, []);
   return useCallback(
     (event: BodyKeyPressEvent) => {
-      lastKeyRef.current = event.nativeEvent.key;
+      // Native reports the key alone; ``shiftKey`` is then absent and Return is plain Return.
+      lastKeyRef.current = { key: event.nativeEvent.key, shiftKey: event.nativeEvent.shiftKey };
       const command = keyCommand(event.nativeEvent, primary);
       if (command == null) return;
       const result = applyMarkdownCommand(body, nativeSelectionRef.current, command);

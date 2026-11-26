@@ -518,6 +518,36 @@ describe('HighlightedBody -- headings, ordered items, tasks and rules (#3251)', 
     expect(unseenTexts(lone.getByTestId('journal-markdown-item-marker-0'))).toEqual([]);
   });
 
+  it('draws a continuation line as a row of its item: the block’s column, no marker (#3800)', () => {
+    const body = '9. buy oats\n   the **steel-cut** kind\n10. tea\nafter';
+    const { getByTestId, queryByTestId } = render(
+      <HighlightedBody body={body} notes={[]} onOpen={jest.fn()} />,
+    );
+    const block = getByTestId('journal-markdown-ordered-0');
+    expect(
+      isInside(getByTestId('journal-markdown-continuation-12'), 'journal-markdown-ordered-0'),
+    ).toBe(true);
+    expect(renderedText(block)).toBe('9. buy oatsthe steel-cut kind10. tea');
+    // The same unseen sizers as its item's row: one column, one text start.
+    const column = getByTestId('journal-markdown-item-marker-12');
+    expect(unseenTexts(column)).toEqual(unseenTexts(getByTestId('journal-markdown-item-marker-0')));
+    expect(unseenTexts(column)).toEqual(['0. ', '00. ']);
+    expect(renderedText(column)).toBe('');
+    // The continuation line carries no marker of its own, and is not an item.
+    expect(queryByTestId('journal-markdown-ordinal-12')).toBeNull();
+    expect(queryByTestId('journal-markdown-item-12')).toBeNull();
+    expect(renderedText(getByTestId('journal-markdown-item-text-12'))).toBe('the steel-cut kind');
+    expect(getByTestId('journal-markdown-bold-21')).toBeTruthy();
+  });
+
+  it('gives a continuation line the column even where its item’s marker sizes itself (#3800)', () => {
+    const { getByTestId } = render(
+      <HighlightedBody body={'- one\n  two'} notes={[]} onOpen={jest.fn()} />,
+    );
+    expect(unseenTexts(getByTestId('journal-markdown-item-marker-0'))).toEqual([]);
+    expect(unseenTexts(getByTestId('journal-markdown-item-marker-6'))).toEqual(['\u2022 ']);
+  });
+
   it('makes finished-entry task glyphs accessible and pressable without opening an anchor', () => {
     const body = '- [ ] *buy milk*';
     const anchored = note({

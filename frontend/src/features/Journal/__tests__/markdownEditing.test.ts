@@ -312,7 +312,7 @@ describe('reconcileBodyChange', () => {
 
   it('leaves a forward Delete alone even where it looks like Backspace', () => {
     // '-  x' with the caret at 2: Backspace and Delete both yield '- x'.
-    expect(reconcileBodyChange('-  x', '- x', { start: 2, end: 2 }, 'Delete')).toEqual({
+    expect(reconcileBodyChange('-  x', '- x', { start: 2, end: 2 }, { key: 'Delete' })).toEqual({
       text: '- x',
     });
     expect(reconcileBodyChange('-  x', '- x', { start: 2, end: 2 })).toEqual({
@@ -484,7 +484,7 @@ describe('reconcileBodyChange -- numbers are only rewritten by Return and indent
     ['', '1. a\n1. b\n7. c', { start: 0, end: 0 }, undefined],
     ['1. a\n3. c', '1. a\n3. cd', { start: 9, end: 9 }, undefined],
     ['1. a\n2. b\n3. c', '1. a\n3. c', { start: 5, end: 10 }, undefined],
-    ['1. a\n\n3. c', '1. a\n3. c', { start: 4, end: 4 }, 'Delete'],
+    ['1. a\n\n3. c', '1. a\n3. c', { start: 4, end: 4 }, { key: 'Delete' }],
     ['1. a\n\n3. c', '1. a\n3. c', { start: 5, end: 5 }, undefined],
   ])('keeps %j -> %j as the field reported it', (previous, next, selection, key) => {
     expect(reconcileBodyChange(previous, next, selection, key)).toEqual({ text: next });

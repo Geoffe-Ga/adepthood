@@ -432,6 +432,18 @@
     "coveredBy": "frontend/e2e/journal-ordered-list-edit.browser.e2e.test.ts"
   },
   {
+    "id": "journal.list-continuation-line",
+    "description": "A writer lets one list item run over more than one line. Shift+Return on a bulleted, numbered or checkbox item opens a new line with no marker, indented with spaces to the column the item's text starts at; Return after it starts the next item of the same kind (the next number, a new bullet, a new unchecked box), and Return on that empty item leaves the list. Backspace at the start of a continuation line takes it back in one keystroke. The stored body is exactly those characters, and after a cold reload read mode draws each continuation line inside its item, with no marker of its own and its text starting in the same column as the item's text.",
+    "crosses": {
+      "screen": "frontend/src/features/Journal/JournalEntryScreen.tsx",
+      "client": ["journal"],
+      "routes": ["POST /journal/", "PATCH /journal/{entry_id}", "GET /journal/{entry_id}"],
+      "tables": ["journalentry"]
+    },
+    "status": "covered",
+    "coveredBy": "frontend/e2e/journal-list-continuation.browser.e2e.test.ts"
+  },
+  {
     "id": "journal.checklist-button",
     "description": "A writer starts a checklist from the toolbar. The Checklist button, beside Bulleted list and Numbered list, turns the caret's line into an unchecked task (- [ ]); from there Return gives the next unchecked box and Return on an empty box leaves the list, so one press is the way into a checklist. The button, or Cmd/Ctrl+Shift+9, converts a bullet or a numbered item to a task in place, keeping its indent and words, and pressed on a task -- checked or not -- clears the whole prefix and leaves the words. It reads as pressed only on a task line, where Bulleted list is released and Indent and Outdent stay on offer; Bulleted list on a task takes the box off and leaves the bullet. The stored body is exactly that Markdown, and read mode draws the checkboxes after a cold reload.",
     "crosses": {

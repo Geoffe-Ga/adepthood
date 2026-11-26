@@ -822,6 +822,64 @@ describe('LiveMarkdownBody Backspace on list items', () => {
   });
 });
 
+describe('LiveMarkdownBody Shift+Return in a list (#3800)', () => {
+  it('opens a continuation line under the item’s text when Shift is held', () => {
+    const onChangeBody = jest.fn();
+    const { getByTestId } = render(<Harness initial="1. buy oats" onChangeBody={onChangeBody} />);
+    const input = getByTestId('journal-body-input');
+    select(input, 11);
+    fireEvent(input, 'keyPress', keyPress('Shift', { shiftKey: true }).event);
+    fireEvent(input, 'keyPress', keyPress('Enter', { shiftKey: true }).event);
+    fireEvent.changeText(input, '1. buy oats\n');
+    expect(onChangeBody).toHaveBeenLastCalledWith('1. buy oats\n   ');
+    expect(getByTestId('journal-body-input').props.selection).toEqual({ start: 15, end: 15 });
+  });
+
+  it('walks the whole sequence: continuation line, next item, out of the list', () => {
+    const onChangeBody = jest.fn();
+    const { getByTestId } = render(
+      <Harness initial="- [ ] buy oats" onChangeBody={onChangeBody} />,
+    );
+    const input = getByTestId('journal-body-input');
+    select(input, 14);
+    fireEvent(input, 'keyPress', keyPress('Enter', { shiftKey: true }).event);
+    fireEvent.changeText(input, '- [ ] buy oats\n');
+    expect(onChangeBody).toHaveBeenLastCalledWith('- [ ] buy oats\n      ');
+    select(input, 21);
+    fireEvent.changeText(input, '- [ ] buy oats\n      kind');
+    select(input, 25);
+    fireEvent(input, 'keyPress', keyPress('Enter').event);
+    fireEvent.changeText(input, '- [ ] buy oats\n      kind\n');
+    expect(onChangeBody).toHaveBeenLastCalledWith('- [ ] buy oats\n      kind\n- [ ] ');
+    select(input, 32);
+    fireEvent(input, 'keyPress', keyPress('Enter').event);
+    fireEvent.changeText(input, '- [ ] buy oats\n      kind\n- [ ] \n');
+    expect(onChangeBody).toHaveBeenLastCalledWith('- [ ] buy oats\n      kind\n');
+  });
+
+  it('continues the list as before when the field reports Return without Shift', () => {
+    const onChangeBody = jest.fn();
+    const { getByTestId } = render(<Harness initial="- a" onChangeBody={onChangeBody} />);
+    const input = getByTestId('journal-body-input');
+    select(input, 3);
+    fireEvent(input, 'keyPress', keyPress('Enter').event);
+    fireEvent.changeText(input, '- a\n');
+    expect(onChangeBody).toHaveBeenLastCalledWith('- a\n- ');
+  });
+
+  it('forgets Shift once the change it made is read, so a later paste is kept verbatim', () => {
+    const onChangeBody = jest.fn();
+    const { getByTestId } = render(<Harness initial="- a" onChangeBody={onChangeBody} />);
+    const input = getByTestId('journal-body-input');
+    select(input, 3);
+    fireEvent(input, 'keyPress', keyPress('Enter', { shiftKey: true }).event);
+    fireEvent.changeText(input, '- a\n');
+    select(input, 6);
+    fireEvent.changeText(input, '- a\n  b\n  c\n- d');
+    expect(onChangeBody).toHaveBeenLastCalledWith('- a\n  b\n  c\n- d');
+  });
+});
+
 describe('LiveMarkdownBody on native', () => {
   it('keeps the visible TextInput with no mirror behind it', () => {
     const { getByTestId, queryByTestId } = render(<Harness initial="**a**" />);
